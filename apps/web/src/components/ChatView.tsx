@@ -691,7 +691,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activePendingUserInput?.requestId,
     activePendingProgress?.activeQuestion?.id,
   ]);
-  useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
   const clearAttachmentPreviewHandoffs = useCallback(() => {
@@ -2567,9 +2566,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           },
         },
       }));
-      promptRef.current = "";
-      setComposerCursor(0);
-      setComposerTrigger(null);
     },
     [activePendingUserInput],
   );
@@ -2585,7 +2581,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!activePendingUserInput) {
         return;
       }
-      promptRef.current = value;
       setPendingUserInputAnswersByRequestId((existing) => ({
         ...existing,
         [activePendingUserInput.requestId]: {
@@ -2960,7 +2955,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       return true;
     },
-    [activePendingProgress?.activeQuestion, activePendingUserInput, setPrompt],
+    [setPrompt],
   );
 
   const readComposerSnapshot = useCallback((): {
@@ -3111,12 +3106,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
       );
     },
-    [
-      activePendingProgress?.activeQuestion,
-      activePendingUserInput,
-      onChangeActivePendingUserInputCustomAnswer,
-      setPrompt,
-    ],
+    [setPrompt],
   );
 
   const onComposerCommandKey = (
@@ -3332,6 +3322,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       answers={activePendingDraftAnswers}
                       questionIndex={activePendingQuestionIndex}
                       onSelectOption={onSelectActivePendingUserInputOption}
+                      onChangeCustomAnswer={onChangeActivePendingUserInputCustomAnswer}
                       onAdvance={onAdvanceActivePendingUserInput}
                     />
                   </div>
@@ -3436,13 +3427,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     )}
                   <ComposerPromptEditor
                     ref={composerEditorRef}
-                    value={
-                      isComposerApprovalState
-                        ? ""
-                        : activePendingProgress
-                          ? activePendingProgress.customAnswer
-                          : prompt
-                    }
+                    value={isComposerApprovalState ? "" : prompt}
                     cursor={composerCursor}
                     onChange={onPromptChange}
                     onCommandKeyDown={onComposerCommandKey}
@@ -3451,9 +3436,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       isComposerApprovalState
                         ? (activePendingApproval?.detail ??
                           "Resolve this approval request to continue")
-                        : activePendingProgress
-                          ? "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
+                        : showPlanFollowUpPrompt && activeProposedPlan
                             ? "Add feedback to refine the plan, or leave this blank to implement it"
                             : phase === "disconnected"
                               ? "Ask for follow-up changes or attach images"
@@ -3928,3 +3911,1933 @@ export default function ChatView({ threadId }: ChatViewProps) {
     </div>
   );
 }
+<<<<<<< HEAD
+=======
+
+interface ChatHeaderProps {
+  activeThreadId: ThreadId;
+  activeThreadTitle: string;
+  activeProjectName: string | undefined;
+  isGitRepo: boolean;
+  openInCwd: string | null;
+  activeProjectScripts: ProjectScript[] | undefined;
+  preferredScriptId: string | null;
+  keybindings: ResolvedKeybindingsConfig;
+  availableEditors: ReadonlyArray<EditorId>;
+  diffToggleShortcutLabel: string | null;
+  gitCwd: string | null;
+  diffOpen: boolean;
+  onRunProjectScript: (script: ProjectScript) => void;
+  onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
+  onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
+  onDeleteProjectScript: (scriptId: string) => Promise<void>;
+  onToggleDiff: () => void;
+}
+
+const ChatHeader = memo(function ChatHeader({
+  activeThreadId,
+  activeThreadTitle,
+  activeProjectName,
+  isGitRepo,
+  openInCwd,
+  activeProjectScripts,
+  preferredScriptId,
+  keybindings,
+  availableEditors,
+  diffToggleShortcutLabel,
+  gitCwd,
+  diffOpen,
+  onRunProjectScript,
+  onAddProjectScript,
+  onUpdateProjectScript,
+  onDeleteProjectScript,
+  onToggleDiff,
+}: ChatHeaderProps) {
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
+        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+        <h2
+          className="min-w-0 shrink truncate text-sm font-medium text-foreground"
+          title={activeThreadTitle}
+        >
+          {activeThreadTitle}
+        </h2>
+        {activeProjectName && (
+          <Badge variant="outline" className="min-w-0 shrink truncate">
+            {activeProjectName}
+          </Badge>
+        )}
+        {activeProjectName && !isGitRepo && (
+          <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
+            No Git
+          </Badge>
+        )}
+      </div>
+      <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 @sm/header-actions:gap-3">
+        {activeProjectScripts && (
+          <ProjectScriptsControl
+            scripts={activeProjectScripts}
+            keybindings={keybindings}
+            preferredScriptId={preferredScriptId}
+            onRunScript={onRunProjectScript}
+            onAddScript={onAddProjectScript}
+            onUpdateScript={onUpdateProjectScript}
+            onDeleteScript={onDeleteProjectScript}
+          />
+        )}
+        {activeProjectName && (
+          <OpenInPicker
+            keybindings={keybindings}
+            availableEditors={availableEditors}
+            openInCwd={openInCwd}
+          />
+        )}
+        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0"
+                pressed={diffOpen}
+                onPressedChange={onToggleDiff}
+                aria-label="Toggle diff panel"
+                variant="outline"
+                size="xs"
+                disabled={!isGitRepo}
+              >
+                <DiffIcon className="size-3" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {!isGitRepo
+              ? "Diff panel is unavailable because this project is not a git repository."
+              : diffToggleShortcutLabel
+                ? `Toggle diff panel (${diffToggleShortcutLabel})`
+                : "Toggle diff panel"}
+          </TooltipPopup>
+        </Tooltip>
+      </div>
+    </div>
+  );
+});
+
+const ThreadErrorBanner = memo(function ThreadErrorBanner({
+  error,
+  onDismiss,
+}: {
+  error: string | null;
+  onDismiss?: () => void;
+}) {
+  if (!error) return null;
+  return (
+    <div className="pt-3 mx-auto max-w-3xl">
+      <Alert variant="error">
+        <CircleAlertIcon />
+        <AlertDescription className="line-clamp-3" title={error}>
+          {error}
+        </AlertDescription>
+        {onDismiss && (
+          <AlertAction>
+            <button
+              type="button"
+              aria-label="Dismiss error"
+              className="inline-flex size-6 items-center justify-center rounded-md text-destructive/60 transition-colors hover:text-destructive"
+              onClick={onDismiss}
+            >
+              <XIcon className="size-3.5" />
+            </button>
+          </AlertAction>
+        )}
+      </Alert>
+    </div>
+  );
+});
+
+const ProviderHealthBanner = memo(function ProviderHealthBanner({
+  status,
+}: {
+  status: ServerProviderStatus | null;
+}) {
+  if (!status || status.status === "ready") {
+    return null;
+  }
+
+  const defaultMessage =
+    status.status === "error"
+      ? `${status.provider} provider is unavailable.`
+      : `${status.provider} provider has limited availability.`;
+
+  return (
+    <div className="pt-3 mx-auto max-w-3xl">
+      <Alert variant={status.status === "error" ? "error" : "warning"}>
+        <CircleAlertIcon />
+        <AlertTitle>
+          {status.provider === "codex" ? "Codex provider status" : `${status.provider} status`}
+        </AlertTitle>
+        <AlertDescription className="line-clamp-3" title={status.message ?? defaultMessage}>
+          {status.message ?? defaultMessage}
+        </AlertDescription>
+      </Alert>
+    </div>
+  );
+});
+
+interface ComposerPendingApprovalPanelProps {
+  approval: PendingApproval;
+  pendingCount: number;
+}
+
+const ComposerPendingApprovalPanel = memo(function ComposerPendingApprovalPanel({
+  approval,
+  pendingCount,
+}: ComposerPendingApprovalPanelProps) {
+  const approvalSummary =
+    approval.requestKind === "command"
+      ? "Command approval requested"
+      : approval.requestKind === "file-read"
+        ? "File-read approval requested"
+        : "File-change approval requested";
+
+  return (
+    <div className="px-4 py-3.5 sm:px-5 sm:py-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="uppercase text-sm tracking-[0.2em]">PENDING APPROVAL</span>
+        <span className="text-sm font-medium">{approvalSummary}</span>
+        {pendingCount > 1 ? (
+          <span className="text-xs text-muted-foreground">1/{pendingCount}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+});
+
+interface ComposerPendingApprovalActionsProps {
+  requestId: ApprovalRequestId;
+  isResponding: boolean;
+  onRespondToApproval: (
+    requestId: ApprovalRequestId,
+    decision: ProviderApprovalDecision,
+  ) => Promise<void>;
+}
+
+const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
+  requestId,
+  isResponding,
+  onRespondToApproval,
+}: ComposerPendingApprovalActionsProps) {
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={isResponding}
+        onClick={() => void onRespondToApproval(requestId, "cancel")}
+      >
+        Cancel turn
+      </Button>
+      <Button
+        size="sm"
+        variant="destructive-outline"
+        disabled={isResponding}
+        onClick={() => void onRespondToApproval(requestId, "decline")}
+      >
+        Decline
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={isResponding}
+        onClick={() => void onRespondToApproval(requestId, "acceptForSession")}
+      >
+        Always allow this session
+      </Button>
+      <Button
+        size="sm"
+        variant="default"
+        disabled={isResponding}
+        onClick={() => void onRespondToApproval(requestId, "accept")}
+      >
+        Approve once
+      </Button>
+    </>
+  );
+});
+
+interface PendingUserInputPanelProps {
+  pendingUserInputs: PendingUserInput[];
+  respondingRequestIds: ApprovalRequestId[];
+  answers: Record<string, PendingUserInputDraftAnswer>;
+  questionIndex: number;
+  onSelectOption: (questionId: string, optionLabel: string) => void;
+  onChangeCustomAnswer: (questionId: string, value: string) => void;
+  onAdvance: () => void;
+}
+
+const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
+  pendingUserInputs,
+  respondingRequestIds,
+  answers,
+  questionIndex,
+  onSelectOption,
+  onChangeCustomAnswer,
+  onAdvance,
+}: PendingUserInputPanelProps) {
+  if (pendingUserInputs.length === 0) return null;
+  const activePrompt = pendingUserInputs[0];
+  if (!activePrompt) return null;
+
+  return (
+    <ComposerPendingUserInputCard
+      key={activePrompt.requestId}
+      prompt={activePrompt}
+      isResponding={respondingRequestIds.includes(activePrompt.requestId)}
+      answers={answers}
+      questionIndex={questionIndex}
+      onSelectOption={onSelectOption}
+      onChangeCustomAnswer={onChangeCustomAnswer}
+      onAdvance={onAdvance}
+    />
+  );
+});
+
+const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
+  prompt,
+  isResponding,
+  answers,
+  questionIndex,
+  onSelectOption,
+  onChangeCustomAnswer,
+  onAdvance,
+}: {
+  prompt: PendingUserInput;
+  isResponding: boolean;
+  answers: Record<string, PendingUserInputDraftAnswer>;
+  questionIndex: number;
+  onSelectOption: (questionId: string, optionLabel: string) => void;
+  onChangeCustomAnswer: (questionId: string, value: string) => void;
+  onAdvance: () => void;
+}) {
+  const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
+  const activeQuestion = progress.activeQuestion;
+  const autoAdvanceTimerRef = useRef<number | null>(null);
+  const pendingAnswerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+
+  // Clear auto-advance timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+    };
+  }, []);
+
+  const selectOptionAndAutoAdvance = useCallback(
+    (questionId: string, optionLabel: string) => {
+      onSelectOption(questionId, optionLabel);
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+      autoAdvanceTimerRef.current = window.setTimeout(() => {
+        autoAdvanceTimerRef.current = null;
+        onAdvance();
+      }, 200);
+    },
+    [onSelectOption, onAdvance],
+  );
+
+  // Keyboard shortcut: number keys 1-9 select corresponding option and auto-advance.
+  // When the dedicated custom-answer editor is empty, digit keys should pick options
+  // instead of typing into the editor.
+  useEffect(() => {
+    if (!activeQuestion || isResponding) return;
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (target instanceof HTMLElement && target.isContentEditable) {
+        const hasCustomText = progress.customAnswer.length > 0;
+        if (hasCustomText) return;
+      }
+      const digit = Number.parseInt(event.key, 10);
+      if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
+      const optionIndex = digit - 1;
+      if (optionIndex >= activeQuestion.options.length) return;
+      const option = activeQuestion.options[optionIndex];
+      if (!option) return;
+      event.preventDefault();
+      selectOptionAndAutoAdvance(activeQuestion.id, option.label);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [activeQuestion, isResponding, selectOptionAndAutoAdvance, progress.customAnswer.length]);
+
+  if (!activeQuestion) {
+    return null;
+  }
+
+  const handleCustomAnswerCommandKey = (
+    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+    event: KeyboardEvent,
+  ): boolean => {
+    if (key === "Enter" && !event.shiftKey) {
+      onAdvance();
+      return true;
+    }
+    return false;
+  };
+
+  return (
+    <div className="px-4 py-3 sm:px-5">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {prompt.questions.length > 1 ? (
+            <span className="flex h-5 items-center rounded-md bg-muted/60 px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground/60">
+              {questionIndex + 1}/{prompt.questions.length}
+            </span>
+          ) : null}
+          <span className="text-[11px] font-semibold tracking-widest text-muted-foreground/50 uppercase">
+            {activeQuestion.header}
+          </span>
+        </div>
+      </div>
+      <p className="mt-1.5 text-sm text-foreground/90">{activeQuestion.question}</p>
+      <div className="mt-3 rounded-xl border border-border/60 bg-background/65 px-3 py-2.5">
+        <ComposerPromptEditor
+          ref={pendingAnswerEditorRef}
+          value={progress.customAnswer}
+          cursor={progress.customAnswer.length}
+          disabled={isResponding}
+          placeholder="Type your own answer, or leave this blank to use the selected option"
+          className="max-h-32 min-h-10 text-[13px]"
+          onChange={(nextValue) => {
+            onChangeCustomAnswer(activeQuestion.id, nextValue);
+          }}
+          onCommandKeyDown={handleCustomAnswerCommandKey}
+          onPaste={() => {}}
+        />
+      </div>
+      <div className="mt-3 space-y-1">
+        {activeQuestion.options.map((option, index) => {
+          const isSelected = progress.selectedOptionLabel === option.label;
+          const shortcutKey = index < 9 ? index + 1 : null;
+          return (
+            <button
+              key={`${activeQuestion.id}:${option.label}`}
+              type="button"
+              disabled={isResponding}
+              onClick={() => selectOptionAndAutoAdvance(activeQuestion.id, option.label)}
+              className={cn(
+                "group flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150",
+                isSelected
+                  ? "border-blue-500/40 bg-blue-500/8 text-foreground"
+                  : "border-transparent bg-muted/20 text-foreground/80 hover:bg-muted/40 hover:border-border/40",
+                isResponding && "opacity-50 cursor-not-allowed",
+              )}
+            >
+              {shortcutKey !== null ? (
+                <kbd
+                  className={cn(
+                    "flex size-5 shrink-0 items-center justify-center rounded text-[11px] font-medium tabular-nums transition-colors duration-150",
+                    isSelected
+                      ? "bg-blue-500/20 text-blue-400"
+                      : "bg-muted/40 text-muted-foreground/50 group-hover:bg-muted/60 group-hover:text-muted-foreground/70",
+                  )}
+                >
+                  {shortcutKey}
+                </kbd>
+              ) : null}
+              <div className="min-w-0 flex-1">
+                <span className="text-sm font-medium">{option.label}</span>
+                {option.description && option.description !== option.label ? (
+                  <span className="ml-2 text-xs text-muted-foreground/50">
+                    {option.description}
+                  </span>
+                ) : null}
+              </div>
+              {isSelected ? <CheckIcon className="size-3.5 shrink-0 text-blue-400" /> : null}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+});
+
+const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBanner({
+  planTitle,
+}: {
+  planTitle: string | null;
+}) {
+  return (
+    <div className="px-4 py-3.5 sm:px-5 sm:py-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="uppercase text-sm tracking-[0.2em]">Plan ready</span>
+        {planTitle ? (
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{planTitle}</span>
+        ) : null}
+      </div>
+      {/* <div className="mt-2 text-xs text-muted-foreground">
+        Review the plan
+      </div> */}
+    </div>
+  );
+});
+
+const MessageCopyButton = memo(function MessageCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [text]);
+
+  return (
+    <Button type="button" size="xs" variant="outline" onClick={handleCopy} title="Copy message">
+      {copied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
+    </Button>
+  );
+});
+
+function hasNonZeroStat(stat: { additions: number; deletions: number }): boolean {
+  return stat.additions > 0 || stat.deletions > 0;
+}
+
+const DiffStatLabel = memo(function DiffStatLabel(props: {
+  additions: number;
+  deletions: number;
+  showParentheses?: boolean;
+}) {
+  const { additions, deletions, showParentheses = false } = props;
+  return (
+    <>
+      {showParentheses && <span className="text-muted-foreground/70">(</span>}
+      <span className="text-success">+{additions}</span>
+      <span className="mx-0.5 text-muted-foreground/70">/</span>
+      <span className="text-destructive">-{deletions}</span>
+      {showParentheses && <span className="text-muted-foreground/70">)</span>}
+    </>
+  );
+});
+
+function collectDirectoryPaths(nodes: ReadonlyArray<TurnDiffTreeNode>): string[] {
+  const paths: string[] = [];
+  for (const node of nodes) {
+    if (node.kind !== "directory") continue;
+    paths.push(node.path);
+    paths.push(...collectDirectoryPaths(node.children));
+  }
+  return paths;
+}
+
+function buildDirectoryExpansionState(
+  directoryPaths: ReadonlyArray<string>,
+  expanded: boolean,
+): Record<string, boolean> {
+  const expandedState: Record<string, boolean> = {};
+  for (const directoryPath of directoryPaths) {
+    expandedState[directoryPath] = expanded;
+  }
+  return expandedState;
+}
+
+const ChangedFilesTree = memo(function ChangedFilesTree(props: {
+  turnId: TurnId;
+  files: ReadonlyArray<TurnDiffFileChange>;
+  allDirectoriesExpanded: boolean;
+  resolvedTheme: "light" | "dark";
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+}) {
+  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
+  const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
+  const directoryPathsKey = useMemo(
+    () => collectDirectoryPaths(treeNodes).join("\u0000"),
+    [treeNodes],
+  );
+  const allDirectoryExpansionState = useMemo(
+    () =>
+      buildDirectoryExpansionState(
+        directoryPathsKey ? directoryPathsKey.split("\u0000") : [],
+        allDirectoriesExpanded,
+      ),
+    [allDirectoriesExpanded, directoryPathsKey],
+  );
+  const [expandedDirectories, setExpandedDirectories] = useState<Record<string, boolean>>(() =>
+    buildDirectoryExpansionState(directoryPathsKey ? directoryPathsKey.split("\u0000") : [], true),
+  );
+  useEffect(() => {
+    setExpandedDirectories(allDirectoryExpansionState);
+  }, [allDirectoryExpansionState]);
+
+  const toggleDirectory = useCallback((pathValue: string, fallbackExpanded: boolean) => {
+    setExpandedDirectories((current) => ({
+      ...current,
+      [pathValue]: !(current[pathValue] ?? fallbackExpanded),
+    }));
+  }, []);
+
+  const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
+    const leftPadding = 8 + depth * 14;
+    if (node.kind === "directory") {
+      const isExpanded = expandedDirectories[node.path] ?? depth === 0;
+      return (
+        <div key={`dir:${node.path}`}>
+          <button
+            type="button"
+            className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
+            style={{ paddingLeft: `${leftPadding}px` }}
+            onClick={() => toggleDirectory(node.path, depth === 0)}
+          >
+            <ChevronRightIcon
+              aria-hidden="true"
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground/80",
+                isExpanded && "rotate-90",
+              )}
+            />
+            {isExpanded ? (
+              <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+            ) : (
+              <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+            )}
+            <span className="truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
+              {node.name}
+            </span>
+            {hasNonZeroStat(node.stat) && (
+              <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+                <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
+              </span>
+            )}
+          </button>
+          {isExpanded && (
+            <div className="space-y-0.5">
+              {node.children.map((childNode) => renderTreeNode(childNode, depth + 1))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <button
+        key={`file:${node.path}`}
+        type="button"
+        className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
+        style={{ paddingLeft: `${leftPadding}px` }}
+        onClick={() => onOpenTurnDiff(turnId, node.path)}
+      >
+        <span aria-hidden="true" className="size-3.5 shrink-0" />
+        <VscodeEntryIcon
+          pathValue={node.path}
+          kind="file"
+          theme={resolvedTheme}
+          className="size-3.5 text-muted-foreground/70"
+        />
+        <span className="truncate font-mono text-[11px] text-muted-foreground/80 group-hover:text-foreground/90">
+          {node.name}
+        </span>
+        {node.stat && (
+          <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+            <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
+          </span>
+        )}
+      </button>
+    );
+  };
+
+  return <div className="space-y-0.5">{treeNodes.map((node) => renderTreeNode(node, 0))}</div>;
+});
+
+const ProposedPlanCard = memo(function ProposedPlanCard({
+  planMarkdown,
+  cwd,
+  workspaceRoot,
+}: {
+  planMarkdown: string;
+  cwd: string | undefined;
+  workspaceRoot: string | undefined;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [savePath, setSavePath] = useState("");
+  const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
+  const savePathInputId = useId();
+  const title = proposedPlanTitle(planMarkdown) ?? "Proposed plan";
+  const lineCount = planMarkdown.split("\n").length;
+  const canCollapse = planMarkdown.length > 900 || lineCount > 20;
+  const displayedPlanMarkdown = stripDisplayedPlanMarkdown(planMarkdown);
+  const collapsedPreview = canCollapse
+    ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
+    : null;
+  const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
+  const saveContents = normalizePlanMarkdownForExport(planMarkdown);
+
+  const handleDownload = () => {
+    downloadPlanAsTextFile(downloadFilename, saveContents);
+  };
+
+  const openSaveDialog = () => {
+    if (!workspaceRoot) {
+      toastManager.add({
+        type: "error",
+        title: "Workspace path is unavailable",
+        description: "This thread does not have a workspace path to save into.",
+      });
+      return;
+    }
+    setSavePath((existing) => (existing.length > 0 ? existing : downloadFilename));
+    setIsSaveDialogOpen(true);
+  };
+
+  const handleSaveToWorkspace = () => {
+    const api = readNativeApi();
+    const relativePath = savePath.trim();
+    if (!api || !workspaceRoot) {
+      return;
+    }
+    if (!relativePath) {
+      toastManager.add({
+        type: "warning",
+        title: "Enter a workspace path",
+      });
+      return;
+    }
+
+    setIsSavingToWorkspace(true);
+    void api.projects
+      .writeFile({
+        cwd: workspaceRoot,
+        relativePath,
+        contents: saveContents,
+      })
+      .then((result) => {
+        setIsSaveDialogOpen(false);
+        toastManager.add({
+          type: "success",
+          title: "Plan saved to workspace",
+          description: result.relativePath,
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not save plan",
+          description: error instanceof Error ? error.message : "An error occurred while saving.",
+        });
+      })
+      .then(
+        () => {
+          setIsSavingToWorkspace(false);
+        },
+        () => {
+          setIsSavingToWorkspace(false);
+        },
+      );
+  };
+
+  return (
+    <div className="rounded-[24px] border border-border/80 bg-card/70 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Badge variant="secondary">Plan</Badge>
+          <p className="truncate text-sm font-medium text-foreground">{title}</p>
+        </div>
+        <Menu>
+          <MenuTrigger
+            render={<Button aria-label="Plan actions" size="icon-xs" variant="outline" />}
+          >
+            <EllipsisIcon aria-hidden="true" className="size-4" />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
+            <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
+              Save to workspace
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      </div>
+      <div className="mt-4">
+        <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
+          {canCollapse && !expanded ? (
+            <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
+          ) : (
+            <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
+          )}
+          {canCollapse && !expanded ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
+          ) : null}
+        </div>
+        {canCollapse ? (
+          <div className="mt-4 flex justify-center">
+            <Button
+              size="sm"
+              variant="outline"
+              data-scroll-anchor-ignore
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? "Collapse plan" : "Expand plan"}
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
+      <Dialog
+        open={isSaveDialogOpen}
+        onOpenChange={(open) => {
+          if (!isSavingToWorkspace) {
+            setIsSaveDialogOpen(open);
+          }
+        }}
+      >
+        <DialogPopup className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Save plan to workspace</DialogTitle>
+            <DialogDescription>
+              Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-3">
+            <label htmlFor={savePathInputId} className="grid gap-1.5">
+              <span className="text-xs font-medium text-foreground">Workspace path</span>
+              <Input
+                id={savePathInputId}
+                value={savePath}
+                onChange={(event) => setSavePath(event.target.value)}
+                placeholder={downloadFilename}
+                spellCheck={false}
+                disabled={isSavingToWorkspace}
+              />
+            </label>
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsSaveDialogOpen(false)}
+              disabled={isSavingToWorkspace}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => void handleSaveToWorkspace()}
+              disabled={isSavingToWorkspace}
+            >
+              {isSavingToWorkspace ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+    </div>
+  );
+});
+
+interface MessagesTimelineProps {
+  hasMessages: boolean;
+  isWorking: boolean;
+  activeTurnInProgress: boolean;
+  activeTurnStartedAt: string | null;
+  scrollContainer: HTMLDivElement | null;
+  timelineEntries: ReturnType<typeof deriveTimelineEntries>;
+  completionDividerBeforeEntryId: string | null;
+  completionSummary: string | null;
+  turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
+  nowIso: string;
+  expandedWorkGroups: Record<string, boolean>;
+  onToggleWorkGroup: (groupId: string) => void;
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  revertTurnCountByUserMessageId: Map<MessageId, number>;
+  onRevertUserMessage: (messageId: MessageId) => void;
+  isRevertingCheckpoint: boolean;
+  onImageExpand: (preview: ExpandedImagePreview) => void;
+  markdownCwd: string | undefined;
+  resolvedTheme: "light" | "dark";
+  workspaceRoot: string | undefined;
+}
+
+type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
+type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
+type TimelineProposedPlan = Extract<TimelineEntry, { kind: "proposed-plan" }>["proposedPlan"];
+type TimelineWorkEntry = Extract<TimelineEntry, { kind: "work" }>["entry"];
+type TimelineRow =
+  | {
+      kind: "work";
+      id: string;
+      createdAt: string;
+      groupedEntries: TimelineWorkEntry[];
+    }
+  | {
+      kind: "message";
+      id: string;
+      createdAt: string;
+      message: TimelineMessage;
+      showCompletionDivider: boolean;
+    }
+  | {
+      kind: "proposed-plan";
+      id: string;
+      createdAt: string;
+      proposedPlan: TimelineProposedPlan;
+    }
+  | { kind: "working"; id: string; createdAt: string | null };
+
+function estimateTimelineProposedPlanHeight(proposedPlan: TimelineProposedPlan): number {
+  const estimatedLines = Math.max(1, Math.ceil(proposedPlan.planMarkdown.length / 72));
+  return 120 + Math.min(estimatedLines * 22, 880);
+}
+
+const MessagesTimeline = memo(function MessagesTimeline({
+  hasMessages,
+  isWorking,
+  activeTurnInProgress,
+  activeTurnStartedAt,
+  scrollContainer,
+  timelineEntries,
+  completionDividerBeforeEntryId,
+  completionSummary,
+  turnDiffSummaryByAssistantMessageId,
+  nowIso,
+  expandedWorkGroups,
+  onToggleWorkGroup,
+  onOpenTurnDiff,
+  revertTurnCountByUserMessageId,
+  onRevertUserMessage,
+  isRevertingCheckpoint,
+  onImageExpand,
+  markdownCwd,
+  resolvedTheme,
+  workspaceRoot,
+}: MessagesTimelineProps) {
+  const timelineRootRef = useRef<HTMLDivElement | null>(null);
+  const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const timelineRoot = timelineRootRef.current;
+    if (!timelineRoot) return;
+
+    const updateWidth = (nextWidth: number) => {
+      setTimelineWidthPx((previousWidth) => {
+        if (previousWidth !== null && Math.abs(previousWidth - nextWidth) < 0.5) {
+          return previousWidth;
+        }
+        return nextWidth;
+      });
+    };
+
+    updateWidth(timelineRoot.getBoundingClientRect().width);
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      updateWidth(timelineRoot.getBoundingClientRect().width);
+    });
+    observer.observe(timelineRoot);
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasMessages, isWorking]);
+
+  const rows = useMemo<TimelineRow[]>(() => {
+    const nextRows: TimelineRow[] = [];
+
+    for (let index = 0; index < timelineEntries.length; index += 1) {
+      const timelineEntry = timelineEntries[index];
+      if (!timelineEntry) {
+        continue;
+      }
+
+      if (timelineEntry.kind === "work") {
+        const groupedEntries = [timelineEntry.entry];
+        let cursor = index + 1;
+        while (cursor < timelineEntries.length) {
+          const nextEntry = timelineEntries[cursor];
+          if (!nextEntry || nextEntry.kind !== "work") break;
+          groupedEntries.push(nextEntry.entry);
+          cursor += 1;
+        }
+        nextRows.push({
+          kind: "work",
+          id: timelineEntry.id,
+          createdAt: timelineEntry.createdAt,
+          groupedEntries,
+        });
+        index = cursor - 1;
+        continue;
+      }
+
+      if (timelineEntry.kind === "proposed-plan") {
+        nextRows.push({
+          kind: "proposed-plan",
+          id: timelineEntry.id,
+          createdAt: timelineEntry.createdAt,
+          proposedPlan: timelineEntry.proposedPlan,
+        });
+        continue;
+      }
+
+      nextRows.push({
+        kind: "message",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        message: timelineEntry.message,
+        showCompletionDivider:
+          timelineEntry.message.role === "assistant" &&
+          completionDividerBeforeEntryId === timelineEntry.id,
+      });
+    }
+
+    if (isWorking) {
+      nextRows.push({
+        kind: "working",
+        id: "working-indicator-row",
+        createdAt: activeTurnStartedAt,
+      });
+    }
+
+    return nextRows;
+  }, [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt]);
+
+  const firstUnvirtualizedRowIndex = useMemo(() => {
+    const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
+    if (!activeTurnInProgress) return firstTailRowIndex;
+
+    const turnStartedAtMs =
+      typeof activeTurnStartedAt === "string" ? Date.parse(activeTurnStartedAt) : Number.NaN;
+    let firstCurrentTurnRowIndex = -1;
+    if (!Number.isNaN(turnStartedAtMs)) {
+      firstCurrentTurnRowIndex = rows.findIndex((row) => {
+        if (row.kind === "working") return true;
+        if (!row.createdAt) return false;
+        const rowCreatedAtMs = Date.parse(row.createdAt);
+        return !Number.isNaN(rowCreatedAtMs) && rowCreatedAtMs >= turnStartedAtMs;
+      });
+    }
+
+    if (firstCurrentTurnRowIndex < 0) {
+      firstCurrentTurnRowIndex = rows.findIndex(
+        (row) => row.kind === "message" && row.message.streaming,
+      );
+    }
+
+    if (firstCurrentTurnRowIndex < 0) return firstTailRowIndex;
+
+    for (let index = firstCurrentTurnRowIndex - 1; index >= 0; index -= 1) {
+      const previousRow = rows[index];
+      if (!previousRow || previousRow.kind !== "message") continue;
+      if (previousRow.message.role === "user") {
+        return Math.min(index, firstTailRowIndex);
+      }
+      if (previousRow.message.role === "assistant" && !previousRow.message.streaming) {
+        break;
+      }
+    }
+
+    return Math.min(firstCurrentTurnRowIndex, firstTailRowIndex);
+  }, [activeTurnInProgress, activeTurnStartedAt, rows]);
+
+  const virtualizedRowCount = clamp(firstUnvirtualizedRowIndex, {
+    minimum: 0,
+    maximum: rows.length,
+  });
+
+  const rowVirtualizer = useVirtualizer({
+    count: virtualizedRowCount,
+    getScrollElement: () => scrollContainer,
+    // Use stable row ids so virtual measurements do not leak across thread switches.
+    getItemKey: (index: number) => rows[index]?.id ?? index,
+    estimateSize: (index: number) => {
+      const row = rows[index];
+      if (!row) return 96;
+      if (row.kind === "work") return 112;
+      if (row.kind === "proposed-plan") return estimateTimelineProposedPlanHeight(row.proposedPlan);
+      if (row.kind === "working") return 40;
+      return estimateTimelineMessageHeight(row.message, { timelineWidthPx });
+    },
+    measureElement: measureVirtualElement,
+    useAnimationFrameWithResizeObserver: true,
+    overscan: 8,
+  });
+  useEffect(() => {
+    if (timelineWidthPx === null) return;
+    rowVirtualizer.measure();
+  }, [rowVirtualizer, timelineWidthPx]);
+  useEffect(() => {
+    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
+      const viewportHeight = instance.scrollRect?.height ?? 0;
+      const scrollOffset = instance.scrollOffset ?? 0;
+      const remainingDistance = instance.getTotalSize() - (scrollOffset + viewportHeight);
+      return remainingDistance > AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
+    };
+    return () => {
+      rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
+    };
+  }, [rowVirtualizer]);
+  const pendingMeasureFrameRef = useRef<number | null>(null);
+  const onTimelineImageLoad = useCallback(() => {
+    if (pendingMeasureFrameRef.current !== null) return;
+    pendingMeasureFrameRef.current = window.requestAnimationFrame(() => {
+      pendingMeasureFrameRef.current = null;
+      rowVirtualizer.measure();
+    });
+  }, [rowVirtualizer]);
+  useEffect(() => {
+    return () => {
+      const frame = pendingMeasureFrameRef.current;
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, []);
+
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const nonVirtualizedRows = rows.slice(virtualizedRowCount);
+  const [allDirectoriesExpandedByTurnId, setAllDirectoriesExpandedByTurnId] = useState<
+    Record<string, boolean>
+  >({});
+  const onToggleAllDirectories = useCallback((turnId: TurnId) => {
+    setAllDirectoriesExpandedByTurnId((current) => ({
+      ...current,
+      [turnId]: !(current[turnId] ?? true),
+    }));
+  }, []);
+
+  const renderRowContent = (row: TimelineRow) => (
+    <div
+      className="pb-4"
+      data-timeline-row-kind={row.kind}
+      data-message-id={row.kind === "message" ? row.message.id : undefined}
+      data-message-role={row.kind === "message" ? row.message.role : undefined}
+    >
+      {row.kind === "work" &&
+        (() => {
+          const groupId = row.id;
+          const groupedEntries = row.groupedEntries;
+          const isExpanded = expandedWorkGroups[groupId] ?? false;
+          const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+          const visibleEntries =
+            hasOverflow && !isExpanded
+              ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+              : groupedEntries;
+          const hiddenCount = groupedEntries.length - visibleEntries.length;
+          const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
+          const groupLabel = onlyToolEntries
+            ? groupedEntries.length === 1
+              ? "Tool call"
+              : `Tool calls (${groupedEntries.length})`
+            : groupedEntries.length === 1
+              ? "Work event"
+              : `Work log (${groupedEntries.length})`;
+
+          return (
+            <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
+              <div className="mb-1.5 flex items-center justify-between gap-3">
+                <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                  {groupLabel}
+                </p>
+                {hasOverflow && (
+                  <button
+                    type="button"
+                    className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
+                    onClick={() => onToggleWorkGroup(groupId)}
+                  >
+                    {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1">
+                {visibleEntries.map((workEntry) => (
+                  <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
+                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+                    <div className="min-w-0 flex-1 py-[2px]">
+                      <p className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}>
+                        {workEntry.label}
+                      </p>
+                      {workEntry.command && (
+                        <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
+                          {workEntry.command}
+                        </pre>
+                      )}
+                      {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {workEntry.changedFiles.slice(0, 6).map((filePath) => (
+                            <span
+                              key={`${workEntry.id}:${filePath}`}
+                              className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
+                              title={filePath}
+                            >
+                              {filePath}
+                            </span>
+                          ))}
+                          {workEntry.changedFiles.length > 6 && (
+                            <span className="px-1 text-[10px] text-muted-foreground/65">
+                              +{workEntry.changedFiles.length - 6} more
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {workEntry.detail &&
+                        (!workEntry.command || workEntry.detail !== workEntry.command) && (
+                          <p
+                            className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
+                            title={workEntry.detail}
+                          >
+                            {workEntry.detail}
+                          </p>
+                        )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+      {row.kind === "message" &&
+        row.message.role === "user" &&
+        (() => {
+          const userImages = row.message.attachments ?? [];
+          const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
+          return (
+            <div className="flex justify-end">
+              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+                {userImages.length > 0 && (
+                  <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+                    {userImages.map(
+                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                        <div
+                          key={image.id}
+                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                        >
+                          {image.previewUrl ? (
+                            <button
+                              type="button"
+                              className="h-full w-full cursor-zoom-in"
+                              aria-label={`Preview ${image.name}`}
+                              onClick={() => {
+                                const preview = buildExpandedImagePreview(userImages, image.id);
+                                if (!preview) return;
+                                onImageExpand(preview);
+                              }}
+                            >
+                              <img
+                                src={image.previewUrl}
+                                alt={image.name}
+                                className="h-full max-h-[220px] w-full object-cover"
+                                onLoad={onTimelineImageLoad}
+                                onError={onTimelineImageLoad}
+                              />
+                            </button>
+                          ) : (
+                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                              {image.name}
+                            </div>
+                          )}
+                        </div>
+                      ),
+                    )}
+                  </div>
+                )}
+                {row.message.text && (
+                  <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                    {row.message.text}
+                  </pre>
+                )}
+                <div className="mt-1.5 flex items-center justify-end gap-2">
+                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                    {row.message.text && <MessageCopyButton text={row.message.text} />}
+                    {canRevertAgentWork && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={isRevertingCheckpoint || isWorking}
+                        onClick={() => onRevertUserMessage(row.message.id)}
+                        title="Revert to this message"
+                      >
+                        <Undo2Icon className="size-3" />
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-right text-[10px] text-muted-foreground/30">
+                    {formatTimestamp(row.message.createdAt)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+      {row.kind === "message" &&
+        row.message.role === "assistant" &&
+        (() => {
+          const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+          return (
+            <>
+              {row.showCompletionDivider && (
+                <div className="my-3 flex items-center gap-3">
+                  <span className="h-px flex-1 bg-border" />
+                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                    {completionSummary ? `Response • ${completionSummary}` : "Response"}
+                  </span>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+              )}
+              <div className="min-w-0 px-1 py-0.5">
+                <ChatMarkdown
+                  text={messageText}
+                  cwd={markdownCwd}
+                  isStreaming={Boolean(row.message.streaming)}
+                />
+                {(() => {
+                  const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
+                  if (!turnSummary) return null;
+                  const checkpointFiles = turnSummary.files;
+                  if (checkpointFiles.length === 0) return null;
+                  const summaryStat = summarizeTurnDiffStats(checkpointFiles);
+                  const changedFileCountLabel = String(checkpointFiles.length);
+                  const allDirectoriesExpanded =
+                    allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true;
+                  return (
+                    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                          <span>Changed files ({changedFileCountLabel})</span>
+                          {hasNonZeroStat(summaryStat) && (
+                            <>
+                              <span className="mx-1">•</span>
+                              <DiffStatLabel
+                                additions={summaryStat.additions}
+                                deletions={summaryStat.deletions}
+                              />
+                            </>
+                          )}
+                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            onClick={() => onToggleAllDirectories(turnSummary.turnId)}
+                          >
+                            {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            onClick={() =>
+                              onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
+                            }
+                          >
+                            View diff
+                          </Button>
+                        </div>
+                      </div>
+                      <ChangedFilesTree
+                        key={`changed-files-tree:${turnSummary.turnId}`}
+                        turnId={turnSummary.turnId}
+                        files={checkpointFiles}
+                        allDirectoriesExpanded={allDirectoriesExpanded}
+                        resolvedTheme={resolvedTheme}
+                        onOpenTurnDiff={onOpenTurnDiff}
+                      />
+                    </div>
+                  );
+                })()}
+                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
+                  {formatMessageMeta(
+                    row.message.createdAt,
+                    row.message.streaming
+                      ? formatElapsed(row.message.createdAt, nowIso)
+                      : formatElapsed(row.message.createdAt, row.message.completedAt),
+                  )}
+                </p>
+              </div>
+            </>
+          );
+        })()}
+
+      {row.kind === "proposed-plan" && (
+        <div className="min-w-0 px-1 py-0.5">
+          <ProposedPlanCard
+            planMarkdown={row.proposedPlan.planMarkdown}
+            cwd={markdownCwd}
+            workspaceRoot={workspaceRoot}
+          />
+        </div>
+      )}
+
+      {row.kind === "working" && (
+        <div className="py-0.5 pl-1.5">
+          <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
+            <span className="inline-flex items-center gap-[3px]">
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+            </span>
+            <span>
+              {row.createdAt
+                ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
+                : "Working..."}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  if (!hasMessages && !isWorking) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-sm text-muted-foreground/30">
+          Send a message to start the conversation.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={timelineRootRef}
+      data-timeline-root="true"
+      className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden"
+    >
+      {virtualizedRowCount > 0 && (
+        <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+          {virtualRows.map((virtualRow: VirtualItem) => {
+            const row = rows[virtualRow.index];
+            if (!row) return null;
+
+            return (
+              <div
+                key={`virtual-row:${row.id}`}
+                data-index={virtualRow.index}
+                ref={rowVirtualizer.measureElement}
+                className="absolute left-0 top-0 w-full"
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                {renderRowContent(row)}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {nonVirtualizedRows.map((row) => (
+        <div key={`non-virtual-row:${row.id}`}>{renderRowContent(row)}</div>
+      ))}
+    </div>
+  );
+});
+
+function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
+  value: ProviderKind;
+  label: string;
+  available: true;
+} {
+  return option.available && option.value !== "claudeCode";
+}
+
+const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
+const UNAVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter((option) => !option.available);
+const COMING_SOON_PROVIDER_OPTIONS = [
+  { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
+  { id: "gemini", label: "Gemini", icon: Gemini },
+] as const;
+
+function getCustomModelOptionsByProvider(settings: {
+  customCodexModels: readonly string[];
+}): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
+  return {
+    codex: getAppModelOptions("codex", settings.customCodexModels),
+  };
+}
+
+const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
+  codex: OpenAI,
+  claudeCode: ClaudeAI,
+  cursor: CursorIcon,
+};
+
+function resolveModelForProviderPicker(
+  provider: ProviderKind,
+  value: string,
+  options: ReadonlyArray<{ slug: string; name: string }>,
+): ModelSlug | null {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const direct = options.find((option) => option.slug === trimmedValue);
+  if (direct) {
+    return direct.slug;
+  }
+
+  const byName = options.find((option) => option.name.toLowerCase() === trimmedValue.toLowerCase());
+  if (byName) {
+    return byName.slug;
+  }
+
+  const normalized = normalizeModelSlug(trimmedValue, provider);
+  if (!normalized) {
+    return null;
+  }
+
+  const resolved = options.find((option) => option.slug === normalized);
+  if (resolved) {
+    return resolved.slug;
+  }
+
+  return null;
+}
+
+const ProviderModelPicker = memo(function ProviderModelPicker(props: {
+  provider: ProviderKind;
+  model: ModelSlug;
+  lockedProvider: ProviderKind | null;
+  modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
+  compact?: boolean;
+  disabled?: boolean;
+  onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
+}) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const selectedProviderOptions = props.modelOptionsByProvider[props.provider];
+  const selectedModelLabel =
+    selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
+  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.provider];
+
+  return (
+    <Menu
+      open={isMenuOpen}
+      onOpenChange={(open) => {
+        if (props.disabled) {
+          setIsMenuOpen(false);
+          return;
+        }
+        setIsMenuOpen(open);
+      }}
+    >
+      <MenuTrigger
+        render={
+          <Button
+            size="sm"
+            variant="ghost"
+            className={cn(
+              "min-w-0 shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80",
+              props.compact ? "max-w-42" : "sm:px-3",
+            )}
+            disabled={props.disabled}
+          />
+        }
+      >
+        <span
+          className={cn("flex min-w-0 items-center gap-2", props.compact ? "max-w-36" : undefined)}
+        >
+          <ProviderIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
+          <span className="truncate">{selectedModelLabel}</span>
+          <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+        </span>
+      </MenuTrigger>
+      <MenuPopup align="start">
+        {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
+          const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
+          const isDisabledByProviderLock =
+            props.lockedProvider !== null && props.lockedProvider !== option.value;
+          return (
+            <MenuSub key={option.value}>
+              <MenuSubTrigger disabled={isDisabledByProviderLock}>
+                <OptionIcon
+                  aria-hidden="true"
+                  className="size-4 shrink-0 text-muted-foreground/85"
+                />
+                {option.label}
+              </MenuSubTrigger>
+              <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
+                <MenuGroup>
+                  <MenuRadioGroup
+                    value={props.provider === option.value ? props.model : ""}
+                    onValueChange={(value) => {
+                      if (props.disabled) return;
+                      if (isDisabledByProviderLock) return;
+                      if (!value) return;
+                      const resolvedModel = resolveModelForProviderPicker(
+                        option.value,
+                        value,
+                        props.modelOptionsByProvider[option.value],
+                      );
+                      if (!resolvedModel) return;
+                      props.onProviderModelChange(option.value, resolvedModel);
+                      setIsMenuOpen(false);
+                    }}
+                  >
+                    {props.modelOptionsByProvider[option.value].map((modelOption) => (
+                      <MenuRadioItem
+                        key={`${option.value}:${modelOption.slug}`}
+                        value={modelOption.slug}
+                        onClick={() => setIsMenuOpen(false)}
+                      >
+                        {modelOption.name}
+                      </MenuRadioItem>
+                    ))}
+                  </MenuRadioGroup>
+                </MenuGroup>
+              </MenuSubPopup>
+            </MenuSub>
+          );
+        })}
+        {UNAVAILABLE_PROVIDER_OPTIONS.length > 0 && <MenuDivider />}
+        {UNAVAILABLE_PROVIDER_OPTIONS.map((option) => {
+          const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
+          return (
+            <MenuItem key={option.value} disabled>
+              <OptionIcon
+                aria-hidden="true"
+                className={cn(
+                  "size-4 shrink-0 opacity-80",
+                  option.value === "claudeCode" ? "" : "text-muted-foreground/85",
+                )}
+              />
+              <span>{option.label}</span>
+              <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
+                Coming soon
+              </span>
+            </MenuItem>
+          );
+        })}
+        {UNAVAILABLE_PROVIDER_OPTIONS.length === 0 && <MenuDivider />}
+        {COMING_SOON_PROVIDER_OPTIONS.map((option) => {
+          const OptionIcon = option.icon;
+          return (
+            <MenuItem key={option.id} disabled>
+              <OptionIcon aria-hidden="true" className="size-4 shrink-0 opacity-80" />
+              <span>{option.label}</span>
+              <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
+                Coming soon
+              </span>
+            </MenuItem>
+          );
+        })}
+      </MenuPopup>
+    </Menu>
+  );
+});
+
+const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
+  activePlan: boolean;
+  interactionMode: ProviderInteractionMode;
+  planSidebarOpen: boolean;
+  runtimeMode: RuntimeMode;
+  selectedEffort: CodexReasoningEffort | null;
+  selectedProvider: ProviderKind;
+  selectedCodexFastModeEnabled: boolean;
+  reasoningOptions: ReadonlyArray<CodexReasoningEffort>;
+  onEffortSelect: (effort: CodexReasoningEffort) => void;
+  onCodexFastModeChange: (enabled: boolean) => void;
+  onToggleInteractionMode: () => void;
+  onTogglePlanSidebar: () => void;
+  onToggleRuntimeMode: () => void;
+}) {
+  const defaultReasoningEffort = getDefaultReasoningEffort("codex");
+  const reasoningLabelByOption: Record<CodexReasoningEffort, string> = {
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Extra High",
+  };
+
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            size="sm"
+            variant="ghost"
+            className="shrink-0 px-2 text-muted-foreground/70 hover:text-foreground/80"
+            aria-label="More composer controls"
+          />
+        }
+      >
+        <EllipsisIcon aria-hidden="true" className="size-4" />
+      </MenuTrigger>
+      <MenuPopup align="start">
+        {props.selectedProvider === "codex" && props.selectedEffort != null ? (
+          <>
+            <MenuGroup>
+              <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Reasoning</div>
+              <MenuRadioGroup
+                value={props.selectedEffort}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  const nextEffort = props.reasoningOptions.find((option) => option === value);
+                  if (!nextEffort) return;
+                  props.onEffortSelect(nextEffort);
+                }}
+              >
+                {props.reasoningOptions.map((effort) => (
+                  <MenuRadioItem key={effort} value={effort}>
+                    {reasoningLabelByOption[effort]}
+                    {effort === defaultReasoningEffort ? " (default)" : ""}
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuGroup>
+            <MenuDivider />
+            <MenuGroup>
+              <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Fast Mode</div>
+              <MenuRadioGroup
+                value={props.selectedCodexFastModeEnabled ? "on" : "off"}
+                onValueChange={(value) => {
+                  props.onCodexFastModeChange(value === "on");
+                }}
+              >
+                <MenuRadioItem value="off">off</MenuRadioItem>
+                <MenuRadioItem value="on">on</MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuGroup>
+            <MenuDivider />
+          </>
+        ) : null}
+        <MenuGroup>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Mode</div>
+          <MenuRadioGroup
+            value={props.interactionMode}
+            onValueChange={(value) => {
+              if (!value || value === props.interactionMode) return;
+              props.onToggleInteractionMode();
+            }}
+          >
+            <MenuRadioItem value="default">Chat</MenuRadioItem>
+            <MenuRadioItem value="plan">Plan</MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuGroup>
+        <MenuDivider />
+        <MenuGroup>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Access</div>
+          <MenuRadioGroup
+            value={props.runtimeMode}
+            onValueChange={(value) => {
+              if (!value || value === props.runtimeMode) return;
+              props.onToggleRuntimeMode();
+            }}
+          >
+            <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
+            <MenuRadioItem value="full-access">Full access</MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuGroup>
+        {props.activePlan ? (
+          <>
+            <MenuDivider />
+            <MenuItem onClick={props.onTogglePlanSidebar}>
+              <ListTodoIcon className="size-4 shrink-0" />
+              {props.planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
+            </MenuItem>
+          </>
+        ) : null}
+      </MenuPopup>
+    </Menu>
+  );
+});
+
+const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
+  effort: CodexReasoningEffort;
+  fastModeEnabled: boolean;
+  options: ReadonlyArray<CodexReasoningEffort>;
+  onEffortChange: (effort: CodexReasoningEffort) => void;
+  onFastModeChange: (enabled: boolean) => void;
+}) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const defaultReasoningEffort = getDefaultReasoningEffort("codex");
+  const reasoningLabelByOption: Record<CodexReasoningEffort, string> = {
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Extra High",
+  };
+  const triggerLabel = [
+    reasoningLabelByOption[props.effort],
+    ...(props.fastModeEnabled ? ["Fast"] : []),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <Menu
+      open={isMenuOpen}
+      onOpenChange={(open) => {
+        setIsMenuOpen(open);
+      }}
+    >
+      <MenuTrigger
+        render={
+          <Button
+            size="sm"
+            variant="ghost"
+            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+          />
+        }
+      >
+        <span>{triggerLabel}</span>
+        <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+      </MenuTrigger>
+      <MenuPopup align="start">
+        <MenuGroup>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Reasoning</div>
+          <MenuRadioGroup
+            value={props.effort}
+            onValueChange={(value) => {
+              if (!value) return;
+              const nextEffort = props.options.find((option) => option === value);
+              if (!nextEffort) return;
+              props.onEffortChange(nextEffort);
+            }}
+          >
+            {props.options.map((effort) => (
+              <MenuRadioItem key={effort} value={effort}>
+                {reasoningLabelByOption[effort]}
+                {effort === defaultReasoningEffort ? " (default)" : ""}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
+        <MenuDivider />
+        <MenuGroup>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Fast Mode</div>
+          <MenuRadioGroup
+            value={props.fastModeEnabled ? "on" : "off"}
+            onValueChange={(value) => {
+              props.onFastModeChange(value === "on");
+            }}
+          >
+            <MenuRadioItem value="off">off</MenuRadioItem>
+            <MenuRadioItem value="on">on</MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+});
+
+const OpenInPicker = memo(function OpenInPicker({
+  keybindings,
+  availableEditors,
+  openInCwd,
+}: {
+  keybindings: ResolvedKeybindingsConfig;
+  availableEditors: ReadonlyArray<EditorId>;
+  openInCwd: string | null;
+}) {
+  const [lastEditor, setLastEditor] = useState<EditorId>(() => {
+    const stored = localStorage.getItem(LAST_EDITOR_KEY);
+    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
+  });
+
+  const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: EditorId }>>(
+    () => [
+      {
+        label: "Cursor",
+        Icon: CursorIcon,
+        value: "cursor",
+      },
+      {
+        label: "VS Code",
+        Icon: VisualStudioCode,
+        value: "vscode",
+      },
+      {
+        label: "Zed",
+        Icon: Zed,
+        value: "zed",
+      },
+      {
+        label: isMacPlatform(navigator.platform)
+          ? "Finder"
+          : isWindowsPlatform(navigator.platform)
+            ? "Explorer"
+            : "Files",
+        Icon: FolderClosedIcon,
+        value: "file-manager",
+      },
+    ],
+    [],
+  );
+  const options = useMemo(
+    () => allOptions.filter((option) => availableEditors.includes(option.value)),
+    [allOptions, availableEditors],
+  );
+
+  const effectiveEditor = options.some((option) => option.value === lastEditor)
+    ? lastEditor
+    : (options[0]?.value ?? null);
+  const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
+
+  const openInEditor = useCallback(
+    (editorId: EditorId | null) => {
+      const api = readNativeApi();
+      if (!api || !openInCwd) return;
+      const editor = editorId ?? effectiveEditor;
+      if (!editor) return;
+      void api.shell.openInEditor(openInCwd, editor);
+      localStorage.setItem(LAST_EDITOR_KEY, editor);
+      setLastEditor(editor);
+    },
+    [effectiveEditor, openInCwd, setLastEditor],
+  );
+
+  const openFavoriteEditorShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
+    [keybindings],
+  );
+
+  useEffect(() => {
+    const handler = (e: globalThis.KeyboardEvent) => {
+      const api = readNativeApi();
+      if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
+      if (!api || !openInCwd) return;
+      if (!effectiveEditor) return;
+
+      e.preventDefault();
+      void api.shell.openInEditor(openInCwd, effectiveEditor);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [effectiveEditor, keybindings, openInCwd]);
+
+  return (
+    <Group aria-label="Subscription actions">
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={!effectiveEditor || !openInCwd}
+        onClick={() => openInEditor(effectiveEditor)}
+      >
+        {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
+        <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
+          Open
+        </span>
+      </Button>
+      <GroupSeparator className="hidden @sm/header-actions:block" />
+      <Menu>
+        <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
+          <ChevronDownIcon aria-hidden="true" className="size-4" />
+        </MenuTrigger>
+        <MenuPopup align="end">
+          {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
+          {options.map(({ label, Icon, value }) => (
+            <MenuItem key={value} onClick={() => openInEditor(value)}>
+              <Icon aria-hidden="true" className="text-muted-foreground" />
+              {label}
+              {value === effectiveEditor && openFavoriteEditorShortcutLabel && (
+                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+              )}
+            </MenuItem>
+          ))}
+        </MenuPopup>
+      </Menu>
+    </Group>
+  );
+});
+>>>>>>> 3a8dc31 (fix(web): preserve composer draft during planning prompts)
