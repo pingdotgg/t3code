@@ -4,9 +4,9 @@ import { extractRunnableCommandFromCodeBlock } from "../lib/runnableMarkdownComm
 
 describe("extractRunnableCommandFromCodeBlock", () => {
   it("returns shell commands for runnable shell fences", () => {
-    expect(
-      extractRunnableCommandFromCodeBlock("language-bash", "bun lint\nbun typecheck"),
-    ).toBe("bun lint\nbun typecheck");
+    expect(extractRunnableCommandFromCodeBlock("language-bash", "bun lint\nbun typecheck")).toBe(
+      "bun lint\nbun typecheck",
+    );
   });
 
   it("strips prompt prefixes from console-style snippets", () => {

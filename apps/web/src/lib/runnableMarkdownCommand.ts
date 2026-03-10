@@ -1,11 +1,5 @@
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
-const RAW_RUNNABLE_CODE_FENCE_LANGUAGES = new Set([
-  "bash",
-  "shell",
-  "shellscript",
-  "sh",
-  "zsh",
-]);
+const RAW_RUNNABLE_CODE_FENCE_LANGUAGES = new Set(["bash", "shell", "shellscript", "sh", "zsh"]);
 const PROMPT_RUNNABLE_CODE_FENCE_LANGUAGES = new Set(["console", "shellsession", "terminal"]);
 
 function extractFenceLanguage(className: string | undefined): string {
@@ -14,7 +8,10 @@ function extractFenceLanguage(className: string | undefined): string {
 }
 
 function normalizeShellCodeBlock(code: string): string {
-  return code.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/^\n+|\n+$/g, "");
+  return code
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/^\n+|\n+$/g, "");
 }
 
 function stripShellPromptPrefixes(code: string): string | null {

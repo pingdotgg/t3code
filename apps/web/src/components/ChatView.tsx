@@ -266,7 +266,10 @@ const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
 function normalizeTerminalCommandInput(command: string): string | null {
-  const normalized = command.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/^\n+|\n+$/g, "");
+  const normalized = command
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/^\n+|\n+$/g, "");
   if (normalized.trim().length === 0) {
     return null;
   }
