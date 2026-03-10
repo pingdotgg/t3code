@@ -80,6 +80,15 @@ describe("projectOrder", () => {
     ).toBe(true);
   });
 
+  it("clears an empty optimistic order once the live project order catches up", () => {
+    expect(
+      shouldClearOptimisticProjectOrder({
+        optimisticOrder: [],
+        currentOrder: [],
+      }),
+    ).toBe(true);
+  });
+
   it("preserves the current project order when there is no override", () => {
     const ordered = orderProjectsByIds(
       [
@@ -136,6 +145,24 @@ describe("projectOrder", () => {
       ProjectId.makeUnsafe("project-b"),
       ProjectId.makeUnsafe("project-c"),
       ProjectId.makeUnsafe("project-a"),
+    ]);
+  });
+
+  it("treats dropping a project onto itself as a no-op", () => {
+    expect(
+      reorderProjectOrder({
+        currentOrder: [
+          ProjectId.makeUnsafe("project-a"),
+          ProjectId.makeUnsafe("project-b"),
+          ProjectId.makeUnsafe("project-c"),
+        ],
+        movedProjectId: ProjectId.makeUnsafe("project-b"),
+        beforeProjectId: ProjectId.makeUnsafe("project-b"),
+      }),
+    ).toEqual([
+      ProjectId.makeUnsafe("project-a"),
+      ProjectId.makeUnsafe("project-b"),
+      ProjectId.makeUnsafe("project-c"),
     ]);
   });
 });

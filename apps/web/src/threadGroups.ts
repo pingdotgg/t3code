@@ -31,6 +31,15 @@ function normalizeBranchName(branch: string): string {
   return branch.trim();
 }
 
+function normalizeThreadGroupIdentity(input: ThreadGroupIdentity): ThreadGroupIdentity {
+  const branch = input.branch ? normalizeBranchName(input.branch) : null;
+  const worktreePath = input.worktreePath ? normalizeWorktreePath(input.worktreePath) : null;
+  return {
+    branch: branch && branch.length > 0 ? branch : null,
+    worktreePath: worktreePath && worktreePath.length > 0 ? worktreePath : null,
+  };
+}
+
 function normalizeProjectThreadGroupOrder(threadGroupOrder: readonly ThreadGroupId[]): ThreadGroupId[] {
   const seen = new Set<ThreadGroupId>();
   const next: ThreadGroupId[] = [];
@@ -45,11 +54,12 @@ function normalizeProjectThreadGroupOrder(threadGroupOrder: readonly ThreadGroup
 }
 
 export function buildThreadGroupId(input: ThreadGroupIdentity): ThreadGroupId {
-  if (input.worktreePath) {
-    return `worktree:${normalizeWorktreePath(input.worktreePath)}`;
+  const normalized = normalizeThreadGroupIdentity(input);
+  if (normalized.worktreePath) {
+    return `worktree:${normalized.worktreePath}`;
   }
-  if (input.branch) {
-    return `branch:${normalizeBranchName(input.branch)}`;
+  if (normalized.branch) {
+    return `branch:${normalized.branch}`;
   }
   return MAIN_THREAD_GROUP_ID;
 }
@@ -70,26 +80,27 @@ export function orderProjectThreadGroups<T extends ThreadGroupSeed>(input: {
 }): OrderedProjectThreadGroup[] {
   const groups = new Map<string, OrderedProjectThreadGroup>();
   for (const thread of input.threads) {
-    const id = buildThreadGroupId({
+    const identity = normalizeThreadGroupIdentity({
       branch: thread.branch,
       worktreePath: thread.worktreePath,
     });
+    const id = buildThreadGroupId(identity);
     const existing = groups.get(id);
     if (!existing) {
       groups.set(id, {
         id,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        label: threadGroupLabel({
-          branch: thread.branch,
-          worktreePath: thread.worktreePath,
-        }),
+        branch: identity.branch,
+        worktreePath: identity.worktreePath,
+        label: threadGroupLabel(identity),
         latestActivityAt: thread.createdAt,
       });
       continue;
     }
     if (thread.createdAt > existing.latestActivityAt) {
       existing.latestActivityAt = thread.createdAt;
+      existing.branch = identity.branch;
+      existing.worktreePath = identity.worktreePath;
+      existing.label = threadGroupLabel(identity);
     }
   }
 
@@ -123,6 +134,9 @@ export function reorderProjectThreadGroupOrder(input: {
 }): ThreadGroupId[] {
   const normalizedCurrentOrder = normalizeProjectThreadGroupOrder(input.currentOrder);
   if (input.movedGroupId === MAIN_THREAD_GROUP_ID) {
+    return normalizedCurrentOrder;
+  }
+  if (input.beforeGroupId === input.movedGroupId) {
     return normalizedCurrentOrder;
   }
   const withoutMoved = normalizedCurrentOrder.filter((groupId) => groupId !== input.movedGroupId);
