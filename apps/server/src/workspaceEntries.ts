@@ -411,6 +411,7 @@ async function getWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
 
 export function clearWorkspaceIndexCache(cwd: string): void {
   workspaceIndexCache.delete(cwd);
+  inFlightWorkspaceIndexBuilds.delete(cwd);
 }
 
 export async function searchWorkspaceEntries(
