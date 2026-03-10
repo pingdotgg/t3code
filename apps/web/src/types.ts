@@ -43,6 +43,7 @@ export interface ChatMessage {
   id: MessageId;
   role: "user" | "assistant" | "system";
   text: string;
+  thinkingText?: string;
   attachments?: ChatAttachment[];
   createdAt: string;
   completedAt?: string | undefined;

@@ -795,11 +795,15 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         const { event } = message;
 
         if (event.type === "content_block_delta") {
-          if (
-            event.delta.type === "text_delta" &&
-            event.delta.text.length > 0 &&
-            context.turnState
-          ) {
+          // Extract text and stream kind from both text_delta and thinking_delta events
+          const deltaText =
+            event.delta.type === "text_delta"
+              ? event.delta.text
+              : event.delta.type === "thinking_delta"
+                ? (event.delta as { thinking?: string }).thinking ?? ""
+                : undefined;
+
+          if (deltaText !== undefined && deltaText.length > 0 && context.turnState) {
             if (!context.turnState.emittedTextDelta) {
               context.turnState = {
                 ...context.turnState,
@@ -817,7 +821,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               itemId: asRuntimeItemId(context.turnState.assistantItemId),
               payload: {
                 streamKind: streamKindFromDeltaType(event.delta.type),
-                delta: event.delta.text,
+                delta: deltaText,
               },
               providerRefs: {
                 ...providerThreadRef(context),

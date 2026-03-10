@@ -526,6 +526,12 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(""),
   });
 
+  const bufferedThinkingTextByMessageId = yield* Cache.make<MessageId, string>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(""),
+  });
+
   const bufferedProposedPlanById = yield* Cache.make<string, { text: string; createdAt: string }>({
     capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
@@ -617,6 +623,38 @@ const make = Effect.gen(function* () {
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
 
+  const appendBufferedThinkingText = (messageId: MessageId, delta: string) =>
+    Cache.getOption(bufferedThinkingTextByMessageId, messageId).pipe(
+      Effect.flatMap((existingText) =>
+        Effect.gen(function* () {
+          const nextText = Option.match(existingText, {
+            onNone: () => delta,
+            onSome: (text) => `${text}${delta}`,
+          });
+          if (nextText.length <= MAX_BUFFERED_ASSISTANT_CHARS) {
+            yield* Cache.set(bufferedThinkingTextByMessageId, messageId, nextText);
+            return "";
+          }
+
+          // Safety valve: flush full buffered thinking text to cap memory.
+          yield* Cache.invalidate(bufferedThinkingTextByMessageId, messageId);
+          return nextText;
+        }),
+      ),
+    );
+
+  const takeBufferedThinkingText = (messageId: MessageId) =>
+    Cache.getOption(bufferedThinkingTextByMessageId, messageId).pipe(
+      Effect.flatMap((existingText) =>
+        Cache.invalidate(bufferedThinkingTextByMessageId, messageId).pipe(
+          Effect.as(Option.getOrElse(existingText, () => "")),
+        ),
+      ),
+    );
+
+  const clearBufferedThinkingText = (messageId: MessageId) =>
+    Cache.invalidate(bufferedThinkingTextByMessageId, messageId);
+
   const appendBufferedProposedPlan = (planId: string, delta: string, createdAt: string) =>
     Cache.getOption(bufferedProposedPlanById, planId).pipe(
       Effect.flatMap((existingEntry) => {
@@ -640,7 +678,10 @@ const make = Effect.gen(function* () {
   const clearBufferedProposedPlan = (planId: string) =>
     Cache.invalidate(bufferedProposedPlanById, planId);
 
-  const clearAssistantMessageState = (messageId: MessageId) => clearBufferedAssistantText(messageId);
+  const clearAssistantMessageState = (messageId: MessageId) =>
+    Effect.all([clearBufferedAssistantText(messageId), clearBufferedThinkingText(messageId)]).pipe(
+      Effect.asVoid,
+    );
 
   const finalizeAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -654,6 +695,7 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
+      const bufferedThinking = yield* takeBufferedThinkingText(input.messageId);
       const text =
         bufferedText.length > 0
           ? bufferedText
@@ -661,13 +703,14 @@ const make = Effect.gen(function* () {
             ? input.fallbackText!
             : "";
 
-      if (text.length > 0) {
+      if (text.length > 0 || bufferedThinking.length > 0) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.delta",
           commandId: providerCommandId(input.event, input.finalDeltaCommandTag),
           threadId: input.threadId,
           messageId: input.messageId,
           delta: text,
+          ...(bufferedThinking.length > 0 ? { thinkingDelta: bufferedThinking } : {}),
           ...(input.turnId ? { turnId: input.turnId } : {}),
           createdAt: input.createdAt,
         });
@@ -895,6 +938,10 @@ const make = Effect.gen(function* () {
         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
           ? event.payload.delta
           : undefined;
+      const thinkingDelta =
+        event.type === "content.delta" && event.payload.streamKind === "reasoning_text"
+          ? event.payload.delta
+          : undefined;
       const proposedPlanDelta =
         event.type === "turn.proposed.delta" ? event.payload.delta : undefined;
 
@@ -928,6 +975,44 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             messageId: assistantMessageId,
             delta: assistantDelta,
+            ...(turnId ? { turnId } : {}),
+            createdAt: now,
+          });
+        }
+      }
+
+      if (thinkingDelta && thinkingDelta.length > 0) {
+        const assistantMessageId = MessageId.makeUnsafe(
+          `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+        );
+        const turnId = toTurnId(event.turnId);
+        if (turnId) {
+          yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
+        }
+
+        const assistantDeliveryMode = yield* Ref.get(assistantDeliveryModeRef);
+        if (assistantDeliveryMode === "buffered") {
+          const spillChunk = yield* appendBufferedThinkingText(assistantMessageId, thinkingDelta);
+          if (spillChunk.length > 0) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.message.assistant.delta",
+              commandId: providerCommandId(event, "thinking-delta-buffer-spill"),
+              threadId: thread.id,
+              messageId: assistantMessageId,
+              delta: "",
+              thinkingDelta: spillChunk,
+              ...(turnId ? { turnId } : {}),
+              createdAt: now,
+            });
+          }
+        } else {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.message.assistant.delta",
+            commandId: providerCommandId(event, "thinking-delta"),
+            threadId: thread.id,
+            messageId: assistantMessageId,
+            delta: "",
+            thinkingDelta: thinkingDelta,
             ...(turnId ? { turnId } : {}),
             createdAt: now,
           });
