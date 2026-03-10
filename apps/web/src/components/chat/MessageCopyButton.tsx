@@ -1,6 +1,6 @@
 import { memo, useCallback, useState } from "react";
 import { CopyIcon, CheckIcon } from "lucide-react";
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 
 export const MessageCopyButton = memo(function MessageCopyButton({
   text,

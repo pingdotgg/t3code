@@ -2,7 +2,7 @@ import { type CodexReasoningEffort } from "@t3tools/contracts";
 import { getDefaultReasoningEffort } from "@t3tools/shared/model";
 import { memo, useState } from "react";
 import { ChevronDownIcon } from "lucide-react";
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 import {
   Menu,
   MenuGroup,
@@ -11,7 +11,7 @@ import {
   MenuRadioItem,
   MenuSeparator as MenuDivider,
   MenuTrigger,
-} from "./ui/menu";
+} from "../ui/menu";
 
 export const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
   effort: CodexReasoningEffort;

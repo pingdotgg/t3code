@@ -7,11 +7,11 @@ import { memo } from "react";
 import {
   type ComposerSlashCommand,
   type ComposerTriggerKind,
-} from "../composer-logic";
+} from "../../composer-logic";
 import { BotIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
-import { Badge } from "./ui/badge";
-import { Command, CommandItem, CommandList } from "./ui/command";
+import { Badge } from "../ui/badge";
+import { Command, CommandItem, CommandList } from "../ui/command";
 import { VscodeEntryIcon } from "./VscodeEntryIcon";
 
 export type ComposerCommandItem =

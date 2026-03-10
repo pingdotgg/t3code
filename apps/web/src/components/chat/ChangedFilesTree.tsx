@@ -1,7 +1,10 @@
 import { type TurnId } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { type TurnDiffFileChange } from "../types";
-import { buildTurnDiffTree, type TurnDiffTreeNode } from "../lib/turnDiffTree";
+import { type TurnDiffFileChange } from "../../types";
+import {
+  buildTurnDiffTree,
+  type TurnDiffTreeNode,
+} from "../../lib/turnDiffTree";
 import { ChevronRightIcon, FolderIcon, FolderClosedIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";

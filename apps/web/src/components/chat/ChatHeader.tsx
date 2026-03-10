@@ -5,15 +5,15 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { memo } from "react";
-import GitActionsControl from "./GitActionsControl";
+import GitActionsControl from "../GitActionsControl";
 import { DiffIcon } from "lucide-react";
-import { Badge } from "./ui/badge";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { Badge } from "../ui/badge";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
-} from "./ProjectScriptsControl";
-import { Toggle } from "./ui/toggle";
-import { SidebarTrigger } from "./ui/sidebar";
+} from "../ProjectScriptsControl";
+import { Toggle } from "../ui/toggle";
+import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 
 interface ChatHeaderProps {

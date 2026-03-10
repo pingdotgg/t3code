@@ -1,9 +1,9 @@
 import { type ModelSlug, type ProviderKind } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { memo, useState } from "react";
-import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../session-logic";
+import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
 import { ChevronDownIcon } from "lucide-react";
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 import {
   Menu,
   MenuGroup,
@@ -16,7 +16,7 @@ import {
   MenuSubPopup,
   MenuSubTrigger,
   MenuTrigger,
-} from "./ui/menu";
+} from "../ui/menu";
 import {
   ClaudeAI,
   CursorIcon,
@@ -24,7 +24,7 @@ import {
   Icon,
   OpenAI,
   OpenCodeIcon,
-} from "./Icons";
+} from "../Icons";
 import { cn } from "~/lib/utils";
 
 function isAvailableProviderOption(

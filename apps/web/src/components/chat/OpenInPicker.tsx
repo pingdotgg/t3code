@@ -7,18 +7,18 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   isOpenFavoriteEditorShortcut,
   shortcutLabelForCommand,
-} from "../keybindings";
+} from "../../keybindings";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
-import { Button } from "./ui/button";
-import { Group, GroupSeparator } from "./ui/group";
+import { Button } from "../ui/button";
+import { Group, GroupSeparator } from "../ui/group";
 import {
   Menu,
   MenuItem,
   MenuPopup,
   MenuShortcut,
   MenuTrigger,
-} from "./ui/menu";
-import { CursorIcon, Icon, VisualStudioCode, Zed } from "./Icons";
+} from "../ui/menu";
+import { CursorIcon, Icon, VisualStudioCode, Zed } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 

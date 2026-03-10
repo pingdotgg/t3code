@@ -6,14 +6,14 @@ import {
   normalizePlanMarkdownForExport,
   proposedPlanTitle,
   stripDisplayedPlanMarkdown,
-} from "../proposedPlan";
-import ChatMarkdown from "./ChatMarkdown";
+} from "../../proposedPlan";
+import ChatMarkdown from "../ChatMarkdown";
 import { EllipsisIcon } from "lucide-react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { cn } from "~/lib/utils";
-import { Badge } from "./ui/badge";
+import { Badge } from "../ui/badge";
 import {
   Dialog,
   DialogDescription,
@@ -22,8 +22,8 @@ import {
   DialogPanel,
   DialogPopup,
   DialogTitle,
-} from "./ui/dialog";
-import { toastManager } from "./ui/toast";
+} from "../ui/dialog";
+import { toastManager } from "../ui/toast";
 import { readNativeApi } from "~/nativeApi";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({

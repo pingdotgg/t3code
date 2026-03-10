@@ -153,8 +153,8 @@ import {
   type ComposerPromptEditorHandle,
 } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
-import { MessagesTimeline } from "./MessagesTimeline";
-import { ChatHeader } from "./ChatHeader";
+import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { ChatHeader } from "./chat/ChatHeader";
 import {
   buildExpandedImagePreview,
   ExpandedImagePreview,
@@ -162,19 +162,19 @@ import {
 import {
   AVAILABLE_PROVIDER_OPTIONS,
   ProviderModelPicker,
-} from "./ProviderModelPicker";
+} from "./chat/ProviderModelPicker";
 import {
   ComposerCommandItem,
   ComposerCommandMenu,
-} from "./ComposerCommandMenu";
-import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
-import { CodexTraitsPicker } from "./CodexTraitsPicker";
-import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
-import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
-import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
-import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
-import { ProviderHealthBanner } from "./ProviderHealthBanner";
-import { ThreadErrorBanner } from "./ThreadErrorBanner";
+} from "./chat/ComposerCommandMenu";
+import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalActions";
+import { CodexTraitsPicker } from "./chat/CodexTraitsPicker";
+import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
+import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
+import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
+import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
+import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
+import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
   buildLocalDraftThread,
   buildTemporaryWorktreeBranchName,

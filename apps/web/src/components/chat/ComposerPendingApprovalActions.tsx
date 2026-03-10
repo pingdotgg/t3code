@@ -3,7 +3,7 @@ import {
   type ProviderApprovalDecision,
 } from "@t3tools/contracts";
 import { memo } from "react";
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 
 interface ComposerPendingApprovalActionsProps {
   requestId: ApprovalRequestId;

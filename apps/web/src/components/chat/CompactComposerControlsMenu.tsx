@@ -7,7 +7,7 @@ import {
 import { getDefaultReasoningEffort } from "@t3tools/shared/model";
 import { memo } from "react";
 import { EllipsisIcon, ListTodoIcon } from "lucide-react";
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 import {
   Menu,
   MenuGroup,
@@ -17,7 +17,7 @@ import {
   MenuRadioItem,
   MenuSeparator as MenuDivider,
   MenuTrigger,
-} from "./ui/menu";
+} from "../ui/menu";
 
 export const CompactComposerControlsMenu = memo(
   function CompactComposerControlsMenu(props: {

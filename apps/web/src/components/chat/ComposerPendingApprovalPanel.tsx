@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { type PendingApproval } from "../session-logic";
+import { type PendingApproval } from "../../session-logic";
 
 interface ComposerPendingApprovalPanelProps {
   approval: PendingApproval;
