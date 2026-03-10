@@ -20,6 +20,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { readNativeApi } from "../nativeApi";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
@@ -592,6 +593,7 @@ async function mountChatView(options: {
       await waitForProductionStyles();
     },
     syncSnapshot: async (snapshot: OrchestrationReadModel) => {
+      fixture.snapshot = snapshot;
       useStore.getState().syncServerReadModel(snapshot);
       await waitForLayout();
     },
@@ -870,6 +872,29 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("serves the latest synced snapshot through the browser fixture RPC", async () => {
+    const targetMessageId = "msg-user-target-synced-snapshot" as MessageId;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const nextSnapshot = createSnapshotForTargetUser({
+        targetMessageId,
+        targetText: "synced snapshot regression",
+      });
+
+      await mounted.syncSnapshot(nextSnapshot);
+
+      const api = readNativeApi();
+      expect(api).toBeTruthy();
+      await expect(api!.orchestration.getSnapshot()).resolves.toEqual(nextSnapshot);
     } finally {
       await mounted.cleanup();
     }

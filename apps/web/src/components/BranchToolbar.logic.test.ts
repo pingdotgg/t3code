@@ -113,8 +113,8 @@ describe("resolveDraftContextForEnvModeChange", () => {
       }),
     ).toEqual({
       envMode: "local",
-      branch: "feature/base",
-      worktreePath: "/repo/.t3/worktrees/feature-base",
+      branch: null,
+      worktreePath: null,
     });
   });
 });

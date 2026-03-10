@@ -40,7 +40,7 @@ export function resolveDraftContextForEnvModeChange(input: {
   currentWorktreePath: string | null;
 }): DraftContextForEnvModeChange {
   const { nextMode, currentBranch, currentWorktreePath } = input;
-  if (nextMode === "local" && currentWorktreePath === null) {
+  if (nextMode === "local") {
     return {
       envMode: "local",
       branch: null,
