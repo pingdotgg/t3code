@@ -73,7 +73,7 @@ import {
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import { expandHomePath } from "./os-jank.ts";
+import { expandTilde } from "./os-jank.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -298,7 +298,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     readonly command: ClientOrchestrationCommand;
   }) {
     const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
-      const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
+      const normalizedWorkspaceRoot = path.resolve(expandTilde(workspaceRoot.trim()));
       const workspaceStat = yield* fileSystem
         .stat(normalizedWorkspaceRoot)
         .pipe(Effect.catch(() => Effect.succeed(null)));
