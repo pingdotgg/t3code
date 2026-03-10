@@ -4202,7 +4202,7 @@ const ChatHeader = memo(function ChatHeader({
           </Badge>
         )}
       </div>
-      <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 overflow-hidden @sm/header-actions:gap-3">
+      <div className="@container/header-actions flex min-w-0 flex-[2] items-center justify-end gap-2 overflow-hidden [&>*]:shrink-0 @md/header-actions:gap-3">
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
@@ -6017,11 +6017,11 @@ const OpenInPicker = memo(function OpenInPicker({
         onClick={() => openInEditor(effectiveEditor)}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
-        <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
+        <span className="sr-only @md/header-actions:not-sr-only @md/header-actions:ml-0.5">
           Open
         </span>
       </Button>
-      <GroupSeparator className="hidden @sm/header-actions:block" />
+      <GroupSeparator className="hidden @md/header-actions:block" />
       <Menu>
         <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
           <ChevronDownIcon aria-hidden="true" className="size-4" />
