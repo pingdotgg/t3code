@@ -1556,6 +1556,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             : {}),
           ...(resumeState?.resume ? { resume: resumeState.resume } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
+          settingSources: ["user", "project", "local"],
           includePartialMessages: true,
           canUseTool,
           env: process.env,
