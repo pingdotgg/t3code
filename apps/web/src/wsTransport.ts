@@ -1,5 +1,4 @@
 import {
-  type WsDecodeDiagnostic,
   type WsPush,
   type WsPushChannel,
   type WsPushMessage,
@@ -7,7 +6,7 @@ import {
   type WsResponse as WsResponseMessage,
   WsResponse as WsResponseSchema,
 } from "@t3tools/contracts";
-import { Schema, SchemaIssue } from "effect";
+import { Exit, Schema } from "effect";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
 
@@ -25,7 +24,7 @@ type TransportState = "connecting" | "open" | "reconnecting" | "closed" | "dispo
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
-const decodeWsResponse = Schema.decodeUnknownSync(WsResponseSchema);
+const decodeWsResponse = Schema.decodeUnknownExit(Schema.fromJsonString(WsResponseSchema));
 const isWebSocketResponseEnvelope = Schema.is(WebSocketResponse);
 
 const isWsPushMessage = (value: WsResponseMessage): value is WsPush =>
@@ -39,83 +38,6 @@ interface WsRequestEnvelope {
   };
 }
 
-function describeValue(value: unknown): string {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "array";
-  return typeof value;
-}
-
-function parseJsonOffset(error: unknown): number | undefined {
-  if (!(error instanceof Error)) {
-    return undefined;
-  }
-  const match = /position\s+(\d+)/i.exec(error.message);
-  if (!match) {
-    return undefined;
-  }
-  const parsed = Number(match[1]);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
-}
-
-function makeEnvelopeDiagnostic(raw: unknown, reason: string): WsDecodeDiagnostic {
-  return {
-    code: "invalid-envelope",
-    reason,
-    rawKind: describeValue(raw),
-    expected: "WsResponse",
-    actual: describeValue(raw),
-  };
-}
-
-function decodeInboundMessage(
-  raw: unknown,
-): { readonly ok: true; readonly message: WsResponseMessage } | { readonly ok: false; readonly diagnostic: WsDecodeDiagnostic } {
-  if (typeof raw !== "string") {
-    return {
-      ok: false,
-      diagnostic: {
-        code: "invalid-envelope",
-        reason: "Expected a text WebSocket frame.",
-        rawKind: describeValue(raw),
-        expected: "string",
-        actual: describeValue(raw),
-      },
-    };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    return {
-      ok: false,
-      diagnostic: {
-        code: "invalid-json",
-        reason: error instanceof Error ? error.message : "Failed to parse JSON.",
-        rawKind: "string",
-        expected: "valid JSON string",
-        actual: raw,
-        ...(parseJsonOffset(error) !== undefined ? { jsonOffset: parseJsonOffset(error) } : {}),
-      },
-    };
-  }
-
-  try {
-    return { ok: true, message: decodeWsResponse(parsed) };
-  } catch (error) {
-    return {
-      ok: false,
-      diagnostic: makeEnvelopeDiagnostic(
-        parsed,
-        typeof error === "object" && error !== null && "issue" in error
-          ? SchemaIssue.makeFormatterDefault()((error as Schema.SchemaError).issue)
-          : error instanceof Error
-            ? error.message
-            : "Failed to decode WebSocket envelope.",
-      ),
-    };
-  }
-}
 
 function asError(value: unknown, fallback: string): Error {
   if (value instanceof Error) {
@@ -270,13 +192,13 @@ export class WsTransport {
   }
 
   private handleMessage(raw: unknown) {
-    const decoded = decodeInboundMessage(raw);
-    if (!decoded.ok) {
-      console.warn("Dropped inbound WebSocket envelope", decoded.diagnostic);
+    const result = decodeWsResponse(raw);
+    if (Exit.isFailure(result)) {
+      console.warn("Dropped inbound WebSocket envelope:", `${result.cause}`);
       return;
     }
 
-    const message = decoded.message;
+    const message = result.value;
     if (isWsPushMessage(message)) {
       this.latestPushByChannel.set(message.channel, message);
       const channelListeners = this.listeners.get(message.channel);

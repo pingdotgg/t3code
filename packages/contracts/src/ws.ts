@@ -169,24 +169,6 @@ export const WsWelcomePayload = Schema.Struct({
 });
 export type WsWelcomePayload = typeof WsWelcomePayload.Type;
 
-export const WsDecodeDiagnosticCode = Schema.Literals([
-  "invalid-json",
-  "invalid-envelope",
-  "invalid-request",
-  "invalid-response",
-]);
-export type WsDecodeDiagnosticCode = typeof WsDecodeDiagnosticCode.Type;
-
-export const WsDecodeDiagnostic = Schema.Struct({
-  code: WsDecodeDiagnosticCode,
-  reason: TrimmedNonEmptyString,
-  rawKind: Schema.optional(TrimmedNonEmptyString),
-  expected: Schema.optional(TrimmedNonEmptyString),
-  actual: Schema.optional(TrimmedNonEmptyString),
-  path: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
-  jsonOffset: Schema.optional(NonNegativeInt),
-});
-export type WsDecodeDiagnostic = typeof WsDecodeDiagnostic.Type;
 
 export interface WsPushPayloadByChannel {
   readonly [WS_CHANNELS.serverWelcome]: WsWelcomePayload;
