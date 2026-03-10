@@ -143,6 +143,7 @@ import {
   ListTodoIcon,
   LockIcon,
   LockOpenIcon,
+  PencilIcon,
   Undo2Icon,
   XIcon,
   CopyIcon,
@@ -441,6 +442,36 @@ function cloneComposerImageForRetry(image: ComposerImageAttachment): ComposerIma
     };
   } catch {
     return image;
+  }
+}
+
+async function restoreComposerImageAttachment(
+  attachment: NonNullable<ChatMessage["attachments"]>[number],
+): Promise<ComposerImageAttachment | null> {
+  if (attachment.type !== "image" || !attachment.previewUrl) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(attachment.previewUrl);
+    if (!response.ok) {
+      return null;
+    }
+    const blob = await response.blob();
+    const file = new File([blob], attachment.name, {
+      type: blob.type || attachment.mimeType,
+    });
+    return {
+      type: "image",
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      previewUrl: attachment.previewUrl,
+      file,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -1115,6 +1146,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const lastEditableUserMessageId = useMemo(() => {
+    for (let index = timelineEntries.length - 1; index >= 0; index -= 1) {
+      const entry = timelineEntries[index];
+      if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+        continue;
+      }
+      if (revertTurnCountByUserMessageId.has(entry.message.id)) {
+        return entry.message.id;
+      }
+    }
+    return null;
+  }, [revertTurnCountByUserMessageId, timelineEntries]);
 
   const completionSummary = useMemo(() => {
     if (!latestTurnSettled) return null;
@@ -2412,13 +2455,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   };
 
   const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
+    async (turnCount: number): Promise<boolean> => {
       const api = readNativeApi();
-      if (!api || !activeThread || isRevertingCheckpoint) return;
+      if (!api || !activeThread || isRevertingCheckpoint) return false;
 
       if (phase === "running" || isSendBusy || isConnecting) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
-        return;
+        return false;
       }
       const confirmed = await api.dialogs.confirm(
         [
@@ -2428,7 +2471,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ].join("\n"),
       );
       if (!confirmed) {
-        return;
+        return false;
       }
 
       setIsRevertingCheckpoint(true);
@@ -2441,15 +2484,49 @@ export default function ChatView({ threadId }: ChatViewProps) {
           turnCount,
           createdAt: new Date().toISOString(),
         });
+        return true;
       } catch (err) {
         setThreadError(
           activeThread.id,
           err instanceof Error ? err.message : "Failed to revert thread state.",
         );
+        return false;
+      } finally {
+        setIsRevertingCheckpoint(false);
       }
-      setIsRevertingCheckpoint(false);
     },
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
+  );
+
+  const restoreUserMessageToComposer = useCallback(
+    (
+      message: ChatMessage,
+      restoredImages: ComposerImageAttachment[],
+      failedAttachmentCount: number,
+    ) => {
+      clearComposerDraftContent(threadId);
+      setPrompt(message.text);
+      setComposerCursor(message.text.length);
+      setComposerTrigger(detectComposerTrigger(message.text, message.text.length));
+      if (restoredImages.length > 0) {
+        addComposerImagesToDraft(restoredImages);
+      }
+      if (failedAttachmentCount > 0) {
+        setThreadError(
+          threadId,
+          "Restored the last message text, but one or more image attachments could not be reloaded.",
+        );
+      }
+      scheduleComposerFocus();
+    },
+    [
+      addComposerImagesToDraft,
+      clearComposerDraftContent,
+      scheduleComposerFocus,
+      setPrompt,
+      setThreadError,
+      threadId,
+    ],
   );
 
   const onSend = async (e?: { preventDefault: () => void }) => {
@@ -3420,6 +3497,43 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     void onRevertToTurnCount(targetTurnCount);
   };
+  const onEditLastUserMessage = useCallback(
+    async (messageId: MessageId) => {
+      if (!activeThread || messageId !== lastEditableUserMessageId) {
+        return;
+      }
+      const message = activeThread.messages.find(
+        (candidate) => candidate.id === messageId && candidate.role === "user",
+      );
+      const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
+      if (!message || typeof targetTurnCount !== "number") {
+        return;
+      }
+      const imageAttachments = (message.attachments ?? []).filter(
+        (attachment): attachment is NonNullable<ChatMessage["attachments"]>[number] =>
+          attachment.type === "image",
+      );
+      const restoredResults = await Promise.all(
+        imageAttachments.map((attachment) => restoreComposerImageAttachment(attachment)),
+      );
+      const restoredImages = restoredResults.filter(
+        (image): image is ComposerImageAttachment => image !== null,
+      );
+      const failedAttachmentCount = restoredResults.length - restoredImages.length;
+      const reverted = await onRevertToTurnCount(targetTurnCount);
+      if (!reverted) {
+        return;
+      }
+      restoreUserMessageToComposer(message, restoredImages, failedAttachmentCount);
+    },
+    [
+      activeThread,
+      lastEditableUserMessageId,
+      onRevertToTurnCount,
+      restoreUserMessageToComposer,
+      revertTurnCountByUserMessageId,
+    ],
+  );
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -3523,6 +3637,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
               onOpenTurnDiff={onOpenTurnDiff}
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
+              lastEditableUserMessageId={lastEditableUserMessageId}
+              onEditLastUserMessage={onEditLastUserMessage}
               isRevertingCheckpoint={isRevertingCheckpoint}
               onImageExpand={onExpandTimelineImage}
               markdownCwd={gitCwd ?? undefined}
@@ -4951,6 +5067,8 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  lastEditableUserMessageId: MessageId | null;
+  onEditLastUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
@@ -5005,6 +5123,8 @@ const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  lastEditableUserMessageId,
+  onEditLastUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
   markdownCwd,
@@ -5299,6 +5419,8 @@ const MessagesTimeline = memo(function MessagesTimeline({
         (() => {
           const userImages = row.message.attachments ?? [];
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
+          const canEditLastMessage =
+            canRevertAgentWork && row.message.id === lastEditableUserMessageId;
           return (
             <div className="flex justify-end">
               <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
@@ -5347,7 +5469,19 @@ const MessagesTimeline = memo(function MessagesTimeline({
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
                     {row.message.text && <MessageCopyButton text={row.message.text} />}
-                    {canRevertAgentWork && (
+                    {canEditLastMessage && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={isRevertingCheckpoint || isWorking}
+                        onClick={() => onEditLastUserMessage(row.message.id)}
+                        title="Edit last message"
+                      >
+                        <PencilIcon className="size-3" />
+                      </Button>
+                    )}
+                    {canRevertAgentWork && !canEditLastMessage && (
                       <Button
                         type="button"
                         size="xs"
@@ -5384,7 +5518,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   <span className="h-px flex-1 bg-border" />
                 </div>
               )}
-              <div className="group min-w-0 px-1 py-0.5">
+              <div className="min-w-0 px-1 py-0.5">
                 <ChatMarkdown
                   text={messageText}
                   cwd={markdownCwd}
@@ -5446,19 +5580,14 @@ const MessagesTimeline = memo(function MessagesTimeline({
                     </div>
                   );
                 })()}
-                <div className="mt-1.5 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {row.message.text && <MessageCopyButton text={row.message.text} />}
-                  </div>
-                  <p className="text-[10px] text-muted-foreground/30">
-                    {formatMessageMeta(
-                      row.message.createdAt,
-                      row.message.streaming
-                        ? formatElapsed(row.message.createdAt, nowIso)
-                        : formatElapsed(row.message.createdAt, row.message.completedAt),
-                    )}
-                  </p>
-                </div>
+                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
+                  {formatMessageMeta(
+                    row.message.createdAt,
+                    row.message.streaming
+                      ? formatElapsed(row.message.createdAt, nowIso)
+                      : formatElapsed(row.message.createdAt, row.message.completedAt),
+                  )}
+                </p>
               </div>
             </>
           );
@@ -5639,10 +5768,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         }
       >
         <span
-          className={cn(
-            "flex min-w-0 items-center gap-2",
-            props.compact ? "max-w-36" : undefined,
-          )}
+          className={cn("flex min-w-0 items-center gap-2", props.compact ? "max-w-36" : undefined)}
         >
           <ProviderIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
           <span className="truncate">{selectedModelLabel}</span>
