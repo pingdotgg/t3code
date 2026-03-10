@@ -40,6 +40,7 @@ interface CommandAvailabilityOptions {
 const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const ANTIGRAVITY_BUNDLE_IDENTIFIER = "com.google.antigravity";
 const ANTIGRAVITY_MAC_APP_NAME = "Antigravity.app";
+const ANTIGRAVITY_LINUX_COMMAND = "antigravity";
 const ANTIGRAVITY_WINDOWS_EXECUTABLE = "Antigravity.exe";
 
 function shouldUseGotoFlag(editorId: EditorId, target: string): boolean {
@@ -250,6 +251,13 @@ function resolveAntigravityLaunch(
     return {
       command: "open",
       args: ["-b", ANTIGRAVITY_BUNDLE_IDENTIFIER, stripLineColumnSuffix(target)],
+    };
+  }
+
+  if (platform === "linux" && isCommandAvailable(ANTIGRAVITY_LINUX_COMMAND, { platform, env })) {
+    return {
+      command: ANTIGRAVITY_LINUX_COMMAND,
+      args: [stripLineColumnSuffix(target)],
     };
   }
 

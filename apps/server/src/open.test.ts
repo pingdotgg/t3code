@@ -115,6 +115,27 @@ describe("resolveEditorLaunch", () => {
     }),
   );
 
+  it.effect("falls back to the Antigravity launcher on Linux", () =>
+    Effect.sync(() => {
+      withTempDir((dir) => {
+        const launcherPath = path.join(dir, "antigravity");
+        fs.writeFileSync(launcherPath, "#!/bin/sh\nexit 0\n", "utf8");
+        fs.chmodSync(launcherPath, 0o755);
+        const env = {
+          PATH: dir,
+        } satisfies NodeJS.ProcessEnv;
+
+        const launch = Effect.runSync(
+          resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "antigravity" }, "linux", env),
+        );
+        assert.deepEqual(launch, {
+          command: "antigravity",
+          args: ["/tmp/workspace"],
+        });
+      });
+    }),
+  );
+
   it.effect("uses --goto when editor supports line/column suffixes", () =>
     Effect.gen(function* () {
       const lineOnly = yield* resolveEditorLaunch(
@@ -313,6 +334,24 @@ describe("resolveAvailableEditors", () => {
         PATH: dir,
         LOCALAPPDATA: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      });
+      assert.deepEqual(editors, ["cursor", "antigravity", "file-manager"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns installed editors for Linux command launches", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-editors-"));
+    try {
+      fs.writeFileSync(path.join(dir, "cursor"), "#!/bin/sh\nexit 0\n", "utf8");
+      fs.chmodSync(path.join(dir, "cursor"), 0o755);
+      fs.writeFileSync(path.join(dir, "antigravity"), "#!/bin/sh\nexit 0\n", "utf8");
+      fs.chmodSync(path.join(dir, "antigravity"), 0o755);
+      fs.writeFileSync(path.join(dir, "xdg-open"), "#!/bin/sh\nexit 0\n", "utf8");
+      fs.chmodSync(path.join(dir, "xdg-open"), 0o755);
+      const editors = resolveAvailableEditors("linux", {
+        PATH: dir,
       });
       assert.deepEqual(editors, ["cursor", "antigravity", "file-manager"]);
     } finally {
