@@ -119,6 +119,7 @@ import {
   type TurnDiffTreeNode,
 } from "../lib/turnDiffTree";
 import BranchToolbar from "./BranchToolbar";
+import { computeMessageDurationStart } from "./ChatView.logic";
 import GitActionsControl from "./GitActionsControl";
 import {
   isOpenFavoriteEditorShortcut,
@@ -5086,6 +5087,7 @@ type TimelineRow =
       createdAt: string;
       message: TimelineMessage;
       showCompletionDivider: boolean;
+      durationStart: string;
     }
   | {
       kind: "proposed-plan";
@@ -5153,6 +5155,11 @@ const MessagesTimeline = memo(function MessagesTimeline({
   const rows = useMemo<TimelineRow[]>(() => {
     const nextRows: TimelineRow[] = [];
 
+    const messages = timelineEntries
+      .filter((e): e is Extract<typeof e, { kind: "message" }> => e.kind === "message")
+      .map((e) => ({ ...e.message, id: e.id }));
+    const durationStartById = computeMessageDurationStart(messages);
+
     for (let index = 0; index < timelineEntries.length; index += 1) {
       const timelineEntry = timelineEntries[index];
       if (!timelineEntry) {
@@ -5193,6 +5200,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         message: timelineEntry.message,
+        durationStart: durationStartById.get(timelineEntry.id) ?? timelineEntry.message.createdAt,
         showCompletionDivider:
           timelineEntry.message.role === "assistant" &&
           completionDividerBeforeEntryId === timelineEntry.id,
@@ -5561,8 +5569,8 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   {formatMessageMeta(
                     row.message.createdAt,
                     row.message.streaming
-                      ? formatElapsed(row.message.createdAt, nowIso)
-                      : formatElapsed(row.message.createdAt, row.message.completedAt),
+                      ? formatElapsed(row.durationStart, nowIso)
+                      : formatElapsed(row.durationStart, row.message.completedAt),
                   )}
                 </p>
               </div>
