@@ -265,9 +265,7 @@ async function mountApp(): Promise<{ cleanup: () => Promise<void> }> {
   host.style.overflow = "hidden";
   document.body.append(host);
 
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${THREAD_ID}`] }),
-  );
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/${THREAD_ID}`] }));
 
   const screen = await render(<RouterProvider router={router} />, { container: host });
   await waitForComposerEditor();
