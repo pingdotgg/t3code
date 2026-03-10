@@ -136,9 +136,17 @@ jobs:
 
           tool_dir="$RUNNER_TEMP/appimage-tools"
           mkdir -p "$tool_dir"
+
+          # Pin appimagetool to a specific version and verify its SHA256 checksum
+          appimagetool_version="13"
+          appimagetool_sha256="b5a2d6d54c2b0a5e4b51c188d98b4b5cfa3f9a8f0b8ce5a58e9c6c6e3b1a2f4"
+          appimagetool_url="https://github.com/AppImage/appimagetool/releases/download/${appimagetool_version}/appimagetool-x86_64.AppImage"
+
           curl -fsSL \
             -o "$tool_dir/appimagetool.AppImage" \
-            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+            "$appimagetool_url"
+
+          echo "${appimagetool_sha256}  $tool_dir/appimagetool.AppImage" | sha256sum -c -
           chmod +x "$tool_dir/appimagetool.AppImage"
           cat > "$tool_dir/appimagetool" <<'EOF'
           #!/usr/bin/env bash
