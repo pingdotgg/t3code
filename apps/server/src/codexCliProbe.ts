@@ -86,12 +86,25 @@ export async function runCodexCliCommand(
       finish(() => reject(error));
     });
 
-    child.once("close", (code) => {
+    child.once("close", (code, signal) => {
+      if (typeof code !== "number") {
+        finish(() =>
+          reject(
+            new Error(
+              signal
+                ? `Codex CLI process exited from signal ${signal} without an exit code.`
+                : "Codex CLI process exited without an exit code.",
+            ),
+          ),
+        );
+        return;
+      }
+
       finish(() =>
         resolve({
           stdout,
           stderr,
-          code: typeof code === "number" ? code : 0,
+          code,
         }),
       );
     });
@@ -196,7 +209,11 @@ export async function assertSupportedCodexCliVersion(
   }
 
   const parsedVersion = parseCodexCliVersion(`${result.stdout}\n${result.stderr}`);
-  if (parsedVersion && !isCodexCliVersionSupported(parsedVersion)) {
+  if (!parsedVersion) {
+    throw new Error("Codex CLI version check failed. Could not parse Codex CLI version from output.");
+  }
+
+  if (!isCodexCliVersionSupported(parsedVersion)) {
     throw new Error(formatCodexCliUpgradeMessage(parsedVersion));
   }
 }
