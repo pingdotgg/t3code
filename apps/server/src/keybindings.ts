@@ -506,17 +506,9 @@ export interface KeybindingsShape {
   readonly getSnapshot: Effect.Effect<KeybindingsConfigState, KeybindingsConfigError>;
 
   /**
-   * Subscribe to keybindings config change events.
-   *
-   * Returns a scoped subscription. Callers should subscribe in the
-   * current fiber (not inside a fork) to avoid missing events due to
-   * lazy subscription setup in `Stream.fromPubSub`.
+   * Stream of keybindings config change events.
    */
-  readonly subscribeChanges: Effect.Effect<
-    PubSub.Subscription<KeybindingsChangeEvent>,
-    never,
-    Scope.Scope
-  >;
+  readonly streamChanges: Stream.Stream<KeybindingsChangeEvent>;
 
   /**
    * Upsert a keybinding rule and persist the resulting configuration.
@@ -866,7 +858,7 @@ const makeKeybindings = Effect.gen(function* () {
     syncDefaultKeybindingsOnStartup,
     loadConfigState: loadConfigStateFromCacheOrDisk,
     getSnapshot: loadConfigStateFromCacheOrDisk,
-    subscribeChanges: PubSub.subscribe(changesPubSub),
+    streamChanges: Stream.fromPubSub(changesPubSub),
     upsertKeybindingRule: (rule) =>
       upsertSemaphore.withPermits(1)(
         Effect.gen(function* () {

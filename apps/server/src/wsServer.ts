@@ -35,7 +35,6 @@ import {
   FileSystem,
   Layer,
   Path,
-  PubSub,
   Ref,
   Result,
   Schema,
@@ -612,21 +611,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  // Subscribe synchronously so the subscription exists before the
-  // readiness barrier — avoids a race where the polling watcher
-  // publishes before a lazily-created Stream.fromPubSub subscription.
-  const keybindingsChangesSub = yield* keybindingsManager.subscribeChanges.pipe(
-    Scope.provide(subscriptionsScope),
-  );
-  yield* Effect.forever(
-    PubSub.take(keybindingsChangesSub).pipe(
-      Effect.flatMap((event) =>
-        pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
-          issues: event.issues,
-          providers: providerStatuses,
-        }),
-      ),
-    ),
+  yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
+    pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+      issues: event.issues,
+      providers: providerStatuses,
+    }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
