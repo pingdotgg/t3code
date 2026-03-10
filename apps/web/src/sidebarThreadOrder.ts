@@ -35,7 +35,12 @@ export function getSidebarThreadRecentActivityAt(entry: SidebarThreadEntryLike):
     latestActivityAt = latestIso(latestActivityAt, proposedPlan.updatedAt);
   }
 
-  for (const pendingUserInput of derivePendingUserInputs(thread.activities)) {
+  for (
+    const pendingUserInput of derivePendingUserInputs(thread.activities, {
+      latestTurn: thread.latestTurn,
+      session: thread.session,
+    })
+  ) {
     latestActivityAt = latestIso(latestActivityAt, pendingUserInput.createdAt);
   }
 
