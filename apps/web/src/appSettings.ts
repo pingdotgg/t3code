@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
-import { type ProviderKind } from "@t3tools/contracts";
+import { type ProviderKind, type ProviderStartOptions } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
@@ -160,6 +160,24 @@ export function getSlashModelOptions(
     const searchName = option.name.toLowerCase();
     return searchSlug.includes(normalizedQuery) || searchName.includes(normalizedQuery);
   });
+}
+
+export function resolveProviderOptionsFromSettings(
+  settings: Pick<AppSettings, "codexBinaryPath" | "codexHomePath">,
+): ProviderStartOptions {
+  const codexBinaryPath = settings.codexBinaryPath.trim();
+  const codexHomePath = settings.codexHomePath.trim();
+
+  if (!codexBinaryPath && !codexHomePath) {
+    return {};
+  }
+
+  return {
+    codex: {
+      ...(codexBinaryPath ? { binaryPath: codexBinaryPath } : {}),
+      ...(codexHomePath ? { homePath: codexHomePath } : {}),
+    },
+  };
 }
 
 function emitChange(): void {

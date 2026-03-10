@@ -23,6 +23,7 @@ import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { resolveProviderOptionsFromSettings, useAppSettings } from "../appSettings";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -132,6 +133,8 @@ function errorDetails(error: unknown): string {
 function EventRouter() {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setProjectExpanded = useStore((store) => store.setProjectExpanded);
+  const { settings } = useAppSettings();
+  const { codexBinaryPath, codexHomePath } = settings;
   const removeOrphanedTerminalStates = useTerminalStateStore(
     (store) => store.removeOrphanedTerminalStates,
   );
@@ -143,6 +146,16 @@ function EventRouter() {
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
 
   pathnameRef.current = pathname;
+
+  useEffect(() => {
+    const api = readNativeApi();
+    if (!api) return;
+    const providerOptions = resolveProviderOptionsFromSettings({
+      codexBinaryPath,
+      codexHomePath,
+    });
+    void api.server.setProviderOptions({ providerOptions }).catch(() => undefined);
+  }, [codexBinaryPath, codexHomePath]);
 
   useEffect(() => {
     const api = readNativeApi();

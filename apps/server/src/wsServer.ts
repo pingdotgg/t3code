@@ -916,6 +916,21 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
       }
+      case WS_METHODS.serverSetProviderOptions: {
+        const body = stripRequestTag(request.body);
+        const nextProviders = yield* providerHealth.setProviderOptions(body.providerOptions);
+        providers = nextProviders;
+        const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        yield* broadcastPush({
+          type: "push",
+          channel: WS_CHANNELS.serverConfigUpdated,
+          data: {
+            issues: keybindingsConfig.issues,
+            providers: nextProviders,
+          },
+        });
+        return { providers: nextProviders };
+      }
 
       default: {
         const _exhaustiveCheck: never = request.body;

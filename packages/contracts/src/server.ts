@@ -3,6 +3,7 @@ import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
 import { ProviderKind } from "./orchestration";
+import { ProviderStartOptions } from "./provider";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -69,3 +70,13 @@ export const ServerConfigUpdatedPayload = Schema.Struct({
   providers: ServerProviderStatuses,
 });
 export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
+
+export const ServerSetProviderOptionsInput = Schema.Struct({
+  providerOptions: ProviderStartOptions,
+});
+export type ServerSetProviderOptionsInput = typeof ServerSetProviderOptionsInput.Type;
+
+export const ServerSetProviderOptionsResult = Schema.Struct({
+  providers: ServerProviderStatuses,
+});
+export type ServerSetProviderOptionsResult = typeof ServerSetProviderOptionsResult.Type;

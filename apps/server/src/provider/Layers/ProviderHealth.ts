@@ -9,11 +9,12 @@
  * @module ProviderHealthLive
  */
 import type {
+  ProviderStartOptions,
   ServerProviderAuthStatus,
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Array, Effect, Fiber, Layer, Option, Result, Stream } from "effect";
+import { Array, Effect, Layer, Option, Ref, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -176,11 +177,19 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
     (acc, chunk) => acc + new TextDecoder().decode(chunk),
   );
 
-const runCodexCommand = (args: ReadonlyArray<string>) =>
+const runCodexCommand = (
+  args: ReadonlyArray<string>,
+  options?: { readonly binaryPath?: string; readonly homePath?: string },
+) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make("codex", [...args], {
+    const binaryPath = options?.binaryPath ?? "codex";
+    const command = ChildProcess.make(binaryPath, [...args], {
       shell: process.platform === "win32",
+      env: {
+        ...process.env,
+        ...(options?.homePath ? { CODEX_HOME: options.homePath } : {}),
+      },
     });
 
     const child = yield* spawner.spawn(command);
@@ -199,15 +208,18 @@ const runCodexCommand = (args: ReadonlyArray<string>) =>
 
 // ── Health check ────────────────────────────────────────────────────
 
-export const checkCodexProviderStatus: Effect.Effect<
-  ServerProviderStatus,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner
-> = Effect.gen(function* () {
+export const checkCodexProviderStatus = (
+  options?: NonNullable<ProviderStartOptions["codex"]>,
+): Effect.Effect<ServerProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
   const checkedAt = new Date().toISOString();
+  const codexBinaryPath = options?.binaryPath ?? "codex";
 
   // Probe 1: `codex --version` — is the CLI reachable?
-  const versionProbe = yield* runCodexCommand(["--version"]).pipe(
+  const versionProbe = yield* runCodexCommand(["--version"], {
+    binaryPath: codexBinaryPath,
+    ...(options?.homePath ? { homePath: options.homePath } : {}),
+  }).pipe(
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
     Effect.result,
   );
@@ -221,7 +233,9 @@ export const checkCodexProviderStatus: Effect.Effect<
       authStatus: "unknown" as const,
       checkedAt,
       message: isCommandMissingCause(error)
-        ? "Codex CLI (`codex`) is not installed or not on PATH."
+        ? codexBinaryPath === "codex"
+          ? "Codex CLI (`codex`) is not installed or not on PATH."
+          : `Codex CLI (${codexBinaryPath}) is not installed or not executable.`
         : `Failed to execute Codex CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
     };
   }
@@ -265,7 +279,10 @@ export const checkCodexProviderStatus: Effect.Effect<
   }
 
   // Probe 2: `codex login status` — is the user authenticated?
-  const authProbe = yield* runCodexCommand(["login", "status"]).pipe(
+  const authProbe = yield* runCodexCommand(["login", "status"], {
+    binaryPath: codexBinaryPath,
+    ...(options?.homePath ? { homePath: options.homePath } : {}),
+  }).pipe(
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
     Effect.result,
   );
@@ -312,13 +329,31 @@ export const checkCodexProviderStatus: Effect.Effect<
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const codexStatusFiber = yield* checkCodexProviderStatus.pipe(
-      Effect.map(Array.of),
-      Effect.forkScoped,
-    );
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const overridesRef = yield* Ref.make<ProviderStartOptions>({});
+    const statusRef = yield* Ref.make<ReadonlyArray<ServerProviderStatus>>([]);
+    const runCheck = (options?: NonNullable<ProviderStartOptions["codex"]>) =>
+      checkCodexProviderStatus(options).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
+    const refreshStatuses = Effect.gen(function* () {
+      const overrides = yield* Ref.get(overridesRef);
+      const codexStatus = yield* runCheck(overrides.codex);
+      const statuses = Array.of(codexStatus);
+      yield* Ref.set(statusRef, statuses);
+      return statuses;
+    });
+
+    yield* refreshStatuses;
 
     return {
-      getStatuses: Fiber.join(codexStatusFiber),
+      getStatuses: Ref.get(statusRef),
+      setProviderOptions: (input) =>
+        Effect.gen(function* () {
+          yield* Ref.set(overridesRef, input);
+          return yield* refreshStatuses;
+        }),
     } satisfies ProviderHealthShape;
   }),
 );
