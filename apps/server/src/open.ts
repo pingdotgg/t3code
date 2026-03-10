@@ -236,7 +236,7 @@ export const launchDetached = (launch: EditorLaunch) =>
       try {
         const useShell = process.platform === "win32";
         const args = useShell
-          ? launch.args.map((a) => (a.includes(" ") ? `"${a}"` : a))
+          ? launch.args.map((a) => `"${a}"`)
           : [...launch.args];
         child = spawn(launch.command, args, {
           detached: true,
