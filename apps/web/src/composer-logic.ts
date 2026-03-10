@@ -169,7 +169,9 @@ export function parseStandaloneComposerSlashCommand(
   if (!match) {
     return null;
   }
-  return match[1]?.toLowerCase() === "plan" ? "plan" : "default";
+  const command = match[1]?.toLowerCase();
+  if (command === "plan") return "plan";
+  return "default";
 }
 
 export function replaceTextRange(

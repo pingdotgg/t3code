@@ -1,12 +1,18 @@
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopRuntimeInfo, DesktopUpdateState } from "@t3tools/contracts";
 
 import { getCanRetryAfterDownloadFailure, nextStatusAfterDownloadFailure } from "./updateState";
 
-export function createInitialDesktopUpdateState(currentVersion: string): DesktopUpdateState {
+export function createInitialDesktopUpdateState(
+  currentVersion: string,
+  runtimeInfo: DesktopRuntimeInfo,
+): DesktopUpdateState {
   return {
     enabled: false,
     status: "disabled",
     currentVersion,
+    hostArch: runtimeInfo.hostArch,
+    appArch: runtimeInfo.appArch,
+    runningUnderArm64Translation: runtimeInfo.runningUnderArm64Translation,
     availableVersion: null,
     downloadedVersion: null,
     downloadPercent: null,

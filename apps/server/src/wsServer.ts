@@ -26,6 +26,7 @@ import {
   WebSocketRequest,
   WsPush,
   WsResponse,
+  ServerProviderStatus,
 } from "@t3tools/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -266,8 +267,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }),
     ),
   );
-
-  const providerStatuses = yield* providerHealth.getStatuses;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -613,6 +612,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
+  // Push updated provider statuses to connected clients once background health checks finish.
+  let providers: ReadonlyArray<ServerProviderStatus> = [];
+  yield* providerHealth.getStatuses.pipe(
+    Effect.flatMap((statuses) => {
+      providers = statuses;
+      return broadcastPush({
+        type: "push",
+        channel: WS_CHANNELS.serverConfigUpdated,
+        data: {
+          issues: [],
+          providers: statuses,
+        },
+      });
+    }),
+    Effect.forkIn(subscriptionsScope),
+  );
+
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
     broadcastPush({
       type: "push",
@@ -627,7 +643,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       channel: WS_CHANNELS.serverConfigUpdated,
       data: {
         issues: event.issues,
-        providers: providerStatuses,
+        providers,
       },
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
@@ -814,6 +830,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* gitManager.runStackedAction(body);
       }
 
+      case WS_METHODS.gitResolvePullRequest: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.resolvePullRequest(body);
+      }
+
+      case WS_METHODS.gitPreparePullRequestThread: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.preparePullRequestThread(body);
+      }
+
       case WS_METHODS.gitListBranches: {
         const body = stripRequestTag(request.body);
         return yield* git.listBranches(body);
@@ -881,7 +907,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
-          providers: providerStatuses,
+          providers,
           availableEditors,
         };
 

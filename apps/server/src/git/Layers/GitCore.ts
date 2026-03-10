@@ -100,6 +100,38 @@ function parseRemoteNames(stdout: string): ReadonlyArray<string> {
     .toSorted((a, b) => b.length - a.length);
 }
 
+function sanitizeRemoteName(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return sanitized.length > 0 ? sanitized : "fork";
+}
+
+function normalizeRemoteUrl(value: string): string {
+  return value
+    .trim()
+    .replace(/\/+$/g, "")
+    .replace(/\.git$/i, "")
+    .toLowerCase();
+}
+
+function parseRemoteFetchUrls(stdout: string): Map<string, string> {
+  const remotes = new Map<string, string>();
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(trimmed);
+    if (!match) continue;
+    const [, remoteName = "", remoteUrl = "", direction = ""] = match;
+    if (direction !== "fetch" || remoteName.length === 0 || remoteUrl.length === 0) {
+      continue;
+    }
+    remotes.set(remoteName, remoteUrl);
+  }
+  return remotes;
+}
+
 function parseRemoteRefWithRemoteNames(
   branchName: string,
   remoteNames: ReadonlyArray<string>,
@@ -417,6 +449,61 @@ const makeGitCore = Effect.gen(function* () {
     executeGit("GitCore.originRemoteExists", cwd, ["remote", "get-url", "origin"], {
       allowNonZeroExit: true,
     }).pipe(Effect.map((result) => result.code === 0));
+
+  const listRemoteNames = (cwd: string): Effect.Effect<ReadonlyArray<string>, GitCommandError> =>
+    runGitStdout("GitCore.listRemoteNames", cwd, ["remote"]).pipe(
+      Effect.map((stdout) => parseRemoteNames(stdout).toReversed()),
+    );
+
+  const resolvePrimaryRemoteName = (cwd: string): Effect.Effect<string, GitCommandError> =>
+    Effect.gen(function* () {
+      if (yield* originRemoteExists(cwd)) {
+        return "origin";
+      }
+      const remotes = yield* listRemoteNames(cwd);
+      const [firstRemote] = remotes;
+      if (firstRemote) {
+        return firstRemote;
+      }
+      return yield* createGitCommandError(
+        "GitCore.resolvePrimaryRemoteName",
+        cwd,
+        ["remote"],
+        "No git remote is configured for this repository.",
+      );
+    });
+
+  const ensureRemote: GitCoreShape["ensureRemote"] = (input) =>
+    Effect.gen(function* () {
+      const preferredName = sanitizeRemoteName(input.preferredName);
+      const normalizedTargetUrl = normalizeRemoteUrl(input.url);
+      const remoteFetchUrls = yield* runGitStdout(
+        "GitCore.ensureRemote.listRemoteUrls",
+        input.cwd,
+        ["remote", "-v"],
+      ).pipe(Effect.map((stdout) => parseRemoteFetchUrls(stdout)));
+
+      for (const [remoteName, remoteUrl] of remoteFetchUrls.entries()) {
+        if (normalizeRemoteUrl(remoteUrl) === normalizedTargetUrl) {
+          return remoteName;
+        }
+      }
+
+      let remoteName = preferredName;
+      let suffix = 1;
+      while (remoteFetchUrls.has(remoteName)) {
+        remoteName = `${preferredName}-${suffix}`;
+        suffix += 1;
+      }
+
+      yield* runGit("GitCore.ensureRemote.add", input.cwd, [
+        "remote",
+        "add",
+        remoteName,
+        input.url,
+      ]);
+      return remoteName;
+    });
 
   const resolveBaseBranchForNoUpstream = (
     cwd: string,
@@ -1015,28 +1102,75 @@ const makeGitCore = Effect.gen(function* () {
 
   const createWorktree: GitCoreShape["createWorktree"] = (input) =>
     Effect.gen(function* () {
-      const sanitizedBranch = input.newBranch.replace(/\//g, "-");
+      const targetBranch = input.newBranch ?? input.branch;
+      const sanitizedBranch = targetBranch.replace(/\//g, "-");
       const repoName = path.basename(input.cwd);
       const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
       const worktreePath =
         input.path ?? path.join(homeDir, ".t3", "worktrees", repoName, sanitizedBranch);
+      const args = input.newBranch
+        ? ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch]
+        : ["worktree", "add", worktreePath, input.branch];
 
-      yield* executeGit(
-        "GitCore.createWorktree",
-        input.cwd,
-        ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch],
-        {
-          fallbackErrorMessage: "git worktree add failed",
-        },
-      );
+      yield* executeGit("GitCore.createWorktree", input.cwd, args, {
+        fallbackErrorMessage: "git worktree add failed",
+      });
 
       return {
         worktree: {
           path: worktreePath,
-          branch: input.newBranch,
+          branch: targetBranch,
         },
       };
     });
+
+  const fetchPullRequestBranch: GitCoreShape["fetchPullRequestBranch"] = (input) =>
+    Effect.gen(function* () {
+      const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+      yield* executeGit(
+        "GitCore.fetchPullRequestBranch",
+        input.cwd,
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          remoteName,
+          `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
+        ],
+        {
+          fallbackErrorMessage: "git fetch pull request branch failed",
+        },
+      );
+    }).pipe(Effect.asVoid);
+
+  const fetchRemoteBranch: GitCoreShape["fetchRemoteBranch"] = (input) =>
+    Effect.gen(function* () {
+      yield* runGit("GitCore.fetchRemoteBranch.fetch", input.cwd, [
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        input.remoteName,
+        `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
+      ]);
+
+      const localBranchAlreadyExists = yield* branchExists(input.cwd, input.localBranch);
+      const targetRef = `${input.remoteName}/${input.remoteBranch}`;
+      yield* runGit(
+        "GitCore.fetchRemoteBranch.materialize",
+        input.cwd,
+        localBranchAlreadyExists
+          ? ["branch", "--force", input.localBranch, targetRef]
+          : ["branch", input.localBranch, targetRef],
+      );
+    }).pipe(Effect.asVoid);
+
+  const setBranchUpstream: GitCoreShape["setBranchUpstream"] = (input) =>
+    runGit("GitCore.setBranchUpstream", input.cwd, [
+      "branch",
+      "--set-upstream-to",
+      `${input.remoteName}/${input.remoteBranch}`,
+      input.branch,
+    ]);
 
   const removeWorktree: GitCoreShape["removeWorktree"] = (input) =>
     Effect.gen(function* () {
@@ -1197,6 +1331,10 @@ const makeGitCore = Effect.gen(function* () {
     readConfigValue,
     listBranches,
     createWorktree,
+    fetchPullRequestBranch,
+    ensureRemote,
+    fetchRemoteBranch,
+    setBranchUpstream,
     removeWorktree,
     renameBranch,
     createBranch,

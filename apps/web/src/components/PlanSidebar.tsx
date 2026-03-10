@@ -20,6 +20,7 @@ import {
   buildProposedPlanMarkdownFilename,
   normalizePlanMarkdownForExport,
   downloadPlanAsTextFile,
+  stripDisplayedPlanMarkdown,
 } from "../proposedPlan";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { readNativeApi } from "~/nativeApi";
@@ -67,6 +68,7 @@ const PlanSidebar = memo(function PlanSidebar({
   const [copied, setCopied] = useState(false);
 
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
+  const displayedPlanMarkdown = planMarkdown ? stripDisplayedPlanMarkdown(planMarkdown) : null;
   const planTitle = planMarkdown ? proposedPlanTitle(planMarkdown) : null;
 
   const handleCopyPlan = useCallback(() => {
@@ -233,7 +235,11 @@ const PlanSidebar = memo(function PlanSidebar({
               </button>
               {proposedPlanExpanded ? (
                 <div className="rounded-lg border border-border/50 bg-background/50 p-3">
-                  <ChatMarkdown text={planMarkdown} cwd={markdownCwd} isStreaming={false} />
+                  <ChatMarkdown
+                    text={displayedPlanMarkdown ?? ""}
+                    cwd={markdownCwd}
+                    isStreaming={false}
+                  />
                 </div>
               ) : null}
             </div>
