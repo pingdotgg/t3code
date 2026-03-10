@@ -206,7 +206,7 @@ export function resolveQuickAction(
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
-      label: "Commit, push & create PR",
+      label: "Commit, push & PR",
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",

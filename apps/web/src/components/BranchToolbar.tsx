@@ -17,6 +17,7 @@ interface BranchToolbarProps {
   threadId: ThreadId;
   onEnvModeChange: (mode: EnvMode) => void;
   envLocked: boolean;
+  onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
 
@@ -24,6 +25,7 @@ export default function BranchToolbar({
   threadId,
   onEnvModeChange,
   envLocked,
+  onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarProps) {
   const threads = useStore((store) => store.threads);
@@ -128,6 +130,9 @@ export default function BranchToolbar({
         effectiveEnvMode={effectiveEnvMode}
         envLocked={envLocked}
         onSetThreadBranch={setThreadBranch}
+        {...(onCheckoutPullRequestRequest
+          ? { onCheckoutPullRequestRequest }
+          : {})}
         {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
       />
     </div>

@@ -178,7 +178,7 @@ import {
   VisualStudioCode,
   Zed,
 } from "./Icons";
-import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
+import { cn, isMacPlatform, isWindowsPlatform, randomUUID } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Command, CommandItem, CommandList } from "./ui/command";
@@ -223,6 +223,7 @@ import {
   type ComposerPromptEditorHandle,
   type ComposerPromptEditorSnapshot,
 } from "./ComposerPromptEditor";
+import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
@@ -441,6 +442,11 @@ type ComposerCommandItem =
 
 type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
 
+interface PullRequestDialogState {
+  initialReference: string | null;
+  key: number;
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -460,7 +466,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 function buildTemporaryWorktreeBranchName(): string {
   // Keep the 8-hex suffix shape for backend temporary-branch detection.
-  const token = crypto.randomUUID().slice(0, 8).toLowerCase();
+  const token = randomUUID().slice(0, 8).toLowerCase();
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
@@ -643,6 +649,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const getDraftThreadByProjectId = useComposerDraftStore((store) => store.getDraftThreadByProjectId);
+  const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
+  const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
+  const clearProjectDraftThreadId = useComposerDraftStore(
+    (store) => store.clearProjectDraftThreadId,
+  );
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
@@ -679,6 +691,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const [pullRequestDialogState, setPullRequestDialogState] = useState<PullRequestDialogState | null>(
+    null,
+  );
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
@@ -777,11 +792,89 @@ export default function ChatView({ threadId }: ChatViewProps) {
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+
+  const openPullRequestDialog = useCallback((reference?: string) => {
+    if (!canCheckoutPullRequestIntoThread) {
+      return;
+    }
+    setPullRequestDialogState({
+      initialReference: reference ?? null,
+      key: Date.now(),
+    });
+    setComposerHighlightedItemId(null);
+  }, [canCheckoutPullRequestIntoThread]);
+
+  const closePullRequestDialog = useCallback(() => {
+    setPullRequestDialogState(null);
+  }, []);
+
+  const openOrReuseProjectDraftThread = useCallback(
+    async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
+      if (!activeProject) {
+        throw new Error("No active project is available for this pull request.");
+      }
+      const storedDraftThread = getDraftThreadByProjectId(activeProject.id);
+      if (storedDraftThread) {
+        setDraftThreadContext(storedDraftThread.threadId, input);
+        setProjectDraftThreadId(activeProject.id, storedDraftThread.threadId, input);
+        if (storedDraftThread.threadId !== threadId) {
+          await navigate({
+            to: "/$threadId",
+            params: { threadId: storedDraftThread.threadId },
+          });
+        }
+        return;
+      }
+
+      const activeDraftThread = getDraftThread(threadId);
+      if (!isServerThread && activeDraftThread?.projectId === activeProject.id) {
+        setDraftThreadContext(threadId, input);
+        setProjectDraftThreadId(activeProject.id, threadId, input);
+        return;
+      }
+
+      clearProjectDraftThreadId(activeProject.id);
+      const nextThreadId = newThreadId();
+      setProjectDraftThreadId(activeProject.id, nextThreadId, {
+        createdAt: new Date().toISOString(),
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        ...input,
+      });
+      await navigate({
+        to: "/$threadId",
+        params: { threadId: nextThreadId },
+      });
+    },
+    [
+      activeProject,
+      clearProjectDraftThreadId,
+      getDraftThread,
+      getDraftThreadByProjectId,
+      isServerThread,
+      navigate,
+      setDraftThreadContext,
+      setProjectDraftThreadId,
+      threadId,
+    ],
+  );
+
+  const handlePreparedPullRequestThread = useCallback(
+    async (input: { branch: string; worktreePath: string | null }) => {
+      await openOrReuseProjectDraftThread({
+        branch: input.branch,
+        worktreePath: input.worktreePath,
+        envMode: input.worktreePath ? "worktree" : "local",
+      });
+    },
+    [openOrReuseProjectDraftThread],
+  );
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -1397,13 +1490,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, setTerminalOpen, terminalState.terminalOpen]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedTerminalLimit) return;
-    const terminalId = `terminal-${crypto.randomUUID()}`;
+    const terminalId = `terminal-${randomUUID()}`;
     storeSplitTerminal(activeThreadId, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeThreadId, storeSplitTerminal, hasReachedTerminalLimit]);
   const createNewTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedTerminalLimit) return;
-    const terminalId = `terminal-${crypto.randomUUID()}`;
+    const terminalId = `terminal-${randomUUID()}`;
     storeNewTerminal(activeThreadId, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeThreadId, storeNewTerminal, hasReachedTerminalLimit]);
@@ -1472,7 +1565,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const shouldCreateNewTerminal =
         wantsNewTerminal && terminalState.terminalIds.length < MAX_THREAD_TERMINAL_COUNT;
       const targetTerminalId = shouldCreateNewTerminal
-        ? `terminal-${crypto.randomUUID()}`
+        ? `terminal-${randomUUID()}`
         : baseTerminalId;
 
       setTerminalOpen(true);
@@ -1984,6 +2077,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   useEffect(() => {
     setExpandedWorkGroups({});
+    setPullRequestDialogState(null);
     if (planSidebarOpenOnNextThreadRef.current) {
       planSidebarOpenOnNextThreadRef.current = false;
       setPlanSidebarOpen(true);
@@ -2365,7 +2459,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const previewUrl = URL.createObjectURL(file);
       nextImages.push({
         type: "image",
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         name: file.name || "image",
         mimeType: file.type,
         sizeBytes: file.size,
@@ -3718,7 +3812,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             ? "Add feedback to refine the plan, or leave this blank to implement it"
                             : phase === "disconnected"
                               ? "Ask for follow-up changes or attach images"
-                              : "Ask anything, @tag files/folders, or use /model"
+                              : "Ask anything, @tag files/folders, or use / to show available commands"
                     }
                     disabled={isConnecting || isComposerApprovalState}
                   />
@@ -4048,10 +4142,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
               onEnvModeChange={onEnvModeChange}
               envLocked={envLocked}
               onComposerFocusRequest={scheduleComposerFocus}
+              {...(canCheckoutPullRequestIntoThread
+                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                : {})}
             />
           )}
-        </div>
-        {/* end chat column */}
+          {pullRequestDialogState ? (
+            <PullRequestThreadDialog
+              key={pullRequestDialogState.key}
+              open
+              cwd={activeProject?.cwd ?? null}
+              initialReference={pullRequestDialogState.initialReference}
+              onOpenChange={(open) => {
+                if (!open) {
+                  closePullRequestDialog();
+                }
+              }}
+              onPrepared={handlePreparedPullRequestThread}
+            />
+          ) : null}
+        </div>{/* end chat column */}
 
         {/* Plan sidebar */}
         {planSidebarOpen ? (
