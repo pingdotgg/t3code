@@ -172,14 +172,16 @@ describe("WsTransport", () => {
       data: { issues: [], providers: [] },
     });
     expect(warnSpy).toHaveBeenCalledTimes(2);
-    expect(warnSpy).toHaveBeenNthCalledWith(1, "Dropped inbound WebSocket envelope", {
-      phase: "json",
-      message: expect.stringContaining("Expected property name or '}'"),
-    });
-    expect(warnSpy).toHaveBeenNthCalledWith(2, "Dropped inbound WebSocket envelope", {
-      phase: "schema",
-      message: expect.stringContaining('Expected "server.configUpdated"'),
-    });
+    expect(warnSpy).toHaveBeenNthCalledWith(
+      1,
+      "Dropped inbound WebSocket envelope",
+      "SyntaxError: Expected property name or '}' in JSON at position 2 (line 1 column 3)",
+    );
+    expect(warnSpy).toHaveBeenNthCalledWith(
+      2,
+      "Dropped inbound WebSocket envelope",
+      expect.stringContaining('Expected "server.configUpdated"'),
+    );
 
     transport.dispose();
   });
