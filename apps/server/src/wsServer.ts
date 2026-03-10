@@ -23,6 +23,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   WebSocketRequest,
+  type WsResponse as WsResponseMessage,
   WsResponse,
   type WsPushEnvelopeBase,
 } from "@t3tools/contracts";
@@ -36,6 +37,7 @@ import {
   Path,
   PubSub,
   Ref,
+  Result,
   Schema,
   Scope,
   ServiceMap,
@@ -65,7 +67,11 @@ import {
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
 } from "./attachmentPaths";
-import { decodeJsonString, encodeJsonStringEffect, formatJsonDecodeFailure } from "@t3tools/shared/schemaJson";
+import {
+  decodeJsonString,
+  encodeJsonStringEffect,
+  formatJsonDecodeFailure,
+} from "@t3tools/shared/schemaJson";
 import {
   createAttachmentId,
   resolveAttachmentPath,
@@ -474,7 +480,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               }
             }),
           ).pipe(Effect.exit);
-          if (streamExit._tag === "Failure") {
+          if (Exit.isFailure(streamExit)) {
             if (!res.destroyed) {
               res.destroy();
             }
@@ -901,7 +907,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {
-    const sendWsResponse = (response: unknown) =>
+    const sendWsResponse = (response: WsResponseMessage) =>
       encodeWsResponse(response).pipe(
         Effect.tap((encodedResponse) => Effect.sync(() => ws.send(encodedResponse))),
         Effect.asVoid,
@@ -916,23 +922,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }
 
     const request = decodeWebSocketRequest(messageText);
-    if (request._tag === "Failure") {
+    if (Result.isFailure(request)) {
       return yield* sendWsResponse({
         id: "unknown",
         error: { message: `Invalid request format: ${formatJsonDecodeFailure(request.failure)}` },
       });
     }
 
-    const result = yield* Effect.exit(routeRequest(request.value));
+    const result = yield* Effect.exit(routeRequest(request.success));
     if (Exit.isFailure(result)) {
       return yield* sendWsResponse({
-        id: request.value.id,
+        id: request.success.id,
         error: { message: Cause.pretty(result.cause) },
       });
     }
 
     return yield* sendWsResponse({
-      id: request.value.id,
+      id: request.success.id,
       result: result.value,
     });
   });

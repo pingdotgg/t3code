@@ -56,9 +56,7 @@ describe("makeDrainableWorker", () => {
 
     const drained = await Effect.runPromise(Deferred.make<void>());
     void Effect.runPromise(
-      worker.drain.pipe(
-        Effect.tap(() => Deferred.succeed(drained, undefined).pipe(Effect.orDie)),
-      ),
+      worker.drain.pipe(Effect.tap(() => Deferred.succeed(drained, undefined).pipe(Effect.orDie))),
     );
 
     await Effect.runPromise(worker.enqueue("second"));

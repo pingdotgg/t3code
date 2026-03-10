@@ -67,11 +67,7 @@ export const makeDrainableWorker = <A, E, R>(
     yield* Effect.forkScoped(
       Effect.forever(
         Queue.take(queue).pipe(
-          Effect.flatMap((item) =>
-            process(item).pipe(
-              Effect.ensuring(finishOne),
-            ),
-          ),
+          Effect.flatMap((item) => process(item).pipe(Effect.ensuring(finishOne))),
         ),
       ),
     );

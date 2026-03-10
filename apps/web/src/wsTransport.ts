@@ -7,7 +7,7 @@ import {
   WsResponse as WsResponseSchema,
 } from "@t3tools/contracts";
 import { decodeJsonString, formatJsonDecodeFailure } from "@t3tools/shared/schemaJson";
-import { Schema } from "effect";
+import { Result, Schema } from "effect";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
 
@@ -193,7 +193,7 @@ export class WsTransport {
 
   private handleMessage(raw: unknown) {
     const result = decodeWsResponse(raw);
-    if (result._tag === "Failure") {
+    if (Result.isFailure(result)) {
       console.warn("Dropped inbound WebSocket envelope", {
         phase: result.failure.phase,
         message: formatJsonDecodeFailure(result.failure),
@@ -201,7 +201,7 @@ export class WsTransport {
       return;
     }
 
-    const message = result.value;
+    const message = result.success;
     if (isWsPushMessage(message)) {
       this.latestPushByChannel.set(message.channel, message);
       const channelListeners = this.listeners.get(message.channel);

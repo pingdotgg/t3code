@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Result, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { decodeJsonString, formatJsonDecodeFailure } from "./schemaJson";
@@ -13,8 +13,8 @@ describe("schemaJson", () => {
     const decode = decodeJsonString(ExampleSchema);
 
     const invalidJson = decode("{ invalid-json");
-    expect(invalidJson._tag).toBe("Failure");
-    if (invalidJson._tag !== "Failure") {
+    expect(Result.isFailure(invalidJson)).toBe(true);
+    if (!Result.isFailure(invalidJson)) {
       throw new Error("Expected invalid JSON to fail decoding");
     }
     expect(invalidJson.failure.phase).toBe("json");
@@ -26,13 +26,11 @@ describe("schemaJson", () => {
         data: 123,
       }),
     );
-    expect(invalidShape._tag).toBe("Failure");
-    if (invalidShape._tag !== "Failure") {
+    expect(Result.isFailure(invalidShape)).toBe(true);
+    if (!Result.isFailure(invalidShape)) {
       throw new Error("Expected invalid shape to fail decoding");
     }
     expect(invalidShape.failure.phase).toBe("schema");
-    expect(formatJsonDecodeFailure(invalidShape.failure)).toContain(
-      "Schema validation failed",
-    );
+    expect(formatJsonDecodeFailure(invalidShape.failure)).toContain("Schema validation failed");
   });
 });
