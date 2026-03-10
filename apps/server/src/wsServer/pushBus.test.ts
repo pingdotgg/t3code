@@ -1,6 +1,7 @@
 import type { WebSocket } from "ws";
-import { afterEach, describe, expect, it } from "vitest";
-import { Effect, Exit, Ref, Scope } from "effect";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vitest";
+import { Effect, Ref } from "effect";
 import { WS_CHANNELS } from "@t3tools/contracts";
 
 import { makeServerPushBus } from "./pushBus";
@@ -40,33 +41,16 @@ class MockWebSocket {
 }
 
 describe("makeServerPushBus", () => {
-  let scope: Scope.Closeable | null = null;
-
-  afterEach(async () => {
-    if (scope) {
-      await Effect.runPromise(Scope.close(scope, Exit.void));
-    }
-    scope = null;
-  });
-
-  it("waits for the welcome push before a new client joins broadcast delivery", async () => {
-    scope = await Effect.runPromise(Scope.make("sequential"));
-
-    const client = new MockWebSocket();
-    const { clients, pushBus } = await Effect.runPromise(
+  it.live("waits for the welcome push before a new client joins broadcast delivery", () =>
+    Effect.scoped(
       Effect.gen(function* () {
+        const client = new MockWebSocket();
         const clients = yield* Ref.make(new Set<WebSocket>());
         const pushBus = yield* makeServerPushBus({
           clients,
           logOutgoingPush: () => {},
         });
 
-        return { clients, pushBus };
-      }).pipe(Scope.provide(scope)),
-    );
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
         yield* pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
           issues: [{ kind: "keybindings.malformed-config", message: "queued-before-connect" }],
           providers: [],
@@ -88,33 +72,33 @@ describe("makeServerPushBus", () => {
           issues: [],
           providers: [],
         });
+
+        yield* Effect.promise(() => client.waitForSentCount(2));
+
+        const messages = client.sent.map(
+          (message) => JSON.parse(message) as { channel: string; data: unknown },
+        );
+
+        expect(messages).toHaveLength(2);
+        expect(messages[0]).toEqual({
+          type: "push",
+          sequence: 2,
+          channel: WS_CHANNELS.serverWelcome,
+          data: {
+            cwd: "/tmp/project",
+            projectName: "project",
+          },
+        });
+        expect(messages[1]).toEqual({
+          type: "push",
+          sequence: 3,
+          channel: WS_CHANNELS.serverConfigUpdated,
+          data: {
+            issues: [],
+            providers: [],
+          },
+        });
       }),
-    );
-
-    await client.waitForSentCount(2);
-
-    const messages = client.sent.map(
-      (message) => JSON.parse(message) as { channel: string; data: unknown },
-    );
-
-    expect(messages).toHaveLength(2);
-    expect(messages[0]).toEqual({
-      type: "push",
-      sequence: 2,
-      channel: WS_CHANNELS.serverWelcome,
-      data: {
-        cwd: "/tmp/project",
-        projectName: "project",
-      },
-    });
-    expect(messages[1]).toEqual({
-      type: "push",
-      sequence: 3,
-      channel: WS_CHANNELS.serverConfigUpdated,
-      data: {
-        issues: [],
-        providers: [],
-      },
-    });
-  });
+    ),
+  );
 });

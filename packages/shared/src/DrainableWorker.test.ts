@@ -1,73 +1,56 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { Deferred, Effect, Exit, Scope } from "effect";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vitest";
+import { Deferred, Effect } from "effect";
 
 import { makeDrainableWorker } from "./DrainableWorker";
 
 describe("makeDrainableWorker", () => {
-  let scope: Scope.Closeable | null = null;
+  it.live("waits for work enqueued during active processing before draining", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processed: string[] = [];
+        const firstStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const secondStarted = yield* Deferred.make<void>();
+        const releaseSecond = yield* Deferred.make<void>();
 
-  afterEach(async () => {
-    if (scope) {
-      await Effect.runPromise(Scope.close(scope, Exit.void));
-    }
-    scope = null;
-  });
+        const worker = yield* makeDrainableWorker((item: string) =>
+          Effect.gen(function* () {
+            if (item === "first") {
+              yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
+              yield* Deferred.await(releaseFirst);
+            }
 
-  it("waits for work enqueued during active processing before draining", async () => {
-    scope = await Effect.runPromise(Scope.make("sequential"));
+            if (item === "second") {
+              yield* Deferred.succeed(secondStarted, undefined).pipe(Effect.orDie);
+              yield* Deferred.await(releaseSecond);
+            }
 
-    const processed: string[] = [];
-    const { worker, firstStarted, releaseFirst, secondStarted, releaseSecond } =
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const firstStarted = yield* Deferred.make<void>();
-          const releaseFirst = yield* Deferred.make<void>();
-          const secondStarted = yield* Deferred.make<void>();
-          const releaseSecond = yield* Deferred.make<void>();
+            processed.push(item);
+          }),
+        );
 
-          const worker = yield* makeDrainableWorker((item: string) =>
-            Effect.gen(function* () {
-              if (item === "first") {
-                yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
-                yield* Deferred.await(releaseFirst);
-              }
+        yield* worker.enqueue("first");
+        yield* Deferred.await(firstStarted);
 
-              if (item === "second") {
-                yield* Deferred.succeed(secondStarted, undefined).pipe(Effect.orDie);
-                yield* Deferred.await(releaseSecond);
-              }
+        const drained = yield* Deferred.make<void>();
+        yield* Effect.forkChild(
+          worker.drain.pipe(
+            Effect.tap(() => Deferred.succeed(drained, undefined).pipe(Effect.orDie)),
+          ),
+        );
 
-              processed.push(item);
-            }),
-          );
+        yield* worker.enqueue("second");
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Deferred.await(secondStarted);
 
-          return {
-            worker,
-            firstStarted,
-            releaseFirst,
-            secondStarted,
-            releaseSecond,
-          };
-        }).pipe(Scope.provide(scope)),
-      );
+        expect(yield* Deferred.isDone(drained)).toBe(false);
 
-    await Effect.runPromise(worker.enqueue("first"));
-    await Effect.runPromise(Deferred.await(firstStarted));
+        yield* Deferred.succeed(releaseSecond, undefined);
+        yield* Deferred.await(drained);
 
-    const drained = await Effect.runPromise(Deferred.make<void>());
-    void Effect.runPromise(
-      worker.drain.pipe(Effect.tap(() => Deferred.succeed(drained, undefined).pipe(Effect.orDie))),
-    );
-
-    await Effect.runPromise(worker.enqueue("second"));
-    await Effect.runPromise(Deferred.succeed(releaseFirst, undefined));
-    await Effect.runPromise(Deferred.await(secondStarted));
-
-    expect(await Effect.runPromise(Deferred.isDone(drained))).toBe(false);
-
-    await Effect.runPromise(Deferred.succeed(releaseSecond, undefined));
-    await Effect.runPromise(Deferred.await(drained));
-
-    expect(processed).toEqual(["first", "second"]);
-  });
+        expect(processed).toEqual(["first", "second"]);
+      }),
+    ),
+  );
 });
