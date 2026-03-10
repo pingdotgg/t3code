@@ -16,7 +16,7 @@ import {
   type RuntimeMode,
   type ServerConfigShape,
 } from "./config";
-import { fixPath, resolveStateDir } from "./os-jank";
+import { fixPath, resolveBaseDir, resolveStateDir } from "./os-jank";
 import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
@@ -36,6 +36,7 @@ interface CliInput {
   readonly mode: Option.Option<RuntimeMode>;
   readonly port: Option.Option<number>;
   readonly host: Option.Option<string>;
+  readonly baseDir: Option.Option<string>;
   readonly stateDir: Option.Option<string>;
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
@@ -99,6 +100,7 @@ const CliEnvConfig = Config.all({
   ),
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  baseDir: Config.string("T3CODE_BASE_DIR").pipe(Config.option, Config.map(Option.getOrUndefined)),
   stateDir: Config.string("T3CODE_STATE_DIR").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -152,8 +154,11 @@ const ServerConfigLive = (input: CliInput) =>
           return findAvailablePort(DEFAULT_PORT);
         },
       });
+
+      const baseDir = yield* resolveBaseDir(Option.getOrUndefined(input.baseDir) ?? env.baseDir);
       const stateDir = yield* resolveStateDir(
         Option.getOrUndefined(input.stateDir) ?? env.stateDir,
+        baseDir,
       );
       const devUrl = Option.getOrElse(input.devUrl, () => env.devUrl);
       const noBrowser = resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
@@ -180,6 +185,7 @@ const ServerConfigLive = (input: CliInput) =>
         cwd: cliConfig.cwd,
         keybindingsConfigPath,
         host,
+        baseDir,
         stateDir,
         staticDir,
         devUrl,
@@ -299,6 +305,10 @@ const hostFlag = Flag.string("host").pipe(
   Flag.withDescription("Host/interface to bind (for example 127.0.0.1, 0.0.0.0, or a Tailnet IP)."),
   Flag.optional,
 );
+const baseDirFlag = Flag.string("base-dir").pipe(
+  Flag.withDescription("Base directory for all T3 Code data (equivalent to T3CODE_BASE_DIR)."),
+  Flag.optional,
+);
 const stateDirFlag = Flag.string("state-dir").pipe(
   Flag.withDescription("State directory path (equivalent to T3CODE_STATE_DIR)."),
   Flag.optional,
@@ -335,6 +345,7 @@ export const t3Cli = Command.make("t3", {
   mode: modeFlag,
   port: portFlag,
   host: hostFlag,
+  baseDir: baseDirFlag,
   stateDir: stateDirFlag,
   devUrl: devUrlFlag,
   noBrowser: noBrowserFlag,

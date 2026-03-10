@@ -32,16 +32,17 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ServerConfig } from "../../config.ts";
 
-const makeProjectionPipelineTestLayer = (stateDir: string) =>
+const makeProjectionPipelineTestLayer = (stateDir: string, baseDir: string) =>
   OrchestrationProjectionPipelineLive.pipe(
     Layer.provideMerge(OrchestrationEventStoreLive),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), stateDir)),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), stateDir, baseDir)),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
   );
 
 const runWithProjectionPipelineLayer = <A, E>(
   stateDir: string,
+  baseDir: string,
   effect: Effect.Effect<
     A,
     E,
@@ -49,12 +50,12 @@ const runWithProjectionPipelineLayer = <A, E>(
   >,
 ) =>
   Effect.acquireUseRelease(
-    Effect.sync(() => ManagedRuntime.make(makeProjectionPipelineTestLayer(stateDir))),
+    Effect.sync(() => ManagedRuntime.make(makeProjectionPipelineTestLayer(stateDir, baseDir))),
     (runtime) => Effect.promise(() => runtime.runPromise(effect)),
     (runtime) => Effect.promise(() => runtime.dispose()),
   );
 
-const projectionLayer = it.layer(makeProjectionPipelineTestLayer(process.cwd()));
+const projectionLayer = it.layer(makeProjectionPipelineTestLayer(process.cwd(), process.cwd()));
 
 projectionLayer("OrchestrationProjectionPipeline", (it) => {
   it.effect("bootstraps all projection states and writes projection rows", () =>
@@ -176,8 +177,12 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
   );
 
   it.effect("stores message attachment references without mutating payloads", () =>
-    Effect.sync(() => fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-"))).pipe(
-      Effect.flatMap((stateDir) =>
+    Effect.sync(() => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-base-"));
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-"));
+      return { baseDir, stateDir };
+    }).pipe(
+      Effect.flatMap(({ baseDir, stateDir }) =>
         Effect.gen(function* () {
           const projectionPipeline = yield* OrchestrationProjectionPipeline;
           const eventStore = yield* OrchestrationEventStore;
@@ -236,16 +241,23 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
             },
           ]);
         }).pipe(
-          (effect) => runWithProjectionPipelineLayer(stateDir, effect),
-          Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
+          (effect) => runWithProjectionPipelineLayer(stateDir, baseDir, effect),
+          Effect.ensuring(Effect.sync(() => {
+            fs.rmSync(stateDir, { recursive: true, force: true });
+            fs.rmSync(baseDir, { recursive: true, force: true });
+          })),
         ),
       ),
     ),
   );
 
   it.effect("preserves mixed image attachment metadata as-is", () =>
-    Effect.sync(() => fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-"))).pipe(
-      Effect.flatMap((stateDir) =>
+    Effect.sync(() => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-safe-"));
+      const stateDir = path.join(baseDir, "userdata");
+      return { baseDir, stateDir };
+    }).pipe(
+      Effect.flatMap(({ baseDir, stateDir }) =>
         Effect.gen(function* () {
           const projectionPipeline = yield* OrchestrationProjectionPipeline;
           const eventStore = yield* OrchestrationEventStore;
@@ -318,8 +330,8 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
             },
           ]);
         }).pipe(
-          (effect) => runWithProjectionPipelineLayer(stateDir, effect),
-          Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
+          (effect) => runWithProjectionPipelineLayer(stateDir, baseDir, effect),
+          Effect.ensuring(Effect.sync(() => fs.rmSync(baseDir, { recursive: true, force: true }))),
         ),
       ),
     ),
@@ -449,10 +461,12 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
   );
 
   it.effect("overwrites stored attachment references when a message updates attachments", () =>
-    Effect.sync(() =>
-      fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-overwrite-")),
-    ).pipe(
-      Effect.flatMap((stateDir) =>
+    Effect.sync(() => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-overwrite-"));
+      const stateDir = path.join(baseDir, "userdata");
+      return { baseDir, stateDir };
+    }).pipe(
+      Effect.flatMap(({ baseDir, stateDir }) =>
         Effect.gen(function* () {
           const projectionPipeline = yield* OrchestrationProjectionPipeline;
           const eventStore = yield* OrchestrationEventStore;
@@ -586,18 +600,20 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
             },
           ]);
         }).pipe(
-          (effect) => runWithProjectionPipelineLayer(stateDir, effect),
-          Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
+          (effect) => runWithProjectionPipelineLayer(stateDir, baseDir, effect),
+          Effect.ensuring(Effect.sync(() => fs.rmSync(baseDir, { recursive: true, force: true }))),
         ),
       ),
     ),
   );
 
   it.effect("does not persist attachment files when projector transaction rolls back", () =>
-    Effect.sync(() =>
-      fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-rollback-")),
-    ).pipe(
-      Effect.flatMap((stateDir) =>
+    Effect.sync(() => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-rollback-"));
+      const stateDir = path.join(baseDir, "userdata");
+      return { baseDir, stateDir };
+    }).pipe(
+      Effect.flatMap(({ baseDir, stateDir }) =>
         Effect.gen(function* () {
           const projectionPipeline = yield* OrchestrationProjectionPipeline;
           const eventStore = yield* OrchestrationEventStore;
@@ -709,18 +725,20 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           assert.equal(fs.existsSync(attachmentPath), false);
           yield* sql`DROP TRIGGER IF EXISTS fail_thread_messages_projection_state_update`;
         }).pipe(
-          (effect) => runWithProjectionPipelineLayer(stateDir, effect),
-          Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
+          (effect) => runWithProjectionPipelineLayer(stateDir, baseDir, effect),
+          Effect.ensuring(Effect.sync(() => fs.rmSync(baseDir, { recursive: true, force: true }))),
         ),
       ),
     ),
   );
 
   it.effect("removes unreferenced attachment files when a thread is reverted", () =>
-    Effect.sync(() =>
-      fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-revert-")),
-    ).pipe(
-      Effect.flatMap((stateDir) =>
+    Effect.sync(() => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-overwrite-"));
+      const stateDir = path.join(baseDir, "userdata");
+      return { baseDir, stateDir };
+    }).pipe(
+      Effect.flatMap(({ baseDir, stateDir }) =>
         Effect.gen(function* () {
           const projectionPipeline = yield* OrchestrationProjectionPipeline;
           const eventStore = yield* OrchestrationEventStore;
@@ -925,18 +943,20 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           assert.equal(fs.existsSync(removePath), false);
           assert.equal(fs.existsSync(otherThreadPath), true);
         }).pipe(
-          (effect) => runWithProjectionPipelineLayer(stateDir, effect),
-          Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
+          (effect) => runWithProjectionPipelineLayer(stateDir, baseDir, effect),
+          Effect.ensuring(Effect.sync(() => fs.rmSync(baseDir, { recursive: true, force: true }))),
         ),
       ),
     ),
   );
 
   it.effect("removes thread attachment directory when thread is deleted", () =>
-    Effect.sync(() =>
-      fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-delete-")),
-    ).pipe(
-      Effect.flatMap((stateDir) =>
+    Effect.sync(() => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-revert-"));
+      const stateDir = path.join(baseDir, "userdata");
+      return { baseDir, stateDir };
+    }).pipe(
+      Effect.flatMap(({ baseDir, stateDir }) =>
         Effect.gen(function* () {
           const projectionPipeline = yield* OrchestrationProjectionPipeline;
           const eventStore = yield* OrchestrationEventStore;
@@ -1057,18 +1077,20 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           assert.equal(fs.existsSync(threadAttachmentPath), false);
           assert.equal(fs.existsSync(otherThreadAttachmentPath), true);
         }).pipe(
-          (effect) => runWithProjectionPipelineLayer(stateDir, effect),
-          Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
+          (effect) => runWithProjectionPipelineLayer(stateDir, baseDir, effect),
+          Effect.ensuring(Effect.sync(() => fs.rmSync(baseDir, { recursive: true, force: true }))),
         ),
       ),
     ),
   );
 
   it.effect("ignores unsafe thread ids for attachment cleanup paths", () =>
-    Effect.sync(() =>
-      fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-unsafe-")),
-    ).pipe(
-      Effect.flatMap((stateDir) =>
+    Effect.sync(() => {
+      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-delete-"));
+      const stateDir = path.join(baseDir, "userdata");
+      return { baseDir, stateDir };
+    }).pipe(
+      Effect.flatMap(({ baseDir, stateDir }) =>
         Effect.gen(function* () {
           const projectionPipeline = yield* OrchestrationProjectionPipeline;
           const eventStore = yield* OrchestrationEventStore;
@@ -1102,8 +1124,8 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           assert.equal(fs.existsSync(attachmentsSentinelPath), true);
           assert.equal(fs.existsSync(stateDirSentinelPath), true);
         }).pipe(
-          (effect) => runWithProjectionPipelineLayer(stateDir, effect),
-          Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
+          (effect) => runWithProjectionPipelineLayer(stateDir, baseDir, effect),
+          Effect.ensuring(Effect.sync(() => fs.rmSync(baseDir, { recursive: true, force: true }))),
         ),
       ),
     ),
@@ -1822,7 +1844,10 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
     fs.rmSync(tempDir, { recursive: true, force: true });
   }).pipe(
     Effect.provide(
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd()), NodeServices.layer),
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), process.cwd(), process.cwd()),
+        NodeServices.layer,
+      ),
     ),
   ),
 );
@@ -1833,7 +1858,7 @@ const engineLayer = it.layer(
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd(), process.cwd())),
     Layer.provideMerge(NodeServices.layer),
   ),
 );

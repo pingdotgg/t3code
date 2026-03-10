@@ -12,12 +12,15 @@ import { GitCoreLive } from "./GitCore.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
 import { GitCommandError } from "../Errors.ts";
 import { type ProcessRunResult, runProcess } from "../../processRunner.ts";
+import { ServerConfig } from "../../config.ts";
 
 // ── Helpers ──
 
 const GitServiceTestLayer = GitServiceLive.pipe(Layer.provide(NodeServices.layer));
+const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), process.cwd(), process.cwd());
 const GitCoreTestLayer = GitCoreLive.pipe(
   Layer.provide(GitServiceTestLayer),
+  Layer.provide(ServerConfigLayer),
   Layer.provide(NodeServices.layer),
 );
 const TestLayer = Layer.mergeAll(NodeServices.layer, GitServiceTestLayer, GitCoreTestLayer);
@@ -90,6 +93,7 @@ const makeIsolatedGitCore = (gitService: GitServiceShape) =>
     const gitServiceLayer = Layer.succeed(GitService, gitService);
     const coreLayer = GitCoreLive.pipe(
       Layer.provide(gitServiceLayer),
+      Layer.provide(ServerConfigLayer),
       Layer.provide(NodeServices.layer),
     );
     const core = await Effect.runPromise(Effect.service(GitCore).pipe(Effect.provide(coreLayer)));

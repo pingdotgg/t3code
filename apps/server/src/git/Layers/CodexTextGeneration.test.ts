@@ -8,9 +8,9 @@ import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
 import { TextGenerationError } from "../Errors.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 
-const makeCodexTextGenerationTestLayer = (stateDir: string) =>
+const makeCodexTextGenerationTestLayer = (baseDir: string) =>
   CodexTextGenerationLive.pipe(
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), stateDir)),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), `${baseDir}/userdata`, baseDir)),
     Layer.provideMerge(NodeServices.layer),
   );
 

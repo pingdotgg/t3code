@@ -1,10 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
 import {
-  DEFAULT_DEV_STATE_DIR,
+  getDevStateDir,
   createDevRunnerEnv,
   findFirstAvailableOffset,
   resolveModePortOffsets,
@@ -54,6 +55,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             baseEnv: {},
             serverOffset: 0,
             webOffset: 0,
+            baseDir: undefined,
             stateDir: undefined,
             authToken: undefined,
             noBrowser: undefined,
@@ -63,7 +65,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             port: undefined,
             devUrl: undefined,
           }),
-          DEFAULT_DEV_STATE_DIR,
+          getDevStateDir(resolve(homedir(), ".t3")),
         ]);
 
         assert.equal(env.T3CODE_STATE_DIR, defaultStateDir);
@@ -77,6 +79,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
+          baseDir: "/tmp/custom-base",
           stateDir: "/tmp/override-state",
           authToken: "secret",
           noBrowser: true,
@@ -87,6 +90,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: new URL("http://localhost:7331"),
         });
 
+        assert.equal(env.T3CODE_BASE_DIR, resolve("/tmp/custom-base"));
         assert.equal(env.T3CODE_STATE_DIR, resolve("/tmp/override-state"));
         assert.equal(env.T3CODE_PORT, "4222");
         assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
@@ -107,6 +111,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           },
           serverOffset: 0,
           webOffset: 0,
+          baseDir: undefined,
           stateDir: undefined,
           authToken: undefined,
           noBrowser: undefined,
@@ -129,6 +134,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
+          baseDir: undefined,
           stateDir: undefined,
           authToken: undefined,
           noBrowser: undefined,
@@ -140,6 +146,29 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(env.T3CODE_LOG_WS_EVENTS, "0");
+      }),
+    );
+
+    it.effect("uses base dir for state dir when state dir not provided", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {},
+          serverOffset: 0,
+          webOffset: 0,
+          baseDir: "/tmp/my-t3",
+          stateDir: undefined,
+          authToken: undefined,
+          noBrowser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3CODE_BASE_DIR, resolve("/tmp/my-t3"));
+        assert.equal(env.T3CODE_STATE_DIR, resolve("/tmp/my-t3/dev"));
       }),
     );
   });
