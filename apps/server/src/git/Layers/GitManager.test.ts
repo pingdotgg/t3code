@@ -371,6 +371,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
 
   return {
     service: {
+      getHostingPlatform: (_cwd: string) => "github" as const,
       execute,
       listOpenPullRequests: (input) =>
         execute({
@@ -437,7 +438,6 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
         }).pipe(Effect.asVoid),
-      getHostingPlatform: () => "github" as const,
     },
     ghCalls,
   };

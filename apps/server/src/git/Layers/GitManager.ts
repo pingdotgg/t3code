@@ -801,13 +801,13 @@ export const makeGitManager = Effect.gen(function* () {
 
     return {
       branch: details.branch,
+      hostingPlatform: gitHostingCli.getHostingPlatform(input.cwd),
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
       hasUpstream: details.hasUpstream,
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
       pr,
-      hostingPlatform: gitHostingCli.getHostingPlatform(input.cwd),
     };
   });
 

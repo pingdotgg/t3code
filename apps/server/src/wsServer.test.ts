@@ -1625,6 +1625,7 @@ describe("WebSocket Server", () => {
   it("supports git.status over websocket", async () => {
     const statusResult = {
       branch: "feature/test",
+      hostingPlatform: "github" as const,
       hasWorkingTreeChanges: true,
       workingTree: {
         files: [{ path: "src/index.ts", insertions: 7, deletions: 2 }],
@@ -1635,7 +1636,6 @@ describe("WebSocket Server", () => {
       aheadCount: 0,
       behindCount: 0,
       pr: null,
-      hostingPlatform: "github" as const,
     };
 
     const status = vi.fn(() => Effect.succeed(statusResult));

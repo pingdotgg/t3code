@@ -5,6 +5,9 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
 // Domain Types
 
+export const GitHostingPlatform = Schema.Literals(["github", "gitlab"]);
+export type GitHostingPlatform = typeof GitHostingPlatform.Type;
+
 export const GitStackedAction = Schema.Literals(["commit", "commit_push", "commit_push_pr"]);
 export type GitStackedAction = typeof GitStackedAction.Type;
 const GitCommitStepStatus = Schema.Literals(["created", "skipped_no_changes"]);
@@ -125,11 +128,9 @@ const GitStatusPr = Schema.Struct({
   state: GitStatusPrState,
 });
 
-export const GitHostingPlatform = Schema.Literal("github", "gitlab");
-export type GitHostingPlatform = typeof GitHostingPlatform.Type;
-
 export const GitStatusResult = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
+  hostingPlatform: GitHostingPlatform,
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
     files: Schema.Array(
@@ -146,7 +147,6 @@ export const GitStatusResult = Schema.Struct({
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
   pr: Schema.NullOr(GitStatusPr),
-  hostingPlatform: GitHostingPlatform,
 });
 export type GitStatusResult = typeof GitStatusResult.Type;
 

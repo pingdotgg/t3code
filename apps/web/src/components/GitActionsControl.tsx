@@ -1,8 +1,13 @@
-import type { GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
+import type {
+  GitHostingPlatform,
+  GitStackedAction,
+  GitStatusResult,
+  ThreadId,
+} from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
-import { GitHubIcon } from "./Icons";
+import { GitHubIcon, GitLabIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
@@ -10,6 +15,7 @@ import {
   type GitActionMenuItem,
   type GitQuickAction,
   type DefaultBranchConfirmableAction,
+  prLabel,
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
   resolveQuickAction,
@@ -64,16 +70,19 @@ function getMenuActionDisabledReason({
   gitStatus,
   isBusy,
   hasOriginRemote,
+  platform,
 }: {
   item: GitActionMenuItem;
   gitStatus: GitStatusResult | null;
   isBusy: boolean;
   hasOriginRemote: boolean;
+  platform: GitHostingPlatform;
 }): string | null {
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
   if (!gitStatus) return "Git status is unavailable.";
 
+  const label = prLabel(platform);
   const hasBranch = gitStatus.branch !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
@@ -107,44 +116,62 @@ function getMenuActionDisabledReason({
   }
 
   if (hasOpenPr) {
-    return "View PR is currently unavailable.";
+    return `View ${label} is currently unavailable.`;
   }
   if (!hasBranch) {
-    return "Detached HEAD: checkout a branch before creating a PR.";
+    return `Detached HEAD: checkout a branch before creating a ${label}.`;
   }
   if (hasChanges) {
-    return "Commit local changes before creating a PR.";
+    return `Commit local changes before creating a ${label}.`;
   }
   if (!gitStatus.hasUpstream && !hasOriginRemote) {
-    return 'Add an "origin" remote before creating a PR.';
+    return `Add an "origin" remote before creating a ${label}.`;
   }
   if (!isAhead) {
-    return "No local commits to include in a PR.";
+    return `No local commits to include in a ${label}.`;
   }
   if (isBehind) {
-    return "Branch is behind upstream. Pull/rebase before creating a PR.";
+    return `Branch is behind upstream. Pull/rebase before creating a ${label}.`;
   }
-  return "Create PR is currently unavailable.";
+  return `Create ${label} is currently unavailable.`;
 }
 
 const COMMIT_DIALOG_TITLE = "Commit changes";
 const COMMIT_DIALOG_DESCRIPTION =
   "Review and confirm your commit. Leave the message blank to auto-generate one.";
 
-function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
-  if (icon === "commit") return <GitCommitIcon />;
-  if (icon === "push") return <CloudUploadIcon />;
-  return <GitHubIcon />;
+function HostingPlatformIcon({
+  platform,
+  className,
+}: { platform: GitHostingPlatform; className?: string }) {
+  return platform === "gitlab" ? (
+    <GitLabIcon className={className} />
+  ) : (
+    <GitHubIcon className={className} />
+  );
 }
 
-function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
+function GitActionItemIcon({
+  icon,
+  platform,
+}: { icon: GitActionIconName; platform: GitHostingPlatform }) {
+  if (icon === "commit") return <GitCommitIcon />;
+  if (icon === "push") return <CloudUploadIcon />;
+  return <HostingPlatformIcon platform={platform} />;
+}
+
+function GitQuickActionIcon({
+  quickAction,
+  platform,
+}: { quickAction: GitQuickAction; platform: GitHostingPlatform }) {
   const iconClassName = "size-3.5";
-  if (quickAction.kind === "open_pr") return <GitHubIcon className={iconClassName} />;
+  if (quickAction.kind === "open_pr")
+    return <HostingPlatformIcon platform={platform} className={iconClassName} />;
   if (quickAction.kind === "run_pull") return <InfoIcon className={iconClassName} />;
   if (quickAction.kind === "run_action") {
     if (quickAction.action === "commit") return <GitCommitIcon className={iconClassName} />;
     if (quickAction.action === "commit_push") return <CloudUploadIcon className={iconClassName} />;
-    return <GitHubIcon className={iconClassName} />;
+    return <HostingPlatformIcon platform={platform} className={iconClassName} />;
   }
   if (quickAction.label === "Commit") return <GitCommitIcon className={iconClassName} />;
   return <InfoIcon className={iconClassName} />;
@@ -167,6 +194,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   // Default to true while loading so we don't flash init controls.
   const isRepo = branchList?.isRepo ?? true;
   const hasOriginRemote = branchList?.hasOriginRemote ?? false;
+  const hostingPlatform: GitHostingPlatform = gitStatus?.hostingPlatform ?? "github";
   const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
   const isGitStatusOutOfSync =
     !!gitStatus?.branch && !!currentBranch && gitStatus.branch !== currentBranch;
@@ -197,13 +225,20 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   }, [branchList?.branches, gitStatusForActions?.branch]);
 
   const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasOriginRemote),
-    [gitStatusForActions, hasOriginRemote, isGitActionRunning],
+    () =>
+      buildMenuItems(gitStatusForActions, isGitActionRunning, hasOriginRemote, hostingPlatform),
+    [gitStatusForActions, hasOriginRemote, hostingPlatform, isGitActionRunning],
   );
   const quickAction = useMemo(
     () =>
-      resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultBranch, hasOriginRemote),
-    [gitStatusForActions, hasOriginRemote, isDefaultBranch, isGitActionRunning],
+      resolveQuickAction(
+        gitStatusForActions,
+        isGitActionRunning,
+        isDefaultBranch,
+        hasOriginRemote,
+        hostingPlatform,
+      ),
+    [gitStatusForActions, hasOriginRemote, hostingPlatform, isDefaultBranch, isGitActionRunning],
   );
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
@@ -213,6 +248,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         action: pendingDefaultBranchAction.action,
         branchName: pendingDefaultBranchAction.branchName,
         includesCommit: pendingDefaultBranchAction.includesCommit,
+        platform: hostingPlatform,
       })
     : null;
 
@@ -226,11 +262,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       });
       return;
     }
+    const label = prLabel(hostingPlatform);
     const prUrl = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr.url : null;
     if (!prUrl) {
       toastManager.add({
         type: "error",
-        title: "No open PR found.",
+        title: `No open ${label} found.`,
         data: threadToastData,
       });
       return;
@@ -238,12 +275,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     void api.shell.openExternal(prUrl).catch((err) => {
       toastManager.add({
         type: "error",
-        title: "Unable to open PR link",
+        title: `Unable to open ${label} link`,
         description: err instanceof Error ? err.message : "An error occurred.",
         data: threadToastData,
       });
     });
-  }, [gitStatusForActions?.pr?.state, gitStatusForActions?.pr?.url, threadToastData]);
+  }, [gitStatusForActions?.pr?.state, gitStatusForActions?.pr?.url, hostingPlatform, threadToastData]);
 
   const runGitActionWithToast = useCallback(
     async ({
@@ -299,6 +336,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         hasWorkingTreeChanges: !!actionStatus?.hasWorkingTreeChanges,
         forcePushOnly: forcePushOnlyProgress,
         featureBranch,
+        platform: hostingPlatform,
       });
       const resolvedProgressToastId =
         progressToastId ??
@@ -342,7 +380,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       try {
         const result = await promise;
         stopProgressUpdates();
-        const resultToast = summarizeGitResult(result);
+        const resultToast = summarizeGitResult(result, hostingPlatform);
 
         const existingOpenPrUrl =
           actionStatus?.pr?.state === "open" ? actionStatus.pr.url : undefined;
@@ -363,6 +401,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           toastManager.close(resolvedProgressToastId);
         };
 
+        const actionLabel = prLabel(hostingPlatform);
         toastManager.update(resolvedProgressToastId, {
           type: "success",
           title: resultToast.title,
@@ -390,7 +429,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
             : shouldOfferOpenPrCta
               ? {
                   actionProps: {
-                    children: "View PR",
+                    children: `View ${actionLabel}`,
                     onClick: () => {
                       const api = readNativeApi();
                       if (!api) return;
@@ -402,7 +441,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
               : shouldOfferCreatePrCta
                 ? {
                     actionProps: {
-                      children: "Create PR",
+                      children: `Create ${actionLabel}`,
                       onClick: () => {
                         closeResultToast();
                         void runGitActionWithToast({
@@ -428,6 +467,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     },
 
     [
+      hostingPlatform,
       isDefaultBranch,
       runImmediateGitActionMutation,
       setPendingDefaultBranchAction,
@@ -621,7 +661,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                   />
                 }
               >
-                <GitQuickActionIcon quickAction={quickAction} />
+                <GitQuickActionIcon quickAction={quickAction} platform={hostingPlatform} />
                 <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
                   {quickAction.label}
                 </span>
@@ -637,7 +677,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
               disabled={isGitActionRunning || quickAction.disabled}
               onClick={runQuickAction}
             >
-              <GitQuickActionIcon quickAction={quickAction} />
+              <GitQuickActionIcon quickAction={quickAction} platform={hostingPlatform} />
               <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
                 {quickAction.label}
               </span>
@@ -662,6 +702,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                   gitStatus: gitStatusForActions,
                   isBusy: isGitActionRunning,
                   hasOriginRemote,
+                  platform: hostingPlatform,
                 });
                 if (item.disabled && disabledReason) {
                   return (
@@ -672,7 +713,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                         render={<span className="block w-max cursor-not-allowed" />}
                       >
                         <MenuItem className="w-full" disabled>
-                          <GitActionItemIcon icon={item.icon} />
+                          <GitActionItemIcon icon={item.icon} platform={hostingPlatform} />
                           {item.label}
                         </MenuItem>
                       </PopoverTrigger>
@@ -691,14 +732,15 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                       openDialogForMenuItem(item);
                     }}
                   >
-                    <GitActionItemIcon icon={item.icon} />
+                    <GitActionItemIcon icon={item.icon} platform={hostingPlatform} />
                     {item.label}
                   </MenuItem>
                 );
               })}
               {gitStatusForActions?.branch === null && (
                 <p className="px-2 py-1.5 text-xs text-warning">
-                  Detached HEAD: create and checkout a branch to enable push and PR actions.
+                  Detached HEAD: create and checkout a branch to enable push and{" "}
+                  {prLabel(hostingPlatform)} actions.
                 </p>
               )}
               {gitStatusForActions &&

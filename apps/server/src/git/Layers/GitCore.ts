@@ -757,13 +757,13 @@ const makeGitCore = Effect.gen(function* () {
     statusDetails(input.cwd).pipe(
       Effect.map((details) => ({
         branch: details.branch,
+        hostingPlatform: "github" as const,
         hasWorkingTreeChanges: details.hasWorkingTreeChanges,
         workingTree: details.workingTree,
         hasUpstream: details.hasUpstream,
         aheadCount: details.aheadCount,
         behindCount: details.behindCount,
         pr: null,
-        hostingPlatform: "github" as const,
       })),
     );
 
