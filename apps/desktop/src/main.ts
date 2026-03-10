@@ -4,24 +4,10 @@ import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
 
-import {
-  app,
-  BrowserWindow,
-  dialog,
-  ipcMain,
-  Menu,
-  nativeImage,
-  nativeTheme,
-  protocol,
-  shell,
-} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
-import type {
-  DesktopTheme,
-  DesktopUpdateActionResult,
-  DesktopUpdateState,
-} from "@t3tools/contracts";
+import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
@@ -48,7 +34,6 @@ fixPath();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
-const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
@@ -65,6 +50,7 @@ const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
 const USER_DATA_DIR_NAME = isDevelopment ? "t3code-dev" : "t3code";
 const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+const APPIMAGE_ICON_BASENAME = "t3-code-desktop.png";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = Path.join(STATE_DIR, "logs");
@@ -150,14 +136,6 @@ function getSafeExternalUrl(rawUrl: unknown): string | null {
   }
 
   return parsedUrl.toString();
-}
-
-function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
-  if (rawTheme === "light" || rawTheme === "dark" || rawTheme === "system") {
-    return rawTheme;
-  }
-
-  return null;
 }
 
 function writeDesktopStreamChunk(
@@ -618,8 +596,109 @@ function resolveResourcePath(fileName: string): string | null {
   return null;
 }
 
+let cachedAppImageIconPath: string | null | undefined;
+
+function resolveAppImageIconPath(): string | null {
+  if (cachedAppImageIconPath !== undefined) {
+    return cachedAppImageIconPath;
+  }
+
+  const executablePath = Path.resolve(process.execPath);
+  const executableDir = Path.dirname(executablePath);
+  const executableBase = Path.basename(executablePath, Path.extname(executablePath));
+  const iconBaseNames = [
+    APPIMAGE_ICON_BASENAME.replace(/\.png$/, ""),
+    executableBase,
+    "t3-code-desktop",
+  ];
+  const iconSizes = ["1024x1024", "512x512", "256x256", "128x128", "64x64", "48x48", "32x32"];
+
+  const appImageRoots: string[] = [];
+  const seenRoots = new Set<string>();
+  const pushRoot = (root: string) => {
+    if (!seenRoots.has(root)) {
+      seenRoots.add(root);
+      appImageRoots.push(root);
+    }
+  };
+
+  pushRoot(Path.resolve(process.resourcesPath, ".."));
+  pushRoot(Path.resolve(process.resourcesPath));
+  pushRoot(executableDir);
+
+  if (process.env.APPDIR) {
+    pushRoot(Path.resolve(process.env.APPDIR));
+  }
+
+  if (process.env.APPIMAGE) {
+    pushRoot(Path.resolve(process.env.APPIMAGE));
+    pushRoot(Path.resolve(process.env.APPIMAGE, ".."));
+  }
+
+  const triedCandidates = new Set<string>();
+  const tryCandidate = (candidate: string): string | null => {
+    if (triedCandidates.has(candidate)) {
+      return null;
+    }
+    triedCandidates.add(candidate);
+    if (FS.existsSync(candidate)) {
+      cachedAppImageIconPath = candidate;
+      return candidate;
+    }
+    return null;
+  };
+
+  for (const root of appImageRoots) {
+    const candidate = tryCandidate(Path.join(root, ".DirIcon"));
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  for (const iconBaseName of iconBaseNames) {
+    for (const root of appImageRoots) {
+      const candidate = tryCandidate(Path.join(root, `${iconBaseName}.png`));
+      if (candidate) {
+        return candidate;
+      }
+    }
+
+    for (const iconSize of iconSizes) {
+      for (const root of appImageRoots) {
+        const candidate = tryCandidate(
+          Path.join(
+            root,
+            "usr",
+            "share",
+            "icons",
+            "hicolor",
+            iconSize,
+            "apps",
+            `${iconBaseName}.png`,
+          ),
+        );
+        if (candidate) {
+          return candidate;
+        }
+      }
+    }
+  }
+
+  cachedAppImageIconPath = null;
+  return null;
+}
+
 function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
-  return resolveResourcePath(`icon.${ext}`);
+  const iconPath = resolveResourcePath(`icon.${ext}`);
+  if (iconPath) {
+    return iconPath;
+  }
+
+  if (process.platform === "linux") {
+    return resolveAppImageIconPath();
+  }
+
+  return null;
 }
 
 /**
@@ -1058,16 +1137,6 @@ function registerIpcHandlers(): void {
 
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
     return showDesktopConfirmDialog(message, owner);
-  });
-
-  ipcMain.removeHandler(SET_THEME_CHANNEL);
-  ipcMain.handle(SET_THEME_CHANNEL, async (_event, rawTheme: unknown) => {
-    const theme = getSafeTheme(rawTheme);
-    if (!theme) {
-      return;
-    }
-
-    nativeTheme.themeSource = theme;
   });
 
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
