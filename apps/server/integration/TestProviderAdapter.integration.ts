@@ -5,6 +5,7 @@ import {
   EventId,
   ProviderApprovalDecision,
   ProviderRuntimeEvent,
+  ProviderSendTurnInput,
   RuntimeSessionId,
   ProviderSession,
   ProviderTurnStartResult,
@@ -198,6 +199,11 @@ export interface TestProviderAdapterHarness {
 
 interface MakeTestProviderAdapterHarnessOptions {
   readonly provider?: "codex";
+  readonly resolveTurnResponse?: (input: {
+    readonly session: ProviderSession;
+    readonly turnCount: number;
+    readonly request: ProviderSendTurnInput;
+  }) => Effect.Effect<TestTurnResponse, ProviderAdapterError>;
 }
 
 function nowIso(): string {
@@ -290,7 +296,15 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         const turnCount = state.turnCount;
         const turnId = TurnId.makeUnsafe(`turn-${turnCount}`);
 
-        const response = state.queuedResponses.shift();
+        const response =
+          state.queuedResponses.shift() ??
+          (options?.resolveTurnResponse
+            ? yield* options.resolveTurnResponse({
+                session: state.session,
+                turnCount,
+                request: input,
+              })
+            : undefined);
         if (!response) {
           return yield* new ProviderAdapterValidationError({
             provider,
