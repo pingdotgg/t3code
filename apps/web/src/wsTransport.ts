@@ -1,6 +1,8 @@
 import { WebSocketResponse, WsPush, WsResponse } from "@t3tools/contracts";
 import { Cause, Schema } from "effect";
 
+import { resolveServerWsUrl } from "./serverConnection";
+
 type PushListener = (data: unknown) => void;
 
 interface PendingRequest {
@@ -34,17 +36,7 @@ export class WsTransport {
   private readonly url: string;
 
   constructor(url?: string) {
-    const bridgeUrl = window.desktopBridge?.getWsUrl();
-    // In dev mode, VITE_WS_URL points to the server's WebSocket endpoint.
-    // In production, the page is served by the WS server on the same host:port.
-    const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-    this.url =
-      url ??
-      (bridgeUrl && bridgeUrl.length > 0
-        ? bridgeUrl
-        : envUrl && envUrl.length > 0
-          ? envUrl
-          : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`);
+    this.url = url ?? resolveServerWsUrl();
     this.connect();
   }
 
