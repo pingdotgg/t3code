@@ -14,7 +14,7 @@ import type {
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, Ref, Result, Stream } from "effect";
+import { Effect, Layer, Option, Ref, Result, Semaphore, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -332,28 +332,39 @@ export const ProviderHealthLive = Layer.effect(
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const overridesRef = yield* Ref.make<ProviderStartOptions>({});
     const statusRef = yield* Ref.make<ReadonlyArray<ServerProviderStatus>>([]);
+    // Serialize refreshes so older probes cannot overwrite newer settings.
+    const refreshSemaphore = yield* Semaphore.make(1);
     const runCheck = (options?: NonNullable<ProviderStartOptions["codex"]>) =>
       checkCodexProviderStatus(options).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
-    const refreshStatuses = Effect.gen(function* () {
-      const overrides = yield* Ref.get(overridesRef);
-      const codexStatus = yield* runCheck(overrides.codex);
-      const statuses = [codexStatus];
-      yield* Ref.set(statusRef, statuses);
-      return statuses;
-    });
+    const refreshStatuses = (overrides: ProviderStartOptions) =>
+      Effect.gen(function* () {
+        const codexStatus = yield* runCheck(overrides.codex);
+        const statuses = [codexStatus];
+        yield* Ref.set(statusRef, statuses);
+        return statuses;
+      });
 
-    yield* refreshStatuses;
+    const refreshLatest = refreshSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const overrides = yield* Ref.get(overridesRef);
+        return yield* refreshStatuses(overrides);
+      }),
+    );
+
+    yield* refreshLatest;
 
     return {
       getStatuses: Ref.get(statusRef),
       setProviderOptions: (input) =>
-        Effect.gen(function* () {
-          yield* Ref.set(overridesRef, input);
-          return yield* refreshStatuses;
-        }),
+        refreshSemaphore.withPermits(1)(
+          Effect.gen(function* () {
+            yield* Ref.set(overridesRef, input);
+            return yield* refreshStatuses(input);
+          }),
+        ),
     } satisfies ProviderHealthShape;
   }),
 );

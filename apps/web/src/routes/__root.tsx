@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type ServerConfig } from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -150,12 +150,35 @@ function EventRouter() {
   useEffect(() => {
     const api = readNativeApi();
     if (!api) return;
+    let disposed = false;
     const providerOptions = resolveProviderOptionsFromSettings({
       codexBinaryPath,
       codexHomePath,
     });
-    void api.server.setProviderOptions({ providerOptions }).catch(() => undefined);
-  }, [codexBinaryPath, codexHomePath]);
+    void (async () => {
+      try {
+        const result = await api.server.setProviderOptions({
+          providerOptions,
+          source: "provider",
+        });
+        if (disposed) return;
+        const existingConfig = queryClient.getQueryData<ServerConfig>(serverQueryKeys.config());
+        if (!existingConfig) {
+          void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
+          return;
+        }
+        queryClient.setQueryData<ServerConfig>(serverQueryKeys.config(), {
+          ...existingConfig,
+          providers: result.providers,
+        });
+      } catch {
+        // Swallow provider option update errors; server config updates will reconcile state.
+      }
+    })();
+    return () => {
+      disposed = true;
+    };
+  }, [codexBinaryPath, codexHomePath, queryClient]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -266,14 +289,27 @@ function EventRouter() {
     });
     const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
       const signature = JSON.stringify(payload.issues);
-      if (lastConfigIssuesSignatureRef.current === signature) {
-        return;
-      }
+      const issuesChanged = lastConfigIssuesSignatureRef.current !== signature;
       lastConfigIssuesSignatureRef.current = signature;
 
+      queryClient.setQueryData<ServerConfig>(serverQueryKeys.config(), (current) =>
+        current
+          ? {
+              ...current,
+              issues: payload.issues,
+              providers: payload.providers,
+            }
+          : current,
+      );
       void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
+      if (!issuesChanged) {
+        return;
+      }
       const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
       if (!issue) {
+        if (payload.source === "provider") {
+          return;
+        }
         toastManager.add({
           type: "success",
           title: "Keybindings updated",

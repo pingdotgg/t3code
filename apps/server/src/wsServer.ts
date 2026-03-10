@@ -921,12 +921,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const nextProviders = yield* providerHealth.setProviderOptions(body.providerOptions);
         providers = nextProviders;
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        const updateSource = body.source ?? "provider";
         yield* broadcastPush({
           type: "push",
           channel: WS_CHANNELS.serverConfigUpdated,
           data: {
             issues: keybindingsConfig.issues,
             providers: nextProviders,
+            source: updateSource,
           },
         });
         return { providers: nextProviders };

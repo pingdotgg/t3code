@@ -24,6 +24,9 @@ export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 
 const ServerConfigIssues = Schema.Array(ServerConfigIssue);
 
+export const ServerConfigUpdateSource = Schema.Literals(["provider", "keybindings"]);
+export type ServerConfigUpdateSource = typeof ServerConfigUpdateSource.Type;
+
 export const ServerProviderStatusState = Schema.Literals(["ready", "warning", "error"]);
 export type ServerProviderStatusState = typeof ServerProviderStatusState.Type;
 
@@ -68,11 +71,13 @@ export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.T
 export const ServerConfigUpdatedPayload = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
+  source: Schema.optional(ServerConfigUpdateSource),
 });
 export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
 
 export const ServerSetProviderOptionsInput = Schema.Struct({
   providerOptions: ProviderStartOptions,
+  source: Schema.optional(Schema.Literal("provider")),
 });
 export type ServerSetProviderOptionsInput = typeof ServerSetProviderOptionsInput.Type;
 
