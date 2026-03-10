@@ -14,7 +14,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
-  type OrchestrationCommand,
+  OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -301,6 +301,24 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
   });
 
+  const decodeOrchestrationCommandExit = Schema.decodeUnknownExit(OrchestrationCommand);
+  const supportedOrchestrationCommandTypes = new Set<string>([
+    "project.create",
+    "project.meta.update",
+    "project.delete",
+    "thread.create",
+    "thread.delete",
+    "thread.meta.update",
+    "thread.runtime-mode.set",
+    "thread.interaction-mode.set",
+    "thread.turn.start",
+    "thread.turn.interrupt",
+    "thread.approval.respond",
+    "thread.user-input.respond",
+    "thread.checkpoint.revert",
+    "thread.session.stop",
+  ]);
+
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
     readonly command: ClientOrchestrationCommand;
   }) {
@@ -337,7 +355,18 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }
 
     if (input.command.type !== "thread.turn.start") {
-      return input.command as OrchestrationCommand;
+      const decoded = decodeOrchestrationCommandExit(input.command);
+      if (decoded._tag === "Success") {
+        return decoded.value;
+      }
+      if (!supportedOrchestrationCommandTypes.has(input.command.type)) {
+        return yield* new RouteRequestError({
+          message: `Unsupported orchestration command type: ${input.command.type}`,
+        });
+      }
+      return yield* new RouteRequestError({
+        message: `Invalid orchestration command payload for type: ${input.command.type}`,
+      });
     }
     const turnStartCommand = input.command;
 
