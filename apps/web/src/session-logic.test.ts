@@ -204,6 +204,7 @@ describe("derivePendingUserInputs", () => {
       {
         requestId: "req-user-input-1",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: null,
         questions: [
           {
             id: "sandbox_mode",
@@ -219,6 +220,49 @@ describe("derivePendingUserInputs", () => {
         ],
       },
     ]);
+  });
+
+  it("treats expired prompts as closed", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          requestId: "req-user-input-1",
+          questions: [
+            {
+              id: "approval",
+              header: "Approval",
+              question: "Continue?",
+              options: [
+                {
+                  label: "yes",
+                  description: "Continue execution",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "user-input-expired",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.expired",
+        summary: "Pending question expired after app restart",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          requestId: "req-user-input-1",
+          reason: "server-restart",
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)).toEqual([]);
   });
 });
 
