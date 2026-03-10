@@ -9,6 +9,8 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout>;
 }
 
+type SendTimer = ReturnType<typeof setTimeout>;
+
 const REQUEST_TIMEOUT_MS = 60_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
 const decodeWsResponseFromJson = Schema.decodeUnknownExit(Schema.fromJsonString(WsResponse));
@@ -27,6 +29,7 @@ export class WsTransport {
   private ws: WebSocket | null = null;
   private nextId = 1;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly pendingSendTimers = new Set<SendTimer>();
   private readonly listeners = new Map<string, Set<PushListener>>();
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -94,6 +97,11 @@ export class WsTransport {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    for (const timer of this.pendingSendTimers) {
+      clearTimeout(timer);
+      clearInterval(timer);
+    }
+    this.pendingSendTimers.clear();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
       pending.reject(new Error("Transport disposed"));
@@ -180,19 +188,31 @@ export class WsTransport {
 
     // If not connected, wait for connection
     const waitForOpen = () => {
+      const clearPendingSendWait = () => {
+        clearInterval(check);
+        clearTimeout(timeoutId);
+        this.pendingSendTimers.delete(check);
+        this.pendingSendTimers.delete(timeoutId);
+      };
+
       const check = setInterval(() => {
         if (this.disposed) {
-          clearInterval(check);
+          clearPendingSendWait();
           return;
         }
         if (this.ws?.readyState === WebSocket.OPEN) {
-          clearInterval(check);
+          clearPendingSendWait();
           this.ws.send(JSON.stringify(message));
         }
       }, 50);
+      this.pendingSendTimers.add(check);
 
       // Give up after timeout (the pending request will time out on its own)
-      setTimeout(() => clearInterval(check), REQUEST_TIMEOUT_MS);
+      const timeoutId = setTimeout(() => {
+        clearPendingSendWait();
+      }, REQUEST_TIMEOUT_MS);
+
+      this.pendingSendTimers.add(timeoutId);
     };
     waitForOpen();
   }
