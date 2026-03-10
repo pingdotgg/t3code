@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  type TurnId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -253,6 +254,69 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   return {
     ...snapshot,
     threads: [],
+  };
+}
+
+function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-pending-input" as MessageId,
+    targetText: "pending input thread",
+  });
+  const turnId = "turn-pending-user-input" as TurnId;
+  const pendingUserInputActivity: OrchestrationReadModel["threads"][number]["activities"][number] = {
+    id: "activity-pending-user-input" as OrchestrationReadModel["threads"][number]["activities"][number]["id"],
+    createdAt: isoAt(102),
+    tone: "info",
+    kind: "user-input.requested",
+    summary: "User input requested",
+    turnId,
+    payload: {
+      requestId: "req-user-input-browser",
+      questions: [
+        {
+          id: "affected_course",
+          header: "Affected Course",
+          question: "Which student calendar is broken?",
+          options: [
+            {
+              label: "The Combine (Recommended)",
+              description: "Matches the report.",
+            },
+            {
+              label: "The Invitational",
+              description: "Alternative calendar.",
+            },
+          ],
+        },
+      ],
+    },
+  };
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id !== THREAD_ID
+        ? thread
+        : Object.assign({}, thread, {
+            latestTurn: {
+              turnId,
+              state: "running",
+              requestedAt: isoAt(100),
+              startedAt: isoAt(101),
+              completedAt: null,
+              assistantMessageId: null,
+            },
+            session: {
+              threadId: THREAD_ID,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: isoAt(101),
+            },
+            activities: [pendingUserInputActivity],
+          }),
+    ),
   };
 }
 
@@ -850,6 +914,43 @@ describe("ChatView timeline estimator parity (full app)", () => {
             cwd: "/repo/project",
             editor: "vscode",
           });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("submits structured user-input answers from a running thread", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInput(),
+    });
+
+    try {
+      const optionButton = page.getByRole("button", { name: /The Combine \(Recommended\)/i });
+      await expect.element(optionButton).toBeVisible();
+      await optionButton.click();
+
+      const submitButton = page.getByRole("button", { name: /Submit answers/i });
+      await expect.element(submitButton).toBeEnabled();
+      await submitButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatches = wsRequests.filter(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          );
+          const userInputCommand = dispatches
+            .map((request) => request.command as { type?: string; requestId?: string } | undefined)
+            .find((command) => command?.type === "thread.user-input.respond");
+          expect(userInputCommand).toEqual(
+            expect.objectContaining({
+              type: "thread.user-input.respond",
+              requestId: "req-user-input-browser",
+            }),
+          );
         },
         { timeout: 8_000, interval: 16 },
       );
