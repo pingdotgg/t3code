@@ -163,7 +163,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.mode, "web");
       assert.equal(resolvedConfig?.port, 4666);
-      assert.equal(resolvedConfig?.host, undefined);
+      assert.equal(resolvedConfig?.host, "127.0.0.1");
     }),
   );
 
@@ -209,12 +209,24 @@ it.layer(testLayer)("server CLI command", (it) => {
     Effect.gen(function* () {
       yield* runCli(["--host", "0.0.0.0"], {
         T3CODE_MODE: "desktop",
+        T3CODE_AUTH_TOKEN: "desktop-token",
         T3CODE_NO_BROWSER: "true",
       });
 
       assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.mode, "desktop");
       assert.equal(resolvedConfig?.host, "0.0.0.0");
+    }),
+  );
+
+  it.effect("refuses non-loopback web binds without auth", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--host", "0.0.0.0"], {
+        T3CODE_NO_BROWSER: "true",
+      }).pipe(Effect.catch(() => Effect.void));
+
+      assert.equal(start.mock.calls.length, 0);
+      assert.equal(stop.mock.calls.length, 0);
     }),
   );
 

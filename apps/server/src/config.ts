@@ -12,6 +12,8 @@ export const DEFAULT_PORT = 3773;
 
 export type RuntimeMode = "web" | "desktop";
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "[::1]", "localhost"]);
+
 /**
  * ServerConfigShape - Process/runtime configuration required by the server.
  */
@@ -58,6 +60,15 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
       }),
     );
 }
+
+export const isWildcardHost = (host: string | undefined): boolean =>
+  host === "0.0.0.0" || host === "::" || host === "[::]";
+
+export const isLoopbackHost = (host: string | undefined): boolean =>
+  host !== undefined && LOOPBACK_HOSTS.has(host.trim().toLowerCase());
+
+export const formatHostForUrl = (host: string): string =>
+  host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 
 export const resolveStaticDir = Effect.fn(function* () {
   const { join, resolve } = yield* Path.Path;

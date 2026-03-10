@@ -11,6 +11,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import { NetService } from "@t3tools/shared/Net";
 import {
   DEFAULT_PORT,
+  formatHostForUrl,
+  isLoopbackHost,
+  isWildcardHost,
   resolveStaticDir,
   ServerConfig,
   type RuntimeMode,
@@ -169,10 +172,14 @@ const ServerConfigLive = (input: CliInput) =>
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const { join } = yield* Path.Path;
       const keybindingsConfigPath = join(stateDir, "keybindings.json");
-      const host =
-        Option.getOrUndefined(input.host) ??
-        env.host ??
-        (mode === "desktop" ? "127.0.0.1" : undefined);
+      const host = Option.getOrUndefined(input.host) ?? env.host ?? "127.0.0.1";
+
+      if (!isLoopbackHost(host) && !authToken) {
+        return yield* new StartupError({
+          message:
+            "Refusing to bind a non-loopback host without WebSocket auth. Set --auth-token (or T3CODE_AUTH_TOKEN), or bind to 127.0.0.1.",
+        });
+      }
 
       const config: ServerConfigShape = {
         mode,
@@ -203,12 +210,6 @@ const LayerLive = (input: CliInput) =>
     Layer.provideMerge(AnalyticsServiceLayerLive),
     Layer.provideMerge(ServerConfigLive(input)),
   );
-
-const isWildcardHost = (host: string | undefined): boolean =>
-  host === "0.0.0.0" || host === "::" || host === "[::]";
-
-const formatHostForUrl = (host: string): string =>
-  host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 
 export const recordStartupHeartbeat = Effect.gen(function* () {
   const analytics = yield* AnalyticsService;
@@ -296,7 +297,9 @@ const portFlag = Flag.integer("port").pipe(
   Flag.optional,
 );
 const hostFlag = Flag.string("host").pipe(
-  Flag.withDescription("Host/interface to bind (for example 127.0.0.1, 0.0.0.0, or a Tailnet IP)."),
+  Flag.withDescription(
+    "Host/interface to bind (defaults to 127.0.0.1; use --auth-token with non-loopback hosts).",
+  ),
   Flag.optional,
 );
 const stateDirFlag = Flag.string("state-dir").pipe(
@@ -313,7 +316,7 @@ const noBrowserFlag = Flag.boolean("no-browser").pipe(
   Flag.optional,
 );
 const authTokenFlag = Flag.string("auth-token").pipe(
-  Flag.withDescription("Auth token required for WebSocket connections."),
+  Flag.withDescription("Auth token required for WebSocket connections on non-loopback binds."),
   Flag.withAlias("token"),
   Flag.optional,
 );
