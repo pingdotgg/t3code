@@ -188,6 +188,7 @@ import {
   OpenCodeIcon,
   VisualStudioCode,
   Zed,
+  AntigravityIcon,
 } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
@@ -6590,6 +6591,11 @@ const OpenInPicker = memo(function OpenInPicker({
         label: "Zed",
         Icon: Zed,
         value: "zed",
+      },
+      {
+        label: "Antigravity",
+        Icon: AntigravityIcon,
+        value: "antigravity",
       },
       {
         label: isMacPlatform(navigator.platform)
