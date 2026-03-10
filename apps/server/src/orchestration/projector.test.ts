@@ -1,10 +1,4 @@
-import {
-  CommandId,
-  EventId,
-  ProjectId,
-  ThreadId,
-  type OrchestrationEvent,
-} from "@t3tools/contracts";
+import { CommandId, EventId, ProjectId, ThreadId, type OrchestrationEvent } from "@repo/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 

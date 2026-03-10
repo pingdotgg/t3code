@@ -14,7 +14,7 @@ import type {
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { ServiceMap } from "effect";
 import type { Effect, Stream } from "effect";
 

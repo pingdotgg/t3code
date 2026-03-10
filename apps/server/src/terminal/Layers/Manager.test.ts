@@ -7,7 +7,7 @@ import {
   type TerminalEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {

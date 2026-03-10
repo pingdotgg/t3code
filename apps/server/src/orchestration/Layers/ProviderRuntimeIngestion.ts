@@ -9,9 +9,9 @@ import {
   TurnId,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Ref, Stream } from "effect";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeDrainableWorker } from "@repo/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";

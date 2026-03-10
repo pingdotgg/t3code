@@ -14,7 +14,7 @@ import {
   OrchestrationCommandReceiptStatus,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 

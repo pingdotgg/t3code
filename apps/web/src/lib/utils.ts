@@ -1,4 +1,4 @@
-import { CommandId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { CommandId, MessageId, ProjectId, ThreadId } from "@repo/contracts";
 import { type CxOptions, cx } from "class-variance-authority";
 import { twMerge } from "tailwind-merge";
 import * as Random from "effect/Random";

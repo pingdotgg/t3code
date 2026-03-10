@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@repo/contracts";
 import { it, assert } from "@effect/vitest";
 import { assertFailure, assertSome } from "@effect/vitest/utils";
 import { Effect, Layer, Option } from "effect";

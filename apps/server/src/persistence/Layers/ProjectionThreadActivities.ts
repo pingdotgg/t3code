@@ -1,6 +1,6 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { NonNegativeInt } from "@t3tools/contracts";
+import { NonNegativeInt } from "@repo/contracts";
 import { Effect, Layer, Schema, Struct } from "effect";
 
 import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";

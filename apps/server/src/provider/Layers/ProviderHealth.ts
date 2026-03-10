@@ -13,7 +13,7 @@ import type {
   ServerProviderAuthStatus,
   ServerProviderStatus,
   ServerProviderStatusState,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { Array, Effect, Fiber, FileSystem, Layer, Option, Path, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 

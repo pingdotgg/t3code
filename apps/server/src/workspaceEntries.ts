@@ -7,7 +7,7 @@ import {
   ProjectEntry,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;

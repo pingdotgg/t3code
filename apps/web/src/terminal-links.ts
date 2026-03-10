@@ -1,4 +1,4 @@
-import { EDITORS, type EditorId } from "@t3tools/contracts";
+import { EDITORS, type EditorId } from "@repo/contracts";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";

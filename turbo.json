@@ -19,7 +19,7 @@
       "outputs": ["dist/**", "dist-electron/**"]
     },
     "dev": {
-      "dependsOn": ["@t3tools/contracts#build"],
+      "dependsOn": ["@repo/contracts#build"],
       "cache": false,
       "persistent": true
     },

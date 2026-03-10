@@ -11,7 +11,11 @@ T3 Code is a minimal web GUI for using code agents like Codex and Claude Code (c
 
 This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
 
-## Core Priorities
+## Repo Scope
+
+This repo is a scope of T3 Code. We want to build a better GUI on top of T3 Code's existing server, as well as our own background agents built on top of Daytona sandboxes.
+
+## Core Prior Priorities
 
 1. Performance first.
 2. Reliability first.

@@ -9,7 +9,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Option, Schema } from "effect";
 

@@ -6,7 +6,7 @@
  *
  * @module ProjectionProjectRepository
  */
-import { IsoDateTime, ProjectId, ProjectScript } from "@t3tools/contracts";
+import { IsoDateTime, ProjectId, ProjectScript } from "@repo/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 

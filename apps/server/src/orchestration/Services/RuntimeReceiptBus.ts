@@ -1,4 +1,4 @@
-import { CheckpointRef, IsoDateTime, NonNegativeInt, ThreadId, TurnId } from "@t3tools/contracts";
+import { CheckpointRef, IsoDateTime, NonNegativeInt, ThreadId, TurnId } from "@repo/contracts";
 import { Schema, ServiceMap } from "effect";
 import type { Effect, Stream } from "effect";
 

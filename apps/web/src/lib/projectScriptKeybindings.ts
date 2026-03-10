@@ -3,7 +3,7 @@ import {
   type KeybindingCommand,
   type KeybindingRule,
   type ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { Schema } from "effect";
 
 export const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE = "Invalid keybinding.";

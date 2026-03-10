@@ -10,7 +10,7 @@ import {
   type ProviderUserInputAnswers,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, it, vi } from "@effect/vitest";
 

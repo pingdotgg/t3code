@@ -4,7 +4,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationReadModel,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { describe, expect, it } from "vitest";
 
 import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";

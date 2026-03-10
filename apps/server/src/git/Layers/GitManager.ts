@@ -6,7 +6,7 @@ import {
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
-} from "@t3tools/shared/git";
+} from "@repo/shared/git";
 
 import { GitManagerError } from "../Errors.ts";
 import { GitManager, type GitManagerShape } from "../Services/GitManager.ts";

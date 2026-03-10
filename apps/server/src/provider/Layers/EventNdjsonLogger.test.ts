@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@repo/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 

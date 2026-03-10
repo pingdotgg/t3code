@@ -12,7 +12,7 @@ import {
   TerminalWriteInput,
   type TerminalEvent,
   type TerminalSessionSnapshot,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { Effect, Encoding, Layer, Path, Schema } from "effect";
 
 import { createLogger } from "../../logger";

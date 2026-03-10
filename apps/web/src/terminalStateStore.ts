@@ -5,7 +5,7 @@
  * API constrained to store actions/selectors.
  */
 
-import type { ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@repo/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {

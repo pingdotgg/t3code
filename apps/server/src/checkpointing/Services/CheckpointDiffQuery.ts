@@ -11,7 +11,7 @@ import type {
   OrchestrationGetFullThreadDiffResult,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 

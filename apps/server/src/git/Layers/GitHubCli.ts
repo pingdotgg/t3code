@@ -1,5 +1,5 @@
 import { Effect, Layer, Schema } from "effect";
-import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
+import { PositiveInt, TrimmedNonEmptyString } from "@repo/contracts";
 
 import { runProcess } from "../../processRunner";
 import { GitHubCliError } from "../Errors.ts";

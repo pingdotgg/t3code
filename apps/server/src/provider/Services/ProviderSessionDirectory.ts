@@ -3,7 +3,7 @@ import type {
   ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { Option, ServiceMap } from "effect";
 import type { Effect } from "effect";
 

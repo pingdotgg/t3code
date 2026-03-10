@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-import type { ProviderRuntimeEvent, ProviderSession } from "@t3tools/contracts";
+import type { ProviderRuntimeEvent, ProviderSession } from "@repo/contracts";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -12,7 +12,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";

@@ -20,7 +20,7 @@ import {
   ProviderStopSessionInput,
   type ProviderRuntimeEvent,
   type ProviderSession,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { Effect, Layer, Option, PubSub, Queue, Schema, SchemaIssue, Stream } from "effect";
 
 import { ProviderValidationError } from "../Errors.ts";

@@ -11,7 +11,7 @@ import {
   ProjectionProjectRepository,
   type ProjectionProjectRepositoryShape,
 } from "../Services/ProjectionProjects.ts";
-import { ProjectScript } from "@t3tools/contracts";
+import { ProjectScript } from "@repo/contracts";
 
 // Makes sure that the scripts are parsed from the JSON string the DB returns
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(

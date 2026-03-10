@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@repo/contracts";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";

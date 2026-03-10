@@ -1,4 +1,4 @@
-import { MAX_KEYBINDING_VALUE_LENGTH, type KeybindingCommand } from "@t3tools/contracts";
+import { MAX_KEYBINDING_VALUE_LENGTH, type KeybindingCommand } from "@repo/contracts";
 import { describe, expect, it } from "vitest";
 
 import { commandForProjectScript } from "../projectScripts";

@@ -1,4 +1,4 @@
-import { TurnId } from "@t3tools/contracts";
+import { TurnId } from "@repo/contracts";
 
 export interface DiffRouteSearch {
   diff?: "1";

@@ -8,8 +8,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { ThreadId } from "@t3tools/contracts";
-import { RotatingFileSink } from "@t3tools/shared/logging";
+import type { ThreadId } from "@repo/contracts";
+import { RotatingFileSink } from "@repo/shared/logging";
 import { Effect, Exit, Logger, Scope } from "effect";
 
 import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";

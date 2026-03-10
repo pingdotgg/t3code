@@ -1,4 +1,4 @@
-import type { ProviderKind } from "@t3tools/contracts";
+import type { ProviderKind } from "@repo/contracts";
 import { it, assert, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 

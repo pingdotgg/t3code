@@ -7,7 +7,7 @@
  *
  * @module ProviderAdapterRegistry
  */
-import type { ProviderKind } from "@t3tools/contracts";
+import type { ProviderKind } from "@repo/contracts";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 

@@ -5,8 +5,8 @@ import {
   WebSocketResponse,
   type WsResponse as WsResponseMessage,
   WsResponse as WsResponseSchema,
-} from "@t3tools/contracts";
-import { decodeUnknownJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+} from "@repo/contracts";
+import { decodeUnknownJsonResult, formatSchemaError } from "@repo/shared/schemaJson";
 import { Result, Schema } from "effect";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;

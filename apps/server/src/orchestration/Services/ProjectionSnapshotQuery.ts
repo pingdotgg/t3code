@@ -6,7 +6,7 @@
  *
  * @module ProjectionSnapshotQuery
  */
-import type { OrchestrationReadModel } from "@t3tools/contracts";
+import type { OrchestrationReadModel } from "@repo/contracts";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 

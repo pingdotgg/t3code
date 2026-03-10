@@ -1,4 +1,4 @@
-import { ThreadId, type NativeApi } from "@t3tools/contracts";
+import { ThreadId, type NativeApi } from "@repo/contracts";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkpointDiffQueryOptions, providerQueryKeys } from "./providerReactQuery";

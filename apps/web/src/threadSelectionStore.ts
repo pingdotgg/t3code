@@ -5,7 +5,7 @@
  * and bulk actions on the selected set.
  */
 
-import type { ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@repo/contracts";
 import { create } from "zustand";
 
 export interface ThreadSelectionState {

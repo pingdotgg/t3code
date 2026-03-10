@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@repo/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 

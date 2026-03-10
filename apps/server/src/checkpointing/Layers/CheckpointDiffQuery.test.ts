@@ -5,7 +5,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationReadModel,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 

@@ -18,7 +18,7 @@ import { GitCommandError } from "../../git/Errors.ts";
 import { GitServiceLive } from "../../git/Layers/GitService.ts";
 import { GitService } from "../../git/Services/GitService.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
-import { CheckpointRef } from "@t3tools/contracts";
+import { CheckpointRef } from "@repo/contracts";
 
 const makeCheckpointStore = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

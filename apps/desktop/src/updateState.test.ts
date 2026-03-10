@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopUpdateState } from "@repo/contracts";
 
 import {
   getCanRetryAfterDownloadFailure,

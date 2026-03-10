@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopUpdateActionResult, DesktopUpdateState } from "@repo/contracts";
 
 import {
   getArm64IntelBuildWarningDescription,

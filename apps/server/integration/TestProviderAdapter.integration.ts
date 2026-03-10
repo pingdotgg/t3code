@@ -10,7 +10,7 @@ import {
   ProviderTurnStartResult,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { Effect, Queue, Stream } from "effect";
 
 import {

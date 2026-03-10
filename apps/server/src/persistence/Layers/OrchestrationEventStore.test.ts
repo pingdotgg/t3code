@@ -1,4 +1,4 @@
-import { CommandId, EventId, ProjectId } from "@t3tools/contracts";
+import { CommandId, EventId, ProjectId } from "@repo/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";

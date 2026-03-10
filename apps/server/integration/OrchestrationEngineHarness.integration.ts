@@ -8,7 +8,7 @@ import {
   ApprovalRequestId,
   type OrchestrationEvent,
   type OrchestrationThread,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import {
   Effect,
   Exit,

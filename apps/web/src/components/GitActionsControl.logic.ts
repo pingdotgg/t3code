@@ -1,8 +1,4 @@
-import type {
-  GitRunStackedActionResult,
-  GitStackedAction,
-  GitStatusResult,
-} from "@t3tools/contracts";
+import type { GitRunStackedActionResult, GitStackedAction, GitStatusResult } from "@repo/contracts";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -347,4 +343,4 @@ export function resolveDefaultBranchActionDialogCopy(input: {
 }
 
 // Re-export from shared for backwards compatibility in this module's exports
-export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
+export { resolveAutoFeatureBranchName } from "@repo/shared/git";

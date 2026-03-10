@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { TerminalEvent, TerminalSessionSnapshot } from "@t3tools/contracts";
+import type { TerminalEvent, TerminalSessionSnapshot } from "@repo/contracts";
 import { terminalRunningSubprocessFromEvent } from "./terminalActivity";
 
 const snapshot: TerminalSessionSnapshot = {

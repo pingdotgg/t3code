@@ -1,4 +1,4 @@
-import { readPathFromLoginShell } from "@t3tools/shared/shell";
+import { readPathFromLoginShell } from "@repo/shared/shell";
 
 export function fixPath(): void {
   if (process.platform !== "darwin") return;

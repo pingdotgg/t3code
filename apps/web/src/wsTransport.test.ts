@@ -1,4 +1,4 @@
-import { WS_CHANNELS } from "@t3tools/contracts";
+import { WS_CHANNELS } from "@repo/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WsTransport } from "./wsTransport";

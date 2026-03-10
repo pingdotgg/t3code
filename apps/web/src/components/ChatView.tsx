@@ -21,14 +21,14 @@ import {
   OrchestrationThreadActivity,
   RuntimeMode,
   ProviderInteractionMode,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import {
   getDefaultModel,
   getDefaultReasoningEffort,
   getReasoningEffortOptions,
   normalizeModelSlug,
   resolveModelSlugForProvider,
-} from "@t3tools/shared/model";
+} from "@repo/shared/model";
 import {
   memo,
   useCallback,

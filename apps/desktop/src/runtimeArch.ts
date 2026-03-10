@@ -1,4 +1,4 @@
-import type { DesktopRuntimeArch, DesktopRuntimeInfo } from "@t3tools/contracts";
+import type { DesktopRuntimeArch, DesktopRuntimeInfo } from "@repo/contracts";
 
 interface ResolveDesktopRuntimeInfoInput {
   readonly platform: NodeJS.Platform;

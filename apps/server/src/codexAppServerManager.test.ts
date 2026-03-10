@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, ThreadId } from "@repo/contracts";
 
 import {
   buildCodexInitializeParams,

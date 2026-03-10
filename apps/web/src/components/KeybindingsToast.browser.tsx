@@ -10,7 +10,7 @@ import {
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { ws, http, HttpResponse } from "msw";
 import { setupWorker } from "msw/browser";

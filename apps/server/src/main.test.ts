@@ -1,14 +1,14 @@
 import * as Http from "node:http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import type { OrchestrationReadModel } from "@t3tools/contracts";
+import type { OrchestrationReadModel } from "@repo/contracts";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Command from "effect/unstable/cli/Command";
 import { FetchHttpClient } from "effect/unstable/http";
 import { beforeEach } from "vitest";
-import { NetService } from "@t3tools/shared/Net";
+import { NetService } from "@repo/shared/Net";
 
 import { CliConfig, recordStartupHeartbeat, t3Cli, type CliConfigShape } from "./main";
 import { ServerConfig, type ServerConfigShape } from "./config";

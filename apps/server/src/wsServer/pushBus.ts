@@ -3,7 +3,7 @@ import {
   type WsPushChannel,
   type WsPushData,
   type WsPushEnvelopeBase,
-} from "@t3tools/contracts";
+} from "@repo/contracts";
 import { Deferred, Effect, Queue, Ref, Schema } from "effect";
 import type { Scope } from "effect";
 import type { WebSocket } from "ws";
