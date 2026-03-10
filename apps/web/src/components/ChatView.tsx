@@ -158,7 +158,7 @@ import { ChatHeader } from "./chat/ChatHeader";
 import {
   buildExpandedImagePreview,
   ExpandedImagePreview,
-} from "./ExpandedImagePreview";
+} from "./chat/ExpandedImagePreview";
 import {
   AVAILABLE_PROVIDER_OPTIONS,
   ProviderModelPicker,

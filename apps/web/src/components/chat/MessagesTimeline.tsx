@@ -29,7 +29,7 @@ import { estimateTimelineMessageHeight } from "../timelineHeight";
 import {
   buildExpandedImagePreview,
   ExpandedImagePreview,
-} from "../ExpandedImagePreview";
+} from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
