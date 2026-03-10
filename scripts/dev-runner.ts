@@ -399,9 +399,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
 
     const envOverrides = {
       noBrowser: readOptionalBooleanEnv("T3CODE_NO_BROWSER"),
-      autoBootstrapProjectFromCwd: readOptionalBooleanEnv(
-        "T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD",
-      ),
+      autoBootstrapProjectFromCwd: readOptionalBooleanEnv("T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD"),
       logWebSocketEvents: readOptionalBooleanEnv("T3CODE_LOG_WS_EVENTS"),
     };
 

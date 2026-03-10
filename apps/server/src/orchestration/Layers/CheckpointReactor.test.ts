@@ -69,7 +69,7 @@ function createProviderServiceHarness(
     Effect.die(new Error("Unsupported provider call in test")) as Effect.Effect<A, never>;
   const listSessions = () =>
     hasSession
-        ? Effect.succeed([
+      ? Effect.succeed([
           {
             provider: providerName,
             status: "ready",
@@ -350,7 +350,7 @@ describe("CheckpointReactor", () => {
       type: "turn.started",
       eventId: EventId.makeUnsafe("evt-turn-started-1"),
       provider: "codex",
-      
+
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-1"),
@@ -365,7 +365,7 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-1"),
       provider: "codex",
-      
+
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-1"),
@@ -426,7 +426,7 @@ describe("CheckpointReactor", () => {
       type: "turn.started",
       eventId: EventId.makeUnsafe("evt-turn-started-main"),
       provider: "codex",
-      
+
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-main"),
@@ -442,7 +442,7 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-aux"),
       provider: "codex",
-      
+
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-aux"),
@@ -460,7 +460,7 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-main"),
       provider: "codex",
-      
+
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-main"),
@@ -500,7 +500,7 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-missing-baseline"),
       provider: "codex",
-      
+
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-missing-baseline"),
@@ -589,7 +589,7 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-missing-provider-cwd"),
       provider: "codex",
-      
+
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-missing-cwd"),
@@ -635,7 +635,7 @@ describe("CheckpointReactor", () => {
       type: "checkpoint.captured",
       eventId: EventId.makeUnsafe("evt-checkpoint-captured-3"),
       provider: "codex",
-      
+
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-3"),
@@ -685,7 +685,7 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-runtime-capture-failure"),
       provider: "codex",
-      
+
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-runtime-failure"),
@@ -696,7 +696,7 @@ describe("CheckpointReactor", () => {
       type: "turn.started",
       eventId: EventId.makeUnsafe("evt-turn-started-after-runtime-failure"),
       provider: "codex",
-      
+
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-after-runtime-failure"),

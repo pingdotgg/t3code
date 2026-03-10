@@ -1236,21 +1236,19 @@ describe("WebSocket Server", () => {
       return event.type === "thread.session-set";
     });
 
-    emitRuntimeEvent(
-      {
-        type: "content.delta",
-        eventId: asEventId("evt-ws-runtime-message-delta"),
-        provider: "codex",
-        threadId: asThreadId("thread-1"),
-        createdAt: new Date().toISOString(),
-        turnId: asTurnId("turn-1"),
-        itemId: asProviderItemId("item-1"),
-        payload: {
-          streamKind: "assistant_text",
-          delta: "hello from runtime",
-        },
-      } as unknown as ProviderRuntimeEvent,
-    );
+    emitRuntimeEvent({
+      type: "content.delta",
+      eventId: asEventId("evt-ws-runtime-message-delta"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asTurnId("turn-1"),
+      itemId: asProviderItemId("item-1"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "hello from runtime",
+      },
+    } as unknown as ProviderRuntimeEvent);
 
     const domainPush = await waitForPush(ws, ORCHESTRATION_WS_CHANNELS.domainEvent, (push) => {
       const event = push.data as { type?: string; payload?: { messageId?: string; text?: string } };
@@ -1568,7 +1566,9 @@ describe("WebSocket Server", () => {
     });
 
     expect(response.result).toBeUndefined();
-    expect(response.error?.message).toContain("Workspace file path must stay within the project root.");
+    expect(response.error?.message).toContain(
+      "Workspace file path must stay within the project root.",
+    );
     expect(fs.existsSync(path.join(workspace, "..", "escape.md"))).toBe(false);
   });
 
@@ -1638,7 +1638,14 @@ describe("WebSocket Server", () => {
 
     const status = vi.fn(() => Effect.succeed(statusResult));
     const runStackedAction = vi.fn(() => Effect.void as any);
-    const gitManager: GitManagerShape = { status, runStackedAction };
+    const resolvePullRequest = vi.fn(() => Effect.void as any);
+    const preparePullRequestThread = vi.fn(() => Effect.void as any);
+    const gitManager: GitManagerShape = {
+      status,
+      resolvePullRequest,
+      preparePullRequestThread,
+      runStackedAction,
+    };
 
     server = await createTestServer({ cwd: "/test", gitManager });
     const addr = server.address();
@@ -1656,6 +1663,63 @@ describe("WebSocket Server", () => {
     expect(status).toHaveBeenCalledWith({ cwd: "/test" });
   });
 
+  it("supports git pull request routing over websocket", async () => {
+    const resolvePullRequestResult = {
+      pullRequest: {
+        number: 42,
+        title: "PR thread flow",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+        baseBranch: "main",
+        headBranch: "feature/pr-threads",
+        state: "open" as const,
+      },
+    };
+    const preparePullRequestThreadResult = {
+      ...resolvePullRequestResult,
+      branch: "feature/pr-threads",
+      worktreePath: "/tmp/pr-threads",
+    };
+
+    const gitManager: GitManagerShape = {
+      status: vi.fn(() => Effect.void as any),
+      resolvePullRequest: vi.fn(() => Effect.succeed(resolvePullRequestResult)),
+      preparePullRequestThread: vi.fn(() => Effect.succeed(preparePullRequestThreadResult)),
+      runStackedAction: vi.fn(() => Effect.void as any),
+    };
+
+    server = await createTestServer({ cwd: "/test", gitManager });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const resolveResponse = await sendRequest(ws, WS_METHODS.gitResolvePullRequest, {
+      cwd: "/test",
+      reference: "#42",
+    });
+    expect(resolveResponse.error).toBeUndefined();
+    expect(resolveResponse.result).toEqual(resolvePullRequestResult);
+
+    const prepareResponse = await sendRequest(ws, WS_METHODS.gitPreparePullRequestThread, {
+      cwd: "/test",
+      reference: "42",
+      mode: "worktree",
+    });
+    expect(prepareResponse.error).toBeUndefined();
+    expect(prepareResponse.result).toEqual(preparePullRequestThreadResult);
+    expect(gitManager.resolvePullRequest).toHaveBeenCalledWith({
+      cwd: "/test",
+      reference: "#42",
+    });
+    expect(gitManager.preparePullRequestThread).toHaveBeenCalledWith({
+      cwd: "/test",
+      reference: "42",
+      mode: "worktree",
+    });
+  });
+
   it("returns errors from git.runStackedAction", async () => {
     const runStackedAction = vi.fn(() =>
       Effect.fail(
@@ -1667,6 +1731,8 @@ describe("WebSocket Server", () => {
     );
     const gitManager: GitManagerShape = {
       status: vi.fn(() => Effect.void as any),
+      resolvePullRequest: vi.fn(() => Effect.void as any),
+      preparePullRequestThread: vi.fn(() => Effect.void as any),
       runStackedAction,
     };
 

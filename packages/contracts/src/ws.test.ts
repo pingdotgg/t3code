@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import { ORCHESTRATION_WS_METHODS } from "./orchestration";
+import { WS_METHODS } from "./ws";
 import { WebSocketRequest } from "./ws";
 
 const decodeWebSocketRequest = Schema.decodeUnknownEffect(WebSocketRequest);
@@ -54,5 +55,20 @@ it.effect("trims websocket request id and nested orchestration ids", () =>
     if (parsed.body._tag === ORCHESTRATION_WS_METHODS.getTurnDiff) {
       assert.strictEqual(parsed.body.threadId, "thread-1");
     }
+  }),
+);
+
+it.effect("accepts git.preparePullRequestThread requests", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeWebSocketRequest({
+      id: "req-pr-1",
+      body: {
+        _tag: WS_METHODS.gitPreparePullRequestThread,
+        cwd: "/repo",
+        reference: "#42",
+        mode: "worktree",
+      },
+    });
+    assert.strictEqual(parsed.body._tag, WS_METHODS.gitPreparePullRequestThread);
   }),
 );
