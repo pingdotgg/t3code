@@ -587,6 +587,16 @@ function configureApplicationMenu(): void {
     },
     { role: "editMenu" },
     { role: "viewMenu" },
+    ...(process.platform === "linux"
+      ? [
+          {
+            label: "Zoom In Alias",
+            accelerator: "Ctrl+=",
+            role: "zoomIn" as const,
+            visible: false,
+          },
+        ]
+      : []),
     { role: "windowMenu" },
     {
       role: "help",
