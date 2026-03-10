@@ -475,6 +475,15 @@ function buildVisibleMessageNodes(input: {
   return materializeThread(lineageSelection.rootThreadId ?? input.rootThreadId);
 }
 
+function parseVariantGroupMessageId(variantGroupId: string): MessageId | null {
+  const separatorIndex = variantGroupId.indexOf(":");
+  if (separatorIndex <= 0 || separatorIndex === variantGroupId.length - 1) {
+    return null;
+  }
+  const messageId = variantGroupId.slice(separatorIndex + 1).trim();
+  return messageId ? (messageId as MessageId) : null;
+}
+
 function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
   if (!previewUrl || typeof URL === "undefined" || !previewUrl.startsWith("blob:")) {
     return;
@@ -1257,7 +1266,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const turnInProgress = Boolean(activeLatestTurn?.startedAt) && !latestTurnSettled;
+  const orchestrationRunning = activeThread?.session?.orchestrationStatus === "running";
+  const hasActiveTurn = Boolean(activeThread?.session?.activeTurnId);
+  const isWorking =
+    phase === "running" ||
+    orchestrationRunning ||
+    hasActiveTurn ||
+    isSendBusy ||
+    isConnecting ||
+    isRevertingCheckpoint ||
+    turnInProgress;
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -1625,6 +1644,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
           break;
         }
       }
+    }
+    const latestUserEntry = [...timelineEntries]
+      .reverse()
+      .find((entry) => entry.kind === "message" && entry.message.role === "user");
+    if (latestUserEntry && latestUserEntry.kind === "message") {
+      editableIds.add(latestUserEntry.message.id);
     }
     return editableIds;
   }, [timelineEntries, turnDiffSummaryByAssistantMessageId]);
@@ -3970,6 +3995,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [branchedThreadRecords, navigate, routeRootThreadId],
   );
+  const navigateToNewBranchInRoot = useCallback(
+    (nextThreadId: ThreadId) => {
+      void navigate({
+        to: "/$threadId",
+        params: { threadId: routeRootThreadId },
+        search: (previous) => {
+          const rest = stripDiffSearchParams(stripBranchSearchParams(previous));
+          return { ...rest, branchThreadId: nextThreadId };
+        },
+      });
+    },
+    [navigate, routeRootThreadId],
+  );
   const createBranchedThreadFromMessage = useCallback(
     async ({
       sourceThreadId,
@@ -3983,14 +4021,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       messageText?: string;
     }) => {
       const api = readNativeApi();
-      if (
-        !api ||
-        !activeThread ||
-        !activeProject ||
-        !isServerThread ||
-        isWorking ||
-        isCreatingBranch
-      ) {
+      if (!api || !activeThread || !activeProject || !isServerThread || isCreatingBranch) {
         return;
       }
 
@@ -4043,7 +4074,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setVariantSelection(nextRecord.variantGroupId, nextRecord.anchorThreadId, nextRecord.threadId);
         const snapshot = await api.orchestration.getSnapshot();
         syncServerReadModel(snapshot);
-        navigateToVisibleThread(nextThreadId);
+        navigateToNewBranchInRoot(nextThreadId);
       } catch (error) {
         toastManager.add({
           type: "error",
@@ -4065,6 +4096,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       isServerThread,
       isWorking,
       navigateToVisibleThread,
+      navigateToNewBranchInRoot,
       providerOptionsForDispatch,
       routeRootThreadId,
       runtimeMode,
@@ -4088,18 +4120,54 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [editableUserMessageIds, timelineMessageById],
   );
+  const resolveBranchSource = useCallback(
+    (messageId: MessageId) => {
+      const fallbackMessage = timelineMessageById.get(messageId);
+      if (!fallbackMessage) {
+        return null;
+      }
+
+      const variantState = messageVariantStateByMessageId.get(messageId);
+      if (!variantState) {
+        const fallbackThreadId = visibleOriginThreadIdByMessageId.get(messageId);
+        return fallbackThreadId
+          ? { sourceThreadId: fallbackThreadId, sourceMessage: fallbackMessage }
+          : null;
+      }
+
+      const sourceThreadId = variantState.anchorThreadId;
+      const anchorThread = threadById.get(sourceThreadId);
+      if (!anchorThread) {
+        const fallbackThreadId = visibleOriginThreadIdByMessageId.get(messageId);
+        return fallbackThreadId
+          ? { sourceThreadId: fallbackThreadId, sourceMessage: fallbackMessage }
+          : null;
+      }
+
+      const anchorMessageId = parseVariantGroupMessageId(variantState.variantGroupId);
+      const anchorMessage =
+        anchorMessageId
+          ? anchorThread.messages.find((message) => message.id === anchorMessageId) ?? null
+          : null;
+
+      return {
+        sourceThreadId,
+        sourceMessage: anchorMessage ?? fallbackMessage,
+      };
+    },
+    [messageVariantStateByMessageId, threadById, timelineMessageById, visibleOriginThreadIdByMessageId],
+  );
   const onSubmitEditBranch = useCallback(() => {
     if (!editBranchMessageId) {
       return;
     }
-    const message = timelineMessageById.get(editBranchMessageId);
-    const sourceThreadId = visibleOriginThreadIdByMessageId.get(editBranchMessageId);
-    if (!message || message.role !== "user" || !sourceThreadId) {
+    const resolved = resolveBranchSource(editBranchMessageId);
+    if (!resolved || resolved.sourceMessage.role !== "user") {
       return;
     }
     void createBranchedThreadFromMessage({
-      sourceThreadId,
-      sourceMessage: message,
+      sourceThreadId: resolved.sourceThreadId,
+      sourceMessage: resolved.sourceMessage,
       kind: "edit",
       messageText: editBranchText,
     });
@@ -4109,32 +4177,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
     createBranchedThreadFromMessage,
     editBranchMessageId,
     editBranchText,
-    timelineMessageById,
-    visibleOriginThreadIdByMessageId,
+    resolveBranchSource,
   ]);
   const onRetryAssistantMessage = useCallback(
     (messageId: MessageId) => {
-      const message = timelineMessageById.get(messageId);
-      const sourceThreadId = visibleOriginThreadIdByMessageId.get(messageId);
+      const resolved = resolveBranchSource(messageId);
       if (
-        !message ||
-        message.role !== "assistant" ||
+        !resolved ||
+        resolved.sourceMessage.role !== "assistant" ||
         !retryableAssistantMessageIds.has(messageId) ||
-        !sourceThreadId
+        !resolved.sourceThreadId
       ) {
         return;
       }
       void createBranchedThreadFromMessage({
-        sourceThreadId,
-        sourceMessage: message,
+        sourceThreadId: resolved.sourceThreadId,
+        sourceMessage: resolved.sourceMessage,
         kind: "retry",
       });
     },
     [
       createBranchedThreadFromMessage,
+      resolveBranchSource,
       retryableAssistantMessageIds,
-      timelineMessageById,
-      visibleOriginThreadIdByMessageId,
     ],
   );
   const onNavigateMessageVariant = useCallback(
@@ -6469,7 +6534,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                           type="button"
                           size="xs"
                           variant="outline"
-                          disabled={isWorking || isCreatingBranch}
+                          disabled={isCreatingBranch}
                           onClick={() => onEditUserMessage(row.message.id)}
                         >
                           Edit
@@ -6508,7 +6573,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
         (() => {
           const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
           const canRetryMessage =
-            !row.message.streaming && retryableAssistantMessageIds.has(row.message.id);
+            retryableAssistantMessageIds.has(row.message.id) ||
+            row.message.streaming ||
+            row.message.turnId !== null;
           const variantState = messageVariantStateByMessageId.get(row.message.id) ?? null;
           return (
             <>

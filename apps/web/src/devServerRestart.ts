@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { create } from "zustand";
 
 import { toastManager } from "./components/ui/toast";
@@ -111,11 +112,20 @@ if (typeof window !== "undefined") {
 }
 
 export function useDevServerRestart() {
-  return useDevServerRestartStore((state) => ({
-    status: state.status,
-    restart: state.restart,
-    start: state.start,
-    serverVersion: state.serverVersion,
-    lastWelcomeAt: state.lastWelcomeAt,
-  }));
+  const status = useDevServerRestartStore((state) => state.status);
+  const restart = useDevServerRestartStore((state) => state.restart);
+  const start = useDevServerRestartStore((state) => state.start);
+  const serverVersion = useDevServerRestartStore((state) => state.serverVersion);
+  const lastWelcomeAt = useDevServerRestartStore((state) => state.lastWelcomeAt);
+
+  return useMemo(
+    () => ({
+      status,
+      restart,
+      start,
+      serverVersion,
+      lastWelcomeAt,
+    }),
+    [lastWelcomeAt, restart, serverVersion, start, status],
+  );
 }

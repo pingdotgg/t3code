@@ -20,8 +20,6 @@ import { isProjectDescendant, sanitizeProjectParents } from "./sidebarTree";
 
 import { resolveServerHttpOrigin } from "./serverConnection";
 
-import { resolveServerHttpOrigin } from "./serverConnection";
-
 // ── State ────────────────────────────────────────────────────────────
 
 export interface AppState {

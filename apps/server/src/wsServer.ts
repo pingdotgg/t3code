@@ -480,16 +480,45 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       });
     }
 
-    const sourceUserMessage =
+    let sourceUserMessage =
       input.kind === "edit"
         ? sourceMessage.role === "user"
           ? sourceMessage
           : null
-        : sourceMessage.role === "assistant" && sourceMessage.turnId !== null
-          ? sourceThread.messages.find(
-              (message) => message.role === "user" && message.turnId === sourceMessage.turnId,
-            ) ?? null
+        : sourceMessage.role === "assistant"
+          ? (() => {
+              if (sourceMessage.turnId !== null) {
+                return (
+                  sourceThread.messages.find(
+                    (message) => message.role === "user" && message.turnId === sourceMessage.turnId,
+                  ) ?? null
+                );
+              }
+
+              const sourceMessageIndex = sourceThread.messages.findIndex(
+                (message) => message.id === sourceMessage.id,
+              );
+              if (sourceMessageIndex < 0) {
+                return null;
+              }
+              for (let index = sourceMessageIndex - 1; index >= 0; index -= 1) {
+                const previousMessage = sourceThread.messages[index];
+                if (previousMessage?.role === "user") {
+                  return previousMessage;
+                }
+              }
+              return null;
+            })()
           : null;
+    if (!sourceUserMessage && input.kind === "retry") {
+      for (let index = sourceThread.messages.length - 1; index >= 0; index -= 1) {
+        const candidate = sourceThread.messages[index];
+        if (candidate?.role === "user") {
+          sourceUserMessage = candidate;
+          break;
+        }
+      }
+    }
     if (!sourceUserMessage) {
       return yield* new RouteRequestError({
         message:
@@ -499,55 +528,94 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       });
     }
 
-    const targetCheckpoint =
-      input.kind === "edit"
-        ? (() => {
-            const sourceMessageIndex = sourceThread.messages.findIndex(
-              (message) => message.id === sourceMessage.id,
-            );
-            if (sourceMessageIndex < 0) {
-              return null;
-            }
-            for (let index = sourceMessageIndex + 1; index < sourceThread.messages.length; index += 1) {
-              const nextMessage = sourceThread.messages[index];
-              if (!nextMessage) {
-                continue;
-              }
-              if (nextMessage.role === "user") {
-                break;
-              }
-              if (nextMessage.role !== "assistant" || nextMessage.turnId === null) {
-                continue;
-              }
-              const checkpoint = sourceThread.checkpoints.find(
-                (entry) => entry.turnId === nextMessage.turnId,
-              );
-              if (checkpoint) {
-                return checkpoint;
-              }
-            }
-            return null;
-          })()
-        : sourceMessage.turnId !== null
-          ? sourceThread.checkpoints.find((checkpoint) => checkpoint.turnId === sourceMessage.turnId) ?? null
-          : null;
-    if (!targetCheckpoint) {
+    const latestCheckpoint = sourceThread.checkpoints.reduce(
+      (latest, checkpoint) =>
+        !latest || checkpoint.checkpointTurnCount > latest.checkpointTurnCount ? checkpoint : latest,
+      null as (typeof sourceThread.checkpoints)[number] | null,
+    );
+    const latestCheckpointTurnCount = latestCheckpoint?.checkpointTurnCount ?? 0;
+
+    let targetCheckpoint: (typeof sourceThread.checkpoints)[number] | null = null;
+    let rollbackIncludesTarget = true;
+    if (input.kind === "edit") {
+      const sourceMessageIndex = sourceThread.messages.findIndex(
+        (message) => message.id === sourceMessage.id,
+      );
+      if (sourceMessageIndex >= 0) {
+        for (let index = sourceMessageIndex + 1; index < sourceThread.messages.length; index += 1) {
+          const nextMessage = sourceThread.messages[index];
+          if (!nextMessage) {
+            continue;
+          }
+          if (nextMessage.role === "user") {
+            break;
+          }
+          if (nextMessage.role !== "assistant" || nextMessage.turnId === null) {
+            continue;
+          }
+          const checkpoint = sourceThread.checkpoints.find(
+            (entry) => entry.turnId === nextMessage.turnId,
+          );
+          if (checkpoint) {
+            targetCheckpoint = checkpoint;
+            rollbackIncludesTarget = true;
+            break;
+          }
+        }
+      }
+
+      if (!targetCheckpoint && sourceMessageIndex >= 0) {
+        for (let index = sourceMessageIndex - 1; index >= 0; index -= 1) {
+          const previousMessage = sourceThread.messages[index];
+          if (!previousMessage) {
+            continue;
+          }
+          if (previousMessage.role !== "assistant" || previousMessage.turnId === null) {
+            continue;
+          }
+          const checkpoint = sourceThread.checkpoints.find(
+            (entry) => entry.turnId === previousMessage.turnId,
+          );
+          if (checkpoint) {
+            targetCheckpoint = checkpoint;
+            rollbackIncludesTarget = false;
+            break;
+          }
+        }
+      }
+
+      if (!targetCheckpoint && latestCheckpoint) {
+        targetCheckpoint = latestCheckpoint;
+        rollbackIncludesTarget = false;
+      }
+    } else {
+      if (sourceMessage.turnId !== null) {
+        targetCheckpoint =
+          sourceThread.checkpoints.find((checkpoint) => checkpoint.turnId === sourceMessage.turnId) ??
+          null;
+        rollbackIncludesTarget = Boolean(targetCheckpoint);
+      }
+
+      if (!targetCheckpoint && latestCheckpoint) {
+        targetCheckpoint = latestCheckpoint;
+        rollbackIncludesTarget = false;
+      }
+    }
+
+    if (!targetCheckpoint && input.kind !== "edit") {
       return yield* new RouteRequestError({
-        message:
-          input.kind === "edit"
-            ? "The selected message does not have a completed response to branch from yet."
-            : "The selected message does not have a checkpoint to branch from yet.",
+        message: "The selected message does not have a checkpoint to branch from yet.",
       });
     }
 
-    const latestCheckpointTurnCount = sourceThread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
-    const turnsToRollback = Math.max(
-      0,
-      latestCheckpointTurnCount - targetCheckpoint.checkpointTurnCount + 1,
-    );
+    const turnsToRollback = targetCheckpoint
+      ? Math.max(
+          0,
+          latestCheckpointTurnCount -
+            targetCheckpoint.checkpointTurnCount +
+            (rollbackIncludesTarget ? 1 : 0),
+        )
+      : 0;
     const nextMessageText =
       input.kind === "edit" ? (input.messageText ?? sourceUserMessage.text) : sourceUserMessage.text;
     if (nextMessageText.length === 0 && (sourceUserMessage.attachments?.length ?? 0) === 0) {
