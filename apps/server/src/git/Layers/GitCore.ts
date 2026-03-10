@@ -565,9 +565,13 @@ const makeGitCore = Effect.gen(function* () {
           continue;
         }
 
+        const remotePrefix =
+          primaryRemoteName && primaryRemoteName !== "origin" ? `${primaryRemoteName}/` : null;
         const normalizedCandidate = candidate.startsWith("origin/")
           ? candidate.slice("origin/".length)
-          : candidate;
+          : remotePrefix && candidate.startsWith(remotePrefix)
+            ? candidate.slice(remotePrefix.length)
+            : candidate;
         if (normalizedCandidate.length === 0 || normalizedCandidate === branch) {
           continue;
         }
@@ -576,7 +580,10 @@ const makeGitCore = Effect.gen(function* () {
           return normalizedCandidate;
         }
 
-        if (primaryRemoteName && (yield* remoteBranchExists(cwd, primaryRemoteName, normalizedCandidate))) {
+        if (
+          primaryRemoteName &&
+          (yield* remoteBranchExists(cwd, primaryRemoteName, normalizedCandidate))
+        ) {
           return `${primaryRemoteName}/${normalizedCandidate}`;
         }
       }

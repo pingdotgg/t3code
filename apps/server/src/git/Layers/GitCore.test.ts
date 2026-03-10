@@ -1406,6 +1406,44 @@ it.layer(TestLayer)("git integration", (it) => {
         }),
     );
 
+    it.effect(
+      "computes ahead count against a non-origin remote-prefixed gh-merge-base candidate",
+      () =>
+        Effect.gen(function* () {
+          const remote = yield* makeTmpDir();
+          const source = yield* makeTmpDir();
+          const remoteName = "fork-seed";
+          yield* git(remote, ["init", "--bare"]);
+
+          yield* initRepoWithCommit(source);
+          const initialBranch = (yield* listGitBranches({ cwd: source })).branches.find(
+            (branch) => branch.current,
+          )!.name;
+          yield* git(source, ["remote", "add", remoteName, remote]);
+          yield* git(source, ["push", "-u", remoteName, initialBranch]);
+          yield* git(source, ["checkout", "-b", "feature/non-origin-merge-base"]);
+          yield* git(source, [
+            "config",
+            "branch.feature/non-origin-merge-base.gh-merge-base",
+            `${remoteName}/${initialBranch}`,
+          ]);
+          yield* writeTextFile(
+            path.join(source, "feature.txt"),
+            `ahead of ${remoteName}/${initialBranch}\n`,
+          );
+          yield* git(source, ["add", "feature.txt"]);
+          yield* git(source, ["commit", "-m", "feature commit"]);
+          yield* git(source, ["branch", "-D", initialBranch]);
+
+          const core = yield* GitCore;
+          const details = yield* core.statusDetails(source);
+          expect(details.branch).toBe("feature/non-origin-merge-base");
+          expect(details.hasUpstream).toBe(false);
+          expect(details.aheadCount).toBe(1);
+          expect(details.behindCount).toBe(0);
+        }),
+    );
+
     it.effect("skips push when no upstream is configured and branch is not ahead of base", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

@@ -463,11 +463,17 @@ export const makeGitManager = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const remoteName = yield* readConfigValueNullable(cwd, `branch.${details.branch}.remote`);
-      const headBranchFromUpstream = details.upstreamRef ? extractBranchFromRef(details.upstreamRef) : "";
-      const headBranch = headBranchFromUpstream.length > 0 ? headBranchFromUpstream : details.branch;
+      const headBranchFromUpstream = details.upstreamRef
+        ? extractBranchFromRef(details.upstreamRef)
+        : "";
+      const headBranch =
+        headBranchFromUpstream.length > 0 ? headBranchFromUpstream : details.branch;
 
       const [remoteRepository, originRepository] = yield* Effect.all(
-        [resolveRemoteRepositoryContext(cwd, remoteName), resolveRemoteRepositoryContext(cwd, "origin")],
+        [
+          resolveRemoteRepositoryContext(cwd, remoteName),
+          resolveRemoteRepositoryContext(cwd, "origin"),
+        ],
         { concurrency: "unbounded" },
       );
 
@@ -486,18 +492,26 @@ export const makeGitManager = Effect.gen(function* () {
           : null;
       const remoteAliasHeadSelector =
         remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
-      const shouldProbeRemoteOwnedSelectors = isCrossRepository || (remoteName !== null && remoteName !== "origin");
+      const shouldProbeRemoteOwnedSelectors =
+        isCrossRepository || (remoteName !== null && remoteName !== "origin");
 
       const headSelectors: string[] = [];
+      if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {
+        appendUnique(headSelectors, ownerHeadSelector);
+        appendUnique(
+          headSelectors,
+          remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
+        );
+      }
       appendUnique(headSelectors, details.branch);
       appendUnique(headSelectors, headBranch !== details.branch ? headBranch : null);
-      appendUnique(headSelectors, shouldProbeRemoteOwnedSelectors ? ownerHeadSelector : null);
-      appendUnique(
-        headSelectors,
-        shouldProbeRemoteOwnedSelectors && remoteAliasHeadSelector !== ownerHeadSelector
-          ? remoteAliasHeadSelector
-          : null,
-      );
+      if (!isCrossRepository && shouldProbeRemoteOwnedSelectors) {
+        appendUnique(headSelectors, ownerHeadSelector);
+        appendUnique(
+          headSelectors,
+          remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
+        );
+      }
 
       return {
         localBranch: details.branch,
