@@ -12,6 +12,7 @@ import {
 } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { Button } from "./ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 
 interface BranchToolbarProps {
   threadId: ThreadId;
@@ -103,10 +104,29 @@ export default function BranchToolbar({
   return (
     <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-5 pb-3 pt-1">
       <div className="flex items-center gap-2">
-        {envLocked || activeWorktreePath ? (
+        {activeWorktreePath ? (
           <span className="border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
-            {activeWorktreePath ? "Worktree" : "Local"}
+            Worktree
           </span>
+        ) : envLocked ? (
+          <Popover>
+            <PopoverTrigger
+              openOnHover
+              render={
+                <Button
+                  aria-disabled="true"
+                  variant="ghost"
+                  className="cursor-not-allowed text-muted-foreground/70 opacity-64"
+                  size="xs"
+                />
+              }
+            >
+              Local
+            </PopoverTrigger>
+            <PopoverPopup tooltipStyle side="bottom" align="start">
+              Start a new thread to use worktrees
+            </PopoverPopup>
+          </Popover>
         ) : (
           <Button
             type="button"
