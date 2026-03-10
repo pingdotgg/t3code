@@ -158,6 +158,8 @@ function parseGitLabMrList(raw: string): ReadonlyArray<PullRequestSummary> {
       baseRefName: r.target_branch,
       headRefName: r.source_branch,
       state: normalizeGitLabState(r.state as string | null | undefined),
+      updatedAt:
+        typeof r.updated_at === "string" && r.updated_at.length > 0 ? r.updated_at : null,
       isCrossRepository,
     });
   }
@@ -191,6 +193,19 @@ function parseGitLabMrView(raw: string): PullRequestSummary {
     state: normalizeGitLabState(parsed.state as string | null | undefined),
     isCrossRepository,
   };
+}
+
+function resolveGlabStateArgs(state: "open" | "closed" | "merged" | "all"): string[] {
+  switch (state) {
+    case "all":
+      return ["--all"];
+    case "closed":
+      return ["--closed"];
+    case "merged":
+      return ["--merged"];
+    case "open":
+      return [];
+  }
 }
 
 // ── Dispatcher ────────────────────────────────────────────────────────
@@ -244,6 +259,49 @@ const makeGitHostingCliDispatcher = Effect.gen(function* () {
             catch: (error: unknown) =>
               new GitHostingCliError({
                 operation: "listOpenPullRequests",
+                detail:
+                  error instanceof Error
+                    ? `GitLab CLI returned invalid MR list JSON: ${error.message}`
+                    : "GitLab CLI returned invalid MR list JSON.",
+                ...(error !== undefined ? { cause: error } : {}),
+              }),
+          }),
+        ),
+      );
+    },
+
+    listPullRequests: (input) => {
+      const provider = detectHostingProvider(input.cwd);
+      if (provider === "github") {
+        return gitHubCli.listPullRequests(input);
+      }
+      const stateArgs = resolveGlabStateArgs(input.state);
+      return Effect.tryPromise({
+        try: () =>
+          runProcess(
+            "glab",
+            [
+              "mr",
+              "list",
+              "--source-branch",
+              input.headSelector,
+              ...stateArgs,
+              "--per-page",
+              String(input.limit ?? 20),
+              "--output",
+              "json",
+            ],
+            { cwd: input.cwd, timeoutMs: DEFAULT_TIMEOUT_MS },
+          ),
+        catch: (error) => normalizeGitLabError("listPullRequests", error),
+      }).pipe(
+        Effect.map((result) => result.stdout),
+        Effect.flatMap((raw) =>
+          Effect.try({
+            try: () => parseGitLabMrList(raw),
+            catch: (error: unknown) =>
+              new GitHostingCliError({
+                operation: "listPullRequests",
                 detail:
                   error instanceof Error
                     ? `GitLab CLI returned invalid MR list JSON: ${error.message}`
