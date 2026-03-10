@@ -245,8 +245,8 @@ const make = Effect.gen(function* () {
           status: mapProviderSessionStatusToOrchestrationStatus(session.status),
           providerName: session.provider,
           runtimeMode: desiredRuntimeMode,
-          // Provider turn ids are not orchestration turn ids.
-          activeTurnId: null,
+          // This remains provider-scoped runtime state used for projection and interrupt routing.
+          activeTurnId: session.activeTurnId ?? null,
           lastError: session.lastError ?? null,
           updatedAt: session.updatedAt,
         },

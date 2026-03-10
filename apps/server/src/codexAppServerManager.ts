@@ -134,6 +134,20 @@ export interface CodexAppServerStartSessionInput {
   readonly runtimeMode: RuntimeMode;
 }
 
+export interface CodexAppServerRecoverSessionInput {
+  readonly threadId: ThreadId;
+  readonly provider?: "codex";
+  readonly cwd?: string;
+  readonly model?: string;
+  readonly serviceTier?: string;
+  readonly resumeCursor: unknown;
+  readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
+  readonly runtimeMode: RuntimeMode;
+  readonly recoveredTurn?: {
+    readonly activeTurnId?: TurnId;
+  };
+}
+
 export interface CodexThreadTurnSnapshot {
   id: TurnId;
   items: unknown[];
@@ -522,6 +536,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
+    return this.openSession(input);
+  }
+
+  async recoverSession(input: CodexAppServerRecoverSessionInput): Promise<ProviderSession> {
+    return this.openSession(input);
+  }
+
+  private async openSession(
+    input: CodexAppServerStartSessionInput | CodexAppServerRecoverSessionInput,
+  ): Promise<ProviderSession> {
     const threadId = input.threadId;
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
@@ -548,14 +572,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
-      const child = spawn(codexBinaryPath, ["app-server"], {
+      const child = this.spawnCodexAppServerProcess({
+        binaryPath: codexBinaryPath,
         cwd: resolvedCwd,
-        env: {
-          ...process.env,
-          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
-        },
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: process.platform === "win32",
+        ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
       const output = readline.createInterface({ input: child.stdout });
 
@@ -688,8 +708,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       }
       const providerThreadId = threadIdRaw;
 
+      const restoredActiveTurnId =
+        threadOpenMethod === "thread/resume" && "recoveredTurn" in input
+          ? input.recoveredTurn?.activeTurnId
+          : undefined;
       this.updateSession(context, {
-        status: "ready",
+        status: restoredActiveTurnId !== undefined ? "running" : "ready",
+        activeTurnId: restoredActiveTurnId,
         resumeCursor: { threadId: providerThreadId },
       });
       this.emitLifecycleEvent(
@@ -1122,6 +1147,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     notification: JsonRpcNotification,
   ): void {
     const route = this.readRouteFields(notification.params);
+    this.maybeAdoptActiveTurnIdFromRoute(context, notification.method, route);
     const textDelta =
       notification.method === "item/agentMessage/delta"
         ? this.readString(notification.params, "delta")
@@ -1184,6 +1210,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   private handleServerRequest(context: CodexSessionContext, request: JsonRpcRequest): void {
     const route = this.readRouteFields(request.params);
+    this.maybeAdoptActiveTurnIdFromRoute(context, request.method, route);
     const requestKind = this.requestKindForMethod(request.method);
     let requestId: ApprovalRequestId | undefined;
     if (requestKind) {
@@ -1341,12 +1368,70 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     assertSupportedCodexCliVersion(input);
   }
 
+  private spawnCodexAppServerProcess(input: {
+    readonly binaryPath: string;
+    readonly cwd: string;
+    readonly homePath?: string;
+  }): ChildProcessWithoutNullStreams {
+    return spawn(input.binaryPath, ["app-server"], {
+      cwd: input.cwd,
+      env: {
+        ...process.env,
+        ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    });
+  }
+
   private updateSession(context: CodexSessionContext, updates: Partial<ProviderSession>): void {
     context.session = {
       ...context.session,
       ...updates,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  private shouldAdoptActiveTurnIdFromRouteMethod(method: string): boolean {
+    switch (method) {
+      case "item/agentMessage/delta":
+      case "item/reasoning/textDelta":
+      case "item/reasoning/summaryTextDelta":
+      case "item/commandExecution/outputDelta":
+      case "item/fileChange/outputDelta":
+      case "item/tool/requestUserInput":
+      case "item/commandExecution/requestApproval":
+      case "item/fileRead/requestApproval":
+      case "item/fileChange/requestApproval":
+      case "item/started":
+      case "item/completed":
+      case "turn/plan/updated":
+      case "turn/diff/updated":
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private maybeAdoptActiveTurnIdFromRoute(
+    context: CodexSessionContext,
+    method: string,
+    route: { turnId?: TurnId },
+  ): void {
+    if (context.session.activeTurnId !== undefined) {
+      return;
+    }
+    if (route.turnId === undefined) {
+      return;
+    }
+    if (!this.shouldAdoptActiveTurnIdFromRouteMethod(method)) {
+      return;
+    }
+
+    this.updateSession(context, {
+      status: "running",
+      activeTurnId: route.turnId,
+    });
   }
 
   private requestKindForMethod(method: string): ProviderRequestKind | undefined {
@@ -1507,7 +1592,9 @@ function normalizeProviderThreadId(value: string | undefined): string | undefine
   return brandIfNonEmpty(value, (normalized) => normalized);
 }
 
-function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
+function readCodexProviderOptions(input: {
+  readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
+}): {
   readonly binaryPath?: string;
   readonly homePath?: string;
 } {
@@ -1574,7 +1661,11 @@ function readResumeCursorThreadId(resumeCursor: unknown): string | undefined {
   return typeof rawThreadId === "string" ? normalizeProviderThreadId(rawThreadId) : undefined;
 }
 
-function readResumeThreadId(input: CodexAppServerStartSessionInput): string | undefined {
+function readResumeThreadId(input: {
+  readonly threadId?: ThreadId;
+  readonly runtimeMode?: RuntimeMode;
+  readonly resumeCursor?: unknown;
+}): string | undefined {
   return readResumeCursorThreadId(input.resumeCursor);
 }
 

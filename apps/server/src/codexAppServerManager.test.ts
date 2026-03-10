@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { PassThrough } from "node:stream";
 import os from "node:os";
 import path from "node:path";
-import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, ThreadId, TurnId } from "@t3tools/contracts";
 
 import {
   buildCodexInitializeParams,
@@ -18,6 +20,96 @@ import {
 } from "./codexAppServerManager";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
+
+class FakeChildProcess extends EventEmitter {
+  readonly stdin = new PassThrough();
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  readonly pid = 12345;
+
+  kill() {
+    return true;
+  }
+}
+
+function createStartSessionHarness(options?: {
+  readonly sendRequestImpl?: (method: string, params: unknown) => unknown;
+}) {
+  const manager = new CodexAppServerManager();
+  const child = new FakeChildProcess();
+  const spawnSpy = vi
+    .spyOn(
+      manager as unknown as {
+        spawnCodexAppServerProcess: (input: {
+          binaryPath: string;
+          cwd: string;
+          homePath?: string;
+        }) => FakeChildProcess;
+      },
+      "spawnCodexAppServerProcess",
+    )
+    .mockReturnValue(child);
+  const assertSupportedCodexCliVersion = vi
+    .spyOn(
+      manager as unknown as {
+        assertSupportedCodexCliVersion: (input: {
+          binaryPath: string;
+          cwd: string;
+          homePath?: string;
+        }) => void;
+      },
+      "assertSupportedCodexCliVersion",
+    )
+    .mockImplementation(() => {});
+  const sendRequest = vi
+    .spyOn(
+      manager as unknown as {
+        sendRequest: (
+          context: unknown,
+          method: string,
+          params: unknown,
+          timeoutMs?: number,
+        ) => Promise<unknown>;
+      },
+      "sendRequest",
+    )
+    .mockImplementation(async (_context, method, params) => {
+      if (options?.sendRequestImpl) {
+        return options.sendRequestImpl(method, params);
+      }
+      switch (method) {
+        case "initialize":
+          return {};
+        case "model/list":
+          return {};
+        case "account/read":
+          return {};
+        case "thread/start":
+          return {
+            thread: {
+              id: "provider-thread-1",
+            },
+          };
+        case "thread/resume":
+          return {
+            thread: {
+              id: "provider-thread-1",
+            },
+          };
+        default:
+          throw new Error(`Unexpected method: ${method}`);
+      }
+    });
+
+  return {
+    manager,
+    child,
+    spawnSpy,
+    assertSupportedCodexCliVersion,
+    sendRequest,
+  };
+}
 
 function createSendTurnHarness() {
   const manager = new CodexAppServerManager();
@@ -367,6 +459,86 @@ describe("startSession", () => {
     } finally {
       versionCheck.mockRestore();
       manager.stopAll();
+    }
+  });
+
+  it("returns a recovered session in running state when recovered turn metadata is present", async () => {
+    const { manager, spawnSpy, assertSupportedCodexCliVersion, sendRequest } =
+      createStartSessionHarness();
+
+    try {
+      const session = await manager.recoverSession({
+        threadId: asThreadId("thread-resume-running"),
+        provider: "codex",
+        runtimeMode: "full-access",
+        resumeCursor: { threadId: "provider-thread-1" },
+        recoveredTurn: {
+          activeTurnId: asTurnId("turn-resume-running"),
+        },
+      });
+
+      expect(spawnSpy).toHaveBeenCalledTimes(1);
+      expect(assertSupportedCodexCliVersion).toHaveBeenCalledTimes(1);
+      expect(sendRequest).toHaveBeenCalledWith(
+        expect.anything(),
+        "thread/resume",
+        expect.objectContaining({
+          threadId: "provider-thread-1",
+        }),
+      );
+      expect(session.status).toBe("running");
+      expect(session.activeTurnId).toBe("turn-resume-running");
+      expect(session.resumeCursor).toEqual({ threadId: "provider-thread-1" });
+    } finally {
+      manager.stopAll();
+      spawnSpy.mockRestore();
+      assertSupportedCodexCliVersion.mockRestore();
+      sendRequest.mockRestore();
+    }
+  });
+
+  it("drops recovered turn state when resume falls back to a fresh thread start", async () => {
+    const { manager, spawnSpy, assertSupportedCodexCliVersion, sendRequest } =
+      createStartSessionHarness({
+        sendRequestImpl: (method) => {
+          switch (method) {
+            case "initialize":
+            case "model/list":
+            case "account/read":
+              return {};
+            case "thread/resume":
+              throw new Error("thread/resume failed: thread not found");
+            case "thread/start":
+              return {
+                thread: {
+                  id: "provider-thread-fresh",
+                },
+              };
+            default:
+              throw new Error(`Unexpected method: ${method}`);
+          }
+        },
+      });
+
+    try {
+      const session = await manager.recoverSession({
+        threadId: asThreadId("thread-resume-fallback"),
+        provider: "codex",
+        runtimeMode: "full-access",
+        resumeCursor: { threadId: "provider-thread-stale" },
+        recoveredTurn: {
+          activeTurnId: asTurnId("turn-stale"),
+        },
+      });
+
+      expect(session.status).toBe("ready");
+      expect(session.activeTurnId).toBeUndefined();
+      expect(session.resumeCursor).toEqual({ threadId: "provider-thread-fresh" });
+    } finally {
+      manager.stopAll();
+      spawnSpy.mockRestore();
+      assertSupportedCodexCliVersion.mockRestore();
+      sendRequest.mockRestore();
     }
   });
 });
@@ -745,6 +917,175 @@ describe("respondToUserInput", () => {
     const request = Array.from(context.pendingApprovals.values())[0];
     expect(request?.requestKind).toBe("file-read");
     expect(request?.method).toBe("item/fileRead/requestApproval");
+  });
+});
+
+describe("runtime turn adoption", () => {
+  it("adopts route.turnId from turn-scoped notifications when no active turn is tracked", () => {
+    const manager = new CodexAppServerManager();
+    type NotificationContext = {
+      session: {
+        provider: "codex";
+        status: "ready";
+        threadId: ThreadId;
+        runtimeMode: "full-access";
+        resumeCursor: { threadId: string };
+        activeTurnId: TurnId | undefined;
+        createdAt: string;
+        updatedAt: string;
+      };
+    };
+    const context = {
+      session: {
+        provider: "codex" as const,
+        status: "ready" as const,
+        threadId: asThreadId("thread_1"),
+        runtimeMode: "full-access" as const,
+        resumeCursor: { threadId: "thread_1" },
+        activeTurnId: undefined as TurnId | undefined,
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+    };
+
+    (
+      manager as unknown as {
+        handleServerNotification: (
+          context: NotificationContext,
+          notification: { method: string; params?: unknown },
+        ) => void;
+      }
+    ).handleServerNotification(context, {
+      method: "item/agentMessage/delta",
+      params: {
+        turnId: "turn-adopted-notification",
+        delta: "hi",
+      },
+    });
+
+    expect(context.session.status).toBe("running");
+    expect(context.session.activeTurnId).toBe("turn-adopted-notification");
+  });
+
+  it("adopts route.turnId from turn-scoped server requests when no active turn is tracked", () => {
+    const manager = new CodexAppServerManager();
+    type RequestContext = {
+      session: {
+        provider: "codex";
+        status: "ready";
+        threadId: ThreadId;
+        runtimeMode: "full-access";
+        resumeCursor: { threadId: string };
+        activeTurnId: TurnId | undefined;
+        createdAt: string;
+        updatedAt: string;
+      };
+      pendingApprovals: Map<unknown, unknown>;
+      pendingUserInputs: Map<unknown, unknown>;
+    };
+    const context = {
+      session: {
+        provider: "codex" as const,
+        status: "ready" as const,
+        threadId: asThreadId("thread_1"),
+        runtimeMode: "full-access" as const,
+        resumeCursor: { threadId: "thread_1" },
+        activeTurnId: undefined as TurnId | undefined,
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+    };
+
+    (
+      manager as unknown as {
+        handleServerRequest: (
+          context: RequestContext,
+          request: { id: number; method: string; params?: unknown },
+        ) => void;
+      }
+    ).handleServerRequest(context, {
+      id: 42,
+      method: "item/tool/requestUserInput",
+      params: {
+        turnId: "turn-adopted-request",
+      },
+    });
+
+    expect(context.session.status).toBe("running");
+    expect(context.session.activeTurnId).toBe("turn-adopted-request");
+  });
+
+  it("does not re-enter running state for terminal lifecycle methods", () => {
+    const manager = new CodexAppServerManager();
+    type NotificationContext = {
+      session: {
+        provider: "codex";
+        status: "ready";
+        threadId: ThreadId;
+        runtimeMode: "full-access";
+        resumeCursor: { threadId: string };
+        activeTurnId: TurnId | undefined;
+        createdAt: string;
+        updatedAt: string;
+      };
+    };
+    const context = {
+      session: {
+        provider: "codex" as const,
+        status: "ready" as const,
+        threadId: asThreadId("thread_1"),
+        runtimeMode: "full-access" as const,
+        resumeCursor: { threadId: "thread_1" },
+        activeTurnId: undefined as TurnId | undefined,
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+    };
+
+    const handleServerNotification = (
+      manager as unknown as {
+        handleServerNotification: (
+          context: NotificationContext,
+          notification: { method: string; params?: unknown },
+        ) => void;
+      }
+    ).handleServerNotification.bind(manager);
+
+    handleServerNotification(context, {
+      method: "turn/completed",
+      params: {
+        turn: {
+          id: "turn-terminal",
+          status: "completed",
+        },
+      },
+    });
+    expect(context.session.status).toBe("ready");
+    expect(context.session.activeTurnId).toBeUndefined();
+
+    handleServerNotification(context, {
+      method: "turn/aborted",
+      params: {
+        turnId: "turn-terminal",
+      },
+    });
+    handleServerNotification(context, {
+      method: "session/closed",
+      params: {
+        turnId: "turn-terminal",
+      },
+    });
+    handleServerNotification(context, {
+      method: "session/exited",
+      params: {
+        turnId: "turn-terminal",
+      },
+    });
+
+    expect(context.session.status).toBe("ready");
+    expect(context.session.activeTurnId).toBeUndefined();
   });
 });
 

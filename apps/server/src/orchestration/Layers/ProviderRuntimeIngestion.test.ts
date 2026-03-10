@@ -254,6 +254,94 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("keeps a recovered running session active while post-resume deltas stream, then settles ready on completion", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-set-recovered-running"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-recovered"),
+          updatedAt: now,
+          lastError: null,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-recovered",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-recovered-delta-1"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-recovered"),
+      itemId: asItemId("item-recovered"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "recover",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-recovered-item-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-recovered"),
+      itemId: asItemId("item-recovered"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const midThread = await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-recovered" &&
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-recovered" && message.text === "recover",
+        ),
+    );
+    expect(midThread.session?.status).toBe("running");
+    expect(midThread.session?.activeTurnId).toBe("turn-recovered");
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-recovered-turn-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-recovered"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const finalThread = await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
+    expect(finalThread.session?.status).toBe("ready");
+    expect(finalThread.session?.activeTurnId).toBeNull();
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = new Date().toISOString();

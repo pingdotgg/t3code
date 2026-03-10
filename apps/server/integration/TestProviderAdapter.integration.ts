@@ -477,6 +477,16 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         sessionModelSwitch: "in-session",
       },
       startSession,
+      recoverSession: (input) =>
+        startSession({
+          threadId: input.threadId,
+          provider: input.provider,
+          ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+          ...(input.model !== undefined ? { model: input.model } : {}),
+          resumeCursor: input.resumeCursor,
+          runtimeMode: input.runtimeMode,
+          ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
+        }),
       sendTurn,
       interruptTurn,
       respondToRequest,

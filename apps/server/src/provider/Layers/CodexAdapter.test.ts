@@ -18,6 +18,7 @@ import { Effect, Fiber, Layer, Option, Stream } from "effect";
 
 import {
   CodexAppServerManager,
+  type CodexAppServerRecoverSessionInput,
   type CodexAppServerStartSessionInput,
   type CodexAppServerSendTurnInput,
 } from "../../codexAppServerManager.ts";
@@ -52,6 +53,24 @@ class FakeCodexManager extends CodexAppServerManager {
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-1"),
     }),
+  );
+
+  public recoverSessionImpl = vi.fn(
+    async (input: CodexAppServerRecoverSessionInput): Promise<ProviderSession> => {
+      const now = new Date().toISOString();
+      return {
+        provider: "codex",
+        status: input.recoveredTurn?.activeTurnId ? "running" : "ready",
+        runtimeMode: input.runtimeMode,
+        threadId: input.threadId,
+        cwd: input.cwd,
+        ...(input.recoveredTurn?.activeTurnId !== undefined
+          ? { activeTurnId: input.recoveredTurn.activeTurnId }
+          : {}),
+        createdAt: now,
+        updatedAt: now,
+      };
+    },
   );
 
   public interruptTurnImpl = vi.fn(
@@ -92,6 +111,10 @@ class FakeCodexManager extends CodexAppServerManager {
 
   override sendTurn(input: CodexAppServerSendTurnInput): Promise<ProviderTurnStartResult> {
     return this.sendTurnImpl(input);
+  }
+
+  override recoverSession(input: CodexAppServerRecoverSessionInput): Promise<ProviderSession> {
+    return this.recoverSessionImpl(input);
   }
 
   override interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void> {
@@ -178,6 +201,33 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         model: "gpt-5.3-codex",
         serviceTier: "fast",
+        runtimeMode: "full-access",
+      });
+    }),
+  );
+
+  it.effect("forwards recovered turn state unchanged when recovering a session", () =>
+    Effect.gen(function* () {
+      validationManager.recoverSessionImpl.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.recoverSession({
+        provider: "codex",
+        threadId: asThreadId("thread-resume"),
+        resumeCursor: { threadId: "provider-thread-1" },
+        recoveredTurn: {
+          activeTurnId: asTurnId("turn-resume"),
+        },
+        runtimeMode: "full-access",
+      });
+
+      assert.deepStrictEqual(validationManager.recoverSessionImpl.mock.calls[0]?.[0], {
+        provider: "codex",
+        threadId: asThreadId("thread-resume"),
+        resumeCursor: { threadId: "provider-thread-1" },
+        recoveredTurn: {
+          activeTurnId: asTurnId("turn-resume"),
+        },
         runtimeMode: "full-access",
       });
     }),

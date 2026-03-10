@@ -33,6 +33,7 @@ import {
 import { CodexAdapter, type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import {
   CodexAppServerManager,
+  type CodexAppServerRecoverSessionInput,
   type CodexAppServerStartSessionInput,
 } from "../../codexAppServerManager.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -1321,6 +1322,40 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
       }).pipe(Effect.map((session) => session));
     };
 
+    const recoverSession: CodexAdapterShape["recoverSession"] = (input) => {
+      if (input.provider !== PROVIDER) {
+        return Effect.fail(
+          new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "recoverSession",
+            issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+          }),
+        );
+      }
+
+      const managerInput: CodexAppServerRecoverSessionInput = {
+        threadId: input.threadId,
+        provider: "codex",
+        resumeCursor: input.resumeCursor,
+        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+        ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
+        ...(input.recoveredTurn !== undefined ? { recoveredTurn: input.recoveredTurn } : {}),
+        runtimeMode: input.runtimeMode,
+        ...(input.model !== undefined ? { model: input.model } : {}),
+      };
+
+      return Effect.tryPromise({
+        try: () => manager.recoverSession(managerInput),
+        catch: (cause) =>
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+            detail: toMessage(cause, "Failed to recover Codex adapter session."),
+            cause,
+          }),
+      }).pipe(Effect.map((session) => session));
+    };
+
     const sendTurn: CodexAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const codexAttachments = yield* Effect.forEach(
@@ -1504,6 +1539,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         sessionModelSwitch: "in-session",
       },
       startSession,
+      recoverSession,
       sendTurn,
       interruptTurn,
       readThread,

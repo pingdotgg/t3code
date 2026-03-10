@@ -7,6 +7,7 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderStartOptions,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import {
@@ -82,6 +83,38 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
       sessions.set(session.threadId, session);
       return session;
     }),
+  );
+
+  const recoverSession = vi.fn(
+    (input: {
+      threadId: ThreadId;
+      provider: ProviderKind;
+      runtimeMode: "approval-required" | "full-access";
+      resumeCursor: unknown;
+      cwd?: string;
+      model?: string;
+      providerOptions?: ProviderStartOptions;
+      recoveredTurn?: { activeTurnId?: TurnId };
+    }) =>
+      Effect.sync(() => {
+        const now = new Date().toISOString();
+        const session: ProviderSession = {
+          provider,
+          status: input.recoveredTurn?.activeTurnId ? "running" : "ready",
+          runtimeMode: input.runtimeMode,
+          threadId: input.threadId,
+          resumeCursor: input.resumeCursor,
+          cwd: input.cwd ?? process.cwd(),
+          ...(input.model !== undefined ? { model: input.model } : {}),
+          ...(input.recoveredTurn?.activeTurnId !== undefined
+            ? { activeTurnId: input.recoveredTurn.activeTurnId }
+            : {}),
+          createdAt: now,
+          updatedAt: now,
+        };
+        sessions.set(session.threadId, session);
+        return session;
+      }),
   );
 
   const sendTurn = vi.fn(
@@ -178,6 +211,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
       sessionModelSwitch: "in-session",
     },
     startSession,
+    recoverSession,
     sendTurn,
     interruptTurn,
     respondToRequest,
@@ -199,6 +233,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     adapter,
     emit,
     startSession,
+    recoverSession,
     sendTurn,
     interruptTurn,
     respondToRequest,
@@ -214,6 +249,24 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
 
 const sleep = (ms: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+
+const waitForRuntimeStatus = (
+  repository: typeof ProviderSessionRuntimeRepository.Service,
+  threadId: ThreadId,
+  status: "ready" | "running" | "stopped" | "error",
+) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const runtime = yield* repository.getByThreadId({ threadId });
+      if (Option.isSome(runtime) && runtime.value.status === status) {
+        return runtime.value;
+      }
+      yield* sleep(10);
+    }
+
+    const runtime = yield* repository.getByThreadId({ threadId });
+    return Option.getOrUndefined(runtime);
+  });
 
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
@@ -383,7 +436,7 @@ it.effect(
         Layer.provide(AnalyticsService.layerTest),
       );
 
-      secondCodex.startSession.mockClear();
+      secondCodex.recoverSession.mockClear();
       secondCodex.rollbackThread.mockClear();
 
       yield* Effect.gen(function* () {
@@ -394,8 +447,8 @@ it.effect(
         });
       }).pipe(Effect.provide(secondProviderLayer));
 
-      assert.equal(secondCodex.startSession.mock.calls.length, 1);
-      const resumedStartInput = secondCodex.startSession.mock.calls[0]?.[0];
+      assert.equal(secondCodex.recoverSession.mock.calls.length, 1);
+      const resumedStartInput = secondCodex.recoverSession.mock.calls[0]?.[0];
       assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
       if (resumedStartInput && typeof resumedStartInput === "object") {
         const startPayload = resumedStartInput as {
@@ -504,7 +557,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         runtimeMode: "full-access",
       });
       yield* routing.codex.stopSession(initial.threadId);
-      routing.codex.startSession.mockClear();
+      routing.codex.recoverSession.mockClear();
       routing.codex.rollbackThread.mockClear();
 
       yield* provider.rollbackConversation({
@@ -512,8 +565,8 @@ routing.layer("ProviderServiceLive routing", (it) => {
         numTurns: 1,
       });
 
-      assert.equal(routing.codex.startSession.mock.calls.length, 1);
-      const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(routing.codex.recoverSession.mock.calls.length, 1);
+      const resumedStartInput = routing.codex.recoverSession.mock.calls[0]?.[0];
       assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
       if (resumedStartInput && typeof resumedStartInput === "object") {
         const startPayload = resumedStartInput as {
@@ -545,7 +598,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
 
       yield* routing.codex.stopAll();
-      routing.codex.startSession.mockClear();
+      routing.codex.recoverSession.mockClear();
       routing.codex.sendTurn.mockClear();
 
       yield* provider.sendTurn({
@@ -554,8 +607,8 @@ routing.layer("ProviderServiceLive routing", (it) => {
         attachments: [],
       });
 
-      assert.equal(routing.codex.startSession.mock.calls.length, 1);
-      const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(routing.codex.recoverSession.mock.calls.length, 1);
+      const resumedStartInput = routing.codex.recoverSession.mock.calls[0]?.[0];
       assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
       if (resumedStartInput && typeof resumedStartInput === "object") {
         const startPayload = resumedStartInput as {
@@ -570,6 +623,86 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.threadId, initial.threadId);
       }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("passes recovered turn state with persisted activeTurnId during recovery", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const initial = yield* provider.startSession(asThreadId("thread-running-hint"), {
+        provider: "codex",
+        threadId: asThreadId("thread-running-hint"),
+        cwd: "/tmp/project-running-hint",
+        runtimeMode: "full-access",
+      });
+      yield* provider.sendTurn({
+        threadId: initial.threadId,
+        input: "resume me",
+        attachments: [],
+      });
+
+      yield* routing.codex.stopAll();
+      routing.codex.recoverSession.mockClear();
+
+      yield* provider.interruptTurn({
+        threadId: initial.threadId,
+      });
+
+      assert.equal(routing.codex.recoverSession.mock.calls.length, 1);
+      assert.deepEqual(routing.codex.recoverSession.mock.calls[0]?.[0], {
+        threadId: initial.threadId,
+        provider: "codex",
+        cwd: "/tmp/project-running-hint",
+        resumeCursor: initial.resumeCursor,
+        recoveredTurn: {
+          activeTurnId: asTurnId(`turn-${String(initial.threadId)}`),
+        },
+        runtimeMode: "full-access",
+      });
+    }),
+  );
+
+  it.effect("recovers ready state without recovered turn when persisted metadata is missing it", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+
+      const initial = yield* provider.startSession(asThreadId("thread-running-hint-missing"), {
+        provider: "codex",
+        threadId: asThreadId("thread-running-hint-missing"),
+        cwd: "/tmp/project-running-hint-missing",
+        runtimeMode: "full-access",
+      });
+
+      yield* directory.upsert({
+        threadId: initial.threadId,
+        provider: "codex",
+        status: "running",
+        runtimePayload: {
+          activeTurnId: null,
+        },
+      });
+
+      yield* routing.codex.stopAll();
+      routing.codex.recoverSession.mockClear();
+
+      yield* provider.interruptTurn({
+        threadId: initial.threadId,
+      });
+
+      assert.equal(routing.codex.recoverSession.mock.calls.length, 1);
+      assert.deepEqual(routing.codex.recoverSession.mock.calls[0]?.[0], {
+        threadId: initial.threadId,
+        provider: "codex",
+        cwd: "/tmp/project-running-hint-missing",
+        resumeCursor: initial.resumeCursor,
+        runtimeMode: "full-access",
+      });
+      const resumedStartInput = routing.codex.recoverSession.mock.calls[0]?.[0] as
+        | { recoveredTurn?: { activeTurnId?: unknown } }
+        | undefined;
+      assert.equal(resumedStartInput?.recoveredTurn?.activeTurnId, undefined);
     }),
   );
 
@@ -605,6 +738,23 @@ routing.layer("ProviderServiceLive routing", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+
+      const readyRuntime = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(readyRuntime), true);
+      if (Option.isSome(readyRuntime)) {
+        assert.equal(readyRuntime.value.status, "ready");
+        const payload = readyRuntime.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            activeTurnId: string | null;
+          };
+          assert.equal(runtimePayload.activeTurnId, null);
+        }
+      }
+
       yield* provider.sendTurn({
         threadId: session.threadId,
         input: "hello",
@@ -637,6 +787,107 @@ routing.layer("ProviderServiceLive routing", (it) => {
       }
     }),
   );
+
+  it.effect("persists turn completion runtime events back into provider_session_runtime", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+
+      const session = yield* provider.startSession(asThreadId("thread-runtime-complete"), {
+        provider: "codex",
+        threadId: asThreadId("thread-runtime-complete"),
+        runtimeMode: "full-access",
+      });
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+      yield* sleep(20);
+
+      routing.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-runtime-complete"),
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        threadId: session.threadId,
+        turnId: asTurnId(`turn-${String(session.threadId)}`),
+        payload: {
+          state: "completed",
+        },
+      });
+      const completedRuntime = yield* waitForRuntimeStatus(
+        runtimeRepository,
+        session.threadId,
+        "ready",
+      );
+      assert.equal(completedRuntime !== undefined, true);
+      if (completedRuntime !== undefined) {
+        assert.equal(completedRuntime.status, "ready");
+        const payload = completedRuntime.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            activeTurnId: string | null;
+            lastError: string | null;
+            lastRuntimeEvent: string | null;
+          };
+          assert.equal(runtimePayload.activeTurnId, null);
+          assert.equal(runtimePayload.lastError, null);
+          assert.equal(runtimePayload.lastRuntimeEvent, "turn.completed");
+        }
+      }
+    }),
+  );
+
+  it.effect("persists failed turn completion errors from runtime events", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+
+      const session = yield* provider.startSession(asThreadId("thread-runtime-failed"), {
+        provider: "codex",
+        threadId: asThreadId("thread-runtime-failed"),
+        runtimeMode: "full-access",
+      });
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+      yield* sleep(20);
+
+      routing.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-runtime-failed"),
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        threadId: session.threadId,
+        turnId: asTurnId(`turn-${String(session.threadId)}`),
+        payload: {
+          state: "failed",
+          errorMessage: "turn failed",
+        },
+      });
+      const failedRuntime = yield* waitForRuntimeStatus(runtimeRepository, session.threadId, "error");
+      assert.equal(failedRuntime !== undefined, true);
+      if (failedRuntime !== undefined) {
+        assert.equal(failedRuntime.status, "error");
+        const payload = failedRuntime.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            activeTurnId: string | null;
+            lastError: string | null;
+            lastRuntimeEvent: string | null;
+          };
+          assert.equal(runtimePayload.activeTurnId, null);
+          assert.equal(runtimePayload.lastError, "turn failed");
+          assert.equal(runtimePayload.lastRuntimeEvent, "turn.completed");
+        }
+      }
+    }),
+  );
 });
 
 const fanout = makeProviderServiceLayer();
@@ -663,7 +914,9 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         createdAt: new Date().toISOString(),
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
-        status: "completed",
+        payload: {
+          state: "completed",
+        },
       };
 
       fanout.codex.emit(completedEvent);
@@ -722,7 +975,9 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         createdAt: new Date().toISOString(),
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
-        status: "completed",
+        payload: {
+          state: "completed",
+        },
       });
 
       yield* Fiber.join(consumer);
@@ -787,7 +1042,9 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           createdAt: new Date().toISOString(),
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
-          status: "completed",
+          payload: {
+            state: "completed",
+          },
         },
       ];
 

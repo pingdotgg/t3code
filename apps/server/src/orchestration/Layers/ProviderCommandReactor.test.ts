@@ -83,49 +83,52 @@ describe("ProviderCommandReactor", () => {
     createdStateDirs.clear();
   });
 
-  async function createHarness(input?: { readonly stateDir?: string }) {
+  async function createHarness(input?: {
+    readonly stateDir?: string;
+    readonly buildSession?: (session: ProviderSession, rawInput: unknown) => ProviderSession;
+  }) {
     const now = new Date().toISOString();
     const stateDir = input?.stateDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
     createdStateDirs.add(stateDir);
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
     const runtimeSessions: Array<ProviderSession> = [];
-    const startSession = vi.fn((_: unknown, input: unknown) => {
+    const startSession = vi.fn((_: unknown, rawInput: unknown) => {
       const sessionIndex = nextSessionIndex++;
       const provider =
-        typeof input === "object" &&
-        input !== null &&
-        "provider" in input &&
-        input.provider === "codex"
-          ? input.provider
+        typeof rawInput === "object" &&
+        rawInput !== null &&
+        "provider" in rawInput &&
+        rawInput.provider === "codex"
+          ? rawInput.provider
           : "codex";
       const resumeCursor =
-        typeof input === "object" && input !== null && "resumeCursor" in input
-          ? input.resumeCursor
+        typeof rawInput === "object" && rawInput !== null && "resumeCursor" in rawInput
+          ? rawInput.resumeCursor
           : undefined;
       const model =
-        typeof input === "object" &&
-        input !== null &&
-        "model" in input &&
-        typeof input.model === "string"
-          ? input.model
+        typeof rawInput === "object" &&
+        rawInput !== null &&
+        "model" in rawInput &&
+        typeof rawInput.model === "string"
+          ? rawInput.model
           : undefined;
       const threadId =
-        typeof input === "object" &&
-        input !== null &&
-        "threadId" in input &&
-        typeof input.threadId === "string"
-          ? ThreadId.makeUnsafe(input.threadId)
+        typeof rawInput === "object" &&
+        rawInput !== null &&
+        "threadId" in rawInput &&
+        typeof rawInput.threadId === "string"
+          ? ThreadId.makeUnsafe(rawInput.threadId)
           : ThreadId.makeUnsafe(`thread-${sessionIndex}`);
       const session: ProviderSession = {
         provider,
         status: "ready" as const,
         runtimeMode:
-          typeof input === "object" &&
-          input !== null &&
-          "runtimeMode" in input &&
-          (input.runtimeMode === "approval-required" || input.runtimeMode === "full-access")
-            ? input.runtimeMode
+          typeof rawInput === "object" &&
+          rawInput !== null &&
+          "runtimeMode" in rawInput &&
+          (rawInput.runtimeMode === "approval-required" || rawInput.runtimeMode === "full-access")
+            ? rawInput.runtimeMode
             : "full-access",
         ...(model !== undefined ? { model } : {}),
         threadId,
@@ -133,8 +136,9 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
         updatedAt: now,
       };
-      runtimeSessions.push(session);
-      return Effect.succeed(session);
+      const resolvedSession = input?.buildSession?.(session, rawInput) ?? session;
+      runtimeSessions.push(resolvedSession);
+      return Effect.succeed(resolvedSession);
     });
     const sendTurn = vi.fn((_: unknown) =>
       Effect.succeed({
@@ -296,6 +300,42 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("binds the provider session activeTurnId when recovery returns a running session", async () => {
+    const harness = await createHarness({
+      buildSession: (session) => ({
+        ...session,
+        status: "running",
+        activeTurnId: asTurnId("turn-recovered"),
+      }),
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-recovered-running"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-recovered-running"),
+          role: "user",
+          text: "resume and keep active turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe("turn-recovered");
   });
 
   it("forwards codex model options through session start and turn send", async () => {

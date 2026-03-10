@@ -11,11 +11,13 @@ import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderKind,
+  ProviderStartOptions,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  RuntimeMode,
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
@@ -42,6 +44,21 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+export interface RecoveredTurnState {
+  readonly activeTurnId?: TurnId;
+}
+
+export interface ProviderSessionRecoveryInput {
+  readonly threadId: ThreadId;
+  readonly provider: ProviderKind;
+  readonly runtimeMode: RuntimeMode;
+  readonly resumeCursor: unknown;
+  readonly cwd?: string;
+  readonly model?: string;
+  readonly providerOptions?: ProviderStartOptions;
+  readonly recoveredTurn?: RecoveredTurnState;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -54,6 +71,13 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly startSession: (
     input: ProviderSessionStartInput,
+  ) => Effect.Effect<ProviderSession, TError>;
+
+  /**
+   * Recover a provider-backed session from persisted runtime state.
+   */
+  readonly recoverSession: (
+    input: ProviderSessionRecoveryInput,
   ) => Effect.Effect<ProviderSession, TError>;
 
   /**
