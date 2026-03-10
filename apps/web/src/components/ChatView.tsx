@@ -3812,7 +3812,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         "flex min-w-0 flex-1 items-center",
                         isComposerFooterCompact
                           ? "gap-1 overflow-hidden"
-                          : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible",
+                          : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
                       )}
                     >
                       {/* Provider/model picker */}

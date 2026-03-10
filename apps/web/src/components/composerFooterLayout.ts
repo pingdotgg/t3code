@@ -1,5 +1,5 @@
 export const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
-export const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 720;
+export const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 800;
 
 export function shouldUseCompactComposerFooter(
   width: number | null,
