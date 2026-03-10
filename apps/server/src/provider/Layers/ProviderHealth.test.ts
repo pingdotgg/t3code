@@ -105,7 +105,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         // Point CODEX_HOME at an empty tmp dir (no config.toml) so the
         // default code path (OpenAI provider, auth probe runs) is exercised.
         yield* withTempCodexHome();
-        const status = yield* checkCodexProviderStatus;
+        const status = yield* checkCodexProviderStatus();
         assert.strictEqual(status.provider, "codex");
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.available, true);
@@ -125,7 +125,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns unavailable when codex is missing", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome();
-        const status = yield* checkCodexProviderStatus;
+        const status = yield* checkCodexProviderStatus();
         assert.strictEqual(status.provider, "codex");
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, false);
@@ -137,7 +137,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns unavailable when codex is below the minimum supported version", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome();
-        const status = yield* checkCodexProviderStatus;
+        const status = yield* checkCodexProviderStatus();
         assert.strictEqual(status.provider, "codex");
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, false);
@@ -160,7 +160,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns unauthenticated when auth probe reports login required", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome();
-        const status = yield* checkCodexProviderStatus;
+        const status = yield* checkCodexProviderStatus();
         assert.strictEqual(status.provider, "codex");
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, true);
@@ -186,7 +186,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns unauthenticated when login status output includes 'not logged in'", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome();
-        const status = yield* checkCodexProviderStatus;
+        const status = yield* checkCodexProviderStatus();
         assert.strictEqual(status.provider, "codex");
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, true);
@@ -211,7 +211,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns warning when login status command is unsupported", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome();
-        const status = yield* checkCodexProviderStatus;
+        const status = yield* checkCodexProviderStatus();
         assert.strictEqual(status.provider, "codex");
         assert.strictEqual(status.status, "warning");
         assert.strictEqual(status.available, true);
@@ -249,7 +249,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             'env_key = "PORTKEY_API_KEY"',
           ].join("\n"),
         );
-        const status = yield* checkCodexProviderStatus;
+        const status = yield* checkCodexProviderStatus();
         assert.strictEqual(status.provider, "codex");
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.available, true);
@@ -282,7 +282,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             'env_key = "PORTKEY_API_KEY"',
           ].join("\n"),
         );
-        const status = yield* checkCodexProviderStatus;
+        const status = yield* checkCodexProviderStatus();
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, false);
       }).pipe(Effect.provide(failingSpawnerLayer("spawn codex ENOENT"))),
@@ -293,7 +293,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("still runs auth probe when model_provider is openai", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome('model_provider = "openai"\n');
-        const status = yield* checkCodexProviderStatus;
+        const status = yield* checkCodexProviderStatus();
         // The auth probe runs and sees "not logged in" → error
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.authStatus, "unauthenticated");

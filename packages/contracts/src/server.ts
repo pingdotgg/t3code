@@ -69,3 +69,8 @@ export const ServerConfigUpdatedPayload = Schema.Struct({
   providers: ServerProviderStatuses,
 });
 export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
+
+export const RecheckProviderHealthInput = Schema.Struct({
+  codexBinaryPath: Schema.optional(TrimmedNonEmptyString),
+});
+export type RecheckProviderHealthInput = typeof RecheckProviderHealthInput.Type;

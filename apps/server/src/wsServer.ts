@@ -893,7 +893,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* terminalManager.close(body);
       }
 
-      case WS_METHODS.serverGetConfig:
+      case WS_METHODS.serverGetConfig: {
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
         return {
           cwd,
@@ -903,11 +903,32 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           providers,
           availableEditors,
         };
+      }
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
+      }
+
+      case WS_METHODS.serverRecheckProviderHealth: {
+        const body = stripRequestTag(request.body);
+        const updatedStatuses = yield* providerHealth.recheckStatuses(body.codexBinaryPath);
+        providers = updatedStatuses;
+        const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        yield* broadcastPush({
+          type: "push",
+          channel: WS_CHANNELS.serverConfigUpdated,
+          data: { issues: keybindingsConfig.issues, providers: updatedStatuses },
+        });
+        return {
+          cwd,
+          keybindingsConfigPath,
+          keybindings: keybindingsConfig.keybindings,
+          issues: keybindingsConfig.issues,
+          providers: updatedStatuses,
+          availableEditors,
+        };
       }
 
       default: {

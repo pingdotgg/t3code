@@ -12,9 +12,17 @@ import type { Effect } from "effect";
 
 export interface ProviderHealthShape {
   /**
-   * Read provider health statuses computed at server startup.
+   * Read provider health statuses (from the latest check).
    */
   readonly getStatuses: Effect.Effect<ReadonlyArray<ServerProviderStatus>>;
+
+  /**
+   * Re-run provider health checks with an optional custom binary path.
+   * Returns the updated statuses.
+   */
+  readonly recheckStatuses: (
+    binaryPath?: string,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderStatus>>;
 }
 
 export class ProviderHealth extends ServiceMap.Service<ProviderHealth, ProviderHealthShape>()(

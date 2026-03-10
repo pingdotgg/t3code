@@ -81,6 +81,7 @@ const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
 
 const defaultProviderHealthService: ProviderHealthShape = {
   getStatuses: Effect.succeed(defaultProviderStatuses),
+  recheckStatuses: () => Effect.succeed(defaultProviderStatuses),
 };
 
 class MockTerminalManager implements TerminalManagerShape {

@@ -1,13 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebouncedValue } from "@tanstack/react-pacer";
+import { useCallback, useRef, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
-import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import {
+  serverConfigQueryOptions,
+  serverRecheckProviderHealthQueryOptions,
+} from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
@@ -83,6 +87,7 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
+  const queryClient = useQueryClient();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
@@ -98,6 +103,21 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+
+  // Re-run server-side provider health check when the binary path setting changes.
+  // The query key includes the debounced path, so React Query automatically
+  // re-fetches whenever it settles to a new value. `enabled` is false until the
+  // user has actually changed the field so the initial mount doesn't trigger a
+  // redundant recheck.
+  const [debouncedBinaryPath] = useDebouncedValue(codexBinaryPath, { wait: 600 });
+  const initialBinaryPathRef = useRef(codexBinaryPath);
+  useQuery(
+    serverRecheckProviderHealthQueryOptions({
+      codexBinaryPath: debouncedBinaryPath || undefined,
+      queryClient,
+      enabled: debouncedBinaryPath !== initialBinaryPathRef.current,
+    }),
+  );
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;

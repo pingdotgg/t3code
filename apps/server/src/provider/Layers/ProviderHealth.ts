@@ -14,7 +14,7 @@ import type {
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Array, Effect, Fiber, FileSystem, Layer, Option, Path, Result, Stream } from "effect";
+import { Array, Effect, Fiber, FileSystem, Layer, Option, Path, Ref, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -236,6 +236,14 @@ export const hasCustomModelProvider = Effect.map(
 
 // ── Effect-native command execution ─────────────────────────────────
 
+/**
+ * Reject binary paths containing shell metacharacters to prevent command
+ * injection when `shell: true` is used on Windows. Only path-like characters
+ * are allowed (letters, digits, path separators, dots, hyphens, underscores,
+ * spaces, colons for drive letters, and tildes for home dirs).
+ */
+const SAFE_BINARY_PATH_RE = /^[\w\s./:\\~-]+$/;
+
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   Stream.runFold(
     stream,
@@ -243,11 +251,23 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
     (acc, chunk) => acc + new TextDecoder().decode(chunk),
   );
 
-const runCodexCommand = (args: ReadonlyArray<string>) =>
+const runCodexCommand = (binaryPath: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
+    if (!SAFE_BINARY_PATH_RE.test(binaryPath)) {
+      return yield* Effect.die(
+        new Error(`Refusing to execute binary path containing invalid characters: ${binaryPath}`),
+      );
+    }
+
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make("codex", [...args], {
-      shell: process.platform === "win32",
+    // On Windows, shell: true is needed for PATH resolution, but the binary
+    // path must be double-quoted to handle paths with spaces (e.g.
+    // "C:\Program Files\..."). The args array is kept separate so the shell
+    // doesn't re-split them.
+    const isWindows = process.platform === "win32";
+    const safeBinaryPath = isWindows ? `"${binaryPath}"` : binaryPath;
+    const command = ChildProcess.make(safeBinaryPath, [...args], {
+      shell: isWindows,
     });
 
     const child = yield* spawner.spawn(command);
@@ -266,142 +286,162 @@ const runCodexCommand = (args: ReadonlyArray<string>) =>
 
 // ── Health check ────────────────────────────────────────────────────
 
-export const checkCodexProviderStatus: Effect.Effect<
+export const checkCodexProviderStatus = (
+  binaryPath = "codex",
+): Effect.Effect<
   ServerProviderStatus,
   never,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
-> = Effect.gen(function* () {
-  const checkedAt = new Date().toISOString();
+> =>
+  Effect.gen(function* () {
+    const checkedAt = new Date().toISOString();
+    const binaryLabel = binaryPath === "codex" ? "`codex`" : `\`${binaryPath}\``;
 
-  // Probe 1: `codex --version` — is the CLI reachable?
-  const versionProbe = yield* runCodexCommand(["--version"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-    Effect.result,
-  );
+    // Probe 1: `codex --version` — is the CLI reachable?
+    const versionProbe = yield* runCodexCommand(binaryPath, ["--version"]).pipe(
+      Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+      Effect.result,
+    );
 
-  if (Result.isFailure(versionProbe)) {
-    const error = versionProbe.failure;
+    if (Result.isFailure(versionProbe)) {
+      const error = versionProbe.failure;
+      return {
+        provider: CODEX_PROVIDER,
+        status: "error" as const,
+        available: false,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message: isCommandMissingCause(error)
+          ? `Codex CLI (${binaryLabel}) is not installed or not on PATH.`
+          : `Failed to execute Codex CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
+      };
+    }
+
+    if (Option.isNone(versionProbe.success)) {
+      return {
+        provider: CODEX_PROVIDER,
+        status: "error" as const,
+        available: false,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message: "Codex CLI is installed but failed to run. Timed out while running command.",
+      };
+    }
+
+    const version = versionProbe.success.value;
+    if (version.code !== 0) {
+      const detail = detailFromResult(version);
+      return {
+        provider: CODEX_PROVIDER,
+        status: "error" as const,
+        available: false,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message: detail
+          ? `Codex CLI is installed but failed to run. ${detail}`
+          : "Codex CLI is installed but failed to run.",
+      };
+    }
+
+    const parsedVersion = parseCodexCliVersion(`${version.stdout}\n${version.stderr}`);
+    if (parsedVersion && !isCodexCliVersionSupported(parsedVersion)) {
+      return {
+        provider: CODEX_PROVIDER,
+        status: "error" as const,
+        available: false,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message: formatCodexCliUpgradeMessage(parsedVersion),
+      };
+    }
+
+    // Probe 2: `codex login status` — is the user authenticated?
+    //
+    // Custom model providers (e.g. Portkey, Azure OpenAI proxy) handle
+    // authentication through their own environment variables, so `codex
+    // login status` will report "not logged in" even when the CLI works
+    // fine.  Skip the auth probe entirely for non-OpenAI providers.
+    if (yield* hasCustomModelProvider) {
+      return {
+        provider: CODEX_PROVIDER,
+        status: "ready" as const,
+        available: true,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message: "Using a custom Codex model provider; OpenAI login check skipped.",
+      } satisfies ServerProviderStatus;
+    }
+
+    const authProbe = yield* runCodexCommand(binaryPath, ["login", "status"]).pipe(
+      Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+      Effect.result,
+    );
+
+    if (Result.isFailure(authProbe)) {
+      const error = authProbe.failure;
+      return {
+        provider: CODEX_PROVIDER,
+        status: "warning" as const,
+        available: true,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message:
+          error instanceof Error
+            ? `Could not verify Codex authentication status: ${error.message}.`
+            : "Could not verify Codex authentication status.",
+      };
+    }
+
+    if (Option.isNone(authProbe.success)) {
+      return {
+        provider: CODEX_PROVIDER,
+        status: "warning" as const,
+        available: true,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message: "Could not verify Codex authentication status. Timed out while running command.",
+      };
+    }
+
+    const parsed = parseAuthStatusFromOutput(authProbe.success.value);
     return {
       provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: isCommandMissingCause(error)
-        ? "Codex CLI (`codex`) is not installed or not on PATH."
-        : `Failed to execute Codex CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
-    };
-  }
-
-  if (Option.isNone(versionProbe.success)) {
-    return {
-      provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: "Codex CLI is installed but failed to run. Timed out while running command.",
-    };
-  }
-
-  const version = versionProbe.success.value;
-  if (version.code !== 0) {
-    const detail = detailFromResult(version);
-    return {
-      provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: detail
-        ? `Codex CLI is installed but failed to run. ${detail}`
-        : "Codex CLI is installed but failed to run.",
-    };
-  }
-
-  const parsedVersion = parseCodexCliVersion(`${version.stdout}\n${version.stderr}`);
-  if (parsedVersion && !isCodexCliVersionSupported(parsedVersion)) {
-    return {
-      provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: formatCodexCliUpgradeMessage(parsedVersion),
-    };
-  }
-
-  // Probe 2: `codex login status` — is the user authenticated?
-  //
-  // Custom model providers (e.g. Portkey, Azure OpenAI proxy) handle
-  // authentication through their own environment variables, so `codex
-  // login status` will report "not logged in" even when the CLI works
-  // fine.  Skip the auth probe entirely for non-OpenAI providers.
-  if (yield* hasCustomModelProvider) {
-    return {
-      provider: CODEX_PROVIDER,
-      status: "ready" as const,
+      status: parsed.status,
       available: true,
-      authStatus: "unknown" as const,
+      authStatus: parsed.authStatus,
       checkedAt,
-      message: "Using a custom Codex model provider; OpenAI login check skipped.",
+      ...(parsed.message ? { message: parsed.message } : {}),
     } satisfies ServerProviderStatus;
-  }
-
-  const authProbe = yield* runCodexCommand(["login", "status"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-    Effect.result,
-  );
-
-  if (Result.isFailure(authProbe)) {
-    const error = authProbe.failure;
-    return {
-      provider: CODEX_PROVIDER,
-      status: "warning" as const,
-      available: true,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message:
-        error instanceof Error
-          ? `Could not verify Codex authentication status: ${error.message}.`
-          : "Could not verify Codex authentication status.",
-    };
-  }
-
-  if (Option.isNone(authProbe.success)) {
-    return {
-      provider: CODEX_PROVIDER,
-      status: "warning" as const,
-      available: true,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: "Could not verify Codex authentication status. Timed out while running command.",
-    };
-  }
-
-  const parsed = parseAuthStatusFromOutput(authProbe.success.value);
-  return {
-    provider: CODEX_PROVIDER,
-    status: parsed.status,
-    available: true,
-    authStatus: parsed.authStatus,
-    checkedAt,
-    ...(parsed.message ? { message: parsed.message } : {}),
-  } satisfies ServerProviderStatus;
-});
+  });
 
 // ── Layer ───────────────────────────────────────────────────────────
 
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const codexStatusFiber = yield* checkCodexProviderStatus.pipe(
-      Effect.map(Array.of),
-      Effect.forkScoped,
-    );
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const statusesRef = yield* Ref.make<ReadonlyArray<ServerProviderStatus>>([]);
+
+    const runCheck = (binaryPath?: string) =>
+      checkCodexProviderStatus(binaryPath).pipe(
+        Effect.map(Array.of),
+        Effect.tap((statuses) => Ref.set(statusesRef, statuses)),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+
+    // Run the initial health check in a background fiber.
+    const codexStatusFiber = yield* runCheck().pipe(Effect.forkScoped);
 
     return {
-      getStatuses: Fiber.join(codexStatusFiber),
+      // Wait for the initial health check to complete (no-op if already done),
+      // then return the latest statuses from the ref — which may have been
+      // updated by a subsequent `recheckStatuses` call.
+      getStatuses: Fiber.join(codexStatusFiber).pipe(Effect.andThen(Ref.get(statusesRef))),
+      recheckStatuses: (binaryPath?: string) => runCheck(binaryPath),
     } satisfies ProviderHealthShape;
   }),
 );
