@@ -45,6 +45,11 @@ export interface PendingUserInput {
   questions: ReadonlyArray<UserInputQuestion>;
 }
 
+interface PendingUserInputContext {
+  latestTurn?: Pick<OrchestrationLatestTurn, "turnId" | "state"> | null;
+  session?: Pick<ThreadSession, "status"> | null;
+}
+
 export interface ActivePlanState {
   createdAt: string;
   turnId: TurnId | null;
@@ -262,8 +267,12 @@ function parseUserInputQuestions(
 
 export function derivePendingUserInputs(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  context?: PendingUserInputContext,
 ): PendingUserInput[] {
-  const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
+  const openByRequestId = new Map<
+    ApprovalRequestId,
+    PendingUserInput & { turnId: TurnId | null }
+  >();
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
 
   for (const activity of ordered) {
@@ -285,18 +294,42 @@ export function derivePendingUserInputs(
         requestId,
         createdAt: activity.createdAt,
         questions,
+        turnId: activity.turnId,
       });
       continue;
     }
 
     if (activity.kind === "user-input.resolved" && requestId) {
       openByRequestId.delete(requestId);
+      continue;
+    }
+
+    const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
+    if (
+      activity.kind === "provider.user-input.respond.failed" &&
+      requestId &&
+      detail?.includes("Unknown pending user input request")
+    ) {
+      openByRequestId.delete(requestId);
     }
   }
 
-  return [...openByRequestId.values()].toSorted((left, right) =>
-    left.createdAt.localeCompare(right.createdAt),
-  );
+  if (context?.session?.status === "error" || context?.session?.status === "closed") {
+    return [];
+  }
+
+  const latestTurn = context?.latestTurn;
+  if (latestTurn && latestTurn.state !== "running") {
+    for (const [requestId, pending] of openByRequestId.entries()) {
+      if (pending.turnId === latestTurn.turnId) {
+        openByRequestId.delete(requestId);
+      }
+    }
+  }
+
+  return [...openByRequestId.values()]
+    .map(({ turnId: _turnId, ...pending }) => pending)
+    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
 export function deriveActivePlanState(

@@ -313,7 +313,13 @@ export default function Sidebar() {
   const pendingUserInputByThreadId = useMemo(() => {
     const map = new Map<ThreadId, boolean>();
     for (const thread of threads) {
-      map.set(thread.id, derivePendingUserInputs(thread.activities).length > 0);
+      map.set(
+        thread.id,
+        derivePendingUserInputs(thread.activities, {
+          latestTurn: thread.latestTurn,
+          session: thread.session,
+        }).length > 0,
+      );
     }
     return map;
   }, [threads]);

@@ -873,8 +873,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [threadActivities],
   );
   const pendingUserInputs = useMemo(
-    () => derivePendingUserInputs(threadActivities),
-    [threadActivities],
+    () =>
+      derivePendingUserInputs(threadActivities, {
+        latestTurn: activeLatestTurn,
+        session: activeThread?.session ?? null,
+      }),
+    [activeLatestTurn, activeThread?.session, threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(
