@@ -1,13 +1,11 @@
-import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
+import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "~/nativeApi";
 
 export const serverQueryKeys = {
   all: ["server"] as const,
   config: () => ["server", "config"] as const,
-};
-
-export const serverMutationKeys = {
-  recheckProviderHealth: () => ["server", "mutation", "recheckProviderHealth"] as const,
+  recheckProviderHealth: (codexBinaryPath: string | undefined) =>
+    ["server", "recheckProviderHealth", codexBinaryPath ?? null] as const,
 };
 
 export function serverConfigQueryOptions() {
@@ -21,20 +19,24 @@ export function serverConfigQueryOptions() {
   });
 }
 
-export function serverRecheckProviderHealthMutationOptions(input: { queryClient: QueryClient }) {
-  return mutationOptions({
-    mutationKey: serverMutationKeys.recheckProviderHealth(),
-    mutationFn: async (codexBinaryPath: string | undefined) => {
+export function serverRecheckProviderHealthQueryOptions(input: {
+  codexBinaryPath: string | undefined;
+  queryClient: QueryClient;
+  enabled?: boolean;
+}) {
+  return queryOptions({
+    queryKey: serverQueryKeys.recheckProviderHealth(input.codexBinaryPath),
+    queryFn: async () => {
       const api = ensureNativeApi();
-      return api.server.recheckProviderHealth({
-        codexBinaryPath,
+      const config = await api.server.recheckProviderHealth({
+        codexBinaryPath: input.codexBinaryPath,
       });
+      // Seed the server config cache so the rest of the app immediately
+      // sees the updated provider statuses without a second round-trip.
+      input.queryClient.setQueryData(serverQueryKeys.config(), config);
+      return config;
     },
-    onSuccess: async () => {
-      // The server also broadcasts a push that triggers invalidation in
-      // __root.tsx, but invalidate eagerly so the settings page reflects
-      // changes without waiting for the push round-trip.
-      await input.queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
-    },
+    enabled: input.enabled ?? true,
+    staleTime: Infinity,
   });
 }

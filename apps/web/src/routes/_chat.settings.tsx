@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
@@ -10,7 +10,7 @@ import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import {
   serverConfigQueryOptions,
-  serverRecheckProviderHealthMutationOptions,
+  serverRecheckProviderHealthQueryOptions,
 } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
@@ -105,19 +105,19 @@ function SettingsRouteView() {
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   // Re-run server-side provider health check when the binary path setting changes.
+  // The query key includes the debounced path, so React Query automatically
+  // re-fetches whenever it settles to a new value. `enabled` is false until the
+  // user has actually changed the field so the initial mount doesn't trigger a
+  // redundant recheck.
   const [debouncedBinaryPath] = useDebouncedValue(codexBinaryPath, { wait: 600 });
-  const recheckHealthMutation = useMutation(
-    serverRecheckProviderHealthMutationOptions({ queryClient }),
+  const initialBinaryPathRef = useRef(codexBinaryPath);
+  useQuery(
+    serverRecheckProviderHealthQueryOptions({
+      codexBinaryPath: debouncedBinaryPath || undefined,
+      queryClient,
+      enabled: debouncedBinaryPath !== initialBinaryPathRef.current,
+    }),
   );
-  const recheckHealth = recheckHealthMutation.mutate;
-  const hasMountedRef = useRef(false);
-  useEffect(() => {
-    if (!hasMountedRef.current) {
-      hasMountedRef.current = true;
-      return;
-    }
-    recheckHealth(debouncedBinaryPath || undefined);
-  }, [debouncedBinaryPath, recheckHealth]);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
