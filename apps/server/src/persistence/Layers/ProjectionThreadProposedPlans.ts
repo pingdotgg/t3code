@@ -70,9 +70,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
 
   const upsert: ProjectionThreadProposedPlanRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadProposedPlanRow(row).pipe(
-      Effect.mapError(
-        toPersistenceSqlError("ProjectionThreadProposedPlanRepository.upsert:query"),
-      ),
+      Effect.mapError(toPersistenceSqlError("ProjectionThreadProposedPlanRepository.upsert:query")),
     );
 
   const listByThreadId: ProjectionThreadProposedPlanRepositoryShape["listByThreadId"] = (input) =>

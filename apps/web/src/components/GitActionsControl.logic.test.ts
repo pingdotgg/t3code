@@ -349,7 +349,12 @@ describe("when: working tree has local changes", () => {
   });
 
   it("resolveQuickAction falls back to commit when no origin remote exists", () => {
-    const quick = resolveQuickAction(status({ hasWorkingTreeChanges: true, hasUpstream: false }), false, false, false);
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true, hasUpstream: false }),
+      false,
+      false,
+      false,
+    );
     assert.deepInclude(quick, {
       kind: "run_action",
       action: "commit",
@@ -587,10 +592,7 @@ describe("when: branch has no upstream configured", () => {
   });
 
   it("buildMenuItems disables push and create PR when no commits are ahead", () => {
-    const items = buildMenuItems(
-      status({ hasUpstream: false, pr: null, aheadCount: 0 }),
-      false,
-    );
+    const items = buildMenuItems(status({ hasUpstream: false, pr: null, aheadCount: 0 }), false);
     assert.deepEqual(items, [
       {
         id: "commit",
@@ -656,10 +658,7 @@ describe("when: branch has no upstream configured", () => {
   });
 
   it("buildMenuItems enables create PR when no upstream and commits are ahead", () => {
-    const items = buildMenuItems(
-      status({ hasUpstream: false, pr: null, aheadCount: 2 }),
-      false,
-    );
+    const items = buildMenuItems(status({ hasUpstream: false, pr: null, aheadCount: 2 }), false);
     assert.deepEqual(items, [
       {
         id: "commit",

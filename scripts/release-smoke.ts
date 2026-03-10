@@ -82,7 +82,12 @@ try {
 
   execFileSync(
     process.execPath,
-    [resolve(repoRoot, "scripts/update-release-package-versions.ts"), "9.9.9-smoke.0", "--root", tempRoot],
+    [
+      resolve(repoRoot, "scripts/update-release-package-versions.ts"),
+      "9.9.9-smoke.0",
+      "--root",
+      tempRoot,
+    ],
     {
       cwd: repoRoot,
       stdio: "inherit",
@@ -95,17 +100,33 @@ try {
   });
 
   const lockfile = readFileSync(resolve(tempRoot, "bun.lock"), "utf8");
-  assertContains(lockfile, `"version": "9.9.9-smoke.0"`, "Expected bun.lock to contain the smoke version.");
+  assertContains(
+    lockfile,
+    `"version": "9.9.9-smoke.0"`,
+    "Expected bun.lock to contain the smoke version.",
+  );
 
   const { arm64Path, x64Path } = writeMacManifestFixtures(tempRoot);
-  execFileSync(process.execPath, [resolve(repoRoot, "scripts/merge-mac-update-manifests.ts"), arm64Path, x64Path], {
-    cwd: repoRoot,
-    stdio: "inherit",
-  });
+  execFileSync(
+    process.execPath,
+    [resolve(repoRoot, "scripts/merge-mac-update-manifests.ts"), arm64Path, x64Path],
+    {
+      cwd: repoRoot,
+      stdio: "inherit",
+    },
+  );
 
   const mergedManifest = readFileSync(arm64Path, "utf8");
-  assertContains(mergedManifest, "T3-Code-9.9.9-smoke.0-arm64.zip", "Merged manifest is missing the arm64 asset.");
-  assertContains(mergedManifest, "T3-Code-9.9.9-smoke.0-x64.zip", "Merged manifest is missing the x64 asset.");
+  assertContains(
+    mergedManifest,
+    "T3-Code-9.9.9-smoke.0-arm64.zip",
+    "Merged manifest is missing the arm64 asset.",
+  );
+  assertContains(
+    mergedManifest,
+    "T3-Code-9.9.9-smoke.0-x64.zip",
+    "Merged manifest is missing the x64 asset.",
+  );
 
   console.log("Release smoke checks passed.");
 } finally {

@@ -40,7 +40,9 @@ interface CommandAvailabilityOptions {
 const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 
 function shouldUseGotoFlag(editorId: EditorId, target: string): boolean {
-  return (editorId === "cursor" || editorId === "vscode") && LINE_COLUMN_SUFFIX_PATTERN.test(target);
+  return (
+    (editorId === "cursor" || editorId === "vscode") && LINE_COLUMN_SUFFIX_PATTERN.test(target)
+  );
 }
 
 function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
@@ -239,9 +241,7 @@ export const launchDetached = (launch: EditorLaunch) =>
         });
       } catch (error) {
         return resume(
-          Effect.fail(
-            new OpenError({ message: "failed to spawn detached process", cause: error }),
-          ),
+          Effect.fail(new OpenError({ message: "failed to spawn detached process", cause: error })),
         );
       }
 

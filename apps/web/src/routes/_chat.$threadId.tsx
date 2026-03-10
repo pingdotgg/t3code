@@ -140,8 +140,8 @@ function ChatThreadRouteView() {
   });
   const search = Route.useSearch();
   const threadExists = useStore((store) => store.threads.some((thread) => thread.id === threadId));
-  const draftThreadExists = useComposerDraftStore(
-    (store) => Object.hasOwn(store.draftThreadsByThreadId, threadId),
+  const draftThreadExists = useComposerDraftStore((store) =>
+    Object.hasOwn(store.draftThreadsByThreadId, threadId),
   );
   const routeThreadExists = threadExists || draftThreadExists;
   const diffOpen = search.diff === "1";
