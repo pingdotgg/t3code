@@ -1591,14 +1591,14 @@ it.layer(TestLayer)("git integration", (it) => {
           const fork = yield* makeTmpDir();
           yield* git(fork, ["init", "--bare"]);
 
-          yield* initRepoWithCommit(tmp);
+          const { initialBranch } = yield* initRepoWithCommit(tmp);
           yield* git(tmp, ["remote", "add", "jasonLaster", fork]);
           yield* git(tmp, ["checkout", "-b", "statemachine"]);
           yield* writeTextFile(path.join(tmp, "fork.txt"), "fork branch\n");
           yield* git(tmp, ["add", "fork.txt"]);
           yield* git(tmp, ["commit", "-m", "fork branch"]);
           yield* git(tmp, ["push", "-u", "jasonLaster", "statemachine"]);
-          yield* git(tmp, ["checkout", "main"]);
+          yield* git(tmp, ["checkout", initialBranch]);
           yield* git(tmp, ["branch", "-D", "statemachine"]);
           yield* git(tmp, [
             "checkout",
