@@ -29,7 +29,7 @@ function ChatRouteLayout() {
       <Sidebar
         side="left"
         collapsible="offcanvas"
-        className="border-r border-border bg-card text-foreground"
+        className="select-none border-r border-border bg-card text-foreground"
       >
         <ThreadSidebar />
       </Sidebar>
