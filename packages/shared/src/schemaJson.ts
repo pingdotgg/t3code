@@ -7,6 +7,15 @@ export interface SchemaJsonDecodeFailure {
   readonly cause: Cause.Cause<Schema.SchemaError>;
 }
 
+export const parseJsonResult = (input: unknown): Result.Result<unknown, string> => {
+  if (typeof input !== "string") return Result.fail("Expected string");
+  try {
+    return Result.succeed(JSON.parse(input));
+  } catch (e) {
+    return Result.fail(e instanceof Error ? e.message : String(e));
+  }
+};
+
 export const decodeJsonResult = <S extends Schema.Codec<unknown, unknown, never, never>>(
   schema: S,
 ) => {
