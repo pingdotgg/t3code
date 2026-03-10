@@ -212,8 +212,8 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
 
   if (editorDef.command) {
     return shouldUseGotoFlag(editorDef.id, input.cwd)
-      ? { command: editorDef.command, args: ["--goto", input.cwd] }
-      : { command: editorDef.command, args: [input.cwd] };
+      ? { command: editorDef.command, args: ["--goto", `"${input.cwd}"`] }
+      : { command: editorDef.command, args: [`"${input.cwd}"`] };
   }
 
   if (editorDef.id !== "file-manager") {
