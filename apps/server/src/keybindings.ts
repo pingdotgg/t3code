@@ -42,7 +42,6 @@ import {
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config";
-import { watchFileWithStatPolling } from "./watchFileWithStatPolling";
 
 export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
   "KeybindingsConfigParseError",
@@ -826,8 +825,6 @@ const makeKeybindings = Effect.gen(function* () {
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
-    // fs.watch (inotify/kqueue) gives instant detection on most platforms
-    // but can silently miss events on Linux containers.
     yield* Stream.runForEach(fs.watch(keybindingsConfigDir), (event) => {
       const isTargetConfigEvent =
         event.path === keybindingsConfigFile ||
@@ -838,17 +835,6 @@ const makeKeybindings = Effect.gen(function* () {
       }
       return revalidateAndEmitSafely;
     }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope), Effect.asVoid);
-
-    // fs.watchFile (stat-based polling on libuv timers) as a reliable
-    // backup.  Unlike an Effect.sleep loop in a forked fiber, libuv
-    // timers fire regardless of Effect fiber scheduling pressure.
-    yield* Stream.runForEach(
-      watchFileWithStatPolling({
-        filePath: keybindingsConfigPath,
-        pollIntervalMs: 100,
-      }),
-      () => revalidateAndEmitSafely,
-    ).pipe(Effect.forkIn(watcherScope), Effect.asVoid);
   });
 
   const start = Effect.gen(function* () {
