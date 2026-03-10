@@ -729,7 +729,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         resolvedThreadId: providerThreadId,
         requestedRuntimeMode: input.runtimeMode,
       }).pipe(this.runPromise);
-      this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${providerThreadId}`);
+      if (restoredActiveTurnId === undefined) {
+        this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${providerThreadId}`);
+      }
       return { ...context.session };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start Codex session.";
@@ -1191,6 +1193,21 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const errorMessage = this.readString(this.readObject(turn, "error"), "message");
       this.updateSession(context, {
         status: status === "failed" ? "error" : "ready",
+        activeTurnId: undefined,
+        lastError: errorMessage ?? context.session.lastError,
+      });
+      return;
+    }
+
+    if (notification.method === "turn/aborted") {
+      const params = this.readObject(notification.params);
+      const turn = this.readObject(params, "turn");
+      const errorMessage =
+        this.readString(this.readObject(turn, "error"), "message") ??
+        this.readString(this.readObject(params, "error"), "message") ??
+        this.readString(params, "message");
+      this.updateSession(context, {
+        status: "ready",
         activeTurnId: undefined,
         lastError: errorMessage ?? context.session.lastError,
       });

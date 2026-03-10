@@ -836,6 +836,9 @@ const make = Effect.gen(function* () {
             ? (eventTurnId ?? null)
             : event.type === "turn.completed" || event.type === "session.exited"
               ? null
+              : event.type === "session.state.changed" &&
+                  (event.payload.state === "ready" || event.payload.state === "stopped")
+                ? null
               : activeTurnId;
         const status = (() => {
           switch (event.type) {

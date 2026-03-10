@@ -465,6 +465,10 @@ describe("startSession", () => {
   it("returns a recovered session in running state when recovered turn metadata is present", async () => {
     const { manager, spawnSpy, assertSupportedCodexCliVersion, sendRequest } =
       createStartSessionHarness();
+    const events: string[] = [];
+    manager.on("event", (event) => {
+      events.push(event.method);
+    });
 
     try {
       const session = await manager.recoverSession({
@@ -489,6 +493,35 @@ describe("startSession", () => {
       expect(session.status).toBe("running");
       expect(session.activeTurnId).toBe("turn-resume-running");
       expect(session.resumeCursor).toEqual({ threadId: "provider-thread-1" });
+      expect(events).toContain("session/threadOpenResolved");
+      expect(events).not.toContain("session/ready");
+    } finally {
+      manager.stopAll();
+      spawnSpy.mockRestore();
+      assertSupportedCodexCliVersion.mockRestore();
+      sendRequest.mockRestore();
+    }
+  });
+
+  it("emits session/ready when a recovered session does not restore an active turn", async () => {
+    const { manager, spawnSpy, assertSupportedCodexCliVersion, sendRequest } =
+      createStartSessionHarness();
+    const events: string[] = [];
+    manager.on("event", (event) => {
+      events.push(event.method);
+    });
+
+    try {
+      const session = await manager.recoverSession({
+        threadId: asThreadId("thread-resume-ready"),
+        provider: "codex",
+        runtimeMode: "full-access",
+        resumeCursor: { threadId: "provider-thread-1" },
+      });
+
+      expect(session.status).toBe("ready");
+      expect(session.activeTurnId).toBeUndefined();
+      expect(events).toContain("session/ready");
     } finally {
       manager.stopAll();
       spawnSpy.mockRestore();
@@ -1081,6 +1114,52 @@ describe("runtime turn adoption", () => {
       method: "session/exited",
       params: {
         turnId: "turn-terminal",
+      },
+    });
+
+    expect(context.session.status).toBe("ready");
+    expect(context.session.activeTurnId).toBeUndefined();
+  });
+
+  it("clears the local active turn when turn/aborted arrives", () => {
+    const manager = new CodexAppServerManager();
+    type NotificationContext = {
+      session: {
+        provider: "codex";
+        status: "running";
+        threadId: ThreadId;
+        runtimeMode: "full-access";
+        resumeCursor: { threadId: string };
+        activeTurnId: TurnId | undefined;
+        lastError?: string;
+        createdAt: string;
+        updatedAt: string;
+      };
+    };
+    const context = {
+      session: {
+        provider: "codex" as const,
+        status: "running" as const,
+        threadId: asThreadId("thread_1"),
+        runtimeMode: "full-access" as const,
+        resumeCursor: { threadId: "thread_1" },
+        activeTurnId: asTurnId("turn-aborted"),
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+    };
+
+    (
+      manager as unknown as {
+        handleServerNotification: (
+          context: NotificationContext,
+          notification: { method: string; params?: unknown },
+        ) => void;
+      }
+    ).handleServerNotification(context, {
+      method: "turn/aborted",
+      params: {
+        turnId: "turn-aborted",
       },
     });
 

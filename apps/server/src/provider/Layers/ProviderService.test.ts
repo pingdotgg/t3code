@@ -788,6 +788,54 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("clears persisted activeTurnId on session.state.changed ready events", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+
+      const session = yield* provider.startSession(asThreadId("thread-runtime-ready"), {
+        provider: "codex",
+        threadId: asThreadId("thread-runtime-ready"),
+        runtimeMode: "full-access",
+      });
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+      yield* sleep(20);
+
+      routing.codex.emit({
+        type: "session.state.changed",
+        eventId: asEventId("evt-runtime-ready"),
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        threadId: session.threadId,
+        payload: {
+          state: "ready",
+        },
+      });
+
+      const readyRuntime = yield* waitForRuntimeStatus(runtimeRepository, session.threadId, "ready");
+      assert.equal(readyRuntime !== undefined, true);
+      if (readyRuntime !== undefined) {
+        assert.equal(readyRuntime.status, "ready");
+        const payload = readyRuntime.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            activeTurnId: string | null;
+            lastError: string | null;
+            lastRuntimeEvent: string | null;
+          };
+          assert.equal(runtimePayload.activeTurnId, null);
+          assert.equal(runtimePayload.lastError, null);
+          assert.equal(runtimePayload.lastRuntimeEvent, "session.state.changed");
+        }
+      }
+    }),
+  );
+
   it.effect("persists turn completion runtime events back into provider_session_runtime", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;

@@ -140,7 +140,9 @@ export function runtimeBindingPatchFromProviderEvent(
         event.payload.state === "error"
           ? { lastError: event.payload.reason ?? existingPayload.lastError ?? null }
           : event.payload.state === "ready"
-            ? { lastError: null }
+            ? { activeTurnId: null, lastError: null }
+            : event.payload.state === "stopped"
+              ? { activeTurnId: null }
             : {};
       return {
         threadId: event.threadId,
