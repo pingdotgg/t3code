@@ -187,7 +187,7 @@ function pullGitBranch({ cwd }: { cwd: string }) {
 function initRepoWithCommit(
   cwd: string,
 ): Effect.Effect<
-  void,
+  { initialBranch: string },
   GitCommandError | PlatformError.PlatformError,
   GitCore | GitService | FileSystem.FileSystem
 > {
@@ -198,6 +198,8 @@ function initRepoWithCommit(
     yield* writeTextFile(path.join(cwd, "README.md"), "# test\n");
     yield* git(cwd, ["add", "."]);
     yield* git(cwd, ["commit", "-m", "initial commit"]);
+    const initialBranch = yield* git(cwd, ["branch", "--show-current"]);
+    return { initialBranch };
   });
 }
 
@@ -1207,18 +1209,18 @@ it.layer(TestLayer)("git integration", (it) => {
     it.effect("fetches a GitHub pull request ref into a local branch without checkout", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
-        yield* initRepoWithCommit(tmp);
+        const { initialBranch } = yield* initRepoWithCommit(tmp);
         const remoteDir = yield* makeTmpDir("git-remote-");
         yield* git(remoteDir, ["init", "--bare"]);
         yield* git(tmp, ["remote", "add", "origin", remoteDir]);
-        yield* git(tmp, ["push", "-u", "origin", "main"]);
+        yield* git(tmp, ["push", "-u", "origin", initialBranch]);
         yield* git(tmp, ["checkout", "-b", "feature/pr-fetch"]);
         yield* writeTextFile(path.join(tmp, "pr-fetch.txt"), "fetch me\n");
         yield* git(tmp, ["add", "pr-fetch.txt"]);
         yield* git(tmp, ["commit", "-m", "Add PR fetch branch"]);
         yield* git(tmp, ["push", "-u", "origin", "feature/pr-fetch"]);
         yield* git(tmp, ["push", "origin", "HEAD:refs/pull/55/head"]);
-        yield* git(tmp, ["checkout", "main"]);
+        yield* git(tmp, ["checkout", initialBranch]);
 
         yield* fetchGitPullRequestBranch({
           cwd: tmp,
@@ -1229,7 +1231,7 @@ it.layer(TestLayer)("git integration", (it) => {
         const localBranches = yield* git(tmp, ["branch", "--list", "feature/pr-fetch"]);
         expect(localBranches).toContain("feature/pr-fetch");
         const currentBranch = yield* git(tmp, ["branch", "--show-current"]);
-        expect(currentBranch).toBe("main");
+        expect(currentBranch).toBe(initialBranch);
       }),
     );
   });
