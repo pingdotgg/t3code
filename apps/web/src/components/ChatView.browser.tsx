@@ -256,6 +256,61 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-plan-target" as MessageId,
+    targetText: "plan thread",
+  });
+  const planMarkdown = [
+    "# Ship plan mode follow-up",
+    "",
+    "- Step 1: capture the thread-open trace",
+    "- Step 2: identify the main-thread bottleneck",
+    "- Step 3: keep collapsed cards cheap",
+    "- Step 4: render the full markdown only on demand",
+    "- Step 5: preserve export and save actions",
+    "- Step 6: add regression coverage",
+    "- Step 7: verify route transitions stay responsive",
+    "- Step 8: confirm no server-side work changed",
+    "- Step 9: confirm short plans still render normally",
+    "- Step 10: confirm long plans stay collapsed by default",
+    "- Step 11: confirm preview text is still useful",
+    "- Step 12: confirm plan follow-up flow still works",
+    "- Step 13: confirm timeline virtualization still behaves",
+    "- Step 14: confirm theme styling still looks correct",
+    "- Step 15: confirm save dialog behavior is unchanged",
+    "- Step 16: confirm download behavior is unchanged",
+    "- Step 17: confirm code fences do not parse until expand",
+    "- Step 18: confirm preview truncation ends cleanly",
+    "- Step 19: confirm markdown links still open in editor after expand",
+    "- Step 20: confirm deep hidden detail only appears after expand",
+    "",
+    "```ts",
+    "export const hiddenPlanImplementationDetail = 'deep hidden detail only after expand';",
+    "```",
+  ].join("\n");
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? Object.assign({}, thread, {
+            proposedPlans: [
+              {
+                id: "plan-browser-test",
+                turnId: null,
+                planMarkdown,
+                createdAt: isoAt(1_000),
+                updatedAt: isoAt(1_001),
+              },
+            ],
+            updatedAt: isoAt(1_001),
+          })
+        : thread,
+    ),
+  };
+}
+
 function resolveWsRpc(tag: string): unknown {
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
@@ -359,9 +414,9 @@ async function setViewport(viewport: ViewportSpec): Promise<void> {
 async function waitForProductionStyles(): Promise<void> {
   await vi.waitFor(
     () => {
-      expect(getComputedStyle(document.documentElement).getPropertyValue("--background").trim()).not.toBe(
-        "",
-      );
+      expect(
+        getComputedStyle(document.documentElement).getPropertyValue("--background").trim(),
+      ).not.toBe("");
       expect(getComputedStyle(document.body).marginTop).toBe("0px");
     },
     {
@@ -399,7 +454,9 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
-async function waitForInteractionModeButton(expectedLabel: "Chat" | "Plan"): Promise<HTMLButtonElement> {
+async function waitForInteractionModeButton(
+  expectedLabel: "Chat" | "Plan",
+): Promise<HTMLButtonElement> {
   return waitForElement(
     () =>
       Array.from(document.querySelectorAll("button")).find(
@@ -642,7 +699,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const measurements: Array<UserRowMeasurement & { viewport: ViewportSpec; estimatedHeightPx: number }> = [];
+      const measurements: Array<
+        UserRowMeasurement & { viewport: ViewportSpec; estimatedHeightPx: number }
+      > = [];
 
       for (const viewport of TEXT_VIEWPORT_MATRIX) {
         await mounted.setViewport(viewport);
@@ -659,7 +718,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
         measurements.push({ ...measurement, viewport, estimatedHeightPx });
       }
 
-      expect(new Set(measurements.map((measurement) => Math.round(measurement.timelineWidthMeasuredPx))).size).toBeGreaterThanOrEqual(3);
+      expect(
+        new Set(measurements.map((measurement) => Math.round(measurement.timelineWidthMeasuredPx)))
+          .size,
+      ).toBeGreaterThanOrEqual(3);
 
       const byMeasuredWidth = measurements.toSorted(
         (left, right) => left.timelineWidthMeasuredPx - right.timelineWidthMeasuredPx,
@@ -701,7 +763,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       { timelineWidthPx: mobileMeasurement.timelineWidthMeasuredPx },
     );
 
-    const measuredDeltaPx = mobileMeasurement.measuredRowHeightPx - desktopMeasurement.measuredRowHeightPx;
+    const measuredDeltaPx =
+      mobileMeasurement.measuredRowHeightPx - desktopMeasurement.measuredRowHeightPx;
     const estimatedDeltaPx = estimatedMobilePx - estimatedDesktopPx;
     expect(measuredDeltaPx).toBeGreaterThan(0);
     expect(estimatedDeltaPx).toBeGreaterThan(0);
@@ -789,7 +852,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === WS_METHODS.shellOpenInEditor);
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenInEditor,
+          );
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.shellOpenInEditor,
             cwd: "/repo/project",
@@ -860,6 +925,43 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         async () => {
           expect((await waitForInteractionModeButton("Chat")).title).toContain("enter plan mode");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps long proposed plans lightweight until the user expands them", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithLongProposedPlan(),
+    });
+
+    try {
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Expand plan",
+          ) as HTMLButtonElement | null,
+        "Unable to find Expand plan button.",
+      );
+
+      expect(document.body.textContent).not.toContain("deep hidden detail only after expand");
+
+      const expandButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Expand plan",
+          ) as HTMLButtonElement | null,
+        "Unable to find Expand plan button.",
+      );
+      expandButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("deep hidden detail only after expand");
         },
         { timeout: 8_000, interval: 16 },
       );

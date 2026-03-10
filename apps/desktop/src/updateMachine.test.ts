@@ -83,7 +83,10 @@ describe("updateMachine", () => {
       },
       "1.1.0",
     );
-    const failedInstall = reduceDesktopUpdateStateOnInstallFailure(downloaded, "backend shutdown timed out");
+    const failedInstall = reduceDesktopUpdateStateOnInstallFailure(
+      downloaded,
+      "backend shutdown timed out",
+    );
 
     expect(downloaded.status).toBe("downloaded");
     expect(downloaded.downloadedVersion).toBe("1.1.0");

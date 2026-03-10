@@ -25,8 +25,7 @@ export function resolveDesktopRuntimeInfo(
     };
   }
 
-  const hostArch =
-    appArch === "arm64" || input.runningUnderArm64Translation ? "arm64" : appArch;
+  const hostArch = appArch === "arm64" || input.runningUnderArm64Translation ? "arm64" : appArch;
 
   return {
     hostArch,

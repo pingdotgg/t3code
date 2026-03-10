@@ -30,9 +30,6 @@ export default defineConfig({
     // In dev mode, tell the web app where the WebSocket server lives
     "import.meta.env.VITE_WS_URL": JSON.stringify(process.env.VITE_WS_URL ?? ""),
   },
-  experimental: {
-    enableNativePlugin: true,
-  },
   resolve: {
     tsconfigPaths: true,
   },
