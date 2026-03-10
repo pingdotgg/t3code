@@ -13,8 +13,13 @@ import type {
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Array, Effect, Fiber, Layer, Option, Result, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Data, Effect, Fiber, Layer, Result } from "effect";
+
+import {
+  runCodexCliCommandWithRetry,
+  type CodexCliCommandRunner,
+  type CodexCliCommandResult,
+} from "../../codexCliProbe";
 
 import {
   formatCodexCliUpgradeMessage,
@@ -23,16 +28,13 @@ import {
 } from "../codexCliVersion";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 
-const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
 
 // ── Pure helpers ────────────────────────────────────────────────────
 
-export interface CommandResult {
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly code: number;
-}
+class ProviderHealthCommandError extends Data.TaggedError("ProviderHealthCommandError")<{
+  readonly cause: Error;
+}> {}
 
 function nonEmptyTrimmed(value: string | undefined): string | undefined {
   if (!value) return undefined;
@@ -40,9 +42,17 @@ function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function unwrapCommandError(error: unknown): Error | undefined {
+  if (error instanceof ProviderHealthCommandError) {
+    return error.cause;
+  }
+  return error instanceof Error ? error : undefined;
+}
+
 function isCommandMissingCause(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const lower = error.message.toLowerCase();
+  const cause = unwrapCommandError(error);
+  if (!cause) return false;
+  const lower = cause.message.toLowerCase();
   return (
     lower.includes("command not found: codex") ||
     lower.includes("spawn codex enoent") ||
@@ -52,7 +62,7 @@ function isCommandMissingCause(error: unknown): boolean {
 }
 
 function detailFromResult(
-  result: CommandResult & { readonly timedOut?: boolean },
+  result: CodexCliCommandResult,
 ): string | undefined {
   if (result.timedOut) return "Timed out while running command.";
   const stderr = nonEmptyTrimmed(result.stderr);
@@ -63,6 +73,12 @@ function detailFromResult(
     return `Command exited with code ${result.code}.`;
   }
   return undefined;
+}
+
+function normalizePromiseError(error: unknown): ProviderHealthCommandError {
+  return new ProviderHealthCommandError({
+    cause: error instanceof Error ? error : new Error(String(error)),
+  });
 }
 
 function extractAuthBoolean(value: unknown): boolean | undefined {
@@ -87,7 +103,7 @@ function extractAuthBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
-export function parseAuthStatusFromOutput(result: CommandResult): {
+export function parseAuthStatusFromOutput(result: CodexCliCommandResult): {
   readonly status: ServerProviderStatusState;
   readonly authStatus: ServerProviderAuthStatus;
   readonly message?: string;
@@ -167,53 +183,27 @@ export function parseAuthStatusFromOutput(result: CommandResult): {
   };
 }
 
-// ── Effect-native command execution ─────────────────────────────────
-
-const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
-  Stream.runFold(
-    stream,
-    () => "",
-    (acc, chunk) => acc + new TextDecoder().decode(chunk),
-  );
-
-const runCodexCommand = (args: ReadonlyArray<string>) =>
+export const makeCheckCodexProviderStatus = (
+  runCommand: CodexCliCommandRunner = runCodexCliCommandWithRetry,
+): Effect.Effect<ServerProviderStatus, never> =>
   Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make("codex", [...args], {
-      shell: process.platform === "win32",
-    });
-
-    const child = yield* spawner.spawn(command);
-
-    const [stdout, stderr, exitCode] = yield* Effect.all(
-      [
-        collectStreamAsString(child.stdout),
-        collectStreamAsString(child.stderr),
-        child.exitCode.pipe(Effect.map(Number)),
-      ],
-      { concurrency: "unbounded" },
-    );
-
-    return { stdout, stderr, code: exitCode } satisfies CommandResult;
-  }).pipe(Effect.scoped);
-
-// ── Health check ────────────────────────────────────────────────────
-
-export const checkCodexProviderStatus: Effect.Effect<
-  ServerProviderStatus,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner
-> = Effect.gen(function* () {
   const checkedAt = new Date().toISOString();
 
   // Probe 1: `codex --version` — is the CLI reachable?
-  const versionProbe = yield* runCodexCommand(["--version"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+  const versionProbe = yield* Effect.tryPromise({
+    try: () =>
+      runCommand({
+        binaryPath: "codex",
+        args: ["--version"],
+      }),
+    catch: normalizePromiseError,
+  }).pipe(
     Effect.result,
   );
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
+    const cause = unwrapCommandError(error);
     return {
       provider: CODEX_PROVIDER,
       status: "error" as const,
@@ -222,11 +212,12 @@ export const checkCodexProviderStatus: Effect.Effect<
       checkedAt,
       message: isCommandMissingCause(error)
         ? "Codex CLI (`codex`) is not installed or not on PATH."
-        : `Failed to execute Codex CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
+        : `Failed to execute Codex CLI health check: ${cause?.message ?? String(error)}.`,
     };
   }
 
-  if (Option.isNone(versionProbe.success)) {
+  const version = versionProbe.success;
+  if (version.timedOut) {
     return {
       provider: CODEX_PROVIDER,
       status: "error" as const,
@@ -237,7 +228,6 @@ export const checkCodexProviderStatus: Effect.Effect<
     };
   }
 
-  const version = versionProbe.success.value;
   if (version.code !== 0) {
     const detail = detailFromResult(version);
     return {
@@ -265,13 +255,20 @@ export const checkCodexProviderStatus: Effect.Effect<
   }
 
   // Probe 2: `codex login status` — is the user authenticated?
-  const authProbe = yield* runCodexCommand(["login", "status"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+  const authProbe = yield* Effect.tryPromise({
+    try: () =>
+      runCommand({
+        binaryPath: "codex",
+        args: ["login", "status"],
+      }),
+    catch: normalizePromiseError,
+  }).pipe(
     Effect.result,
   );
 
   if (Result.isFailure(authProbe)) {
     const error = authProbe.failure;
+    const cause = unwrapCommandError(error);
     return {
       provider: CODEX_PROVIDER,
       status: "warning" as const,
@@ -279,13 +276,13 @@ export const checkCodexProviderStatus: Effect.Effect<
       authStatus: "unknown" as const,
       checkedAt,
       message:
-        error instanceof Error
-          ? `Could not verify Codex authentication status: ${error.message}.`
+        cause instanceof Error
+          ? `Could not verify Codex authentication status: ${cause.message}.`
           : "Could not verify Codex authentication status.",
     };
   }
 
-  if (Option.isNone(authProbe.success)) {
+  if (authProbe.success.timedOut) {
     return {
       provider: CODEX_PROVIDER,
       status: "warning" as const,
@@ -296,7 +293,7 @@ export const checkCodexProviderStatus: Effect.Effect<
     };
   }
 
-  const parsed = parseAuthStatusFromOutput(authProbe.success.value);
+  const parsed = parseAuthStatusFromOutput(authProbe.success);
   return {
     provider: CODEX_PROVIDER,
     status: parsed.status,
@@ -306,6 +303,8 @@ export const checkCodexProviderStatus: Effect.Effect<
     ...(parsed.message ? { message: parsed.message } : {}),
   } satisfies ServerProviderStatus;
 });
+
+export const checkCodexProviderStatus = makeCheckCodexProviderStatus();
 
 // ── Layer ───────────────────────────────────────────────────────────
 
