@@ -1,11 +1,16 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
 import { type ProviderKind } from "@t3tools/contracts";
+import {
+  DEFAULT_WORKTREE_BRANCH_PREFIX,
+  sanitizeWorktreeBranchPrefix,
+} from "@t3tools/shared/git";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+export const MAX_WORKTREE_BRANCH_PREFIX_LENGTH = 128;
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
 };
@@ -21,6 +26,9 @@ const AppSettingsSchema = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
+  worktreeBranchPrefix: Schema.String.check(
+    Schema.isMaxLength(MAX_WORKTREE_BRANCH_PREFIX_LENGTH),
+  ).pipe(Schema.withConstructorDefault(() => Option.some(""))),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
@@ -67,9 +75,23 @@ export function normalizeCustomModelSlugs(
   return normalizedModels;
 }
 
+export function normalizeWorktreeBranchPrefixSetting(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return "";
+  }
+  return sanitizeWorktreeBranchPrefix(trimmed);
+}
+
+export function resolveWorktreeBranchPrefixSetting(value: string | null | undefined): string {
+  const normalized = normalizeWorktreeBranchPrefixSetting(value);
+  return normalized.length > 0 ? normalized : DEFAULT_WORKTREE_BRANCH_PREFIX;
+}
+
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    worktreeBranchPrefix: normalizeWorktreeBranchPrefixSetting(settings.worktreeBranchPrefix),
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
   };
 }

@@ -186,6 +186,25 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   }),
 );
 
+it.effect("preserves worktree branch prefix in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-prefix",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-prefix",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      worktreeBranchPrefix: "bugfix",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.worktreeBranchPrefix, "bugfix");
+  }),
+);
+
 it.effect(
   "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
   () =>
@@ -196,6 +215,7 @@ it.effect(
         createdAt: "2026-01-01T00:00:00.000Z",
       });
       assert.strictEqual(parsed.provider, undefined);
+      assert.strictEqual(parsed.worktreeBranchPrefix, undefined);
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
     }),

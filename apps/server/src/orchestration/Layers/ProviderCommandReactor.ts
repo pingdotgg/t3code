@@ -12,6 +12,10 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
+import {
+  buildWorktreeBranchName,
+  isTemporaryWorktreeBranch,
+} from "@t3tools/shared/git";
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Schema, Stream } from "effect";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -70,8 +74,7 @@ const serverCommandId = (tag: string): CommandId =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-const WORKTREE_BRANCH_PREFIX = "t3code";
-const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
+const LEGACY_WORKTREE_BRANCH_PREFIX = "t3code";
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -99,31 +102,14 @@ function isUnknownPendingApprovalRequestError(error: unknown): boolean {
   );
 }
 
-function isTemporaryWorktreeBranch(branch: string): boolean {
-  return TEMP_WORKTREE_BRANCH_PATTERN.test(branch.trim().toLowerCase());
-}
-
-function buildGeneratedWorktreeBranchName(raw: string): string {
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/^refs\/heads\//, "")
-    .replace(/['"`]/g, "");
-
-  const withoutPrefix = normalized.startsWith(`${WORKTREE_BRANCH_PREFIX}/`)
-    ? normalized.slice(`${WORKTREE_BRANCH_PREFIX}/`.length)
-    : normalized;
-
-  const branchFragment = withoutPrefix
-    .replace(/[^a-z0-9/_-]+/g, "-")
-    .replace(/\/+/g, "/")
-    .replace(/-+/g, "-")
-    .replace(/^[./_-]+|[./_-]+$/g, "")
-    .slice(0, 64)
-    .replace(/[./_-]+$/g, "");
-
-  const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
-  return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
+function isKnownTemporaryWorktreeBranch(
+  branch: string,
+  worktreeBranchPrefix: string | undefined,
+): boolean {
+  return (
+    isTemporaryWorktreeBranch(branch, worktreeBranchPrefix) ||
+    isTemporaryWorktreeBranch(branch, LEGACY_WORKTREE_BRANCH_PREFIX)
+  );
 }
 
 const make = Effect.gen(function* () {
@@ -369,6 +355,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly branch: string | null;
     readonly worktreePath: string | null;
+    readonly worktreeBranchPrefix?: string;
     readonly messageId: string;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
@@ -376,7 +363,7 @@ const make = Effect.gen(function* () {
     if (!input.branch || !input.worktreePath) {
       return;
     }
-    if (!isTemporaryWorktreeBranch(input.branch)) {
+    if (!isKnownTemporaryWorktreeBranch(input.branch, input.worktreeBranchPrefix)) {
       return;
     }
 
@@ -409,7 +396,10 @@ const make = Effect.gen(function* () {
         Effect.flatMap((generated) => {
           if (!generated) return Effect.void;
 
-          const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
+          const targetBranch = buildWorktreeBranchName(
+            input.worktreeBranchPrefix,
+            generated.branch,
+          );
           if (targetBranch === oldBranch) return Effect.void;
 
           return Effect.flatMap(
@@ -463,6 +453,9 @@ const make = Effect.gen(function* () {
       threadId: event.payload.threadId,
       branch: thread.branch,
       worktreePath: thread.worktreePath,
+      ...(event.payload.worktreeBranchPrefix !== undefined
+        ? { worktreeBranchPrefix: event.payload.worktreeBranchPrefix }
+        : {}),
       messageId: message.id,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),

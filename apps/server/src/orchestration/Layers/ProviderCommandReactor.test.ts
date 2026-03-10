@@ -165,7 +165,7 @@ describe("ProviderCommandReactor", () => {
             : "renamed-branch",
       }),
     );
-    const generateBranchName = vi.fn(() =>
+    const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>(() =>
       Effect.fail(
         new TextGenerationError({
           operation: "generateBranchName",
@@ -290,6 +290,101 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("renames first-turn temporary worktree branches with the configured prefix", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    harness.generateBranchName.mockImplementation(() =>
+      Effect.succeed({
+        branch: "Bugfix/Verify Poland weight fix merge https://github.com/pingdotgg/t3code/pull/123",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-thread-meta-worktree"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        branch: "bugfix/1234abcd",
+        worktreePath: "/tmp/provider-project/worktrees/bugfix-1234abcd",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-worktree-rename"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-worktree-rename"),
+          role: "user",
+          text: "verify polish merge",
+          attachments: [],
+        },
+        worktreeBranchPrefix: "bugfix",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
+    expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
+      cwd: "/tmp/provider-project/worktrees/bugfix-1234abcd",
+      oldBranch: "bugfix/1234abcd",
+      newBranch: "bugfix/verify-poland-weight-fix-merge",
+    });
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+      return thread?.branch === "bugfix/verify-poland-weight-fix-merge";
+    });
+  });
+
+  it("migrates legacy t3code temporary worktree branches onto the configured prefix", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    harness.generateBranchName.mockImplementation(() =>
+      Effect.succeed({
+        branch: "feature/refine-toolbar-actions",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-thread-meta-worktree-legacy"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        branch: "t3code/1234abcd",
+        worktreePath: "/tmp/provider-project/worktrees/t3code-1234abcd",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-worktree-legacy"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-worktree-legacy"),
+          role: "user",
+          text: "refine toolbar actions",
+          attachments: [],
+        },
+        worktreeBranchPrefix: "feature",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
+    expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
+      oldBranch: "t3code/1234abcd",
+      newBranch: "feature/refine-toolbar-actions",
+    });
   });
 
   it("forwards codex model options through session start and turn send", async () => {

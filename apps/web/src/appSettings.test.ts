@@ -4,7 +4,9 @@ import {
   getAppModelOptions,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
+  normalizeWorktreeBranchPrefixSetting,
   resolveAppModelSelection,
+  resolveWorktreeBranchPrefixSetting,
 } from "./appSettings";
 
 describe("normalizeCustomModelSlugs", () => {
@@ -80,5 +82,16 @@ describe("getSlashModelOptions", () => {
     );
 
     expect(options.map((option) => option.slug)).toEqual(["openai/gpt-oss-120b"]);
+  });
+});
+
+describe("worktree branch prefix settings", () => {
+  it("stores blank values as default-backed empty strings", () => {
+    expect(normalizeWorktreeBranchPrefixSetting("  ")).toBe("");
+    expect(resolveWorktreeBranchPrefixSetting("  ")).toBe("feature");
+  });
+
+  it("normalizes custom prefixes before persisting them", () => {
+    expect(normalizeWorktreeBranchPrefixSetting(" Bugfix/Hotfix/ ")).toBe("bugfix/hotfix");
   });
 });

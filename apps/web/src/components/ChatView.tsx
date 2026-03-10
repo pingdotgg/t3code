@@ -22,6 +22,7 @@ import {
   RuntimeMode,
   ProviderInteractionMode,
 } from "@t3tools/contracts";
+import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import {
   getDefaultModel,
   getDefaultReasoningEffort,
@@ -203,7 +204,12 @@ import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
-import { getAppModelOptions, resolveAppModelSelection, useAppSettings } from "../appSettings";
+import {
+  getAppModelOptions,
+  resolveAppModelSelection,
+  resolveWorktreeBranchPrefixSetting,
+  useAppSettings,
+} from "../appSettings";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -263,7 +269,6 @@ const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnsw
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
-const WORKTREE_BRANCH_PREFIX = "t3code";
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
   const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
@@ -424,12 +429,6 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-function buildTemporaryWorktreeBranchName(): string {
-  // Keep the 8-hex suffix shape for backend temporary-branch detection.
-  const token = crypto.randomUUID().slice(0, 8).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
-}
-
 function cloneComposerImageForRetry(image: ComposerImageAttachment): ComposerImageAttachment {
   if (typeof URL === "undefined" || !image.previewUrl.startsWith("blob:")) {
     return image;
@@ -576,6 +575,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const { settings } = useAppSettings();
+  const worktreeBranchPrefix = resolveWorktreeBranchPrefixSetting(settings.worktreeBranchPrefix);
   const navigate = useNavigate();
   const rawSearch = useSearch({
     strict: false,
@@ -2562,7 +2562,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
         beginSendPhase("preparing-worktree");
-        const newBranch = buildTemporaryWorktreeBranchName();
+        const newBranch = buildTemporaryWorktreeBranchName(worktreeBranchPrefix);
         const result = await createWorktreeMutation.mutateAsync({
           cwd: activeProject.cwd,
           branch: baseBranchForWorktree,
@@ -2683,6 +2683,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ? { modelOptions: selectedModelOptionsForDispatch }
           : {}),
         ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+        worktreeBranchPrefix,
         provider: selectedProvider,
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
@@ -2961,6 +2962,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
           ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          worktreeBranchPrefix,
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: nextInteractionMode,
@@ -3003,6 +3005,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftInteractionMode,
       setThreadError,
       settings.enableAssistantStreaming,
+      worktreeBranchPrefix,
     ],
   );
 
@@ -3070,6 +3073,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
           ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          worktreeBranchPrefix,
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: "default",
@@ -3125,6 +3129,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider,
     settings.enableAssistantStreaming,
     syncServerReadModel,
+    worktreeBranchPrefix,
   ]);
 
   const onProviderModelSelect = useCallback(

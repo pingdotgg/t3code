@@ -2,9 +2,18 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
+import {
+  buildWorktreeBranchName,
+  DEFAULT_WORKTREE_BRANCH_PREFIX,
+} from "@t3tools/shared/git";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
-import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
+import {
+  MAX_CUSTOM_MODEL_LENGTH,
+  MAX_WORKTREE_BRANCH_PREFIX_LENGTH,
+  resolveWorktreeBranchPrefixSetting,
+  useAppSettings,
+} from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -96,6 +105,9 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const effectiveWorktreeBranchPrefix = resolveWorktreeBranchPrefixSetting(
+    settings.worktreeBranchPrefix,
+  );
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -467,6 +479,72 @@ function SettingsRouteView() {
                   </Button>
                 </div>
               ) : null}
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Git</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Configure how the New worktree flow names its temporary and generated branches.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="worktree-branch-prefix" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Worktree branch prefix</span>
+                  <Input
+                    id="worktree-branch-prefix"
+                    value={settings.worktreeBranchPrefix}
+                    onChange={(event) =>
+                      updateSettings({ worktreeBranchPrefix: event.target.value })
+                    }
+                    placeholder={DEFAULT_WORKTREE_BRANCH_PREFIX}
+                    maxLength={MAX_WORKTREE_BRANCH_PREFIX_LENGTH}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Blank falls back to <code>{DEFAULT_WORKTREE_BRANCH_PREFIX}</code>. Slashes are
+                    allowed for namespaces.
+                  </span>
+                </label>
+
+                <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                  <p>
+                    Effective prefix:{" "}
+                    <code className="font-medium text-foreground">{effectiveWorktreeBranchPrefix}</code>
+                  </p>
+                  <p className="mt-1">
+                    Temporary branch:{" "}
+                    <code className="font-medium text-foreground">
+                      {`${effectiveWorktreeBranchPrefix}/a1b2c3d4`}
+                    </code>
+                  </p>
+                  <p className="mt-1">
+                    Generated branch:{" "}
+                    <code className="font-medium text-foreground">
+                      {buildWorktreeBranchName(effectiveWorktreeBranchPrefix, "fix-timeout-loop")}
+                    </code>
+                  </p>
+                </div>
+
+                {settings.worktreeBranchPrefix !== defaults.worktreeBranchPrefix ? (
+                  <div className="flex justify-end">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        updateSettings({
+                          worktreeBranchPrefix: defaults.worktreeBranchPrefix,
+                        })
+                      }
+                    >
+                      Restore default
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
