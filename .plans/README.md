@@ -10,3 +10,4 @@
 8. `08-precommit-format-and-lint.md`
 9. `09-event-state-test-expansion.md`
 10. `10-unify-process-session-abstraction.md`
+17. `17-e2e-record-replay-strategy.md`

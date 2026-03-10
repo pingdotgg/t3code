@@ -60,13 +60,16 @@
         "@effect/language-service": "catalog:",
         "@effect/vitest": "catalog:",
         "@t3tools/contracts": "workspace:*",
+        "@t3tools/rr-e2e": "workspace:*",
         "@t3tools/shared": "workspace:*",
         "@t3tools/web": "workspace:*",
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
         "@types/ws": "^8.5.13",
+        "playwright": "^1.58.2",
         "tsdown": "catalog:",
         "typescript": "catalog:",
+        "vite": "^8.0.0-beta.12",
         "vitest": "catalog:",
       },
     },
@@ -128,6 +131,20 @@
         "@effect/language-service": "catalog:",
         "@effect/vitest": "catalog:",
         "tsdown": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
+    "packages/rr-e2e": {
+      "name": "@t3tools/rr-e2e",
+      "version": "0.0.0-alpha.1",
+      "dependencies": {
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/language-service": "catalog:",
+        "@effect/vitest": "catalog:",
+        "@types/node": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
       },
@@ -703,6 +720,8 @@
     "@t3tools/desktop": ["@t3tools/desktop@workspace:apps/desktop"],
 
     "@t3tools/marketing": ["@t3tools/marketing@workspace:apps/marketing"],
+
+    "@t3tools/rr-e2e": ["@t3tools/rr-e2e@workspace:packages/rr-e2e"],
 
     "@t3tools/scripts": ["@t3tools/scripts@workspace:scripts"],
 

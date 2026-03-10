@@ -749,6 +749,7 @@ function ComposerPromptEditorInner({
               className,
             )}
             aria-placeholder={placeholder}
+            data-testid="chat-composer-editor"
             placeholder={<span />}
             onPaste={onPaste}
           />

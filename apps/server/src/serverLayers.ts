@@ -35,6 +35,19 @@ import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { GitCore } from "./git/Services/GitCore";
+import { GitManager } from "./git/Services/GitManager";
+import { GitService } from "./git/Services/GitService";
+import { GitHubCli } from "./git/Services/GitHubCli";
+import { TerminalManager } from "./terminal/Services/Manager";
+
+interface ServerRuntimeLayerOptions {
+  readonly gitServiceLayer?: Layer.Layer<GitService>;
+  readonly gitCoreLayer?: Layer.Layer<GitCore>;
+  readonly gitHubCliLayer?: Layer.Layer<GitHubCli>;
+  readonly gitManagerLayer?: Layer.Layer<GitManager>;
+  readonly terminalLayer?: Layer.Layer<TerminalManager>;
+}
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
@@ -67,25 +80,28 @@ export function makeServerProviderLayer(): Layer.Layer<
   }).pipe(Layer.unwrap);
 }
 
-export function makeServerRuntimeServicesLayer() {
-  const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
+export function makeServerRuntimeServicesLayer(options?: ServerRuntimeLayerOptions) {
+  const gitServiceLayer = options?.gitServiceLayer ?? GitServiceLive;
+  const gitCoreLayer = options?.gitCoreLayer ?? GitCoreLive.pipe(Layer.provideMerge(gitServiceLayer));
   const textGenerationLayer = CodexTextGenerationLive;
+  const gitHubCliLayer = options?.gitHubCliLayer ?? GitHubCliLive;
 
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
   );
+  const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provideMerge(gitServiceLayer));
 
   const checkpointDiffQueryLayer = CheckpointDiffQueryLive.pipe(
     Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
-    Layer.provideMerge(CheckpointStoreLive),
+    Layer.provideMerge(checkpointStoreLayer),
   );
 
   const runtimeServicesLayer = Layer.mergeAll(
     orchestrationLayer,
     OrchestrationProjectionSnapshotQueryLive,
-    CheckpointStoreLive,
+    checkpointStoreLayer,
     checkpointDiffQueryLayer,
   );
   const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
@@ -105,19 +121,23 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(checkpointReactorLayer),
   );
 
-  const terminalLayer = TerminalManagerLive.pipe(
-    Layer.provide(
-      typeof Bun !== "undefined" && process.platform !== "win32"
-        ? BunPtyAdapterLive
-        : NodePtyAdapterLive,
-    ),
-  );
+  const terminalLayer =
+    options?.terminalLayer ??
+    TerminalManagerLive.pipe(
+      Layer.provide(
+        typeof Bun !== "undefined" && process.platform !== "win32"
+          ? BunPtyAdapterLive
+          : NodePtyAdapterLive,
+      ),
+    );
 
-  const gitManagerLayer = GitManagerLive.pipe(
-    Layer.provideMerge(gitCoreLayer),
-    Layer.provideMerge(GitHubCliLive),
-    Layer.provideMerge(textGenerationLayer),
-  );
+  const gitManagerLayer =
+    options?.gitManagerLayer ??
+    GitManagerLive.pipe(
+      Layer.provideMerge(gitCoreLayer),
+      Layer.provideMerge(gitHubCliLayer),
+      Layer.provideMerge(textGenerationLayer),
+    );
 
   return Layer.mergeAll(
     orchestrationReactorLayer,

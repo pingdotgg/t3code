@@ -1,7 +1,8 @@
-import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
+import type { Readable, Writable } from "node:stream";
 
 import {
   ApprovalRequestId,
@@ -65,7 +66,7 @@ interface CodexUserInputAnswer {
 interface CodexSessionContext {
   session: ProviderSession;
   account: CodexAccountSnapshot;
-  child: ChildProcessWithoutNullStreams;
+  child: CodexAppServerChildProcess;
   output: readline.Interface;
   pending: Map<PendingRequestKey, PendingRequest>;
   pendingApprovals: Map<ApprovalRequestId, PendingApprovalRequest>;
@@ -94,6 +95,46 @@ interface JsonRpcResponse {
 interface JsonRpcNotification {
   method: string;
   params?: unknown;
+}
+
+export interface CodexAppServerChildProcess {
+  readonly stdin: Writable & { writable: boolean };
+  readonly stdout: Readable;
+  readonly stderr: Readable;
+  readonly pid?: number | undefined;
+  readonly killed: boolean;
+  kill(): boolean;
+  on(event: "error", listener: (error: Error) => void): this;
+  on(
+    event: "exit",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): this;
+}
+
+export interface CodexCliVersionCheckResult {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly error?: Error;
+}
+
+export interface CodexAppServerProcessController {
+  readonly spawnAppServer: (input: {
+    readonly binaryPath: string;
+    readonly cwd: string;
+    readonly homePath?: string;
+  }) => CodexAppServerChildProcess;
+  readonly runVersionCheck: (input: {
+    readonly binaryPath: string;
+    readonly cwd: string;
+    readonly homePath?: string;
+    readonly timeoutMs: number;
+  }) => CodexCliVersionCheckResult;
+  readonly kill: (child: CodexAppServerChildProcess) => void;
+}
+
+export interface CodexAppServerManagerOptions {
+  readonly processController?: CodexAppServerProcessController;
 }
 
 type CodexPlanType =
@@ -373,7 +414,7 @@ export function resolveCodexModelForAccount(
  * wrapper, leaving the actual command running. Use `taskkill /T` to kill the
  * entire process tree instead.
  */
-function killChildTree(child: ChildProcessWithoutNullStreams): void {
+function killChildTree(child: CodexAppServerChildProcess): void {
   if (process.platform === "win32" && child.pid !== undefined) {
     try {
       spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
@@ -384,6 +425,43 @@ function killChildTree(child: ChildProcessWithoutNullStreams): void {
   }
   child.kill();
 }
+
+const defaultCodexAppServerProcessController: CodexAppServerProcessController = {
+  spawnAppServer: (input) =>
+    spawn(input.binaryPath, ["app-server"], {
+      cwd: input.cwd,
+      env: {
+        ...process.env,
+        ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    }),
+  runVersionCheck: (input) => {
+    const result = spawnSync(input.binaryPath, ["--version"], {
+      cwd: input.cwd,
+      env: {
+        ...process.env,
+        ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
+      },
+      encoding: "utf8",
+      shell: process.platform === "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: input.timeoutMs,
+      maxBuffer: 1024 * 1024,
+    });
+
+    return {
+      status: result.status,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+      ...(result.error ? { error: result.error } : {}),
+    };
+  },
+  kill: (child) => {
+    killChildTree(child);
+  },
+};
 
 export function normalizeCodexModelSlug(
   model: string | undefined | null,
@@ -516,9 +594,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
 
   private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
-  constructor(services?: ServiceMap.ServiceMap<never>) {
+  private readonly processController: CodexAppServerProcessController;
+
+  constructor(
+    services?: ServiceMap.ServiceMap<never>,
+    options?: CodexAppServerManagerOptions,
+  ) {
     super();
     this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
+    this.processController =
+      options?.processController ?? defaultCodexAppServerProcessController;
   }
 
   async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
@@ -548,14 +633,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
-      const child = spawn(codexBinaryPath, ["app-server"], {
+      const child = this.processController.spawnAppServer({
+        binaryPath: codexBinaryPath,
         cwd: resolvedCwd,
-        env: {
-          ...process.env,
-          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
-        },
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: process.platform === "win32",
+        ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
       const output = readline.createInterface({ input: child.stdout });
 
@@ -990,7 +1071,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     context.output.close();
 
     if (!context.child.killed) {
-      killChildTree(context.child);
+      this.processController.kill(context.child);
     }
 
     this.updateSession(context, {
@@ -1338,7 +1419,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     readonly cwd: string;
     readonly homePath?: string;
   }): void {
-    assertSupportedCodexCliVersion(input);
+    assertSupportedCodexCliVersion(input, this.processController);
   }
 
   private updateSession(context: CodexSessionContext, updates: Partial<ProviderSession>): void {
@@ -1525,18 +1606,12 @@ function assertSupportedCodexCliVersion(input: {
   readonly binaryPath: string;
   readonly cwd: string;
   readonly homePath?: string;
-}): void {
-  const result = spawnSync(input.binaryPath, ["--version"], {
+}, processController: CodexAppServerProcessController): void {
+  const result = processController.runVersionCheck({
+    binaryPath: input.binaryPath,
     cwd: input.cwd,
-    env: {
-      ...process.env,
-      ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
-    },
-    encoding: "utf8",
-    shell: process.platform === "win32",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: CODEX_VERSION_CHECK_TIMEOUT_MS,
-    maxBuffer: 1024 * 1024,
+    ...(input.homePath ? { homePath: input.homePath } : {}),
+    timeoutMs: CODEX_VERSION_CHECK_TIMEOUT_MS,
   });
 
   if (result.error) {

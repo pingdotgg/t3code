@@ -522,6 +522,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   return (
     <div
+      data-testid="diff-panel"
       className={cn(
         "flex h-full min-w-0 flex-col bg-background",
         mode === "inline"
@@ -553,6 +554,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <>
           <div
             ref={patchViewportRef}
+            data-testid="diff-panel-viewport"
             className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
           >
             {checkpointDiffError && !renderablePatch && (

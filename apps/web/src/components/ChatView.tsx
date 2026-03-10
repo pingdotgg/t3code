@@ -2283,6 +2283,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     if (
+      latestTurnSettled ||
       phase === "running" ||
       activePendingApproval !== null ||
       activePendingUserInput !== null ||
@@ -2294,6 +2295,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activePendingApproval,
     activePendingUserInput,
     activeThread?.error,
+    latestTurnSettled,
     phase,
     resetSendPhase,
     sendPhase,
@@ -2789,6 +2791,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       turnStartSucceeded = true;
       if (isFirstMessage) {
+        if (createdServerThreadForLocalDraft) {
+          const snapshot = await api.orchestration.getSnapshot();
+          syncServerReadModel(snapshot);
+        }
         clearDraftThread(threadIdForSend);
       }
     })().catch(async (err: unknown) => {
@@ -4049,6 +4055,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           <button
                             type="submit"
                             className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
+                            data-testid="chat-send-button"
                             disabled={
                               isSendBusy ||
                               isConnecting ||
@@ -4414,7 +4421,7 @@ const ProviderHealthBanner = memo(function ProviderHealthBanner({
 
   return (
     <div className="pt-3 mx-auto max-w-3xl">
-      <Alert variant={status.status === "error" ? "error" : "warning"}>
+      <Alert data-testid="chat-provider-health-banner" variant={status.status === "error" ? "error" : "warning"}>
         <CircleAlertIcon />
         <AlertTitle>
           {status.provider === "codex" ? "Codex provider status" : `${status.provider} status`}
@@ -5515,7 +5522,10 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   const allDirectoriesExpanded =
                     allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true;
                   return (
-                    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
+                    <div
+                      className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5"
+                      data-testid="chat-turn-diff-card"
+                    >
                       <div className="mb-1.5 flex items-center justify-between gap-2">
                         <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
                           <span>Changed files ({changedFileCountLabel})</span>
@@ -5542,6 +5552,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                             type="button"
                             size="xs"
                             variant="outline"
+                            data-testid="chat-open-turn-diff"
                             onClick={() =>
                               onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
                             }
@@ -5606,7 +5617,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   if (!hasMessages && !isWorking) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground/30">
+        <p className="text-sm text-muted-foreground/30" data-testid="chat-empty-state">
           Send a message to start the conversation.
         </p>
       </div>
@@ -5614,11 +5625,12 @@ const MessagesTimeline = memo(function MessagesTimeline({
   }
 
   return (
-    <div
-      ref={timelineRootRef}
-      data-timeline-root="true"
-      className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden"
-    >
+      <div
+        ref={timelineRootRef}
+        data-timeline-root="true"
+        data-testid="chat-transcript"
+        className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden"
+      >
       {virtualizedRowCount > 0 && (
         <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
           {virtualRows.map((virtualRow: VirtualItem) => {
