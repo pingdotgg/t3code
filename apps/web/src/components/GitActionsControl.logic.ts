@@ -123,12 +123,7 @@ export function buildMenuItems(
   const canCommit = !isBusy && hasChanges;
   const canPush = !isBusy && hasBranch && !hasChanges && !isBehind && gitStatus.aheadCount > 0;
   const canCreatePr =
-    !isBusy &&
-    hasBranch &&
-    !hasChanges &&
-    !hasOpenPr &&
-    gitStatus.aheadCount > 0 &&
-    !isBehind;
+    !isBusy && hasBranch && !hasChanges && !hasOpenPr && gitStatus.aheadCount > 0 && !isBehind;
   const canOpenPr = !isBusy && hasOpenPr;
 
   return [
@@ -151,7 +146,7 @@ export function buildMenuItems(
     hasOpenPr
       ? {
           id: "pr",
-          label: "Open PR",
+          label: "View PR",
           disabled: !canOpenPr,
           icon: "pr",
           kind: "open_pr",
@@ -206,7 +201,7 @@ export function resolveQuickAction(
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
-      label: "Commit, push & create PR",
+      label: "Commit, push & PR",
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
@@ -216,7 +211,7 @@ export function resolveQuickAction(
   if (!gitStatus.hasUpstream) {
     if (!isAhead) {
       if (hasOpenPr) {
-        return { label: "Open PR", disabled: false, kind: "open_pr" };
+        return { label: "View PR", disabled: false, kind: "open_pr" };
       }
       return {
         label: "Push",
@@ -266,7 +261,7 @@ export function resolveQuickAction(
   }
 
   if (hasOpenPr && gitStatus.hasUpstream) {
-    return { label: "Open PR", disabled: false, kind: "open_pr" };
+    return { label: "View PR", disabled: false, kind: "open_pr" };
   }
 
   return {

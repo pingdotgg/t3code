@@ -12,6 +12,8 @@ This document covers how to run desktop releases from one tag, first without sig
   - Linux `x64` AppImage
   - Windows `x64` NSIS installer
 - Publishes one GitHub Release with all produced files.
+  - Versions with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
+  - Only plain `X.Y.Z` releases are marked as the repository's latest release.
 - Includes Electron auto-update metadata (for example `latest*.yml` and `*.blockmap`) in release assets.
 - Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing.
 - Signing is optional and auto-detected per platform from secrets.
@@ -34,6 +36,9 @@ This document covers how to run desktop releases from one tag, first without sig
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
   - `latest*.yml` metadata
   - `*.blockmap` files (used for differential downloads)
+- macOS metadata note:
+  - `electron-updater` reads `latest-mac.yml` for both Intel and Apple Silicon.
+  - The workflow merges the per-arch mac manifests into one `latest-mac.yml` before publishing the GitHub Release.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 

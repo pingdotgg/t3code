@@ -42,7 +42,7 @@ describe("when: branch is clean and has an open PR", () => {
       }),
       false,
     );
-    assert.deepInclude(quick, { kind: "open_pr", label: "Open PR", disabled: false });
+    assert.deepInclude(quick, { kind: "open_pr", label: "View PR", disabled: false });
   });
 
   it("buildMenuItems disables commit/push and enables open PR", () => {
@@ -78,7 +78,7 @@ describe("when: branch is clean and has an open PR", () => {
       },
       {
         id: "pr",
-        label: "Open PR",
+        label: "View PR",
         disabled: false,
         icon: "pr",
         kind: "open_pr",
@@ -199,7 +199,7 @@ describe("when: branch is clean, ahead, and has an open PR", () => {
       },
       {
         id: "pr",
-        label: "Open PR",
+        label: "View PR",
         disabled: false,
         icon: "pr",
         kind: "open_pr",
@@ -344,7 +344,7 @@ describe("when: working tree has local changes", () => {
     assert.deepInclude(quick, {
       kind: "run_action",
       action: "commit_push_pr",
-      label: "Commit, push & create PR",
+      label: "Commit, push & PR",
     });
   });
 
@@ -440,7 +440,7 @@ describe("when: working tree has local changes and branch is behind upstream", (
     assert.deepInclude(quick, {
       kind: "run_action",
       action: "commit_push_pr",
-      label: "Commit, push & create PR",
+      label: "Commit, push & PR",
     });
   });
 
@@ -547,7 +547,7 @@ describe("when: branch has no upstream configured", () => {
     );
     assert.deepInclude(quick, {
       kind: "open_pr",
-      label: "Open PR",
+      label: "View PR",
       disabled: false,
     });
   });
@@ -577,10 +577,7 @@ describe("when: branch has no upstream configured", () => {
   });
 
   it("buildMenuItems disables push and create PR when no commits are ahead", () => {
-    const items = buildMenuItems(
-      status({ hasUpstream: false, pr: null, aheadCount: 0 }),
-      false,
-    );
+    const items = buildMenuItems(status({ hasUpstream: false, pr: null, aheadCount: 0 }), false);
     assert.deepEqual(items, [
       {
         id: "commit",
@@ -627,10 +624,7 @@ describe("when: branch has no upstream configured", () => {
   });
 
   it("buildMenuItems enables create PR when no upstream and commits are ahead", () => {
-    const items = buildMenuItems(
-      status({ hasUpstream: false, pr: null, aheadCount: 2 }),
-      false,
-    );
+    const items = buildMenuItems(status({ hasUpstream: false, pr: null, aheadCount: 2 }), false);
     assert.deepEqual(items, [
       {
         id: "commit",

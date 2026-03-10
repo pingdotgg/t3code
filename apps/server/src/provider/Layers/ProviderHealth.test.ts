@@ -85,6 +85,28 @@ it.effect("returns unavailable when codex is missing", () =>
   }).pipe(Effect.provide(failingSpawnerLayer("spawn codex ENOENT"))),
 );
 
+it.effect("returns unavailable when codex is below the minimum supported version", () =>
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus;
+    assert.strictEqual(status.provider, "codex");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, false);
+    assert.strictEqual(status.authStatus, "unknown");
+    assert.strictEqual(
+      status.message,
+      "Codex CLI v0.36.0 is too old for T3 Code. Upgrade to v0.37.0 or newer and restart T3 Code.",
+    );
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "codex 0.36.0\n", stderr: "", code: 0 };
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
+    ),
+  ),
+);
+
 it.effect("returns unauthenticated when auth probe reports login required", () =>
   Effect.gen(function* () {
     const status = yield* checkCodexProviderStatus;
@@ -110,30 +132,27 @@ it.effect("returns unauthenticated when auth probe reports login required", () =
   ),
 );
 
-it.effect(
-  "returns unauthenticated when login status output includes 'not logged in'",
-  () =>
-    Effect.gen(function* () {
-      const status = yield* checkCodexProviderStatus;
-      assert.strictEqual(status.provider, "codex");
-      assert.strictEqual(status.status, "error");
-      assert.strictEqual(status.available, true);
-      assert.strictEqual(status.authStatus, "unauthenticated");
-      assert.strictEqual(
-        status.message,
-        "Codex CLI is not authenticated. Run `codex login` and try again.",
-      );
-    }).pipe(
-      Effect.provide(
-        mockSpawnerLayer((args) => {
-          const joined = args.join(" ");
-          if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-          if (joined === "login status")
-            return { stdout: "Not logged in\n", stderr: "", code: 1 };
-          throw new Error(`Unexpected args: ${joined}`);
-        }),
-      ),
+it.effect("returns unauthenticated when login status output includes 'not logged in'", () =>
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus;
+    assert.strictEqual(status.provider, "codex");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "unauthenticated");
+    assert.strictEqual(
+      status.message,
+      "Codex CLI is not authenticated. Run `codex login` and try again.",
+    );
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+        if (joined === "login status") return { stdout: "Not logged in\n", stderr: "", code: 1 };
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
     ),
+  ),
 );
 
 it.effect("returns warning when login status command is unsupported", () =>

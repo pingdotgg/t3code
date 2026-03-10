@@ -4,6 +4,14 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { defineConfig } from "vite";
 
 const port = Number(process.env.PORT ?? 5733);
+const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
+
+const buildSourcemap =
+  sourcemapEnv === "0" || sourcemapEnv === "false"
+    ? false
+    : sourcemapEnv === "hidden"
+      ? "hidden"
+      : true;
 
 export default defineConfig({
   plugins: [
@@ -22,9 +30,6 @@ export default defineConfig({
     // In dev mode, tell the web app where the WebSocket server lives
     "import.meta.env.VITE_WS_URL": JSON.stringify(process.env.VITE_WS_URL ?? ""),
   },
-  experimental: {
-    enableNativePlugin: true,
-  },
   resolve: {
     tsconfigPaths: true,
   },
@@ -42,5 +47,6 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    sourcemap: buildSourcemap,
   },
 });

@@ -13,9 +13,14 @@ import type {
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, Result, Stream } from "effect";
+import { Array, Effect, Fiber, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import {
+  formatCodexCliUpgradeMessage,
+  isCodexCliVersionSupported,
+  parseCodexCliVersion,
+} from "../codexCliVersion";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
@@ -247,6 +252,18 @@ export const checkCodexProviderStatus: Effect.Effect<
     };
   }
 
+  const parsedVersion = parseCodexCliVersion(`${version.stdout}\n${version.stderr}`);
+  if (parsedVersion && !isCodexCliVersionSupported(parsedVersion)) {
+    return {
+      provider: CODEX_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: formatCodexCliUpgradeMessage(parsedVersion),
+    };
+  }
+
   // Probe 2: `codex login status` — is the user authenticated?
   const authProbe = yield* runCodexCommand(["login", "status"]).pipe(
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
@@ -295,9 +312,13 @@ export const checkCodexProviderStatus: Effect.Effect<
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const codexStatus = yield* checkCodexProviderStatus;
+    const codexStatusFiber = yield* checkCodexProviderStatus.pipe(
+      Effect.map(Array.of),
+      Effect.forkScoped,
+    );
+
     return {
-      getStatuses: Effect.succeed([codexStatus]),
+      getStatuses: Fiber.join(codexStatusFiber),
     } satisfies ProviderHealthShape;
   }),
 );
