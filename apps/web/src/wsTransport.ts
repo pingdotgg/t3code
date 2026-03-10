@@ -27,6 +27,7 @@ export class WsTransport {
   private ws: WebSocket | null = null;
   private nextId = 1;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly queuedRequestsById = new Map<string, string>();
   private readonly listeners = new Map<string, Set<PushListener>>();
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -59,6 +60,7 @@ export class WsTransport {
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
+        this.queuedRequestsById.delete(id);
         reject(new Error(`Request timed out: ${method}`));
       }, REQUEST_TIMEOUT_MS);
 
@@ -68,7 +70,7 @@ export class WsTransport {
         timeout,
       });
 
-      this.send(message);
+      this.sendOrQueueRequest(id, JSON.stringify(message));
     });
   }
 
@@ -99,6 +101,7 @@ export class WsTransport {
       pending.reject(new Error("Transport disposed"));
     }
     this.pending.clear();
+    this.queuedRequestsById.clear();
     this.ws?.close();
     this.ws = null;
   }
@@ -109,8 +112,13 @@ export class WsTransport {
     const ws = new WebSocket(this.url);
 
     ws.addEventListener("open", () => {
+      if (this.disposed) {
+        ws.close();
+        return;
+      }
       this.ws = ws;
       this.reconnectAttempt = 0;
+      this.flushQueuedRequests();
     });
 
     ws.addEventListener("message", (event) => {
@@ -118,7 +126,9 @@ export class WsTransport {
     });
 
     ws.addEventListener("close", () => {
-      this.ws = null;
+      if (this.ws === ws) {
+        this.ws = null;
+      }
       this.scheduleReconnect();
     });
 
@@ -172,29 +182,28 @@ export class WsTransport {
     }
   }
 
-  private send(message: WsRequestEnvelope) {
+  private sendOrQueueRequest(requestId: string, encodedMessage: string) {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
+      this.ws.send(encodedMessage);
+      return;
+    }
+    this.queuedRequestsById.set(requestId, encodedMessage);
+  }
+
+  private flushQueuedRequests() {
+    if (this.ws?.readyState !== WebSocket.OPEN) {
       return;
     }
 
-    // If not connected, wait for connection
-    const waitForOpen = () => {
-      const check = setInterval(() => {
-        if (this.disposed) {
-          clearInterval(check);
-          return;
-        }
-        if (this.ws?.readyState === WebSocket.OPEN) {
-          clearInterval(check);
-          this.ws.send(JSON.stringify(message));
-        }
-      }, 50);
+    for (const [requestId, encodedMessage] of this.queuedRequestsById) {
+      if (!this.pending.has(requestId)) {
+        this.queuedRequestsById.delete(requestId);
+        continue;
+      }
 
-      // Give up after timeout (the pending request will time out on its own)
-      setTimeout(() => clearInterval(check), REQUEST_TIMEOUT_MS);
-    };
-    waitForOpen();
+      this.ws.send(encodedMessage);
+      this.queuedRequestsById.delete(requestId);
+    }
   }
 
   private scheduleReconnect() {
