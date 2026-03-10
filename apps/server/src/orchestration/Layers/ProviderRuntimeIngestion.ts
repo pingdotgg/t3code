@@ -10,7 +10,8 @@ import {
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, Layer, Option, Ref, Stream } from "effect";
+import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -1118,16 +1119,12 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const start: ProviderRuntimeIngestionShape["start"] = Effect.gen(function* () {
-    const inputQueue = yield* Queue.unbounded<RuntimeIngestionInput>();
-    yield* Effect.addFinalizer(() => Queue.shutdown(inputQueue).pipe(Effect.asVoid));
+  const worker = yield* makeDrainableWorker(processInputSafely);
 
-    yield* Effect.forkScoped(
-      Effect.forever(Queue.take(inputQueue).pipe(Effect.flatMap(processInputSafely))),
-    );
+  const start: ProviderRuntimeIngestionShape["start"] = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(providerService.streamEvents, (event) =>
-        Queue.offer(inputQueue, { source: "runtime", event }).pipe(Effect.asVoid),
+        worker.enqueue({ source: "runtime", event }),
       ),
     );
     yield* Effect.forkScoped(
@@ -1135,13 +1132,14 @@ const make = Effect.gen(function* () {
         if (event.type !== "thread.turn-start-requested") {
           return Effect.void;
         }
-        return Queue.offer(inputQueue, { source: "domain", event }).pipe(Effect.asVoid);
+        return worker.enqueue({ source: "domain", event });
       }),
     );
   });
 
   return {
     start,
+    drain: worker.drain,
   } satisfies ProviderRuntimeIngestionShape;
 });
 

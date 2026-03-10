@@ -8,7 +8,8 @@ import {
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import { Cause, Effect, Layer, Option, Queue, Stream } from "effect";
+import { Cause, Effect, Layer, Option, Stream } from "effect";
+import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
@@ -20,6 +21,7 @@ import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
@@ -65,6 +67,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore;
+  const receiptBus = yield* RuntimeReceiptBus;
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -273,6 +276,22 @@ const make = Effect.gen(function* () {
       checkpointTurnCount: input.turnCount,
       createdAt: input.createdAt,
     });
+    yield* receiptBus.publish({
+      type: "checkpoint.diff.finalized",
+      threadId: input.threadId,
+      turnId: input.turnId,
+      checkpointTurnCount: input.turnCount,
+      checkpointRef: targetCheckpointRef,
+      status: input.status,
+      createdAt: input.createdAt,
+    });
+    yield* receiptBus.publish({
+      type: "turn.processing.quiesced",
+      threadId: input.threadId,
+      turnId: input.turnId,
+      checkpointTurnCount: input.turnCount,
+      createdAt: input.createdAt,
+    });
 
     yield* orchestrationEngine.dispatch({
       type: "thread.activity.append",
@@ -458,6 +477,13 @@ const make = Effect.gen(function* () {
       cwd: checkpointCwd,
       checkpointRef: baselineCheckpointRef,
     });
+    yield* receiptBus.publish({
+      type: "checkpoint.baseline.captured",
+      threadId: thread.id,
+      checkpointTurnCount: currentTurnCount,
+      checkpointRef: baselineCheckpointRef,
+      createdAt: event.createdAt,
+    });
   });
 
   const ensurePreTurnBaselineFromDomainTurnStart = Effect.fnUntraced(function* (
@@ -509,6 +535,13 @@ const make = Effect.gen(function* () {
     yield* checkpointStore.captureCheckpoint({
       cwd: checkpointCwd,
       checkpointRef: baselineCheckpointRef,
+    });
+    yield* receiptBus.publish({
+      type: "checkpoint.baseline.captured",
+      threadId,
+      checkpointTurnCount: currentTurnCount,
+      checkpointRef: baselineCheckpointRef,
+      createdAt: event.occurredAt,
     });
   });
 
@@ -720,14 +753,9 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const worker = yield* makeDrainableWorker(processInputSafely);
+
   const start: CheckpointReactorShape["start"] = Effect.gen(function* () {
-    const queue = yield* Queue.unbounded<ReactorInput>();
-    yield* Effect.addFinalizer(() => Queue.shutdown(queue).pipe(Effect.asVoid));
-
-    yield* Effect.forkScoped(
-      Effect.forever(Queue.take(queue).pipe(Effect.flatMap(processInputSafely))),
-    );
-
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (
@@ -738,7 +766,7 @@ const make = Effect.gen(function* () {
         ) {
           return Effect.void;
         }
-        return Queue.offer(queue, { source: "domain", event }).pipe(Effect.asVoid);
+        return worker.enqueue({ source: "domain", event });
       }),
     );
 
@@ -747,13 +775,14 @@ const make = Effect.gen(function* () {
         if (event.type !== "turn.started" && event.type !== "turn.completed") {
           return Effect.void;
         }
-        return Queue.offer(queue, { source: "runtime", event }).pipe(Effect.asVoid);
+        return worker.enqueue({ source: "runtime", event });
       }),
     );
   });
 
   return {
     start,
+    drain: worker.drain,
   } satisfies CheckpointReactorShape;
 });
 
