@@ -1447,6 +1447,31 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("pushes with upstream setup to the only configured non-origin remote", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const remote = yield* makeTmpDir();
+        yield* git(tmp, ["init", "--initial-branch=main"]);
+        yield* git(tmp, ["config", "user.email", "test@test.com"]);
+        yield* git(tmp, ["config", "user.name", "Test"]);
+        yield* writeTextFile(path.join(tmp, "README.md"), "hello\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* git(tmp, ["commit", "-m", "initial"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(tmp, ["remote", "add", "fork", remote]);
+        yield* git(tmp, ["checkout", "-b", "feature/fork-only"]);
+
+        const core = yield* GitCore;
+        const pushed = yield* core.pushCurrentBranch(tmp, null);
+        expect(pushed.status).toBe("pushed");
+        expect(pushed.setUpstream).toBe(true);
+        expect(pushed.upstreamBranch).toBe("fork/feature/fork-only");
+        expect(yield* git(tmp, ["rev-parse", "--abbrev-ref", "@{upstream}"])).toBe(
+          "fork/feature/fork-only",
+        );
+      }),
+    );
+
     it.effect(
       "pushes with upstream setup when comparable base exists but remote branch is missing",
       () =>
@@ -1481,6 +1506,43 @@ it.layer(TestLayer)("git integration", (it) => {
             featureBranch,
           );
         }),
+    );
+
+    it.effect("prefers branch pushRemote over origin when setting upstream", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const origin = yield* makeTmpDir();
+        const fork = yield* makeTmpDir();
+        yield* git(origin, ["init", "--bare"]);
+        yield* git(fork, ["init", "--bare"]);
+
+        yield* initRepoWithCommit(tmp);
+        const initialBranch = (yield* listGitBranches({ cwd: tmp })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+        yield* git(tmp, ["remote", "add", "origin", origin]);
+        yield* git(tmp, ["remote", "add", "fork", fork]);
+        yield* git(tmp, ["push", "-u", "origin", initialBranch]);
+
+        const featureBranch = "feature/push-remote";
+        yield* git(tmp, ["checkout", "-b", featureBranch]);
+        yield* git(tmp, ["config", `branch.${featureBranch}.pushRemote`, "fork"]);
+        yield* writeTextFile(path.join(tmp, "feature.txt"), "push to fork\n");
+        yield* git(tmp, ["add", "feature.txt"]);
+        yield* git(tmp, ["commit", "-m", "feature commit"]);
+
+        const core = yield* GitCore;
+        const pushed = yield* core.pushCurrentBranch(tmp, null);
+        expect(pushed.status).toBe("pushed");
+        expect(pushed.setUpstream).toBe(true);
+        expect(pushed.upstreamBranch).toBe(`fork/${featureBranch}`);
+        expect(yield* git(tmp, ["rev-parse", "--abbrev-ref", "@{upstream}"])).toBe(
+          `fork/${featureBranch}`,
+        );
+        expect(yield* git(tmp, ["ls-remote", "--heads", "fork", featureBranch])).toContain(
+          featureBranch,
+        );
+      }),
     );
 
     it.effect("includes command context when worktree removal fails", () =>
