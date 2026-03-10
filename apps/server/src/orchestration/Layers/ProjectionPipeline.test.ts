@@ -1718,6 +1718,100 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
       ]);
     }),
   );
+  it.effect("projects thread sidebar state updates into projection_threads", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const createdAt = new Date().toISOString();
+
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.makeUnsafe("evt-sidebar-project-create"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.makeUnsafe("project-sidebar"),
+        occurredAt: createdAt,
+        commandId: CommandId.makeUnsafe("cmd-sidebar-project-create"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-sidebar-project-create"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.makeUnsafe("project-sidebar"),
+          title: "Sidebar Project",
+          workspaceRoot: "/tmp/project-sidebar",
+          defaultModel: "gpt-5-codex",
+          scripts: [],
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.makeUnsafe("evt-sidebar-thread-create"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-sidebar"),
+        occurredAt: createdAt,
+        commandId: CommandId.makeUnsafe("cmd-sidebar-thread-create"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-sidebar-thread-create"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-sidebar"),
+          projectId: ProjectId.makeUnsafe("project-sidebar"),
+          title: "Sidebar Thread",
+          model: "gpt-5-codex",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.sidebar-state-updated",
+        eventId: EventId.makeUnsafe("evt-sidebar-state"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-sidebar"),
+        occurredAt: "2026-03-10T00:00:01.000Z",
+        commandId: CommandId.makeUnsafe("cmd-sidebar-state"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-sidebar-state"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-sidebar"),
+          sidebarHiddenAt: "2026-03-10T00:00:00.000Z",
+          dismissedSidebarKeys: ["plan-submitted:plan-1", "plan-submitted:plan-1"],
+          updatedAt: "2026-03-10T00:00:01.000Z",
+        },
+      });
+
+      const threadRows = yield* sql<{
+        readonly sidebarHiddenAt: string | null;
+        readonly dismissedSidebarKeysJson: string;
+      }>`
+        SELECT
+          sidebar_hidden_at AS "sidebarHiddenAt",
+          dismissed_sidebar_keys_json AS "dismissedSidebarKeysJson"
+        FROM projection_threads
+        WHERE thread_id = 'thread-sidebar'
+      `;
+
+      assert.deepEqual(threadRows, [
+        {
+          sidebarHiddenAt: "2026-03-10T00:00:00.000Z",
+          dismissedSidebarKeysJson: '["plan-submitted:plan-1"]',
+        },
+      ]);
+    }),
+  );
 });
 
 it.effect("restores pending turn-start metadata across projection pipeline restart", () =>

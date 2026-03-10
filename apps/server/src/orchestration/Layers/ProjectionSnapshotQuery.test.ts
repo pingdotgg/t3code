@@ -238,6 +238,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          sidebarHiddenAt: null,
+          dismissedSidebarKeys: [],
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -293,6 +295,104 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
         },
+      ]);
+    }),
+  );
+  it.effect("hydrates sidebar state from projection thread rows", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_state`;
+      yield* sql`DELETE FROM projection_turns`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-1',
+          'Project 1',
+          '/tmp/project-1',
+          NULL,
+          '[]',
+          '2026-03-10T00:00:00.000Z',
+          '2026-03-10T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          sidebar_hidden_at,
+          dismissed_sidebar_keys_json,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-1',
+          'project-1',
+          'Thread 1',
+          'gpt-5-codex',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          '2026-03-10T00:00:02.000Z',
+          '["plan-submitted:plan-1","questions-asked:req-1"]',
+          NULL,
+          '2026-03-10T00:00:01.000Z',
+          '2026-03-10T00:00:02.000Z',
+          NULL
+        )
+      `;
+
+      let sequence = 1;
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (
+            projector,
+            last_applied_sequence,
+            updated_at
+          )
+          VALUES (
+            ${projector},
+            ${sequence},
+            '2026-03-10T00:00:03.000Z'
+          )
+        `;
+        sequence += 1;
+      }
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+
+      assert.equal(snapshot.threads[0]?.sidebarHiddenAt, "2026-03-10T00:00:02.000Z");
+      assert.deepEqual(snapshot.threads[0]?.dismissedSidebarKeys, [
+        "plan-submitted:plan-1",
+        "questions-asked:req-1",
       ]);
     }),
   );
