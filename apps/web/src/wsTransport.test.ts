@@ -175,19 +175,19 @@ describe("WsTransport", () => {
     expect(warnSpy).toHaveBeenNthCalledWith(
       1,
       "Dropped inbound WebSocket envelope",
-      expect.objectContaining({
-        code: "invalid-json",
-        reason: expect.stringContaining("Expected property name or '}'"),
-        rawKind: "string",
-      }),
+      {
+        phase: "json",
+        message: expect.stringContaining("Expected property name or '}'"),
+      },
     );
-    expect(warnSpy).toHaveBeenNthCalledWith(2, "Dropped inbound WebSocket envelope", {
-      code: "invalid-envelope",
-      reason: expect.stringContaining("Expected"),
-      rawKind: "object",
-      expected: "WsResponse",
-      actual: "object",
-    });
+    expect(warnSpy).toHaveBeenNthCalledWith(
+      2,
+      "Dropped inbound WebSocket envelope",
+      {
+        phase: "schema",
+        message: expect.stringContaining('Expected "server.configUpdated"'),
+      },
+    );
 
     transport.dispose();
   });
