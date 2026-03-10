@@ -49,6 +49,12 @@ import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import {
+  FOCUS_MODE_GRACE_MS,
+  deriveFocusThreadVisibility,
+  resolveFocusProjectExpanded,
+  toggleFocusProjectOverride,
+} from "../sidebarFocusMode";
 import { toastManager } from "./ui/toast";
 import {
   getArm64IntelBuildWarningDescription,
@@ -296,6 +302,14 @@ export default function Sidebar() {
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [focusNow, setFocusNow] = useState(() => Date.now());
+  const [focusProjectExpandedSnapshot, setFocusProjectExpandedSnapshot] = useState<
+    ReadonlyMap<ProjectId, boolean> | null
+  >(null);
+  const [focusCollapsedProjectIds, setFocusCollapsedProjectIds] = useState<ReadonlySet<ProjectId>>(
+    () => new Set(),
+  );
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const dragInProgressRef = useRef(false);
@@ -317,6 +331,62 @@ export default function Sidebar() {
     }
     return map;
   }, [threads]);
+  const { focusVisibilityByThreadId, nextFocusExpiryAt } = useMemo(() => {
+    const visibilityByThreadId = new Map<
+      ThreadId,
+      ReturnType<typeof deriveFocusThreadVisibility>
+    >();
+    let nearestExpiryAt: number | null = null;
+
+    for (const thread of threads) {
+      const visibility = deriveFocusThreadVisibility({
+        thread,
+        hasPendingApprovals: pendingApprovalByThreadId.get(thread.id) === true,
+        hasPendingUserInputs: pendingUserInputByThreadId.get(thread.id) === true,
+        now: focusNow,
+        graceMs: FOCUS_MODE_GRACE_MS,
+      });
+      visibilityByThreadId.set(thread.id, visibility);
+      if (
+        visibility.isVisible &&
+        visibility.graceExpiresAt !== null &&
+        (nearestExpiryAt === null || visibility.graceExpiresAt < nearestExpiryAt)
+      ) {
+        nearestExpiryAt = visibility.graceExpiresAt;
+      }
+    }
+
+    return {
+      focusVisibilityByThreadId: visibilityByThreadId,
+      nextFocusExpiryAt: nearestExpiryAt,
+    };
+  }, [focusNow, pendingApprovalByThreadId, pendingUserInputByThreadId, threads]);
+  const activeFocusProjectId = useMemo(() => {
+    if (!routeThreadId) {
+      return null;
+    }
+
+    const activeThread = threads.find((thread) => thread.id === routeThreadId);
+    if (!activeThread) {
+      return null;
+    }
+
+    return focusVisibilityByThreadId.get(activeThread.id)?.isVisible === true
+      ? activeThread.projectId
+      : null;
+  }, [focusVisibilityByThreadId, routeThreadId, threads]);
+  const displayedProjects = useMemo(() => {
+    if (!isFocusMode) {
+      return projects;
+    }
+
+    return projects.filter((project) =>
+      threads.some(
+        (thread) =>
+          thread.projectId === project.id && focusVisibilityByThreadId.get(thread.id)?.isVisible === true,
+      ),
+    );
+  }, [focusVisibilityByThreadId, isFocusMode, projects, threads]);
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
@@ -881,7 +951,7 @@ export default function Sidebar() {
   }, []);
 
   const handleProjectTitleClick = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>, projectId: ProjectId) => {
+    (event: React.MouseEvent<HTMLButtonElement>, onToggle: () => void) => {
       if (dragInProgressRef.current) {
         event.preventDefault();
         event.stopPropagation();
@@ -894,22 +964,61 @@ export default function Sidebar() {
         event.stopPropagation();
         return;
       }
-      toggleProject(projectId);
+      onToggle();
     },
-    [toggleProject],
+    [],
   );
 
   const handleProjectTitleKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLButtonElement>, projectId: ProjectId) => {
+    (event: React.KeyboardEvent<HTMLButtonElement>, onToggle: () => void) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       if (dragInProgressRef.current) {
         return;
       }
-      toggleProject(projectId);
+      onToggle();
     },
-    [toggleProject],
+    [],
   );
+
+  const setFocusProjectOpen = useCallback((projectId: ProjectId, open: boolean) => {
+    setFocusCollapsedProjectIds((current) => toggleFocusProjectOverride(current, projectId, open));
+  }, []);
+
+  const toggleFocusMode = useCallback(() => {
+    setFocusNow(Date.now());
+    setIsFocusMode((current) => {
+      if (current) {
+        setFocusProjectExpandedSnapshot(null);
+        setFocusCollapsedProjectIds(new Set());
+        return false;
+      }
+
+      setFocusProjectExpandedSnapshot(new Map(projects.map((project) => [project.id, project.expanded])));
+      setFocusCollapsedProjectIds(new Set());
+      return true;
+    });
+  }, [projects]);
+
+  useEffect(() => {
+    if (!isFocusMode) {
+      return;
+    }
+    setFocusNow(Date.now());
+  }, [isFocusMode, threads]);
+
+  useEffect(() => {
+    if (!isFocusMode || nextFocusExpiryAt === null) {
+      return;
+    }
+    const delay = Math.max(0, nextFocusExpiryAt - Date.now());
+    const timeout = window.setTimeout(() => {
+      setFocusNow(Date.now());
+    }, delay + 10);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [isFocusMode, nextFocusExpiryAt]);
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -1100,6 +1209,20 @@ export default function Sidebar() {
       </div>
     </div>
   );
+  const focusButton = (
+    <button
+      type="button"
+      aria-pressed={isFocusMode}
+      className={`inline-flex h-7 items-center justify-center rounded-md px-2.5 text-xs font-medium transition-colors ${
+        isFocusMode
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground"
+      }`}
+      onClick={toggleFocusMode}
+    >
+      Focus
+    </button>
+  );
 
   return (
     <>
@@ -1107,6 +1230,7 @@ export default function Sidebar() {
         <>
           <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px]">
             {wordmark}
+            <div className="mt-1.5">{focusButton}</div>
             {showDesktopUpdateButton && (
               <Tooltip>
                 <TooltipTrigger
@@ -1116,7 +1240,7 @@ export default function Sidebar() {
                       aria-label={desktopUpdateTooltip}
                       aria-disabled={desktopUpdateButtonDisabled || undefined}
                       disabled={desktopUpdateButtonDisabled}
-                      className={`inline-flex size-7 ml-auto mt-1.5 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
+                      className={`inline-flex size-7 mt-1.5 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
                       onClick={handleDesktopUpdateButtonClick}
                     >
                       <RocketIcon className="size-3.5" />
@@ -1131,6 +1255,7 @@ export default function Sidebar() {
       ) : (
         <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
           {wordmark}
+          <div className="ml-auto">{focusButton}</div>
         </SidebarHeader>
       )}
 
@@ -1260,10 +1385,10 @@ export default function Sidebar() {
           >
             <SidebarMenu>
               <SortableContext
-                items={projects.map((project) => project.id)}
+                items={displayedProjects.map((project) => project.id)}
                 strategy={verticalListSortingStrategy}
               >
-                {projects.map((project) => {
+                {displayedProjects.map((project) => {
                   const projectThreads = threads
                     .filter((thread) => thread.projectId === project.id)
                     .toSorted((a, b) => {
@@ -1271,19 +1396,33 @@ export default function Sidebar() {
                       if (byDate !== 0) return byDate;
                       return b.id.localeCompare(a.id);
                     });
+                  const focusVisibleProjectThreads = projectThreads.filter(
+                    (thread) => focusVisibilityByThreadId.get(thread.id)?.isVisible === true,
+                  );
+                  const hasVisibleFocusThreadInProject = focusVisibleProjectThreads.length > 0;
+                  const projectBaseExpanded =
+                    focusProjectExpandedSnapshot?.get(project.id) ?? project.expanded;
+                  const isProjectOpen = resolveFocusProjectExpanded({
+                    isFocusMode,
+                    baseExpanded: projectBaseExpanded,
+                    containsVisibleThread: hasVisibleFocusThreadInProject,
+                    manuallyCollapsed: focusCollapsedProjectIds.has(project.id),
+                    activeVisibleThreadInContainer: activeFocusProjectId === project.id,
+                  });
+                  const displayThreads = isFocusMode ? focusVisibleProjectThreads : projectThreads;
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
-                  const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
+                  const hasHiddenThreads = displayThreads.length > THREAD_PREVIEW_LIMIT;
                   const visibleThreads =
                     hasHiddenThreads && !isThreadListExpanded
-                      ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
-                      : projectThreads;
+                      ? displayThreads.slice(0, THREAD_PREVIEW_LIMIT)
+                      : displayThreads;
 
                   return (
                     <SortableProjectItem key={project.id} projectId={project.id}>
                       {(dragHandleProps) => (
                         <Collapsible
                           className="group/collapsible"
-                          open={project.expanded}
+                          open={isProjectOpen}
                         >
                           <div className="group/project-header relative">
                             <SidebarMenuButton
@@ -1292,8 +1431,24 @@ export default function Sidebar() {
                               {...dragHandleProps.attributes}
                               {...dragHandleProps.listeners}
                               onPointerDownCapture={handleProjectTitlePointerDownCapture}
-                              onClick={(event) => handleProjectTitleClick(event, project.id)}
-                              onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
+                              onClick={(event) =>
+                                handleProjectTitleClick(event, () => {
+                                  if (isFocusMode) {
+                                    setFocusProjectOpen(project.id, !isProjectOpen);
+                                    return;
+                                  }
+                                  toggleProject(project.id);
+                                })
+                              }
+                              onKeyDown={(event) =>
+                                handleProjectTitleKeyDown(event, () => {
+                                  if (isFocusMode) {
+                                    setFocusProjectOpen(project.id, !isProjectOpen);
+                                    return;
+                                  }
+                                  toggleProject(project.id);
+                                })
+                              }
                               onContextMenu={(event) => {
                                 event.preventDefault();
                                 void handleProjectContextMenu(project.id, {
@@ -1304,7 +1459,7 @@ export default function Sidebar() {
                             >
                               <ChevronRightIcon
                                 className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
-                                  project.expanded ? "rotate-90" : ""
+                                  isProjectOpen ? "rotate-90" : ""
                                 }`}
                               />
                               <ProjectFavicon cwd={project.cwd} />
@@ -1524,9 +1679,9 @@ export default function Sidebar() {
             </SidebarMenu>
           </DndContext>
 
-          {projects.length === 0 && !shouldShowProjectPathEntry && (
+          {displayedProjects.length === 0 && !shouldShowProjectPathEntry && (
             <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-              No projects yet
+              {projects.length === 0 ? "No projects yet" : "No chats need focus"}
             </div>
           )}
         </SidebarGroup>
