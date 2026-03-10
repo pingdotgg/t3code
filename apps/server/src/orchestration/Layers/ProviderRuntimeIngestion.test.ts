@@ -1091,6 +1091,50 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("runtime exploded");
   });
 
+  it("keeps the session running when a runtime.warning arrives during an active turn", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-warning-turn-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-warning"),
+      payload: {},
+    });
+
+    harness.emit({
+      type: "runtime.warning",
+      eventId: asEventId("evt-warning-runtime"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-warning"),
+      payload: {
+        message: "Reconnecting... 2/5",
+        detail: {
+          willRetry: true,
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "running" &&
+        entry.session?.activeTurnId === "turn-warning" &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) =>
+            activity.id === "evt-warning-runtime" && activity.kind === "runtime.warning",
+        ),
+    );
+    expect(thread.session?.status).toBe("running");
+    expect(thread.session?.activeTurnId).toBe("turn-warning");
+    expect(thread.session?.lastError).toBeNull();
+  });
+
   it("maps session/thread lifecycle and item.started into session/activity projections", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

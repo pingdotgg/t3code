@@ -1192,13 +1192,14 @@ function mapToRuntimeEvents(
   if (event.method === "error") {
     const message =
       asString(asObject(payload?.error)?.message) ?? event.message ?? "Provider runtime error";
+    const willRetry = payload?.willRetry === true;
     return [
       {
-        type: "runtime.error",
+        type: willRetry ? "runtime.warning" : "runtime.error",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
-          class: "provider_error",
+          ...(!willRetry ? { class: "provider_error" as const } : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
@@ -1354,7 +1355,6 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
               threadId: input.threadId,
               ...(input.input !== undefined ? { input: input.input } : {}),
               ...(input.model !== undefined ? { model: input.model } : {}),
-              ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
               ...(input.modelOptions?.codex?.reasoningEffort !== undefined
                 ? { effort: input.modelOptions.codex.reasoningEffort }
                 : {}),
