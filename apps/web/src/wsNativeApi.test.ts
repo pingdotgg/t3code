@@ -18,33 +18,36 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
-const showContextMenuFallbackMock = vi.fn<
-  <T extends string>(
-    items: readonly ContextMenuItem<T>[],
-    position?: { x: number; y: number },
-  ) => Promise<T | null>
->();
+const showContextMenuFallbackMock =
+  vi.fn<
+    <T extends string>(
+      items: readonly ContextMenuItem<T>[],
+      position?: { x: number; y: number },
+    ) => Promise<T | null>
+  >();
 const channelListeners = new Map<string, Set<(message: WsPush) => void>>();
 const latestPushByChannel = new Map<string, WsPush>();
 const subscribeMock = vi.fn<
-  (channel: string, listener: (message: WsPush) => void, options?: { replayLatest?: boolean }) => () => void
->(
-  (channel, listener, options) => {
-    const listeners = channelListeners.get(channel) ?? new Set<(message: WsPush) => void>();
-    listeners.add(listener);
-    channelListeners.set(channel, listeners);
-    const latest = latestPushByChannel.get(channel);
-    if (latest && options?.replayLatest) {
-      listener(latest);
+  (
+    channel: string,
+    listener: (message: WsPush) => void,
+    options?: { replayLatest?: boolean },
+  ) => () => void
+>((channel, listener, options) => {
+  const listeners = channelListeners.get(channel) ?? new Set<(message: WsPush) => void>();
+  listeners.add(listener);
+  channelListeners.set(channel, listeners);
+  const latest = latestPushByChannel.get(channel);
+  if (latest && options?.replayLatest) {
+    listener(latest);
+  }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      channelListeners.delete(channel);
     }
-    return () => {
-      listeners.delete(listener);
-      if (listeners.size === 0) {
-        channelListeners.delete(channel);
-      }
-    };
-  },
-);
+  };
+});
 
 vi.mock("./wsTransport", () => {
   return {

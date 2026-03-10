@@ -47,7 +47,8 @@ export function onServerConfigUpdated(
 ): () => void {
   serverConfigUpdatedListeners.add(listener);
 
-  const latestConfig = instance?.transport.getLatestPush(WS_CHANNELS.serverConfigUpdated)?.data ?? null;
+  const latestConfig =
+    instance?.transport.getLatestPush(WS_CHANNELS.serverConfigUpdated)?.data ?? null;
   if (latestConfig) {
     try {
       listener(latestConfig);

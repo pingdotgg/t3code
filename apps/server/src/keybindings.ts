@@ -569,7 +569,7 @@ const makeKeybindings = Effect.gen(function* () {
           configPath: keybindingsConfigPath,
           detail: "failed to read keybindings config",
           cause,
-      }),
+        }),
     ),
   );
 
@@ -824,9 +824,7 @@ const makeKeybindings = Effect.gen(function* () {
       ),
     );
 
-    const revalidateAndEmitSafely = revalidateAndEmit.pipe(
-      Effect.ignoreCause({ log: true }),
-    );
+    const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
     // fs.watch (inotify/kqueue) gives instant detection on most platforms
     // but can silently miss events on Linux containers.
@@ -839,11 +837,7 @@ const makeKeybindings = Effect.gen(function* () {
         return Effect.void;
       }
       return revalidateAndEmitSafely;
-    }).pipe(
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(watcherScope),
-      Effect.asVoid,
-    );
+    }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope), Effect.asVoid);
 
     // fs.watchFile (stat-based polling on libuv timers) as a reliable
     // backup.  Unlike an Effect.sleep loop in a forked fiber, libuv

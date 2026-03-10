@@ -440,9 +440,7 @@ export const makeOrchestrationIntegrationHarness = (
 
       return waitFor(
         readMatchingReceipt,
-        (
-          receipt,
-        ): receipt is OrchestrationRuntimeReceipt => receipt !== undefined,
+        (receipt): receipt is OrchestrationRuntimeReceipt => receipt !== undefined,
         "runtime receipt",
         timeoutMs,
       );

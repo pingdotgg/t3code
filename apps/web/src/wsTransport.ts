@@ -38,7 +38,6 @@ interface WsRequestEnvelope {
   };
 }
 
-
 function asError(value: unknown, fallback: string): Error {
   if (value instanceof Error) {
     return value;

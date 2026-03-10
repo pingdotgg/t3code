@@ -705,10 +705,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* readiness.markHttpListening;
 
   yield* Effect.addFinalizer(() =>
-    Effect.all([
-      closeAllClients,
-      closeWebSocketServer.pipe(Effect.ignoreCause({ log: true })),
-    ]),
+    Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.ignoreCause({ log: true }))]),
   );
 
   const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
@@ -986,9 +983,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     );
 
     ws.on("message", (raw) => {
-      void runPromise(
-        handleMessage(ws, raw).pipe(Effect.ignoreCause({ log: true })),
-      );
+      void runPromise(handleMessage(ws, raw).pipe(Effect.ignoreCause({ log: true })));
     });
 
     ws.on("close", () => {

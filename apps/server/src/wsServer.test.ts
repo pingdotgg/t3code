@@ -383,9 +383,7 @@ async function rewriteKeybindingsAndWaitForPush(
   ws: WebSocket,
   keybindingsPath: string,
   contents: string,
-  predicate: (
-    push: WsPushMessage<typeof WS_CHANNELS.serverConfigUpdated>,
-  ) => boolean,
+  predicate: (push: WsPushMessage<typeof WS_CHANNELS.serverConfigUpdated>) => boolean,
   attempts = 3,
 ): Promise<WsPushMessage<typeof WS_CHANNELS.serverConfigUpdated>> {
   let lastError: unknown;
@@ -1741,9 +1739,8 @@ describe("WebSocket Server", () => {
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
-    const ws = await connectWs(port);
+    const [ws] = await connectAndAwaitWelcome(port);
     connections.push(ws);
-    await waitForMessage(ws);
 
     const resolveResponse = await sendRequest(ws, WS_METHODS.gitResolvePullRequest, {
       cwd: "/test",
