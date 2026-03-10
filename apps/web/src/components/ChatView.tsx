@@ -1464,7 +1464,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         terminalStore.terminalStateByThreadId,
         targetThreadId,
       );
-      const targetCwd = options?.cwd ?? options?.worktreePath ?? targetThreadWorktreePath ?? targetProject.cwd;
+      const targetCwd =
+        options?.cwd ?? options?.worktreePath ?? targetThreadWorktreePath ?? targetProject.cwd;
       const baseTerminalId =
         targetTerminalState.activeTerminalId ||
         targetTerminalState.terminalIds[0] ||
@@ -1546,7 +1547,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!setupScript) {
         return;
       }
-      await runProjectScript(setupScript, {
+      const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
         targetThreadId: input.targetThreadId,
         targetProject: input.targetProject,
         targetThreadWorktreePath: input.targetThreadWorktreePath,
@@ -1557,7 +1558,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ? { allowLocalDraftThread: input.allowLocalDraftThread }
           : {}),
         ...(input.throwOnError !== undefined ? { throwOnError: input.throwOnError } : {}),
-      });
+      };
+      await runProjectScript(setupScript, setupScriptOptions);
     },
     [runProjectScript],
   );
@@ -2657,23 +2659,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
         beginSendPhase("preparing-worktree");
-        const worktree = await createWorktreeFromBaseBranch({
-          projectCwd: activeProject.cwd,
-          baseBranch: baseBranchForWorktree,
+        const newBranch = buildTemporaryWorktreeBranchName();
+        const result = await createWorktreeMutation.mutateAsync({
+          cwd: activeProject.cwd,
+          branch: baseBranchForWorktree,
+          newBranch,
         });
-        nextThreadBranch = worktree.branch;
-        nextThreadWorktreePath = worktree.worktreePath;
+        nextThreadBranch = result.worktree.branch;
+        nextThreadWorktreePath = result.worktree.path;
         if (isServerThread) {
           await api.orchestration.dispatchCommand({
             type: "thread.meta.update",
             commandId: newCommandId(),
             threadId: threadIdForSend,
-            branch: worktree.branch,
-            worktreePath: worktree.worktreePath,
+            branch: result.worktree.branch,
+            worktreePath: result.worktree.path,
           });
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
-          setStoreThreadBranch(threadIdForSend, worktree.branch, worktree.worktreePath);
+          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
         }
       }
 
@@ -2713,7 +2717,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         createdServerThreadForLocalDraft = true;
       }
 
+      let setupScript: ProjectScript | null = null;
       if (baseBranchForWorktree) {
+        setupScript = setupProjectScript(activeProject.scripts);
+      }
+      if (setupScript) {
         let shouldRunSetupScript = false;
         if (isServerThread) {
           shouldRunSetupScript = true;
@@ -2723,12 +2731,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
         }
         if (shouldRunSetupScript) {
-          await runWorktreeSetupScript({
-            targetThreadId: threadIdForSend,
-            targetProject: activeProject,
-            targetThreadWorktreePath: nextThreadWorktreePath,
+          const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
+            worktreePath: nextThreadWorktreePath,
+            rememberAsLastInvoked: false,
             allowLocalDraftThread: createdServerThreadForLocalDraft,
-          });
+          };
+          if (nextThreadWorktreePath) {
+            setupScriptOptions.cwd = nextThreadWorktreePath;
+          }
+          await runProjectScript(setupScript, setupScriptOptions);
         }
       }
 
@@ -4182,15 +4193,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   <ChevronDownIcon className="size-3.5" />
                                 </MenuTrigger>
                                 <MenuPopup align="end" side="top">
-                                  <MenuItem
-                                    disabled={isSendBusy || isConnecting}
-                                    onClick={() => void onImplementPlanInNewThread()}
-                                  >
-                                    Implement in new thread
-                                  </MenuItem>
-                                </MenuPopup>
-                              </Menu>
-                            </div>
+                                <MenuItem
+                                  disabled={isSendBusy || isConnecting}
+                                  onClick={() => void onImplementPlanInNewThread()}
+                                >
+                                  Implement in new thread
+                                </MenuItem>
+                                <MenuItem
+                                  disabled={isSendBusy || isConnecting || !isGitRepo}
+                                  onClick={() => void onImplementPlanInNewWorktree()}
+                                >
+                                  Implement in new worktree
+                                </MenuItem>
+                              </MenuPopup>
+                            </Menu>
+                          </div>
                           )
                         ) : (
                           <button
@@ -4338,9 +4355,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>
-              Close
-            </AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>Close</AlertDialogClose>
             <Button variant="outline" onClick={onKeepImplementationWorktree}>
               Keep worktree
             </Button>

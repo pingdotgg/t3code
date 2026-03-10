@@ -586,50 +586,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         assert.equal(firstEvent.payload.reason, "Sandbox setup failed");
       }
 
-        assert.equal(secondEvent?.type, "runtime.warning");
-        if (secondEvent?.type === "runtime.warning") {
-          assert.equal(secondEvent.payload.message, "Sandbox setup failed");
-        }
-      }),
-  );
-
-  it.effect("maps process/stderr notifications into runtime warnings", () =>
-    Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
-      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 1)).pipe(
-        Effect.timeoutOption(1_000),
-        Effect.forkChild,
-      );
-
-      const event: ProviderEvent = {
-        id: asEventId("evt-process-stderr"),
-        kind: "notification",
-        provider: "codex",
-        threadId: asThreadId("thread-1"),
-        createdAt: new Date().toISOString(),
-        method: "process/stderr",
-        message:
-          "2026-03-10T01:03:53.921955Z ERROR codex_core::models_manager::manager: failed to renew cache TTL: EOF while parsing a value at line 1 column 0",
-      };
-
-      lifecycleManager.emit("event", event);
-      const maybeEvents = yield* Fiber.join(eventsFiber);
-
-      assert.equal(Option.isSome(maybeEvents), true);
-      if (Option.isNone(maybeEvents)) {
-        return;
-      }
-
-      const events = Array.from(maybeEvents.value);
-      assert.equal(events.length, 1);
-
-      const warningEvent = events[0];
-      assert.equal(warningEvent?.type, "runtime.warning");
-      if (warningEvent?.type === "runtime.warning") {
-        assert.equal(
-          warningEvent.payload.message,
-          "2026-03-10T01:03:53.921955Z ERROR codex_core::models_manager::manager: failed to renew cache TTL: EOF while parsing a value at line 1 column 0",
-        );
+      assert.equal(secondEvent?.type, "runtime.warning");
+      if (secondEvent?.type === "runtime.warning") {
+        assert.equal(secondEvent.payload.message, "Sandbox setup failed");
       }
     }),
   );

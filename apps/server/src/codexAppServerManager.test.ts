@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -165,77 +164,6 @@ describe("classifyCodexStderrLine", () => {
     expect(classifyCodexStderrLine(line)).toEqual({
       message: line,
     });
-  });
-
-  it("emits process/stderr as a notification event", () => {
-    const manager = new CodexAppServerManager();
-    const events: Array<{ method: string; kind: string; message?: string }> = [];
-    manager.on("event", (event) => {
-      events.push({
-        method: event.method,
-        kind: event.kind,
-        ...(event.message ? { message: event.message } : {}),
-      });
-    });
-
-    const output = new EventEmitter();
-    const stderr = new EventEmitter();
-    const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
-    child.stderr = stderr;
-
-    type ProcessListenerHarnessContext = {
-      session: {
-        provider: "codex";
-        status: "ready";
-        threadId: ThreadId;
-        runtimeMode: "full-access";
-        createdAt: string;
-        updatedAt: string;
-      };
-      child: EventEmitter & { stderr: EventEmitter };
-      output: EventEmitter;
-      pending: Map<string, unknown>;
-      pendingApprovals: Map<string, unknown>;
-      pendingUserInputs: Map<string, unknown>;
-      nextRequestId: number;
-      stopping: boolean;
-    };
-
-    const context: ProcessListenerHarnessContext = {
-      session: {
-        provider: "codex" as const,
-        status: "ready" as const,
-        threadId: asThreadId("thread-1"),
-        runtimeMode: "full-access" as const,
-        createdAt: "2026-02-10T00:00:00.000Z",
-        updatedAt: "2026-02-10T00:00:00.000Z",
-      },
-      child,
-      output,
-      pending: new Map(),
-      pendingApprovals: new Map(),
-      pendingUserInputs: new Map(),
-      nextRequestId: 1,
-      stopping: false,
-    };
-
-    (
-      manager as unknown as {
-        attachProcessListeners: (context: ProcessListenerHarnessContext) => void;
-      }
-    ).attachProcessListeners(context);
-
-    const line =
-      "2026-03-10T01:03:53.921955Z ERROR codex_core::models_manager::manager: failed to renew cache TTL: EOF while parsing a value at line 1 column 0";
-    stderr.emit("data", Buffer.from(`${line}\n`));
-
-    expect(events).toEqual([
-      {
-        method: "process/stderr",
-        kind: "notification",
-        message: line,
-      },
-    ]);
   });
 });
 

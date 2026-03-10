@@ -641,23 +641,6 @@ function mapToRuntimeEvents(
     ];
   }
 
-  if (event.method === "process/stderr") {
-    if (!event.message) {
-      return [];
-    }
-
-    return [
-      {
-        type: "runtime.warning",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          message: event.message,
-          ...(event.payload !== undefined ? { detail: event.payload } : {}),
-        },
-      },
-    ];
-  }
-
   if (event.method === "thread/started") {
     const payloadThreadId = asString(asObject(payload?.thread)?.id);
     const providerThreadId = payloadThreadId ?? asString(payload?.threadId);
