@@ -167,6 +167,7 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import {
+  AntigravityIcon,
   ClaudeAI,
   CursorIcon,
   Gemini,
@@ -6068,7 +6069,7 @@ const OpenInPicker = memo(function OpenInPicker({
       },
       {
         label: "Antigravity",
-        Icon: Gemini,
+        Icon: AntigravityIcon,
         value: "antigravity",
       },
       {
