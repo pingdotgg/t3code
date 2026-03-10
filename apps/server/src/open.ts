@@ -234,10 +234,14 @@ export const launchDetached = (launch: EditorLaunch) =>
     yield* Effect.callback<void, OpenError>((resume) => {
       let child;
       try {
-        child = spawn(launch.command, [...launch.args], {
+        const useShell = process.platform === "win32";
+        const args = useShell
+          ? launch.args.map((a) => (a.includes(" ") ? `"${a}"` : a))
+          : [...launch.args];
+        child = spawn(launch.command, args, {
           detached: true,
           stdio: "ignore",
-          shell: process.platform === "win32",
+          shell: useShell,
         });
       } catch (error) {
         return resume(
