@@ -923,6 +923,42 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps slash command suggestions active while typing before a suffix mention", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "@AGENTS.md ");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-prefix-typing" as MessageId,
+        targetText: "prefix typing target",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(composerEditor);
+      range.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+
+      await waitForLayout();
+      document.execCommand("insertText", false, "/mo");
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("/model");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps long proposed plans lightweight until the user expands them", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

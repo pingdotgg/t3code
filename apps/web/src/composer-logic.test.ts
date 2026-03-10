@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  collapseExpandedComposerCursor,
   detectComposerTrigger,
+  detectComposerTriggerInPrefix,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToMention,
   parseStandaloneComposerSlashCommand,
@@ -68,6 +70,18 @@ describe("replaceTextRange", () => {
   });
 });
 
+describe("collapseExpandedComposerCursor", () => {
+  it("maps expanded mention cursor to collapsed cursor", () => {
+    const text = "what's in my @AGENTS.md fsfdas";
+    const expandedCursorAfterMention = "what's in my @AGENTS.md ".length;
+    const collapsedCursorAfterMention = "what's in my ".length + 2;
+
+    expect(collapseExpandedComposerCursor(text, expandedCursorAfterMention)).toBe(
+      collapsedCursorAfterMention,
+    );
+  });
+});
+
 describe("expandCollapsedComposerCursor", () => {
   it("keeps cursor unchanged when no mention segment is present", () => {
     expect(expandCollapsedComposerCursor("plain text", 5)).toBe(5);
@@ -122,6 +136,17 @@ describe("isCollapsedCursorAdjacentToMention", () => {
     expect(isCollapsedCursorAdjacentToMention(text, mentionStart, "right")).toBe(true);
     expect(isCollapsedCursorAdjacentToMention(text, mentionEnd, "right")).toBe(false);
     expect(isCollapsedCursorAdjacentToMention(text, mentionStart - 1, "right")).toBe(false);
+  });
+});
+
+describe("detectComposerTriggerInPrefix", () => {
+  it("ignores suffix text after the caret during edit-time trigger detection", () => {
+    expect(detectComposerTriggerInPrefix("/mo")).toEqual({
+      kind: "slash-command",
+      query: "mo",
+      rangeStart: 0,
+      rangeEnd: 3,
+    });
   });
 });
 
