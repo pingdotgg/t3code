@@ -22,6 +22,8 @@ jobs:
     outputs:
       version: ${{ steps.release_meta.outputs.version }}
       tag: ${{ steps.release_meta.outputs.tag }}
+      is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
+      make_latest: ${{ steps.release_meta.outputs.make_latest }}
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
@@ -45,6 +47,13 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -246,12 +255,29 @@ jobs:
     needs: [preflight, build, publish_cli]
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: desktop-*
           merge-multiple: true
           path: release-assets
+
+      - name: Merge macOS updater manifests
+        run: |
+          node scripts/merge-mac-update-manifests.ts \
+            release-assets/latest-mac.yml \
+            release-assets/latest-mac-x64.yml
+          rm -f release-assets/latest-mac-x64.yml
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -260,7 +286,8 @@ jobs:
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: T3 Code v${{ needs.preflight.outputs.version }}
           generate_release_notes: true
-          make_latest: true
+          prerelease: ${{ needs.preflight.outputs.is_prerelease }}
+          make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
             release-assets/*.dmg
             release-assets/*.zip
@@ -295,33 +322,7 @@ jobs:
         name: Update version strings
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
-        run: |
-          node --input-type=module -e '
-            import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-
-            const files = [
-              "apps/server/package.json",
-              "apps/desktop/package.json",
-              "apps/web/package.json",
-              "packages/contracts/package.json",
-            ];
-
-            let changed = false;
-            for (const file of files) {
-              const packageJson = JSON.parse(readFileSync(file, "utf8"));
-              if (packageJson.version !== process.env.RELEASE_VERSION) {
-                packageJson.version = process.env.RELEASE_VERSION;
-                writeFileSync(file, `${JSON.stringify(packageJson, null, 2)}\n`);
-                changed = true;
-              }
-            }
-
-            if (!changed) {
-              console.log("All package.json versions already match release version.");
-            }
-
-            appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\n`);
-          '
+        run: node scripts/update-release-package-versions.ts "$RELEASE_VERSION" --github-output
 
       - name: Format package.json files
         if: steps.update_versions.outputs.changed == 'true'
@@ -329,7 +330,7 @@ jobs:
 
       - name: Refresh lockfile
         if: steps.update_versions.outputs.changed == 'true'
-        run: bun install
+        run: bun install --lockfile-only --ignore-scripts
 
       - name: Commit and push version bump
         if: steps.update_versions.outputs.changed == 'true'

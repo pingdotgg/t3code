@@ -12,6 +12,7 @@ import {
   TerminalEvent,
   TerminalOpenInput,
   TerminalResizeInput,
+  TerminalRestartInput,
   TerminalSessionSnapshot,
   TerminalSessionStatus,
   TerminalWriteInput,
@@ -88,7 +89,7 @@ export interface TerminalManagerShape {
    * Always resets history before spawning the new process.
    */
   readonly restart: (
-    input: TerminalOpenInput,
+    input: TerminalRestartInput,
   ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
   /**

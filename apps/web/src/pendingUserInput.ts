@@ -95,9 +95,7 @@ export function derivePendingUserInputProgress(
   questionIndex: number,
 ): PendingUserInputProgress {
   const normalizedQuestionIndex =
-    questions.length === 0
-      ? 0
-      : Math.max(0, Math.min(questionIndex, questions.length - 1));
+    questions.length === 0 ? 0 : Math.max(0, Math.min(questionIndex, questions.length - 1));
   const activeQuestion = questions[normalizedQuestionIndex] ?? null;
   const activeDraft = activeQuestion ? draftAnswers[activeQuestion.id] : undefined;
   const resolvedAnswer = resolvePendingUserInputAnswer(activeDraft);

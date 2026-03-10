@@ -4,10 +4,24 @@ import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  protocol,
+  shell,
+} from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type {
+  DesktopTheme,
+  DesktopUpdateActionResult,
+  DesktopUpdateState,
+} from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
@@ -15,10 +29,7 @@ import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
-import {
-  getAutoUpdateDisabledReason,
-  shouldBroadcastDownloadProgress,
-} from "./updateState";
+import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -31,11 +42,13 @@ import {
   reduceDesktopUpdateStateOnNoUpdate,
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
+import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
 
 fixPath();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
+const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
@@ -50,6 +63,8 @@ const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
+const USER_DATA_DIR_NAME = isDevelopment ? "t3code-dev" : "t3code";
+const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = Path.join(STATE_DIR, "logs");
@@ -58,6 +73,8 @@ const LOG_FILE_MAX_FILES = 10;
 const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const DESKTOP_UPDATE_CHANNEL = "latest";
+const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 
@@ -76,7 +93,13 @@ let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
-const initialUpdateState = (): DesktopUpdateState => createInitialDesktopUpdateState(app.getVersion());
+const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
+  platform: process.platform,
+  processArch: process.arch,
+  runningUnderArm64Translation: app.runningUnderARM64Translation === true,
+});
+const initialUpdateState = (): DesktopUpdateState =>
+  createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);
 
 function logTimestamp(): string {
   return new Date().toISOString();
@@ -108,6 +131,33 @@ function formatErrorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function getSafeExternalUrl(rawUrl: unknown): string | null {
+  if (typeof rawUrl !== "string" || rawUrl.length === 0) {
+    return null;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+    return null;
+  }
+
+  return parsedUrl.toString();
+}
+
+function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
+  if (rawTheme === "light" || rawTheme === "dark" || rawTheme === "system") {
+    return rawTheme;
+  }
+
+  return null;
 }
 
 function writeDesktopStreamChunk(
@@ -572,6 +622,34 @@ function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
   return resolveResourcePath(`icon.${ext}`);
 }
 
+/**
+ * Resolve the Electron userData directory path.
+ *
+ * Electron derives the default userData path from `productName` in
+ * package.json, which currently produces directories with spaces and
+ * parentheses (e.g. `~/.config/T3 Code (Alpha)` on Linux). This is
+ * unfriendly for shell usage and violates Linux naming conventions.
+ *
+ * We override it to a clean lowercase name (`t3code`). If the legacy
+ * directory already exists we keep using it so existing users don't
+ * lose their Chromium profile data (localStorage, cookies, sessions).
+ */
+function resolveUserDataPath(): string {
+  const appDataBase =
+    process.platform === "win32"
+      ? process.env.APPDATA || Path.join(OS.homedir(), "AppData", "Roaming")
+      : process.platform === "darwin"
+        ? Path.join(OS.homedir(), "Library", "Application Support")
+        : process.env.XDG_CONFIG_HOME || Path.join(OS.homedir(), ".config");
+
+  const legacyPath = Path.join(appDataBase, LEGACY_USER_DATA_DIR_NAME);
+  if (FS.existsSync(legacyPath)) {
+    return legacyPath;
+  }
+
+  return Path.join(appDataBase, USER_DATA_DIR_NAME);
+}
+
 function configureAppIdentity(): void {
   app.setName(APP_DISPLAY_NAME);
   const commitHash = resolveAboutCommitHash();
@@ -644,7 +722,9 @@ async function checkForUpdates(reason: string): Promise<void> {
     await autoUpdater.checkForUpdates();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    setUpdateState(reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()));
+    setUpdateState(
+      reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()),
+    );
     console.error(`[desktop-updater] Failed to check for updates: ${message}`);
   } finally {
     updateCheckInFlight = false;
@@ -657,6 +737,7 @@ async function downloadAvailableUpdate(): Promise<{ accepted: boolean; completed
   }
   updateDownloadInFlight = true;
   setUpdateState(reduceDesktopUpdateStateOnDownloadStart(updateState));
+  autoUpdater.disableDifferentialDownload = isArm64HostRunningIntelBuild(desktopRuntimeInfo);
   console.info("[desktop-updater] Downloading update...");
 
   try {
@@ -695,7 +776,7 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
 function configureAutoUpdater(): void {
   const enabled = shouldEnableAutoUpdates();
   setUpdateState({
-    ...createInitialDesktopUpdateState(app.getVersion()),
+    ...createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo),
     enabled,
     status: enabled ? "idle" : "disabled",
   });
@@ -705,9 +786,7 @@ function configureAutoUpdater(): void {
   updaterConfigured = true;
 
   const githubToken =
-    process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() ||
-    process.env.GH_TOKEN?.trim() ||
-    "";
+    process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim() || "";
   if (githubToken) {
     // When a token is provided, re-configure the feed with `private: true` so
     // electron-updater uses the GitHub API (api.github.com) instead of the
@@ -725,14 +804,30 @@ function configureAutoUpdater(): void {
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.allowPrerelease = app.getVersion().includes("-");
+  // Keep alpha branding, but force all installs onto the stable update track.
+  autoUpdater.channel = DESKTOP_UPDATE_CHANNEL;
+  autoUpdater.allowPrerelease = DESKTOP_UPDATE_ALLOW_PRERELEASE;
+  autoUpdater.allowDowngrade = false;
+  autoUpdater.disableDifferentialDownload = isArm64HostRunningIntelBuild(desktopRuntimeInfo);
   let lastLoggedDownloadMilestone = -1;
+
+  if (isArm64HostRunningIntelBuild(desktopRuntimeInfo)) {
+    console.info(
+      "[desktop-updater] Apple Silicon host detected while running Intel build; updates will switch to arm64 packages.",
+    );
+  }
 
   autoUpdater.on("checking-for-update", () => {
     console.info("[desktop-updater] Looking for updates...");
   });
   autoUpdater.on("update-available", (info) => {
-    setUpdateState(reduceDesktopUpdateStateOnUpdateAvailable(updateState, info.version, new Date().toISOString()));
+    setUpdateState(
+      reduceDesktopUpdateStateOnUpdateAvailable(
+        updateState,
+        info.version,
+        new Date().toISOString(),
+      ),
+    );
     lastLoggedDownloadMilestone = -1;
     console.info(`[desktop-updater] Update available: ${info.version}`);
   });
@@ -965,6 +1060,16 @@ function registerIpcHandlers(): void {
     return showDesktopConfirmDialog(message, owner);
   });
 
+  ipcMain.removeHandler(SET_THEME_CHANNEL);
+  ipcMain.handle(SET_THEME_CHANNEL, async (_event, rawTheme: unknown) => {
+    const theme = getSafeTheme(rawTheme);
+    if (!theme) {
+      return;
+    }
+
+    nativeTheme.themeSource = theme;
+  });
+
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
   ipcMain.handle(
     CONTEXT_MENU_CHANNEL,
@@ -1028,23 +1133,13 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(OPEN_EXTERNAL_CHANNEL);
   ipcMain.handle(OPEN_EXTERNAL_CHANNEL, async (_event, rawUrl: unknown) => {
-    if (typeof rawUrl !== "string" || rawUrl.length === 0) {
-      return false;
-    }
-
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(rawUrl);
-    } catch {
-      return false;
-    }
-
-    if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+    const externalUrl = getSafeExternalUrl(rawUrl);
+    if (!externalUrl) {
       return false;
     }
 
     try {
-      await shell.openExternal(parsedUrl.toString());
+      await shell.openExternal(externalUrl);
       return true;
     } catch {
       return false;
@@ -1109,7 +1204,42 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("context-menu", (event, params) => {
+    event.preventDefault();
+
+    const menuTemplate: MenuItemConstructorOptions[] = [];
+
+    if (params.misspelledWord) {
+      for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+        menuTemplate.push({
+          label: suggestion,
+          click: () => window.webContents.replaceMisspelling(suggestion),
+        });
+      }
+      if (params.dictionarySuggestions.length === 0) {
+        menuTemplate.push({ label: "No suggestions", enabled: false });
+      }
+      menuTemplate.push({ type: "separator" });
+    }
+
+    menuTemplate.push(
+      { role: "cut", enabled: params.editFlags.canCut },
+      { role: "copy", enabled: params.editFlags.canCopy },
+      { role: "paste", enabled: params.editFlags.canPaste },
+      { role: "selectAll", enabled: params.editFlags.canSelectAll },
+    );
+
+    Menu.buildFromTemplate(menuTemplate).popup({ window });
+  });
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    const externalUrl = getSafeExternalUrl(url);
+    if (externalUrl) {
+      void shell.openExternal(externalUrl);
+    }
+    return { action: "deny" };
+  });
+
   window.on("page-title-updated", (event) => {
     event.preventDefault();
     window.setTitle(APP_DISPLAY_NAME);
@@ -1137,6 +1267,11 @@ function createWindow(): BrowserWindow {
 
   return window;
 }
+
+// Override Electron's userData path before the `ready` event so that
+// Chromium session data uses a filesystem-friendly directory name.
+// Must be called synchronously at the top level — before `app.whenReady()`.
+app.setPath("userData", resolveUserDataPath());
 
 configureAppIdentity();
 

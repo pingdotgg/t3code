@@ -18,6 +18,8 @@ export const gitMutationKeys = {
   checkout: (cwd: string | null) => ["git", "mutation", "checkout", cwd] as const,
   runStackedAction: (cwd: string | null) => ["git", "mutation", "run-stacked-action", cwd] as const,
   pull: (cwd: string | null) => ["git", "mutation", "pull", cwd] as const,
+  preparePullRequestThread: (cwd: string | null) =>
+    ["git", "mutation", "prepare-pull-request-thread", cwd] as const,
 };
 
 export function invalidateGitQueries(queryClient: QueryClient) {
@@ -53,6 +55,26 @@ export function gitBranchesQueryOptions(cwd: string | null) {
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
+  });
+}
+
+export function gitResolvePullRequestQueryOptions(input: {
+  cwd: string | null;
+  reference: string | null;
+}) {
+  return queryOptions({
+    queryKey: ["git", "pull-request", input.cwd, input.reference] as const,
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!input.cwd || !input.reference) {
+        throw new Error("Pull request lookup is unavailable.");
+      }
+      return api.git.resolvePullRequest({ cwd: input.cwd, reference: input.reference });
+    },
+    enabled: input.cwd !== null && input.reference !== null,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
@@ -163,6 +185,27 @@ export function gitRemoveWorktreeMutationOptions(input: { queryClient: QueryClie
       return api.git.removeWorktree({ cwd, path, force });
     },
     mutationKey: ["git", "mutation", "remove-worktree"] as const,
+    onSettled: async () => {
+      await invalidateGitQueries(input.queryClient);
+    },
+  });
+}
+
+export function gitPreparePullRequestThreadMutationOptions(input: {
+  cwd: string | null;
+  queryClient: QueryClient;
+}) {
+  return mutationOptions({
+    mutationFn: async ({ reference, mode }: { reference: string; mode: "local" | "worktree" }) => {
+      const api = ensureNativeApi();
+      if (!input.cwd) throw new Error("Pull request thread preparation is unavailable.");
+      return api.git.preparePullRequestThread({
+        cwd: input.cwd,
+        reference,
+        mode,
+      });
+    },
+    mutationKey: gitMutationKeys.preparePullRequestThread(input.cwd),
     onSettled: async () => {
       await invalidateGitQueries(input.queryClient);
     },
