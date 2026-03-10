@@ -506,7 +506,7 @@ export default function Sidebar() {
           projectId,
           title,
           workspaceRoot: cwd,
-          defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
+          defaultModel: DEFAULT_MODEL_BY_PROVIDER.claudeCode,
           createdAt,
         });
         await handleNewThread(projectId).catch(() => undefined);
