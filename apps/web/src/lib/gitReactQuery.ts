@@ -196,13 +196,7 @@ export function gitPreparePullRequestThreadMutationOptions(input: {
   queryClient: QueryClient;
 }) {
   return mutationOptions({
-    mutationFn: async ({
-      reference,
-      mode,
-    }: {
-      reference: string;
-      mode: "local" | "worktree";
-    }) => {
+    mutationFn: async ({ reference, mode }: { reference: string; mode: "local" | "worktree" }) => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Pull request thread preparation is unavailable.");
       return api.git.preparePullRequestThread({

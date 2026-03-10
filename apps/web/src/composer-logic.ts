@@ -10,11 +10,7 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-const SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
-  "model",
-  "plan",
-  "default",
-];
+const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default"];
 
 function clampCursor(text: string, cursor: number): number {
   if (!Number.isFinite(cursor)) return text.length;

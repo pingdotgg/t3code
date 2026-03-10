@@ -8,7 +8,9 @@ import {
 } from "./git";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(GitCreateWorktreeInput);
-const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
+const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
+  GitPreparePullRequestThreadInput,
+);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
 
 describe("GitCreateWorktreeInput", () => {

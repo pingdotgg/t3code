@@ -153,9 +153,7 @@ function createGitWorktree(input: Parameters<GitCoreShape["createWorktree"]>[0])
   });
 }
 
-function fetchGitPullRequestBranch(
-  input: Parameters<GitCoreShape["fetchPullRequestBranch"]>[0],
-) {
+function fetchGitPullRequestBranch(input: Parameters<GitCoreShape["fetchPullRequestBranch"]>[0]) {
   return Effect.gen(function* () {
     const core = yield* GitCore;
     return yield* core.fetchPullRequestBranch(input);
@@ -1319,23 +1317,25 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    it.effect("reuses an existing remote when the target URL only differs by a trailing slash after .git", () =>
-      Effect.gen(function* () {
-        const tmp = yield* makeTmpDir();
-        yield* initRepoWithCommit(tmp);
-        const core = yield* GitCore;
+    it.effect(
+      "reuses an existing remote when the target URL only differs by a trailing slash after .git",
+      () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          yield* initRepoWithCommit(tmp);
+          const core = yield* GitCore;
 
-        yield* git(tmp, ["remote", "add", "origin", "git@github.com:pingdotgg/t3code.git"]);
+          yield* git(tmp, ["remote", "add", "origin", "git@github.com:pingdotgg/t3code.git"]);
 
-        const remoteName = yield* core.ensureRemote({
-          cwd: tmp,
-          preferredName: "origin",
-          url: "git@github.com:pingdotgg/t3code.git/",
-        });
+          const remoteName = yield* core.ensureRemote({
+            cwd: tmp,
+            preferredName: "origin",
+            url: "git@github.com:pingdotgg/t3code.git/",
+          });
 
-        expect(remoteName).toBe("origin");
-        expect((yield* git(tmp, ["remote"])).split("\n").filter(Boolean)).toEqual(["origin"]);
-      }),
+          expect(remoteName).toBe("origin");
+          expect((yield* git(tmp, ["remote"])).split("\n").filter(Boolean)).toEqual(["origin"]);
+        }),
     );
 
     it.effect("reports status details and dirty state", () =>

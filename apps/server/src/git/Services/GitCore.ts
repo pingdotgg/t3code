@@ -165,9 +165,7 @@ export interface GitCoreShape {
   /**
    * Ensure a named remote exists for the provided URL, returning the reused or created remote name.
    */
-  readonly ensureRemote: (
-    input: GitEnsureRemoteInput,
-  ) => Effect.Effect<string, GitCommandError>;
+  readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
 
   /**
    * Fetch a remote branch into a local branch without checkout.

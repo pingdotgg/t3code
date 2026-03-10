@@ -615,7 +615,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
-  const getDraftThreadByProjectId = useComposerDraftStore((store) => store.getDraftThreadByProjectId);
+  const getDraftThreadByProjectId = useComposerDraftStore(
+    (store) => store.getDraftThreadByProjectId,
+  );
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const clearProjectDraftThreadId = useComposerDraftStore(
@@ -657,9 +659,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
-  const [pullRequestDialogState, setPullRequestDialogState] = useState<PullRequestDialogState | null>(
-    null,
-  );
+  const [pullRequestDialogState, setPullRequestDialogState] =
+    useState<PullRequestDialogState | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
@@ -765,16 +766,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
 
-  const openPullRequestDialog = useCallback((reference?: string) => {
-    if (!canCheckoutPullRequestIntoThread) {
-      return;
-    }
-    setPullRequestDialogState({
-      initialReference: reference ?? null,
-      key: Date.now(),
-    });
-    setComposerHighlightedItemId(null);
-  }, [canCheckoutPullRequestIntoThread]);
+  const openPullRequestDialog = useCallback(
+    (reference?: string) => {
+      if (!canCheckoutPullRequestIntoThread) {
+        return;
+      }
+      setPullRequestDialogState({
+        initialReference: reference ?? null,
+        key: Date.now(),
+      });
+      setComposerHighlightedItemId(null);
+    },
+    [canCheckoutPullRequestIntoThread],
+  );
 
   const closePullRequestDialog = useCallback(() => {
     setPullRequestDialogState(null);
@@ -4131,7 +4135,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
               onPrepared={handlePreparedPullRequestThread}
             />
           ) : null}
-        </div>{/* end chat column */}
+        </div>
+        {/* end chat column */}
 
         {/* Plan sidebar */}
         {planSidebarOpen ? (

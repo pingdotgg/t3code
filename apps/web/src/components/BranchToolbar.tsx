@@ -130,9 +130,7 @@ export default function BranchToolbar({
         effectiveEnvMode={effectiveEnvMode}
         envLocked={envLocked}
         onSetThreadBranch={setThreadBranch}
-        {...(onCheckoutPullRequestRequest
-          ? { onCheckoutPullRequestRequest }
-          : {})}
+        {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
         {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
       />
     </div>

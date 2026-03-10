@@ -116,56 +116,58 @@ export function PullRequestThreadDialog({
     }
   }, [resolvedPullRequest?.state]);
 
-  const handleConfirm = useCallback(async (mode: "local" | "worktree") => {
-    if (!parsedReference) {
-      setReferenceDirty(true);
-      return;
-    }
-    if (!parsedReference || !resolvedPullRequest || !cwd) {
-      return;
-    }
-    setPreparingMode(mode);
-    try {
-      const result = await preparePullRequestThreadMutation.mutateAsync({
-        reference: parsedReference,
-        mode,
-      });
-      await onPrepared({
-        branch: result.branch,
-        worktreePath: result.worktreePath,
-      });
-      onOpenChange(false);
-    } finally {
-      setPreparingMode(null);
-    }
-  }, [
-    cwd,
-    onOpenChange,
-    onPrepared,
-    parsedReference,
-    preparePullRequestThreadMutation,
-    resolvedPullRequest,
-  ]);
+  const handleConfirm = useCallback(
+    async (mode: "local" | "worktree") => {
+      if (!parsedReference) {
+        setReferenceDirty(true);
+        return;
+      }
+      if (!parsedReference || !resolvedPullRequest || !cwd) {
+        return;
+      }
+      setPreparingMode(mode);
+      try {
+        const result = await preparePullRequestThreadMutation.mutateAsync({
+          reference: parsedReference,
+          mode,
+        });
+        await onPrepared({
+          branch: result.branch,
+          worktreePath: result.worktreePath,
+        });
+        onOpenChange(false);
+      } finally {
+        setPreparingMode(null);
+      }
+    },
+    [
+      cwd,
+      onOpenChange,
+      onPrepared,
+      parsedReference,
+      preparePullRequestThreadMutation,
+      resolvedPullRequest,
+    ],
+  );
 
-  const validationMessage =
-    !referenceDirty
-      ? null
-      : reference.trim().length === 0
-        ? "Paste a GitHub pull request URL or enter 123 / #123."
-        : parsedReference === null
-          ? "Use a GitHub pull request URL, 123, or #123."
-          : null;
+  const validationMessage = !referenceDirty
+    ? null
+    : reference.trim().length === 0
+      ? "Paste a GitHub pull request URL or enter 123 / #123."
+      : parsedReference === null
+        ? "Use a GitHub pull request URL, 123, or #123."
+        : null;
   const errorMessage =
     validationMessage ??
     (resolvedPullRequest === null && resolvePullRequestQuery.isError
-      ? (resolvePullRequestQuery.error instanceof Error
-          ? resolvePullRequestQuery.error.message
-          : "Failed to resolve pull request.")
-      : (preparePullRequestThreadMutation.error instanceof Error
-          ? preparePullRequestThreadMutation.error.message
-          : preparePullRequestThreadMutation.error
-            ? "Failed to prepare pull request thread."
-            : null));
+      ? resolvePullRequestQuery.error instanceof Error
+        ? resolvePullRequestQuery.error.message
+        : "Failed to resolve pull request."
+      : preparePullRequestThreadMutation.error instanceof Error
+        ? preparePullRequestThreadMutation.error.message
+        : preparePullRequestThreadMutation.error
+          ? "Failed to prepare pull request thread."
+          : null);
 
   return (
     <Dialog

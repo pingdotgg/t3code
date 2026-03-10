@@ -655,28 +655,27 @@ export const makeGitManager = Effect.gen(function* () {
     };
   });
 
-  const resolvePullRequest: GitManagerShape["resolvePullRequest"] = Effect.fnUntraced(function* (
-    input,
-  ) {
-    const pullRequest = yield* gitHubCli
-      .getPullRequest({
-        cwd: input.cwd,
-        reference: normalizePullRequestReference(input.reference),
-      })
-      .pipe(Effect.map((resolved) => toResolvedPullRequest(resolved)));
+  const resolvePullRequest: GitManagerShape["resolvePullRequest"] = Effect.fnUntraced(
+    function* (input) {
+      const pullRequest = yield* gitHubCli
+        .getPullRequest({
+          cwd: input.cwd,
+          reference: normalizePullRequestReference(input.reference),
+        })
+        .pipe(Effect.map((resolved) => toResolvedPullRequest(resolved)));
 
-    return { pullRequest };
-  });
+      return { pullRequest };
+    },
+  );
 
   const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fnUntraced(
     function* (input) {
       const normalizedReference = normalizePullRequestReference(input.reference);
       const rootWorktreePath = canonicalizeExistingPath(input.cwd);
-      const pullRequestSummary = yield* gitHubCli
-        .getPullRequest({
-          cwd: input.cwd,
-          reference: normalizedReference,
-        });
+      const pullRequestSummary = yield* gitHubCli.getPullRequest({
+        cwd: input.cwd,
+        reference: normalizedReference,
+      });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
@@ -715,12 +714,11 @@ export const makeGitManager = Effect.gen(function* () {
         });
 
       const pullRequestWithRemoteInfo = {
-          ...pullRequest,
-          ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-        } as const;
-      const localPullRequestBranch = resolvePullRequestWorktreeLocalBranchName(
-        pullRequestWithRemoteInfo,
-      );
+        ...pullRequest,
+        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+      } as const;
+      const localPullRequestBranch =
+        resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
 
       const findLocalHeadBranch = (cwd: string) =>
         gitCore.listBranches({ cwd }).pipe(

@@ -4,9 +4,9 @@ import { parsePullRequestReference } from "./pullRequestReference";
 
 describe("parsePullRequestReference", () => {
   it("accepts GitHub pull request URLs", () => {
-    expect(
-      parsePullRequestReference("https://github.com/pingdotgg/t3code/pull/42"),
-    ).toBe("https://github.com/pingdotgg/t3code/pull/42");
+    expect(parsePullRequestReference("https://github.com/pingdotgg/t3code/pull/42")).toBe(
+      "https://github.com/pingdotgg/t3code/pull/42",
+    );
   });
 
   it("accepts raw numbers", () => {
