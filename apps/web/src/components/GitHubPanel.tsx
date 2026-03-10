@@ -1,19 +1,28 @@
 import type { GitMergeBranchesResult, GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  ArrowRightIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CloudUploadIcon,
+  CopyIcon,
+  DownloadIcon,
   ExternalLinkIcon,
+  FolderGit2Icon,
+  GitBranchIcon,
   GitCommitIcon,
+  GitPullRequestIcon,
   LogInIcon,
   RefreshCcwIcon,
+  UploadIcon,
 } from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
-  type GitActionIconName,
   type GitActionMenuItem,
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
@@ -55,7 +64,6 @@ import {
 } from "~/lib/gitReactQuery";
 import { buildTemporaryWorktreeBranchName } from "~/gitWorktree";
 import { cn, newThreadId } from "~/lib/utils";
-import { deriveWorkspacePromotionState } from "~/lib/workspacePromotionState";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -80,123 +88,256 @@ interface PendingDefaultBranchAction {
 }
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
-type PanelBadgeVariant = ComponentProps<typeof Badge>["variant"];
 
-interface PanelCardProps {
-  children: ReactNode;
+// =============================================================================
+// Status Indicator Component
+// =============================================================================
+
+type StatusLevel = "success" | "warning" | "error" | "neutral" | "info";
+
+interface StatusDotProps {
+  level: StatusLevel;
+  pulse?: boolean;
   className?: string;
 }
 
-interface PanelFieldProps {
-  label: string;
-  children: ReactNode;
-  className?: string;
-}
+function StatusDot({ level, pulse, className }: StatusDotProps) {
+  const colors: Record<StatusLevel, string> = {
+    success: "bg-emerald-500",
+    warning: "bg-amber-500",
+    error: "bg-red-500",
+    neutral: "bg-neutral-400 dark:bg-neutral-500",
+    info: "bg-blue-500",
+  };
 
-interface PanelBadgeConfig {
-  label: string;
-  variant: PanelBadgeVariant;
-}
-
-const PANEL_CARD_CLASS = "space-y-3 rounded-xl border border-border bg-muted/30 p-3";
-const PANEL_INSET_CARD_CLASS = "rounded-lg border border-border bg-background p-3";
-const PANEL_FIELD_LABEL_CLASS =
-  "text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground";
-
-function PanelCard({ children, className }: PanelCardProps) {
-  return <div className={cn(PANEL_CARD_CLASS, className)}>{children}</div>;
-}
-
-function PanelInsetCard({ children, className }: PanelCardProps) {
-  return <div className={cn(PANEL_INSET_CARD_CLASS, className)}>{children}</div>;
-}
-
-function PanelField({ label, children, className }: PanelFieldProps) {
   return (
-    <div className={cn("space-y-1", className)}>
-      <p className={PANEL_FIELD_LABEL_CLASS}>{label}</p>
+    <span className={cn("relative flex size-2", className)}>
+      {pulse && (
+        <span
+          className={cn(
+            "absolute inline-flex size-full animate-ping rounded-full opacity-75",
+            colors[level]
+          )}
+        />
+      )}
+      <span className={cn("relative inline-flex size-2 rounded-full", colors[level])} />
+    </span>
+  );
+}
+
+// =============================================================================
+// Keyboard Shortcut Hint
+// =============================================================================
+
+function Kbd({ children }: { children: ReactNode }) {
+  return (
+    <kbd className="inline-flex h-4 min-w-4 items-center justify-center rounded border border-border/50 bg-muted/50 px-1 font-mono text-[10px] text-muted-foreground">
       {children}
-    </div>
+    </kbd>
   );
 }
 
-function PanelBadgeList({ items }: { items: PanelBadgeConfig[] }) {
+// =============================================================================
+// Copyable Path Component
+// =============================================================================
+
+function CopyablePath({ path, className }: { path: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    await navigator.clipboard.writeText(path);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [path]);
+
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {items.map((item) => (
-        <Badge key={`${item.variant}-${item.label}`} variant={item.variant}>
-          {item.label}
-        </Badge>
-      ))}
+    <button
+      type="button"
+      onClick={handleCopy}
+      className={cn(
+        "group flex items-center gap-1.5 rounded px-1.5 py-0.5 -mx-1.5 text-left transition-colors hover:bg-accent/50",
+        className
+      )}
+      title="Click to copy path"
+    >
+      <span className="truncate font-mono text-xs text-muted-foreground">{path}</span>
+      {copied ? (
+        <CheckIcon className="size-3 shrink-0 text-success-foreground" />
+      ) : (
+        <CopyIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+      )}
+    </button>
+  );
+}
+
+// =============================================================================
+// Section Components
+// =============================================================================
+
+interface SectionProps {
+  title: string;
+  children: ReactNode;
+  actions?: ReactNode;
+  defaultOpen?: boolean;
+  collapsible?: boolean;
+}
+
+function Section({ title, children, actions, defaultOpen = true, collapsible = false }: SectionProps) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  if (!collapsible) {
+    return (
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+            {title}
+          </h3>
+          {actions}
+        </div>
+        {children}
+      </section>
+    );
+  }
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <CollapsibleTrigger className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground transition-colors hover:text-foreground">
+            {open ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}
+            {title}
+          </CollapsibleTrigger>
+          {actions}
+        </div>
+        <CollapsibleContent>{children}</CollapsibleContent>
+      </section>
+    </Collapsible>
+  );
+}
+
+// =============================================================================
+// Workspace Card Component
+// =============================================================================
+
+interface WorkspaceCardProps {
+  isPrimary: boolean;
+  name: string;
+  branch: string;
+  targetBranch: string | null;
+  path: string | null;
+  statusLevel: StatusLevel;
+  statusLabel: string;
+  aheadCount: number;
+  behindCount: number;
+  hasOpenPr: boolean;
+  isDefaultBranch: boolean;
+  onOpen: () => void;
+}
+
+function WorkspaceCard({
+  isPrimary,
+  name,
+  branch,
+  targetBranch,
+  path,
+  statusLevel,
+  statusLabel,
+  aheadCount,
+  behindCount,
+  hasOpenPr,
+  isDefaultBranch,
+  onOpen,
+}: WorkspaceCardProps) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border p-3 transition-colors",
+        isPrimary
+          ? "border-border bg-card"
+          : "border-primary/20 bg-primary/[0.02] dark:bg-primary/[0.04]"
+      )}
+    >
+      {/* Header row */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <FolderGit2Icon
+            className={cn("size-4 shrink-0", isPrimary ? "text-muted-foreground" : "text-primary")}
+          />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-medium">{name}</span>
+              {!isPrimary && (
+                <Badge variant="secondary" size="sm">
+                  Dedicated
+                </Badge>
+              )}
+            </div>
+          </div>
+        </div>
+        <Button variant="ghost" size="icon-xs" onClick={onOpen} title="Open in editor">
+          <ExternalLinkIcon className="size-3.5" />
+        </Button>
+      </div>
+
+      {/* Branch flow: current → target */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+        <div className="flex items-center gap-1 text-muted-foreground">
+          <GitBranchIcon className="size-3" />
+          <span className="font-mono">{branch}</span>
+        </div>
+        {targetBranch && !isDefaultBranch && (
+          <>
+            <ArrowRightIcon className="size-3 text-muted-foreground/50" />
+            <span className="font-mono text-muted-foreground">{targetBranch}</span>
+          </>
+        )}
+        {isDefaultBranch && (
+          <Badge variant="warning" size="sm">
+            default
+          </Badge>
+        )}
+      </div>
+
+      {/* Status row */}
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+        <div className="flex items-center gap-1.5">
+          <StatusDot level={statusLevel} pulse={statusLevel === "error"} />
+          <span className="text-muted-foreground">{statusLabel}</span>
+        </div>
+        {aheadCount > 0 && (
+          <span className="flex items-center gap-1 text-success-foreground">
+            <UploadIcon className="size-3" />
+            {aheadCount}
+          </span>
+        )}
+        {behindCount > 0 && (
+          <span className="flex items-center gap-1 text-warning-foreground">
+            <DownloadIcon className="size-3" />
+            {behindCount}
+          </span>
+        )}
+        {hasOpenPr && (
+          <Badge variant="info" size="sm">
+            <GitPullRequestIcon className="size-3" />
+            PR
+          </Badge>
+        )}
+      </div>
+
+      {/* Path */}
+      {path && (
+        <div className="mt-2 border-t border-border/50 pt-2">
+          <CopyablePath path={path} />
+        </div>
+      )}
     </div>
   );
 }
 
-function getMenuActionDisabledReason(
-  item: GitActionMenuItem,
-  gitStatus: GitStatusResult | null,
-  isBusy: boolean,
-): string | null {
-  if (!item.disabled) return null;
-  if (isBusy) return "Git action in progress.";
-  if (!gitStatus) return "Git status is unavailable.";
 
-  const hasBranch = gitStatus.branch !== null;
-  const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
-  const isAhead = gitStatus.aheadCount > 0;
-  const isBehind = gitStatus.behindCount > 0;
-
-  if (item.id === "commit") {
-    if (!hasChanges) {
-      return "Worktree is clean. Make changes before committing.";
-    }
-    return "Commit is currently unavailable.";
-  }
-
-  if (item.id === "push") {
-    if (!hasBranch) {
-      return "Detached HEAD: checkout a branch before pushing.";
-    }
-    if (hasChanges) {
-      return "Commit or stash local changes before pushing.";
-    }
-    if (isBehind) {
-      return "Branch is behind upstream. Pull/rebase before pushing.";
-    }
-    if (!isAhead) {
-      return "No local commits to push.";
-    }
-    return "Push is currently unavailable.";
-  }
-
-  if (hasOpenPr) {
-    return "Open PR is currently unavailable.";
-  }
-  if (!hasBranch) {
-    return "Detached HEAD: checkout a branch before creating a PR.";
-  }
-  if (hasChanges) {
-    return "Commit local changes before creating a PR.";
-  }
-  if (!isAhead) {
-    return "No local commits to include in a PR.";
-  }
-  if (isBehind) {
-    return "Branch is behind upstream. Pull/rebase before creating a PR.";
-  }
-  return "Create PR is currently unavailable.";
-}
-
-const COMMIT_DIALOG_TITLE = "Commit changes";
-const COMMIT_DIALOG_DESCRIPTION =
-  "Review and confirm your commit. Leave the message blank to auto-generate one.";
-
-function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
-  if (icon === "commit") return <GitCommitIcon />;
-  if (icon === "push") return <CloudUploadIcon />;
-  return <GitHubIcon />;
-}
+// =============================================================================
+// Format Helpers
+// =============================================================================
 
 function formatGitHubTimestamp(value: string): string {
   const date = new Date(value);
@@ -204,17 +345,58 @@ function formatGitHubTimestamp(value: string): string {
     return value;
   }
 
+  const now = Date.now();
+  const diff = now - date.getTime();
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+
   return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
+    month: "short",
+    day: "numeric",
   }).format(date);
 }
+
+
+// =============================================================================
+// Derive status info
+// =============================================================================
+
+function deriveStatusInfo(
+  hasConflicts: boolean,
+  mergeInProgress: boolean,
+  hasChanges: boolean
+): { level: StatusLevel; label: string } {
+  if (hasConflicts) {
+    return { level: "error", label: "Conflicts" };
+  }
+  if (mergeInProgress) {
+    return { level: "warning", label: "Merging" };
+  }
+  if (hasChanges) {
+    return { level: "warning", label: "Dirty" };
+  }
+  return { level: "success", label: "Clean" };
+}
+
+// =============================================================================
+// Main Component
+// =============================================================================
+
+const COMMIT_DIALOG_TITLE = "Commit changes";
+const COMMIT_DIALOG_DESCRIPTION =
+  "Review and confirm your commit. Leave the message blank to auto-generate one.";
 
 export default function GitHubPanel({
   workspaceCwd,
   repoCwd,
   repoRoot,
-  scopeKind,
+  scopeKind: _scopeKind,
   activeThreadId,
 }: GitActionsControlProps) {
   const navigate = useNavigate();
@@ -242,8 +424,8 @@ export default function GitHubPanel({
     useState<PendingDefaultBranchAction | null>(null);
   const [mergeSourceBranch, setMergeSourceBranch] = useState("");
   const [lastMergeResult, setLastMergeResult] = useState<GitMergeBranchesResult | null>(null);
-  const [repoDetailsOpen, setRepoDetailsOpen] = useState(false);
-  const [workspaceDetailsOpen, setWorkspaceDetailsOpen] = useState(false);
+  const [mergeExpanded, setMergeExpanded] = useState(false);
+  const [promotionTargetBranch, setPromotionTargetBranch] = useState<string | null>(null);
 
   const { data: gitStatus = null, error: gitStatusError } = useQuery(
     gitStatusQueryOptions(workspaceCwd),
@@ -251,7 +433,6 @@ export default function GitHubPanel({
 
   const { data: branchList = null } = useQuery(gitBranchesQueryOptions(workspaceCwd));
   const githubStatusQuery = useQuery(githubStatusQueryOptions(repoCwd));
-  // Default to true while loading so we don't flash init controls.
   const isRepo = branchList?.isRepo ?? true;
   const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
   const isGitStatusOutOfSync =
@@ -264,8 +445,8 @@ export default function GitHubPanel({
     setPendingDefaultBranchAction(null);
     setDialogCommitMessage("");
     setIsCommitDialogOpen(false);
-    setRepoDetailsOpen(false);
-    setWorkspaceDetailsOpen(false);
+    setMergeExpanded(false);
+    setPromotionTargetBranch(null);
     void invalidateGitQueries(queryClient);
     void invalidateGitHubQueries(queryClient);
   }, [activeThreadId, queryClient, repoCwd, workspaceCwd]);
@@ -285,7 +466,7 @@ export default function GitHubPanel({
     githubIssuesQueryOptions({
       cwd: repoCwd,
       state: issueState,
-      limit: 20,
+      limit: 10,
       enabled:
         githubStatusQuery.data?.installed === true &&
         githubStatusQuery.data?.authenticated === true &&
@@ -335,105 +516,24 @@ export default function GitHubPanel({
     const current = branchList?.branches.find((branch) => branch.name === branchName);
     return current?.isDefault ?? (branchName === "main" || branchName === "master");
   }, [branchList?.branches, gitStatusForActions?.branch]);
-  const activeTargetBranch = gitStatusForActions?.pr?.baseBranch ?? defaultBranch;
-  const promotionState = useMemo(
+  const detectedTargetBranch = gitStatusForActions?.pr?.baseBranch ?? defaultBranch;
+  // User can override the promotion target; fall back to detected
+  const activeTargetBranch = promotionTargetBranch ?? detectedTargetBranch;
+  // Branches that can be promotion targets (exclude current branch)
+  const promotionTargetCandidates = useMemo(
+    () => localBranches.filter((branch) => branch.name !== activeWorkspaceBranch),
+    [localBranches, activeWorkspaceBranch],
+  );
+
+  const statusInfo = useMemo(
     () =>
-      deriveWorkspacePromotionState({
-        branch: activeWorkspaceBranch,
-        targetBranch: activeTargetBranch,
-        isPrimaryWorkspace,
-        hasWorkingTreeChanges: gitStatusForActions?.hasWorkingTreeChanges ?? false,
-        mergeInProgress: activeWorkspaceMerge.inProgress,
-        conflictedFiles: activeWorkspaceMerge.conflictedFiles,
-        hasUpstream: gitStatusForActions?.hasUpstream ?? false,
-        aheadCount: gitStatusForActions?.aheadCount ?? 0,
-        behindCount: gitStatusForActions?.behindCount ?? 0,
-        hasOpenPr: gitStatusForActions?.pr?.state === "open",
-      }),
-    [
-      activeTargetBranch,
-      activeWorkspaceBranch,
-      activeWorkspaceMerge.conflictedFiles,
-      activeWorkspaceMerge.inProgress,
-      gitStatusForActions?.aheadCount,
-      gitStatusForActions?.behindCount,
-      gitStatusForActions?.hasUpstream,
-      gitStatusForActions?.hasWorkingTreeChanges,
-      gitStatusForActions?.pr?.state,
-      isPrimaryWorkspace,
-    ],
+      deriveStatusInfo(
+        activeWorkspaceHasConflicts,
+        activeWorkspaceMerge.inProgress,
+        gitStatusForActions?.hasWorkingTreeChanges ?? false
+      ),
+    [activeWorkspaceHasConflicts, activeWorkspaceMerge.inProgress, gitStatusForActions?.hasWorkingTreeChanges]
   );
-  const repositoryScopeBadges = useMemo<PanelBadgeConfig[]>(
-    () => [
-      {
-        label: scopeKind === "thread" ? "Thread scoped" : "Project scoped",
-        variant: "outline",
-      },
-      { label: repoRoot ? "Repo root" : "Project cwd", variant: "outline" },
-    ],
-    [repoRoot, scopeKind],
-  );
-  const activeWorkspaceSummary = useMemo(() => {
-    const statusBadges: PanelBadgeConfig[] = [];
-
-    if (activeWorkspaceHasConflicts) {
-      statusBadges.push({ label: "Conflicts", variant: "error" });
-    } else if (activeWorkspaceMerge.inProgress) {
-      statusBadges.push({ label: "Merge in progress", variant: "outline" });
-    } else if (gitStatusForActions?.hasWorkingTreeChanges) {
-      statusBadges.push({ label: "Dirty", variant: "warning" });
-    } else {
-      statusBadges.push({ label: "Clean", variant: "success" });
-    }
-
-    statusBadges.push({ label: promotionState.label, variant: "outline" });
-
-    if (activeWorkspaceBranchMeta?.isDefault) {
-      statusBadges.push({ label: "Default branch", variant: "outline" });
-    }
-    if (gitStatusForActions && gitStatusForActions.aheadCount > 0) {
-      statusBadges.push({ label: `Ahead ${gitStatusForActions.aheadCount}`, variant: "secondary" });
-    }
-    if (gitStatusForActions && gitStatusForActions.behindCount > 0) {
-      statusBadges.push({ label: `Behind ${gitStatusForActions.behindCount}`, variant: "secondary" });
-    }
-    if (gitStatusForActions?.pr?.state === "open") {
-      statusBadges.push({ label: "PR open", variant: "outline" });
-    }
-
-    return {
-      name:
-        isPrimaryWorkspace || !workspaceCwd
-          ? "Primary checkout"
-          : formatWorktreePathForDisplay(workspaceCwd),
-      scopeCopy: isPrimaryWorkspace
-        ? "This thread works in the primary checkout."
-        : "This thread works in a dedicated workspace.",
-      typeLabel: isPrimaryWorkspace ? "Primary" : "Dedicated",
-      typeVariant: (isPrimaryWorkspace ? "outline" : "secondary") as PanelBadgeVariant,
-      branchLabel: activeWorkspaceBranch ?? "Detached HEAD",
-      pathLabel: workspaceCwd,
-      targetBranchLabel: activeWorkspaceBranch ?? "Detached HEAD",
-      statusBadges,
-      nextAction: promotionState.nextAction,
-      detail: promotionState.detail,
-      guidanceTitle: promotionState.guidanceTitle,
-      guidanceBody: promotionState.guidanceBody,
-    };
-  }, [
-    activeWorkspaceBranch,
-    activeWorkspaceBranchMeta?.isDefault,
-    activeWorkspaceHasConflicts,
-    activeWorkspaceMerge.inProgress,
-    gitStatusForActions,
-    isPrimaryWorkspace,
-    promotionState.detail,
-    promotionState.guidanceBody,
-    promotionState.guidanceTitle,
-    promotionState.label,
-    promotionState.nextAction,
-    workspaceCwd,
-  ]);
 
   const gitActionMenuItems = useMemo(
     () => buildMenuItems(gitStatusForActions, isGitActionRunning),
@@ -483,7 +583,7 @@ export default function GitHubPanel({
       if (!api) {
         toastManager.add({
           type: "error",
-          title: "Editor opening is unavailable.",
+          title: "Editor unavailable",
           data: threadToastData,
         });
         return;
@@ -491,7 +591,7 @@ export default function GitHubPanel({
       void api.shell.openInEditor(targetPath, preferredTerminalEditor()).catch((error) => {
         toastManager.add({
           type: "error",
-          title: "Unable to open path",
+          title: "Failed to open",
           description: error instanceof Error ? error.message : "An error occurred.",
           data: threadToastData,
         });
@@ -555,14 +655,14 @@ export default function GitHubPanel({
       await focusDraftThread(result.worktree.branch, result.worktree.path);
       toastManager.add({
         type: "success",
-        title: "Dedicated workspace created",
+        title: "Workspace created",
         description: formatWorktreePathForDisplay(result.worktree.path),
         data: threadToastData,
       });
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not create workspace",
+        title: "Failed to create workspace",
         description: error instanceof Error ? error.message : "An error occurred.",
         data: threadToastData,
       });
@@ -590,18 +690,18 @@ export default function GitHubPanel({
         type: result.status === "merged" ? "success" : "warning",
         title:
           result.status === "merged"
-            ? `Merged ${result.sourceBranch} into ${result.targetBranch}`
-            : `Merge conflicts in ${result.targetBranch}`,
+            ? `Merged ${result.sourceBranch}`
+            : `Conflicts in merge`,
         description:
           result.status === "merged"
-            ? formatWorktreePathForDisplay(result.targetWorktreePath)
-            : `${result.conflictedFiles.length} conflicted file${result.conflictedFiles.length === 1 ? "" : "s"}`,
+            ? `Into ${result.targetBranch}`
+            : `${result.conflictedFiles.length} file${result.conflictedFiles.length === 1 ? "" : "s"}`,
         data: threadToastData,
       });
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not merge into workspace",
+        title: "Merge failed",
         description: error instanceof Error ? error.message : "An error occurred.",
         data: threadToastData,
       });
@@ -620,14 +720,13 @@ export default function GitHubPanel({
       }
       toastManager.add({
         type: result.status === "aborted" ? "success" : "info",
-        title:
-          result.status === "aborted" ? "Merge aborted" : "No merge in progress",
+        title: result.status === "aborted" ? "Merge aborted" : "No merge in progress",
         data: threadToastData,
       });
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not abort merge",
+        title: "Failed to abort",
         description: error instanceof Error ? error.message : "An error occurred.",
         data: threadToastData,
       });
@@ -639,7 +738,7 @@ export default function GitHubPanel({
     if (!api) {
       toastManager.add({
         type: "error",
-        title: "Link opening is unavailable.",
+        title: "Link unavailable",
         data: threadToastData,
       });
       return;
@@ -648,7 +747,7 @@ export default function GitHubPanel({
     if (!prUrl) {
       toastManager.add({
         type: "error",
-        title: "No open PR found.",
+        title: "No open PR",
         data: threadToastData,
       });
       return;
@@ -656,7 +755,7 @@ export default function GitHubPanel({
     void api.shell.openExternal(prUrl).catch((err) => {
       toastManager.add({
         type: "error",
-        title: "Unable to open PR link",
+        title: "Failed to open PR",
         description: err instanceof Error ? err.message : "An error occurred.",
         data: threadToastData,
       });
@@ -723,7 +822,7 @@ export default function GitHubPanel({
         progressToastId ??
         toastManager.add({
           type: "loading",
-          title: progressStages[0] ?? "Running git action...",
+          title: progressStages[0] ?? "Running...",
           timeout: 0,
           data: threadToastData,
         });
@@ -731,7 +830,7 @@ export default function GitHubPanel({
       if (progressToastId) {
         toastManager.update(progressToastId, {
           type: "loading",
-          title: progressStages[0] ?? "Running git action...",
+          title: progressStages[0] ?? "Running...",
           timeout: 0,
           data: threadToastData,
         });
@@ -741,7 +840,7 @@ export default function GitHubPanel({
       const stageInterval = setInterval(() => {
         stageIndex = Math.min(stageIndex + 1, progressStages.length - 1);
         toastManager.update(resolvedProgressToastId, {
-          title: progressStages[stageIndex] ?? "Running git action...",
+          title: progressStages[stageIndex] ?? "Running...",
           type: "loading",
           timeout: 0,
           data: threadToastData,
@@ -934,7 +1033,7 @@ export default function GitHubPanel({
       if (!api) {
         toastManager.add({
           type: "error",
-          title: "Link opening is unavailable.",
+          title: "Link unavailable",
           data: threadToastData,
         });
         return;
@@ -967,7 +1066,7 @@ export default function GitHubPanel({
       if (!workspaceCwd) {
         toastManager.add({
           type: "error",
-          title: "Editor opening is unavailable.",
+          title: "Editor unavailable",
           data: threadToastData,
         });
         return;
@@ -982,11 +1081,11 @@ export default function GitHubPanel({
     toastManager.promise(promise, {
       loading: { title: "Pulling...", data: threadToastData },
       success: (result) => ({
-        title: result.status === "pulled" ? "Pulled" : "Already up to date",
+        title: result.status === "pulled" ? "Pulled" : "Up to date",
         description:
           result.status === "pulled"
-            ? `Updated ${result.branch} from ${result.upstreamBranch ?? "upstream"}`
-            : `${result.branch} is already synchronized.`,
+            ? `Updated from ${result.upstreamBranch ?? "upstream"}`
+            : undefined,
         data: threadToastData,
       }),
       error: (err) => ({
@@ -1004,7 +1103,7 @@ export default function GitHubPanel({
     if (result.error) {
       toastManager.add({
         type: "error",
-        title: "GitHub verification failed",
+        title: "Verification failed",
         description: result.error.message,
         data: threadToastData,
       });
@@ -1014,8 +1113,8 @@ export default function GitHubPanel({
     if (!result.data?.installed) {
       toastManager.add({
         type: "warning",
-        title: "GitHub CLI is not installed",
-        description: "Install `gh` on PATH to enable GitHub actions.",
+        title: "gh not installed",
+        description: "Install GitHub CLI to enable features",
         data: threadToastData,
       });
       return;
@@ -1024,8 +1123,8 @@ export default function GitHubPanel({
     if (!result.data.authenticated) {
       toastManager.add({
         type: "warning",
-        title: "GitHub CLI is not authenticated",
-        description: "Run the auth flow to connect `gh`.",
+        title: "gh not authenticated",
+        description: "Run auth flow to connect",
         data: threadToastData,
       });
       return;
@@ -1034,9 +1133,7 @@ export default function GitHubPanel({
     toastManager.add({
       type: "success",
       title: "GitHub verified",
-      description: result.data.accountLogin
-        ? `Authenticated as @${result.data.accountLogin}.`
-        : "GitHub CLI is authenticated.",
+      description: result.data.accountLogin ? `@${result.data.accountLogin}` : undefined,
       data: threadToastData,
     });
   }, [githubStatusQuery, threadToastData]);
@@ -1044,7 +1141,6 @@ export default function GitHubPanel({
   const commitItem = gitActionMenuItems.find((item) => item.id === "commit") ?? null;
   const prItem = gitActionMenuItems.find((item) => item.id === "pr") ?? null;
   const githubRepoUrl = githubStatusQuery.data?.repo?.url ?? null;
-  const githubRepoSettingsUrl = githubRepoUrl ? `${githubRepoUrl}/settings` : null;
   const issuesDisabled =
     githubIssuesQuery.error?.message.toLowerCase().includes("disabled issues") ?? false;
   const pullEnabled =
@@ -1059,649 +1155,579 @@ export default function GitHubPanel({
     !isGitActionRunning &&
     (gitStatusForActions.hasWorkingTreeChanges || gitStatusForActions.aheadCount > 0);
   const commitPushDisabledReason = !gitStatusForActions
-    ? "Git status is unavailable."
+    ? "Status unavailable"
     : gitStatusForActions.branch === null
-      ? "Detached HEAD: checkout a branch before pushing."
+      ? "Detached HEAD"
       : isGitActionRunning
-        ? "Git action in progress."
+        ? "Action in progress"
         : !(gitStatusForActions.hasWorkingTreeChanges || gitStatusForActions.aheadCount > 0)
-          ? "No local changes or commits to push."
+          ? "Nothing to push"
           : null;
   const createWorktreeDisabledReason = !isPrimaryWorkspace
     ? null
     : !activeProjectId
-      ? "Project context is unavailable."
+      ? "No project context"
       : !gitStatusForActions
-        ? "Git status is unavailable."
-      : !repoCwd || !activeWorkspaceBranch
-        ? "Checkout a branch before creating a dedicated workspace."
-        : gitStatusForActions.hasWorkingTreeChanges
-          ? "Primary checkout is dirty. Commit or stash changes first."
-          : createWorktreeMutation.isPending
-            ? "Workspace creation in progress."
-            : null;
+        ? "Status unavailable"
+        : !repoCwd || !activeWorkspaceBranch
+          ? "Checkout branch first"
+          : gitStatusForActions.hasWorkingTreeChanges
+            ? "Commit changes first"
+            : createWorktreeMutation.isPending
+              ? "Creating..."
+              : null;
   const mergeDisabledReason = !gitStatusForActions
-    ? "Git status is unavailable."
+    ? "Status unavailable"
     : !activeWorkspaceBranch
-    ? "Checkout a branch before merging."
-    : mergeSourceBranch.length === 0
-      ? "Create another local branch to merge into this workspace."
-      : activeWorkspaceHasConflicts
-        ? "Resolve or abort the current merge before starting another merge."
-        : activeWorkspaceMerge.inProgress
-          ? "Finish or abort the current merge before starting another merge."
-      : gitStatusForActions.hasWorkingTreeChanges
-        ? "Active workspace is dirty. Clean it before merging."
-        : isMergeRunning
-          ? "Merge in progress."
-          : null;
+      ? "Checkout branch first"
+      : mergeSourceBranch.length === 0
+        ? "No branches to merge"
+        : activeWorkspaceHasConflicts
+          ? "Resolve conflicts first"
+          : activeWorkspaceMerge.inProgress
+            ? "Finish current merge"
+            : gitStatusForActions.hasWorkingTreeChanges
+              ? "Commit changes first"
+              : isMergeRunning
+                ? "Merging..."
+                : null;
 
   if (!workspaceCwd) return null;
 
   return (
     <>
       <div className="flex h-full min-h-0 flex-col bg-card text-foreground">
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="border-b border-border px-4 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <GitHubIcon className="size-4" />
-                    <span className="text-sm font-medium">GitHub</span>
-                    {githubStatusQuery.data?.installed ? (
-                      <Badge
-                        variant={githubStatusQuery.data.authenticated ? "success" : "warning"}
-                        className="h-5"
-                      >
-                        {githubStatusQuery.data.authenticated ? "Ready" : "Auth needed"}
-                      </Badge>
-                    ) : (
-                      <Badge variant="error" className="h-5">
-                        Missing gh
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {githubStatusQuery.data?.repo?.nameWithOwner ?? (isRepo ? "Git actions and repository status" : "Initialize Git to enable repository actions")}
-                  </p>
-                </div>
+        {/* Header */}
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <GitHubIcon className="size-4" />
+            <span className="text-sm font-medium">Git</span>
+            {githubStatusQuery.data?.repo?.nameWithOwner && (
+              <span className="text-xs text-muted-foreground">
+                {githubStatusQuery.data.repo.nameWithOwner}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {githubStatusQuery.data?.authenticated ? (
+              <Badge variant="success" size="sm">
+                <StatusDot level="success" className="mr-0.5" />
+                gh
+              </Badge>
+            ) : githubStatusQuery.data?.installed ? (
+              <Badge variant="warning" size="sm">
+                Auth needed
+              </Badge>
+            ) : (
+              <Badge variant="outline" size="sm">
+                No gh
+              </Badge>
+            )}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => {
+                void invalidateGitQueries(queryClient);
+                void invalidateGitHubQueries(queryClient);
+              }}
+              aria-label="Refresh"
+            >
+              <RefreshCcwIcon
+                className={cn(
+                  "size-3.5",
+                  (githubStatusQuery.isFetching || githubIssuesQuery.isFetching) && "animate-spin"
+                )}
+              />
+            </Button>
+          </div>
+        </div>
+
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="space-y-4 p-4">
+            {/* ============================================================ */}
+            {/* PRIMARY ACTION ZONE - Only for primary workspace */}
+            {/* ============================================================ */}
+            {!isRepo ? (
+              <Button
+                variant="default"
+                size="sm"
+                disabled={initMutation.isPending}
+                onClick={() => initMutation.mutate()}
+                className="w-full"
+              >
+                {initMutation.isPending ? "Initializing..." : "Initialize Git"}
+              </Button>
+            ) : isPrimaryWorkspace ? (
+              <div className="space-y-2">
                 <Button
-                  variant="ghost"
-                  size="icon-xs"
+                  variant="default"
+                  size="default"
+                  disabled={!commitPushAvailable}
                   onClick={() => {
-                    void invalidateGitQueries(queryClient);
-                    void invalidateGitHubQueries(queryClient);
+                    void runGitActionWithToast({ action: "commit_push" });
                   }}
-                  aria-label="Refresh GitHub menu"
+                  className="w-full justify-between"
                 >
-                  <RefreshCcwIcon
-                    className={`size-3.5 ${
-                      githubStatusQuery.isFetching || githubIssuesQuery.isFetching ? "animate-spin" : ""
-                    }`}
-                  />
+                  <span className="flex items-center gap-2">
+                    <CloudUploadIcon className="size-4" />
+                    Commit &amp; Push
+                  </span>
+                  <Kbd>⌘⇧P</Kbd>
                 </Button>
-              </div>
-            </div>
 
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="space-y-5 p-4">
-                <section className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      Repository
-                    </h3>
-                  </div>
-                  <PanelCard>
-                    <PanelField label="Repo">
-                      <p className="break-all text-sm font-medium text-foreground">
-                        {githubStatusQuery.data?.repo?.nameWithOwner ?? "Repository unavailable"}
-                      </p>
-                    </PanelField>
-                    <Collapsible open={repoDetailsOpen} onOpenChange={setRepoDetailsOpen}>
-                      <CollapsibleTrigger className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-                        {repoDetailsOpen ? "Hide details" : "Show details"}
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="pt-3">
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <PanelField label="Scope">
-                            <PanelBadgeList items={repositoryScopeBadges} />
-                          </PanelField>
-                        </div>
-                        <p className="mt-3 break-all text-xs text-muted-foreground">{repoRoot ?? repoCwd}</p>
-                      </CollapsibleContent>
-                    </Collapsible>
-                  </PanelCard>
-                </section>
-
-                <section className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      Active workspace
-                    </h3>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    All git actions in this panel apply to this workspace.
+                {commitPushDisabledReason && (
+                  <p className="text-center text-xs text-muted-foreground">
+                    {commitPushDisabledReason}
                   </p>
-                  <p className="text-xs text-muted-foreground">{activeWorkspaceSummary.scopeCopy}</p>
+                )}
 
-                  {!isRepo ? (
-                    <p className="text-sm text-muted-foreground">
-                      Initialize Git to unlock workspace controls.
-                    </p>
-                  ) : (
-                    <PanelCard>
-                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="min-w-0 flex-1 space-y-3">
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <PanelField label="Workspace">
-                              <p className="break-all text-sm font-medium text-foreground">
-                                {activeWorkspaceSummary.name}
-                              </p>
-                            </PanelField>
-                            <PanelField label="Type">
-                              <PanelBadgeList
-                                items={[
-                                  {
-                                    label: activeWorkspaceSummary.typeLabel,
-                                    variant: activeWorkspaceSummary.typeVariant,
-                                  },
-                                ]}
-                              />
-                            </PanelField>
-                            <PanelField label="Branch">
-                              <p className="break-all text-sm font-medium text-foreground">
-                                {activeWorkspaceSummary.branchLabel}
-                              </p>
-                            </PanelField>
-                            <PanelField label="Status">
-                              <PanelBadgeList items={activeWorkspaceSummary.statusBadges} />
-                            </PanelField>
-                            <PanelField label="Next action" className="md:col-span-2">
-                              <p className="text-sm font-medium text-foreground">
-                                {activeWorkspaceSummary.nextAction}
-                              </p>
-                              <p className="text-xs text-muted-foreground">{activeWorkspaceSummary.detail}</p>
-                            </PanelField>
-                          </div>
-                          <Collapsible open={workspaceDetailsOpen} onOpenChange={setWorkspaceDetailsOpen}>
-                            <CollapsibleTrigger className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-                              {workspaceDetailsOpen ? "Hide details" : "Show details"}
-                            </CollapsibleTrigger>
-                            <CollapsibleContent className="pt-3">
-                              <PanelField label="Path">
-                                <p className="break-all text-xs text-muted-foreground">
-                                  {activeWorkspaceSummary.pathLabel}
-                                </p>
-                              </PanelField>
-                            </CollapsibleContent>
-                          </Collapsible>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            onClick={() => openPathInEditor(workspaceCwd)}
-                          >
-                            Open
-                          </Button>
-                        </div>
-                      </div>
+                {/* Secondary actions row */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={!commitItem || commitItem.disabled}
+                    onClick={() => {
+                      if (commitItem) openDialogForMenuItem(commitItem);
+                    }}
+                    className="justify-center"
+                  >
+                    <GitCommitIcon className="size-3.5" />
+                    Commit
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={!pullEnabled}
+                    onClick={pullLatest}
+                    className="justify-center"
+                  >
+                    <RefreshCcwIcon className="size-3.5" />
+                    Pull
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={!prItem || prItem.disabled}
+                    onClick={() => {
+                      if (prItem) openDialogForMenuItem(prItem);
+                    }}
+                    className="justify-center"
+                  >
+                    <GitPullRequestIcon className="size-3.5" />
+                    {prItem?.kind === "open_pr" ? "View PR" : "PR"}
+                  </Button>
+                </div>
 
-                      <PanelInsetCard>
-                        <PanelField label="Workflow guidance">
-                          <p className="text-sm font-medium text-foreground">
-                            {activeWorkspaceSummary.guidanceTitle}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {activeWorkspaceSummary.guidanceBody}
-                          </p>
-                        </PanelField>
-                      </PanelInsetCard>
+                {/* Status hints */}
+                {gitStatusForActions?.branch === null && (
+                  <p className="text-center text-xs text-warning-foreground">
+                    Detached HEAD — checkout a branch
+                  </p>
+                )}
+                {isGitStatusOutOfSync && (
+                  <p className="text-center text-xs text-muted-foreground">Syncing...</p>
+                )}
+                {gitStatusError && (
+                  <p className="text-center text-xs text-destructive-foreground">
+                    {gitStatusError.message}
+                  </p>
+                )}
+              </div>
+            ) : null}
 
-                      {isPrimaryWorkspace && (
-                        <PanelInsetCard>
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-medium text-foreground">Create dedicated workspace</p>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                Start a dedicated workspace from this branch.
-                              </p>
-                            </div>
-                            <Button
-                              size="sm"
-                              disabled={createWorktreeDisabledReason !== null}
-                              onClick={() => {
-                                void createDedicatedWorkspace();
-                              }}
-                            >
-                              {createWorktreeMutation.isPending
-                                ? "Creating..."
-                                : "Create dedicated workspace"}
-                            </Button>
-                          </div>
-                          {createWorktreeDisabledReason && (
-                            <p className="mt-2 text-xs text-muted-foreground">
-                              {createWorktreeDisabledReason}
-                            </p>
-                          )}
-                        </PanelInsetCard>
-                      )}
-
-                      <PanelInsetCard>
-                        <div className="space-y-3">
-                          <div>
-                            <p className="text-sm font-medium text-foreground">Merge into active workspace</p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Target workspace: {activeWorkspaceSummary.name}
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Target branch: {activeWorkspaceSummary.targetBranchLabel}
-                            </p>
-                          </div>
-
-                          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-                            <label className="space-y-1 text-sm">
-                              <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                                Source branch
-                              </span>
-                              <select
-                                className="flex min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                                value={mergeSourceBranch}
-                                onChange={(event) => setMergeSourceBranch(event.target.value)}
-                                disabled={localBranches.length < 2}
-                              >
-                                {mergeSourceBranch.length === 0 && (
-                                  <option value="">No merge candidates</option>
-                                )}
-                                {localBranches
-                                  .filter((branch) => branch.name !== activeWorkspaceBranch)
-                                  .map((branch) => (
-                                    <option key={branch.name} value={branch.name}>
-                                      {branch.name}
-                                    </option>
-                                  ))}
-                              </select>
-                            </label>
-
-                            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                              <Button
-                                size="sm"
-                                className="w-full sm:w-auto"
-                                disabled={mergeDisabledReason !== null}
-                                onClick={() => {
-                                  void runLocalMerge();
-                                }}
-                              >
-                                {isMergeRunning ? "Merging..." : "Merge source into active workspace"}
-                              </Button>
-                              {activeWorkspaceHasConflicts && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="w-full sm:w-auto"
-                                  disabled={isAbortMergeRunning}
-                                  onClick={() => {
-                                    void abortActiveMerge();
-                                  }}
-                                >
-                                  Abort merge
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-
-                          {mergeDisabledReason && (
-                            <p className="text-xs text-muted-foreground">{mergeDisabledReason}</p>
-                          )}
-
-                          {activeWorkspaceHasConflicts ? (
-                            <PanelCard className="text-sm">
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="font-medium">Resolve conflicted files before continuing promotion.</p>
-                                <Badge variant="error">Conflicted</Badge>
-                              </div>
-                              <div className="mt-3 flex flex-wrap gap-1.5">
-                                {activeWorkspaceMerge.conflictedFiles.map((file) => (
-                                  <Badge key={file} variant="outline">
-                                    {file}
-                                  </Badge>
-                                ))}
-                              </div>
-                            </PanelCard>
-                          ) : lastMergeResult ? (
-                            <PanelCard className="text-sm">
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="font-medium">
-                                  {lastMergeResult.status === "merged"
-                                    ? `Merged ${lastMergeResult.sourceBranch} into ${lastMergeResult.targetBranch}`
-                                    : `Conflicts while merging ${lastMergeResult.sourceBranch} into ${lastMergeResult.targetBranch}`}
-                                </p>
-                                <Badge variant={lastMergeResult.status === "merged" ? "success" : "error"}>
-                                  {lastMergeResult.status === "merged" ? "Merged" : "Conflicted"}
-                                </Badge>
-                              </div>
-                              {lastMergeResult.status === "conflicted" && (
-                                <div className="mt-3 flex flex-wrap gap-1.5">
-                                  {lastMergeResult.conflictedFiles.map((file) => (
-                                    <Badge key={file} variant="outline">
-                                      {file}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              )}
-                            </PanelCard>
-                          ) : null}
-                        </div>
-                      </PanelInsetCard>
-                    </PanelCard>
-                  )}
-                </section>
-
-                <section className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      Actions
-                    </h3>
-                    {gitStatusForActions?.branch && (
-                      <Badge variant="outline" className="max-w-40 truncate">
-                        {gitStatusForActions.branch}
-                      </Badge>
+            {/* ============================================================ */}
+            {/* WORKSPACE SECTION */}
+            {/* ============================================================ */}
+            {isRepo && (
+              <Section title="Workspace">
+                <WorkspaceCard
+                  isPrimary={isPrimaryWorkspace}
+                  name={
+                    isPrimaryWorkspace || !workspaceCwd
+                      ? "Primary checkout"
+                      : formatWorktreePathForDisplay(workspaceCwd)
+                  }
+                  branch={activeWorkspaceBranch ?? "Detached HEAD"}
+                  targetBranch={activeTargetBranch}
+                  path={workspaceCwd}
+                  statusLevel={statusInfo.level}
+                  statusLabel={statusInfo.label}
+                  aheadCount={gitStatusForActions?.aheadCount ?? 0}
+                  behindCount={gitStatusForActions?.behindCount ?? 0}
+                  hasOpenPr={gitStatusForActions?.pr?.state === "open"}
+                  isDefaultBranch={activeWorkspaceBranchMeta?.isDefault ?? false}
+                  onOpen={() => openPathInEditor(workspaceCwd)}
+                />
+                {/* Create dedicated workspace - only show in primary */}
+                {isPrimaryWorkspace && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={createWorktreeDisabledReason !== null}
+                    onClick={() => void createDedicatedWorkspace()}
+                    className="w-full justify-start"
+                  >
+                    <FolderGit2Icon className="size-4" />
+                    Create dedicated workspace
+                    {createWorktreeDisabledReason && (
+                      <span className="ml-auto text-[10px] text-muted-foreground">
+                        {createWorktreeDisabledReason}
+                      </span>
                     )}
+                  </Button>
+                )}
+              </Section>
+            )}
+
+            {/* ============================================================ */}
+            {/* PROMOTION SECTION - For dedicated workspaces */}
+            {/* ============================================================ */}
+            {isRepo && !isPrimaryWorkspace && (
+              <Section title="Promote">
+                <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+                  {/* Target branch selector */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs">
+                      <GitBranchIcon className="size-3 text-foreground" />
+                      <span className="font-mono font-medium">{activeWorkspaceBranch}</span>
+                      <ArrowRightIcon className="size-3 text-muted-foreground" />
+                    </div>
+                    <select
+                      className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-sm font-mono"
+                      value={activeTargetBranch ?? ""}
+                      onChange={(e) => setPromotionTargetBranch(e.target.value || null)}
+                    >
+                      {promotionTargetCandidates.length === 0 ? (
+                        <option value="">No target branches</option>
+                      ) : (
+                        promotionTargetCandidates.map((branch) => (
+                          <option key={branch.name} value={branch.name}>
+                            {branch.name}
+                            {branch.isDefault ? " (default)" : ""}
+                          </option>
+                        ))
+                      )}
+                    </select>
                   </div>
 
-                  {!isRepo ? (
+                  {/* Primary action: Create PR (happy path) */}
+                  {gitStatusForActions?.pr?.state === "open" ? (
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={initMutation.isPending}
-                      onClick={() => initMutation.mutate()}
-                      className="w-full justify-start"
+                      onClick={() => void openExistingPr()}
+                      className="w-full justify-center"
                     >
-                      {initMutation.isPending ? "Initializing Git..." : "Initialize Git"}
+                      <ExternalLinkIcon className="size-4" />
+                      View PR
                     </Button>
                   ) : (
-                    <div className="space-y-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!commitPushAvailable}
-                        onClick={() => {
-                          void runGitActionWithToast({ action: "commit_push" });
-                        }}
-                        className="w-full justify-between"
-                      >
-                        <span className="flex items-center gap-2">
-                          <CloudUploadIcon className="size-4" />
-                          Commit & push
-                        </span>
-                        {commitPushAvailable && <span className="text-[10px] text-muted-foreground">Fast path</span>}
-                      </Button>
-                      {commitPushDisabledReason && (
-                        <p className="text-xs text-muted-foreground">{commitPushDisabledReason}</p>
-                      )}
-
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={!commitItem || commitItem.disabled}
-                          onClick={() => {
-                            if (commitItem) {
-                              openDialogForMenuItem(commitItem);
-                            }
-                          }}
-                          className="justify-start"
-                        >
-                          <GitCommitIcon className="size-4" />
-                          Commit
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={!pullEnabled}
-                          onClick={pullLatest}
-                          className="justify-start"
-                        >
-                          <RefreshCcwIcon className="size-4" />
-                          Pull latest
-                        </Button>
-                      </div>
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!prItem || prItem.disabled}
-                        onClick={() => {
-                          if (prItem) {
-                            openDialogForMenuItem(prItem);
-                          }
-                        }}
-                        className="w-full justify-between"
-                      >
-                        <span className="flex items-center gap-2">
-                          <GitActionItemIcon icon="pr" />
-                          {prItem?.label ?? "Create PR"}
-                        </span>
-                        {gitStatusForActions?.pr?.state === "open" ? (
-                          <ExternalLinkIcon className="size-4 text-muted-foreground" />
-                        ) : null}
-                      </Button>
-
-                      {prItem?.disabled && (
-                        <p className="text-xs text-muted-foreground">
-                          {getMenuActionDisabledReason(prItem, gitStatusForActions, isGitActionRunning)}
-                        </p>
-                      )}
-
-                      {gitStatusForActions?.branch === null && (
-                        <p className="text-xs text-warning">
-                          Detached HEAD: create and checkout a branch to enable push and PR actions.
-                        </p>
-                      )}
-                      {isGitStatusOutOfSync && (
-                        <p className="text-xs text-muted-foreground">Refreshing git status...</p>
-                      )}
-                      {gitStatusError && (
-                        <p className="text-xs text-destructive">{gitStatusError.message}</p>
-                      )}
-                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={
+                        !gitStatusForActions ||
+                        gitStatusForActions.branch === null ||
+                        isGitActionRunning ||
+                        !activeTargetBranch ||
+                        (!(gitStatusForActions.hasWorkingTreeChanges || gitStatusForActions.aheadCount > 0))
+                      }
+                      onClick={() => {
+                        void runGitActionWithToast({ action: "commit_push_pr" });
+                      }}
+                      className="w-full justify-center"
+                    >
+                      <GitPullRequestIcon className="size-4" />
+                      {gitStatusForActions?.hasWorkingTreeChanges ? "Commit & Create PR" : "Create PR"}
+                    </Button>
                   )}
-                </section>
 
-                <section className="space-y-3 border-t border-border pt-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      Auth
-                    </h3>
-                    {githubStatusQuery.data?.accountLogin && (
-                      <Badge variant="outline">@{githubStatusQuery.data.accountLogin}</Badge>
-                    )}
+                  {/* Secondary actions row */}
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      disabled={!commitItem || commitItem.disabled}
+                      onClick={() => {
+                        if (commitItem) openDialogForMenuItem(commitItem);
+                      }}
+                      className="justify-center"
+                    >
+                      <GitCommitIcon className="size-3.5" />
+                      Commit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      disabled={!pullEnabled}
+                      onClick={pullLatest}
+                      className="justify-center"
+                    >
+                      <RefreshCcwIcon className="size-3.5" />
+                      Pull
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      disabled={!commitPushAvailable}
+                      onClick={() => {
+                        void runGitActionWithToast({ action: "commit_push" });
+                      }}
+                      className="justify-center"
+                    >
+                      <CloudUploadIcon className="size-3.5" />
+                      Push
+                    </Button>
                   </div>
 
-                  {!githubStatusQuery.data?.installed ? (
-                    <p className="text-sm text-muted-foreground">
-                      GitHub CLI is not installed on PATH.
+                  {/* Status hints */}
+                  {gitStatusForActions?.branch === null && (
+                    <p className="text-center text-xs text-warning-foreground">
+                      Detached HEAD — checkout a branch
                     </p>
-                  ) : (
-                    <PanelCard className="space-y-2 text-sm">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={githubStatusQuery.data.authenticated ? "success" : "warning"}>
-                          {githubStatusQuery.data.authenticated ? "Authenticated" : "Not authenticated"}
-                        </Badge>
-                        {githubStatusQuery.data.gitProtocol && (
-                          <Badge variant="outline">{githubStatusQuery.data.gitProtocol}</Badge>
+                  )}
+                  {isGitStatusOutOfSync && (
+                    <p className="text-center text-xs text-muted-foreground">Syncing...</p>
+                  )}
+                  {gitStatusError && (
+                    <p className="text-center text-xs text-destructive-foreground">
+                      {gitStatusError.message}
+                    </p>
+                  )}
+                </div>
+              </Section>
+            )}
+
+            {/* ============================================================ */}
+            {/* SYNC SECTION - Pull changes INTO this workspace */}
+            {/* ============================================================ */}
+            {isRepo && localBranches.length > 1 && (
+              <Section title="Sync" collapsible defaultOpen={mergeExpanded}>
+                <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Pull a branch <span className="font-medium">into</span> this workspace
+                  </p>
+
+                  <div className="grid grid-cols-[1fr_auto] items-end gap-2">
+                    <label className="space-y-1 text-xs">
+                      <span className="text-muted-foreground">From branch</span>
+                      <select
+                        className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        value={mergeSourceBranch}
+                        onChange={(e) => setMergeSourceBranch(e.target.value)}
+                        disabled={localBranches.length < 2}
+                      >
+                        {mergeSourceBranch.length === 0 && (
+                          <option value="">No candidates</option>
                         )}
-                        {githubStatusQuery.data.tokenSource && (
-                          <Badge variant="outline">{githubStatusQuery.data.tokenSource}</Badge>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          disabled={isGitHubAuthenticated ? githubStatusQuery.isFetching : loginMutation.isPending}
-                          onClick={() => {
-                            if (isGitHubAuthenticated) {
-                              void verifyGitHubAuth();
-                              return;
-                            }
-                            loginMutation.mutate();
-                          }}
-                          className="justify-start"
-                        >
-                          <LogInIcon className="size-4" />
-                          {isGitHubAuthenticated
-                            ? githubStatusQuery.isFetching
-                              ? "Verifying..."
-                              : "Verify gh"
-                            : loginMutation.isPending
-                              ? "Authenticating..."
-                              : "Authenticate gh"}
-                        </Button>
-                        {githubStatusQuery.data.repo?.url && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void openExternalUrl(githubStatusQuery.data!.repo!.url)}
-                          >
-                            <ExternalLinkIcon className="size-4" />
-                            Open repo
-                          </Button>
-                        )}
-                      </div>
-                      {githubStatusQuery.data.scopes.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {githubStatusQuery.data.scopes.map((scope) => (
-                            <Badge key={scope} variant="outline">
-                              {scope}
-                            </Badge>
+                        {localBranches
+                          .filter((branch) => branch.name !== activeWorkspaceBranch)
+                          .map((branch) => (
+                            <option key={branch.name} value={branch.name}>
+                              {branch.name}
+                            </option>
                           ))}
-                        </div>
-                      )}
-                      {loginMutation.error && (
-                        <p className="text-xs text-destructive">
-                          {loginMutation.error.message}
-                        </p>
-                      )}
-                    </PanelCard>
-                  )}
-                </section>
-
-                <section className="space-y-3 border-t border-border pt-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                      Issues
-                    </h3>
-                    <div className="flex gap-1">
-                      {[
-                        { label: "Open", value: "open" as const },
-                        { label: "Closed", value: "closed" as const },
-                        { label: "All", value: "all" as const },
-                      ].map((item) => (
-                        <Button
-                          key={item.value}
-                          variant={issueState === item.value ? "default" : "outline"}
-                          size="xs"
-                          onClick={() => setIssueState(item.value)}
-                        >
-                          {item.label}
-                        </Button>
-                      ))}
-                    </div>
+                      </select>
+                    </label>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={mergeDisabledReason !== null}
+                      onClick={() => void runLocalMerge()}
+                    >
+                      <DownloadIcon className="size-4" />
+                      {isMergeRunning ? "Syncing..." : "Sync"}
+                    </Button>
                   </div>
 
-                  {!githubStatusQuery.data?.installed ? (
-                    <p className="text-sm text-muted-foreground">Install `gh` to browse issues.</p>
-                  ) : !githubStatusQuery.data.authenticated ? (
-                    <p className="text-sm text-muted-foreground">
-                      Authenticate `gh` to load issues for this repository.
-                    </p>
-                  ) : !githubStatusQuery.data.repo ? (
-                    <p className="text-sm text-muted-foreground">
-                      This project does not resolve to a GitHub repository yet.
-                    </p>
-                  ) : githubIssuesQuery.isLoading || githubIssuesQuery.isFetching ? (
-                    <p className="text-sm text-muted-foreground">Loading issues...</p>
-                  ) : issuesDisabled ? (
-                    <PanelCard>
-                      <p className="text-sm text-muted-foreground">
-                        Issues are disabled for this repository.
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {githubRepoUrl && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void openExternalUrl(githubRepoUrl)}
-                          >
-                            <ExternalLinkIcon className="size-4" />
-                            Open repo
-                          </Button>
-                        )}
-                        {githubRepoSettingsUrl && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void openExternalUrl(githubRepoSettingsUrl)}
-                          >
-                            <ExternalLinkIcon className="size-4" />
-                            Enable issues
-                          </Button>
-                        )}
-                      </div>
-                    </PanelCard>
-                  ) : githubIssuesQuery.error ? (
-                    <p className="text-sm text-destructive">{githubIssuesQuery.error.message}</p>
-                  ) : githubIssuesQuery.data && githubIssuesQuery.data.issues.length > 0 ? (
-                    <div className="space-y-2">
-                      {githubIssuesQuery.data.issues.map((issue) => (
-                        <button
-                          type="button"
-                          key={issue.number}
-                          className="flex w-full flex-col gap-2 rounded-xl border border-border bg-background px-3 py-2 text-left transition-colors hover:bg-accent/50"
-                          onClick={() => void openExternalUrl(issue.url)}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                <span className="font-medium text-foreground">#{issue.number}</span>
-                                <Badge variant={issue.state === "open" ? "success" : "secondary"}>
-                                  {issue.state}
-                                </Badge>
-                                {issue.author && <span>@{issue.author}</span>}
-                              </div>
-                              <p className="mt-1 text-sm font-medium text-foreground">{issue.title}</p>
-                            </div>
-                            <ExternalLinkIcon className="size-4 shrink-0 text-muted-foreground" />
-                          </div>
-                          {(issue.labels.length > 0 || issue.assignees.length > 0) && (
-                            <div className="flex flex-wrap gap-1.5 text-xs">
-                              {issue.labels.map((label) => (
-                                <Badge key={label.name} variant="outline">
-                                  {label.name}
-                                </Badge>
-                              ))}
-                              {issue.assignees.map((assignee) => (
-                                <Badge key={assignee.login} variant="outline">
-                                  @{assignee.login}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-                          <p className="text-xs text-muted-foreground">
-                            Updated {formatGitHubTimestamp(issue.updatedAt)}
-                          </p>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No issues matched this filter.</p>
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="font-mono">{mergeSourceBranch || "..."}</span>
+                    <ArrowRightIcon className="size-3" />
+                    <span className="font-mono font-medium">{activeWorkspaceBranch ?? "..."}</span>
+                  </div>
+
+                  {mergeDisabledReason && (
+                    <p className="text-xs text-muted-foreground">{mergeDisabledReason}</p>
                   )}
-                </section>
-              </div>
-            </ScrollArea>
+
+                  {/* Conflict indicator */}
+                  {activeWorkspaceHasConflicts && (
+                    <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/[0.04] p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-destructive-foreground">
+                          {activeWorkspaceMerge.conflictedFiles.length} conflicted file
+                          {activeWorkspaceMerge.conflictedFiles.length === 1 ? "" : "s"}
+                        </span>
+                        <Button
+                          variant="destructive-outline"
+                          size="xs"
+                          disabled={isAbortMergeRunning}
+                          onClick={() => void abortActiveMerge()}
+                        >
+                          Abort
+                        </Button>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {activeWorkspaceMerge.conflictedFiles.map((file) => (
+                          <Badge key={file} variant="outline" size="sm">
+                            {file}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Last merge result */}
+                  {lastMergeResult && !activeWorkspaceHasConflicts && (
+                    <div
+                      className={cn(
+                        "rounded-md border p-2 text-xs",
+                        lastMergeResult.status === "merged"
+                          ? "border-success/30 bg-success/[0.04] text-success-foreground"
+                          : "border-destructive/30 bg-destructive/[0.04] text-destructive-foreground"
+                      )}
+                    >
+                      {lastMergeResult.status === "merged"
+                        ? `Merged ${lastMergeResult.sourceBranch} → ${lastMergeResult.targetBranch}`
+                        : `Conflicts merging ${lastMergeResult.sourceBranch}`}
+                    </div>
+                  )}
+                </div>
+              </Section>
+            )}
+
+            {/* ============================================================ */}
+            {/* GITHUB AUTH SECTION */}
+            {/* ============================================================ */}
+            <Section
+              title="GitHub"
+              actions={
+                githubStatusQuery.data?.accountLogin && (
+                  <Badge variant="outline" size="sm">
+                    @{githubStatusQuery.data.accountLogin}
+                  </Badge>
+                )
+              }
+            >
+              {!githubStatusQuery.data?.installed ? (
+                <p className="text-xs text-muted-foreground">
+                  Install <code className="rounded bg-muted px-1">gh</code> CLI to enable GitHub features
+                </p>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={
+                      isGitHubAuthenticated ? githubStatusQuery.isFetching : loginMutation.isPending
+                    }
+                    onClick={() => {
+                      if (isGitHubAuthenticated) {
+                        void verifyGitHubAuth();
+                        return;
+                      }
+                      loginMutation.mutate();
+                    }}
+                  >
+                    <LogInIcon className="size-3.5" />
+                    {isGitHubAuthenticated
+                      ? githubStatusQuery.isFetching
+                        ? "Verifying..."
+                        : "Verify"
+                      : loginMutation.isPending
+                        ? "Authenticating..."
+                        : "Authenticate"}
+                  </Button>
+                  {githubRepoUrl && (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => void openExternalUrl(githubRepoUrl)}
+                    >
+                      <ExternalLinkIcon className="size-3.5" />
+                      Open repo
+                    </Button>
+                  )}
+                  {loginMutation.error && (
+                    <span className="text-xs text-destructive-foreground">
+                      {loginMutation.error.message}
+                    </span>
+                  )}
+                </div>
+              )}
+            </Section>
+
+            {/* ============================================================ */}
+            {/* ISSUES SECTION */}
+            {/* ============================================================ */}
+            {githubStatusQuery.data?.authenticated && githubStatusQuery.data?.repo && (
+              <Section
+                title="Issues"
+                collapsible
+                defaultOpen={false}
+                actions={
+                  <div className="flex gap-0.5">
+                    {(["open", "closed", "all"] as const).map((state) => (
+                      <Button
+                        key={state}
+                        variant={issueState === state ? "secondary" : "ghost"}
+                        size="xs"
+                        onClick={() => setIssueState(state)}
+                        className="h-5 px-1.5 text-[10px]"
+                      >
+                        {state.charAt(0).toUpperCase() + state.slice(1)}
+                      </Button>
+                    ))}
+                  </div>
+                }
+              >
+                {githubIssuesQuery.isLoading || githubIssuesQuery.isFetching ? (
+                  <p className="text-xs text-muted-foreground">Loading...</p>
+                ) : issuesDisabled ? (
+                  <p className="text-xs text-muted-foreground">Issues disabled for this repo</p>
+                ) : githubIssuesQuery.error ? (
+                  <p className="text-xs text-destructive-foreground">
+                    {githubIssuesQuery.error.message}
+                  </p>
+                ) : githubIssuesQuery.data && githubIssuesQuery.data.issues.length > 0 ? (
+                  <div className="space-y-1">
+                    {githubIssuesQuery.data.issues.map((issue) => (
+                      <button
+                        type="button"
+                        key={issue.number}
+                        className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/50"
+                        onClick={() => void openExternalUrl(issue.url)}
+                      >
+                        <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                          #{issue.number}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm">{issue.title}</p>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            {issue.author && <span>@{issue.author}</span>}
+                            <span>{formatGitHubTimestamp(issue.updatedAt)}</span>
+                          </div>
+                        </div>
+                        <StatusDot
+                          level={issue.state === "open" ? "success" : "neutral"}
+                          className="mt-1.5"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No issues</p>
+                )}
+              </Section>
+            )}
           </div>
+        </ScrollArea>
       </div>
 
+      {/* ================================================================== */}
+      {/* COMMIT DIALOG */}
+      {/* ================================================================== */}
       <Dialog
         open={isCommitDialogOpen}
         onOpenChange={(open) => {
@@ -1718,46 +1744,50 @@ export default function GitHubPanel({
           </DialogHeader>
           <DialogPanel className="space-y-4">
             <div className="space-y-3 rounded-lg border border-input bg-muted/40 p-3 text-xs">
-              <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-muted-foreground">Branch</span>
-                <span className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{gitStatusForActions?.branch ?? "(detached HEAD)"}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-medium">
+                    {gitStatusForActions?.branch ?? "(detached)"}
+                  </span>
                   {isDefaultBranch && (
-                    <span className="text-right text-warning text-xs">Warning: default branch</span>
+                    <Badge variant="warning" size="sm">
+                      default
+                    </Badge>
                   )}
-                </span>
+                </div>
               </div>
               <div className="space-y-1">
                 <p className="text-muted-foreground">Files</p>
                 {!gitStatusForActions || gitStatusForActions.workingTree.files.length === 0 ? (
-                  <p className="font-medium">none</p>
+                  <p className="font-medium">No changes</p>
                 ) : (
                   <div className="space-y-2">
-                    <ScrollArea className="h-44 rounded-md border border-input bg-background">
-                      <div className="space-y-1 p-1">
+                    <ScrollArea className="h-40 rounded-md border border-input bg-background">
+                      <div className="space-y-0.5 p-1">
                         {gitStatusForActions.workingTree.files.map((file) => (
                           <button
                             type="button"
                             key={file.path}
-                            className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 font-mono text-left transition-colors hover:bg-accent/50"
+                            className="flex w-full items-center justify-between gap-3 rounded px-2 py-1 font-mono text-left transition-colors hover:bg-accent/50"
                             onClick={() => openChangedFileInEditor(file.path)}
                           >
                             <span className="truncate">{file.path}</span>
-                            <span className="shrink-0">
-                              <span className="text-success">+{file.insertions}</span>
-                              <span className="text-muted-foreground"> / </span>
-                              <span className="text-destructive">-{file.deletions}</span>
+                            <span className="shrink-0 tabular-nums">
+                              <span className="text-success-foreground">+{file.insertions}</span>
+                              <span className="mx-0.5 text-border">/</span>
+                              <span className="text-destructive-foreground">-{file.deletions}</span>
                             </span>
                           </button>
                         ))}
                       </div>
                     </ScrollArea>
-                    <div className="flex justify-end font-mono">
-                      <span className="text-success">
+                    <div className="flex justify-end font-mono tabular-nums">
+                      <span className="text-success-foreground">
                         +{gitStatusForActions.workingTree.insertions}
                       </span>
-                      <span className="text-muted-foreground"> / </span>
-                      <span className="text-destructive">
+                      <span className="mx-1 text-border">/</span>
+                      <span className="text-destructive-foreground">
                         -{gitStatusForActions.workingTree.deletions}
                       </span>
                     </div>
@@ -1787,7 +1817,7 @@ export default function GitHubPanel({
               Cancel
             </Button>
             <Button variant="outline" size="sm" onClick={runDialogActionOnNewBranch}>
-              Commit on new branch
+              New branch
             </Button>
             <Button size="sm" onClick={runDialogAction}>
               Commit
@@ -1796,6 +1826,9 @@ export default function GitHubPanel({
         </DialogPopup>
       </Dialog>
 
+      {/* ================================================================== */}
+      {/* DEFAULT BRANCH CONFIRMATION DIALOG */}
+      {/* ================================================================== */}
       <Dialog
         open={pendingDefaultBranchAction !== null}
         onOpenChange={(open) => {
@@ -1807,19 +1840,19 @@ export default function GitHubPanel({
         <DialogPopup className="max-w-xl">
           <DialogHeader>
             <DialogTitle>
-              {pendingDefaultBranchActionCopy?.title ?? "Run action on default branch?"}
+              {pendingDefaultBranchActionCopy?.title ?? "Continue on default branch?"}
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setPendingDefaultBranchAction(null)}>
-              Abort
+              Cancel
             </Button>
             <Button variant="outline" size="sm" onClick={continuePendingDefaultBranchAction}>
               {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
             </Button>
             <Button size="sm" onClick={checkoutFeatureBranchAndContinuePendingAction}>
-              Checkout feature branch & continue
+              Feature branch
             </Button>
           </DialogFooter>
         </DialogPopup>

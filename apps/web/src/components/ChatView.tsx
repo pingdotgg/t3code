@@ -51,11 +51,9 @@ import {
   gitBranchesQueryOptions,
   gitCreateWorktreeMutationOptions,
   gitRepositoryContextQueryOptions,
-  gitStatusQueryOptions,
 } from "~/lib/gitReactQuery";
 import { resolveGitPanelContext } from "~/lib/gitPanelContext";
 import { buildTemporaryWorktreeBranchName } from "~/gitWorktree";
-import { deriveWorkspacePromotionState } from "~/lib/workspacePromotionState";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
@@ -1214,7 +1212,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
-  const threadGitStatusQuery = useQuery(gitStatusQueryOptions(gitCwd));
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
@@ -1225,46 +1222,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
   );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
-  const threadDefaultBranch = useMemo(
-    () => branchesQuery.data?.branches.find((branch) => branch.isDefault)?.name ?? null,
-    [branchesQuery.data?.branches],
-  );
-  const threadPromotionState = useMemo(() => {
-    if (!gitCwd || !branchesQuery.data?.isRepo || !threadGitStatusQuery.data) {
-      return null;
-    }
-
-    const branchName =
-      threadGitStatusQuery.data.branch ??
-      branchesQuery.data.branches.find((branch) => branch.current)?.name ??
-      null;
-    return deriveWorkspacePromotionState({
-      branch: branchName,
-      targetBranch: threadGitStatusQuery.data.pr?.baseBranch ?? threadDefaultBranch,
-      isPrimaryWorkspace: gitPanelContext.repoRoot !== null && gitCwd === gitPanelContext.repoRoot,
-      hasWorkingTreeChanges: threadGitStatusQuery.data.hasWorkingTreeChanges,
-      mergeInProgress: threadGitStatusQuery.data.merge.inProgress,
-      conflictedFiles: threadGitStatusQuery.data.merge.conflictedFiles,
-      hasUpstream: threadGitStatusQuery.data.hasUpstream,
-      aheadCount: threadGitStatusQuery.data.aheadCount,
-      behindCount: threadGitStatusQuery.data.behindCount,
-      hasOpenPr: threadGitStatusQuery.data.pr?.state === "open",
-    });
-  }, [
-    branchesQuery.data?.branches,
-    branchesQuery.data?.isRepo,
-    gitCwd,
-    gitPanelContext.repoRoot,
-    threadDefaultBranch,
-    threadGitStatusQuery.data,
-  ]);
-  const showThreadWorkflowGuidance =
-    !!activeThread &&
-    !!threadPromotionState &&
-    branchesQuery.data?.isRepo === true &&
-    !(gitPanelContext.repoRoot !== null &&
-      gitCwd === gitPanelContext.repoRoot &&
-      threadPromotionState.state === "seeded");
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -3574,9 +3531,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
       <ThreadErrorBanner error={activeThread.error} />
-      <ThreadWorkflowGuidanceBanner
-        promotionState={showThreadWorkflowGuidance ? threadPromotionState : null}
-      />
       <PlanModePanel activePlan={activePlan} />
 
       {/* Messages */}
@@ -4340,38 +4294,6 @@ const ThreadErrorBanner = memo(function ThreadErrorBanner({ error }: { error: st
         <CircleAlertIcon />
         <AlertDescription className="line-clamp-3" title={error}>
           {error}
-        </AlertDescription>
-      </Alert>
-    </div>
-  );
-});
-
-const ThreadWorkflowGuidanceBanner = memo(function ThreadWorkflowGuidanceBanner({
-  promotionState,
-}: {
-  promotionState: ReturnType<typeof deriveWorkspacePromotionState> | null;
-}) {
-  if (!promotionState) {
-    return null;
-  }
-
-  const variant =
-    promotionState.state === "conflicted"
-      ? "error"
-      : promotionState.state === "needs-sync" || promotionState.state === "syncing"
-        ? "warning"
-        : promotionState.state === "ready"
-          ? "success"
-          : "info";
-
-  return (
-    <div className="mx-auto max-w-3xl pt-3">
-      <Alert variant={variant}>
-        <CircleAlertIcon />
-        <AlertTitle>{promotionState.guidanceTitle}</AlertTitle>
-        <AlertDescription>
-          <span>{promotionState.guidanceBody}</span>
-          <span className="text-xs">Next action: {promotionState.nextAction}</span>
         </AlertDescription>
       </Alert>
     </div>
