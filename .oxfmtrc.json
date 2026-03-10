@@ -1,15 +1,5 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "useTabs": false,
-  "tabWidth": 2,
-  "printWidth": 100,
-  "singleQuote": false,
-  "jsxSingleQuote": false,
-  "quoteProps": "as-needed",
-  "semi": true,
-  "trailingComma": "all",
-  "endOfLine": "lf",
-  "insertFinalNewline": true,
   "ignorePatterns": [
     ".plans",
     "dist",
