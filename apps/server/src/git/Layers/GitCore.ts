@@ -31,6 +31,28 @@ function parseBranchAb(value: string): { ahead: number; behind: number } {
   };
 }
 
+function normalizeNumstatPath(rawPath: string): string {
+  const trimmedPath = rawPath.trim();
+  if (trimmedPath.length === 0) {
+    return trimmedPath;
+  }
+
+  const braceExpandedPath = trimmedPath.replace(/\{([^{}]*?) => ([^{}]*?)\}/g, "$2");
+  if (braceExpandedPath !== trimmedPath && braceExpandedPath.trim().length > 0) {
+    return braceExpandedPath.trim();
+  }
+
+  const renameArrowIndex = trimmedPath.indexOf(" => ");
+  if (renameArrowIndex >= 0) {
+    const renamedPath = trimmedPath.slice(renameArrowIndex + " => ".length).trim();
+    if (renamedPath.length > 0) {
+      return renamedPath;
+    }
+  }
+
+  return trimmedPath;
+}
+
 function parseNumstatEntries(
   stdout: string,
 ): Array<{ path: string; insertions: number; deletions: number }> {
@@ -41,11 +63,11 @@ function parseNumstatEntries(
     const rawPath =
       pathParts.length > 1 ? (pathParts.at(-1) ?? "").trim() : pathParts.join("\t").trim();
     if (rawPath.length === 0) continue;
+
     const added = Number.parseInt(addedRaw ?? "0", 10);
     const deleted = Number.parseInt(deletedRaw ?? "0", 10);
-    const renameArrowIndex = rawPath.indexOf(" => ");
-    const normalizedPath =
-      renameArrowIndex >= 0 ? rawPath.slice(renameArrowIndex + " => ".length).trim() : rawPath;
+    const normalizedPath = normalizeNumstatPath(rawPath);
+
     entries.push({
       path: normalizedPath.length > 0 ? normalizedPath : rawPath,
       insertions: Number.isFinite(added) ? added : 0,
