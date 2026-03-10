@@ -872,13 +872,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
   );
+  const activeLatestTurnId = activeLatestTurn?.turnId ?? null;
+  const activeLatestTurnState = activeLatestTurn?.state ?? null;
+  const activeSessionStatus = activeThread?.session?.status ?? null;
+  const pendingUserInputContext = useMemo(
+    () => ({
+      latestTurn: activeLatestTurnId && activeLatestTurnState
+        ? {
+            turnId: activeLatestTurnId,
+            state: activeLatestTurnState,
+          }
+        : null,
+      session: activeSessionStatus
+        ? {
+            status: activeSessionStatus,
+          }
+        : null,
+    }),
+    [activeLatestTurnId, activeLatestTurnState, activeSessionStatus],
+  );
   const pendingUserInputs = useMemo(
-    () =>
-      derivePendingUserInputs(threadActivities, {
-        latestTurn: activeLatestTurn,
-        session: activeThread?.session ?? null,
-      }),
-    [activeLatestTurn, activeThread?.session, threadActivities],
+    () => derivePendingUserInputs(threadActivities, pendingUserInputContext),
+    [pendingUserInputContext, threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(
