@@ -3,6 +3,7 @@ import {
   EventId,
   ProjectId,
   ThreadId,
+  TurnId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
@@ -212,6 +213,637 @@ describe("orchestration projector", () => {
     const thread = afterRunning.threads[0];
     expect(thread?.latestTurn?.turnId).toBe("turn-1");
     expect(thread?.session?.status).toBe("running");
+  });
+
+  it("does not complete a running turn on assistant message finalization alone", async () => {
+    const createdAt = "2026-03-09T12:00:00.000Z";
+    const runningAt = "2026-03-09T12:00:05.000Z";
+    const completeAt = "2026-03-09T12:00:10.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterRunning = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: runningAt,
+          commandId: "cmd-running",
+          payload: {
+            threadId: "thread-1",
+            session: {
+              threadId: "thread-1",
+              status: "running",
+              providerName: "codex",
+              providerSessionId: "session-1",
+              providerThreadId: "provider-thread-1",
+              runtimeMode: "approval-required",
+              activeTurnId: "turn-1",
+              lastError: null,
+              updatedAt: runningAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterAssistantFinal = await Effect.runPromise(
+      projectEvent(
+        afterRunning,
+        makeEvent({
+          sequence: 3,
+          type: "thread.message-sent",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: completeAt,
+          commandId: "cmd-complete",
+          payload: {
+            threadId: "thread-1",
+            messageId: "assistant-msg-1",
+            role: "assistant",
+            text: "final answer",
+            turnId: "turn-1",
+            streaming: false,
+            createdAt: completeAt,
+            updatedAt: completeAt,
+          },
+        }),
+      ),
+    );
+
+    expect(afterAssistantFinal.threads[0]?.latestTurn).toEqual({
+      turnId: TurnId.makeUnsafe("turn-1"),
+      state: "running",
+      requestedAt: runningAt,
+      startedAt: runningAt,
+      completedAt: null,
+      assistantMessageId: null,
+    });
+  });
+
+  it("does not complete a running turn on checkpoint completion alone", async () => {
+    const createdAt = "2026-03-09T12:00:00.000Z";
+    const runningAt = "2026-03-09T12:00:05.000Z";
+    const checkpointAt = "2026-03-09T12:00:12.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterRunning = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: runningAt,
+          commandId: "cmd-running",
+          payload: {
+            threadId: "thread-1",
+            session: {
+              threadId: "thread-1",
+              status: "running",
+              providerName: "codex",
+              providerSessionId: "session-1",
+              providerThreadId: "provider-thread-1",
+              runtimeMode: "approval-required",
+              activeTurnId: "turn-1",
+              lastError: null,
+              updatedAt: runningAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterCheckpoint = await Effect.runPromise(
+      projectEvent(
+        afterRunning,
+        makeEvent({
+          sequence: 3,
+          type: "thread.turn-diff-completed",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: checkpointAt,
+          commandId: "cmd-checkpoint",
+          payload: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            checkpointTurnCount: 1,
+            checkpointRef: "refs/t3/checkpoints/thread-1/turn/1",
+            status: "ready",
+            files: [],
+            assistantMessageId: "assistant-msg-1",
+            completedAt: checkpointAt,
+          },
+        }),
+      ),
+    );
+
+    expect(afterCheckpoint.threads[0]?.latestTurn).toEqual({
+      turnId: TurnId.makeUnsafe("turn-1"),
+      state: "running",
+      requestedAt: runningAt,
+      startedAt: runningAt,
+      completedAt: null,
+      assistantMessageId: "assistant-msg-1",
+    });
+  });
+
+  it("finalizes a running turn only when the session lifecycle closes", async () => {
+    const scenarios = [
+      { threadId: "thread-ready", status: "ready", expectedState: "completed" },
+      { threadId: "thread-error", status: "error", expectedState: "error" },
+      { threadId: "thread-stopped", status: "stopped", expectedState: "interrupted" },
+      { threadId: "thread-interrupted", status: "interrupted", expectedState: "interrupted" },
+    ] as const;
+
+    for (const [index, scenario] of scenarios.entries()) {
+      const createdAt = `2026-03-09T12:0${index}:00.000Z`;
+      const runningAt = `2026-03-09T12:0${index}:05.000Z`;
+      const closedAt = `2026-03-09T12:0${index}:10.000Z`;
+      const model = createEmptyReadModel(createdAt);
+
+      const afterCreate = await Effect.runPromise(
+        projectEvent(
+          model,
+          makeEvent({
+            sequence: 1,
+            type: "thread.created",
+            aggregateKind: "thread",
+            aggregateId: scenario.threadId,
+            occurredAt: createdAt,
+            commandId: `cmd-create-${index}`,
+            payload: {
+              threadId: scenario.threadId,
+              projectId: "project-1",
+              title: "demo",
+              model: "gpt-5.3-codex",
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          }),
+        ),
+      );
+
+      const afterRunning = await Effect.runPromise(
+        projectEvent(
+          afterCreate,
+          makeEvent({
+            sequence: 2,
+            type: "thread.session-set",
+            aggregateKind: "thread",
+            aggregateId: scenario.threadId,
+            occurredAt: runningAt,
+            commandId: `cmd-running-${index}`,
+            payload: {
+              threadId: scenario.threadId,
+              session: {
+                threadId: scenario.threadId,
+                status: "running",
+                providerName: "codex",
+                providerSessionId: `session-${index}`,
+                providerThreadId: `provider-thread-${index}`,
+                runtimeMode: "approval-required",
+                activeTurnId: "turn-1",
+                lastError: null,
+                updatedAt: runningAt,
+              },
+            },
+          }),
+        ),
+      );
+
+      const afterClosed = await Effect.runPromise(
+        projectEvent(
+          afterRunning,
+          makeEvent({
+            sequence: 3,
+            type: "thread.session-set",
+            aggregateKind: "thread",
+            aggregateId: scenario.threadId,
+            occurredAt: closedAt,
+            commandId: `cmd-closed-${index}`,
+            payload: {
+              threadId: scenario.threadId,
+              session: {
+                threadId: scenario.threadId,
+                status: scenario.status,
+                providerName: "codex",
+                providerSessionId: `session-${index}`,
+                providerThreadId: `provider-thread-${index}`,
+                runtimeMode: "approval-required",
+                activeTurnId: null,
+                lastError: scenario.status === "error" ? "Provider crashed" : null,
+                updatedAt: closedAt,
+              },
+            },
+          }),
+        ),
+      );
+
+      expect(afterClosed.threads[0]?.latestTurn).toEqual({
+        turnId: TurnId.makeUnsafe("turn-1"),
+        state: scenario.expectedState,
+        requestedAt: runningAt,
+        startedAt: runningAt,
+        completedAt: closedAt,
+        assistantMessageId: null,
+      });
+    }
+  });
+
+  it("does not finalize a running turn when ready arrives with an active turn id", async () => {
+    const createdAt = "2026-03-09T16:00:00.000Z";
+    const runningAt = "2026-03-09T16:00:05.000Z";
+    const readyNoiseAt = "2026-03-09T16:00:10.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-ready-noise",
+          occurredAt: createdAt,
+          commandId: "cmd-create-ready-noise",
+          payload: {
+            threadId: "thread-ready-noise",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterRunning = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-ready-noise",
+          occurredAt: runningAt,
+          commandId: "cmd-running-ready-noise",
+          payload: {
+            threadId: "thread-ready-noise",
+            session: {
+              threadId: "thread-ready-noise",
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: "turn-1",
+              lastError: null,
+              updatedAt: runningAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterReadyNoise = await Effect.runPromise(
+      projectEvent(
+        afterRunning,
+        makeEvent({
+          sequence: 3,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-ready-noise",
+          occurredAt: readyNoiseAt,
+          commandId: "cmd-ready-noise",
+          payload: {
+            threadId: "thread-ready-noise",
+            session: {
+              threadId: "thread-ready-noise",
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: "turn-1",
+              lastError: null,
+              updatedAt: readyNoiseAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(afterReadyNoise.threads[0]?.latestTurn).toEqual({
+      turnId: TurnId.makeUnsafe("turn-1"),
+      state: "running",
+      requestedAt: runningAt,
+      startedAt: runningAt,
+      completedAt: null,
+      assistantMessageId: null,
+    });
+  });
+
+  it("does not refresh completion timestamps when repeated ready noise replays after completion", async () => {
+    const createdAt = "2026-03-09T17:00:00.000Z";
+    const runningAt = "2026-03-09T17:00:05.000Z";
+    const completedAt = "2026-03-09T17:00:10.000Z";
+    const readyNoiseAt = "2026-03-09T17:00:15.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-ready-replay",
+          occurredAt: createdAt,
+          commandId: "cmd-create-ready-replay",
+          payload: {
+            threadId: "thread-ready-replay",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterRunning = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-ready-replay",
+          occurredAt: runningAt,
+          commandId: "cmd-running-ready-replay",
+          payload: {
+            threadId: "thread-ready-replay",
+            session: {
+              threadId: "thread-ready-replay",
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: "turn-1",
+              lastError: null,
+              updatedAt: runningAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterCompleted = await Effect.runPromise(
+      projectEvent(
+        afterRunning,
+        makeEvent({
+          sequence: 3,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-ready-replay",
+          occurredAt: completedAt,
+          commandId: "cmd-ready-complete",
+          payload: {
+            threadId: "thread-ready-replay",
+            session: {
+              threadId: "thread-ready-replay",
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: completedAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterReadyNoise = await Effect.runPromise(
+      projectEvent(
+        afterCompleted,
+        makeEvent({
+          sequence: 4,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-ready-replay",
+          occurredAt: readyNoiseAt,
+          commandId: "cmd-ready-noise-replay",
+          payload: {
+            threadId: "thread-ready-replay",
+            session: {
+              threadId: "thread-ready-replay",
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: "turn-1",
+              lastError: null,
+              updatedAt: readyNoiseAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(afterReadyNoise.threads[0]?.latestTurn).toEqual({
+      turnId: TurnId.makeUnsafe("turn-1"),
+      state: "completed",
+      requestedAt: runningAt,
+      startedAt: runningAt,
+      completedAt,
+      assistantMessageId: null,
+    });
+  });
+
+  it("does not overwrite an already terminal latest turn on later session events", async () => {
+    const createdAt = "2026-03-09T12:10:00.000Z";
+    const runningAt = "2026-03-09T12:10:05.000Z";
+    const completedAt = "2026-03-09T12:10:10.000Z";
+    const erroredAt = "2026-03-09T12:10:20.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterRunning = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: runningAt,
+          commandId: "cmd-running",
+          payload: {
+            threadId: "thread-1",
+            session: {
+              threadId: "thread-1",
+              status: "running",
+              providerName: "codex",
+              providerSessionId: "session-1",
+              providerThreadId: "provider-thread-1",
+              runtimeMode: "approval-required",
+              activeTurnId: "turn-1",
+              lastError: null,
+              updatedAt: runningAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterCompleted = await Effect.runPromise(
+      projectEvent(
+        afterRunning,
+        makeEvent({
+          sequence: 3,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: completedAt,
+          commandId: "cmd-ready",
+          payload: {
+            threadId: "thread-1",
+            session: {
+              threadId: "thread-1",
+              status: "ready",
+              providerName: "codex",
+              providerSessionId: "session-1",
+              providerThreadId: "provider-thread-1",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: completedAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterErrored = await Effect.runPromise(
+      projectEvent(
+        afterCompleted,
+        makeEvent({
+          sequence: 4,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: erroredAt,
+          commandId: "cmd-error",
+          payload: {
+            threadId: "thread-1",
+            session: {
+              threadId: "thread-1",
+              status: "error",
+              providerName: "codex",
+              providerSessionId: "session-1",
+              providerThreadId: "provider-thread-1",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: "late error",
+              updatedAt: erroredAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(afterErrored.threads[0]?.latestTurn).toEqual({
+      turnId: TurnId.makeUnsafe("turn-1"),
+      state: "completed",
+      requestedAt: runningAt,
+      startedAt: runningAt,
+      completedAt,
+      assistantMessageId: null,
+    });
   });
 
   it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {

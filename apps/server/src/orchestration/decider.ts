@@ -64,6 +64,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
+      const sortOrder =
+        readModel.projects.reduce(
+          (maxSortOrder, project) => Math.max(maxSortOrder, project.sortOrder),
+          -1,
+        ) + 1;
 
       return {
         ...withEventBase({
@@ -79,6 +84,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           defaultModel: command.defaultModel ?? null,
           scripts: [],
+          threadGroupOrder: [],
+          sortOrder,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -106,6 +113,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
           ...(command.defaultModel !== undefined ? { defaultModel: command.defaultModel } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
+          ...(command.threadGroupOrder !== undefined
+            ? { threadGroupOrder: command.threadGroupOrder }
+            : {}),
+          ...(command.sortOrder !== undefined ? { sortOrder: command.sortOrder } : {}),
           updatedAt: occurredAt,
         },
       };

@@ -6,6 +6,7 @@ import {
   OrchestrationCheckpointFile,
   OrchestrationReadModel,
   ProjectScript,
+  ThreadGroupId,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationLatestTurn,
@@ -44,6 +45,7 @@ const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    threadGroupOrder: Schema.fromJsonString(Schema.Array(ThreadGroupId)),
   }),
 );
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
@@ -139,11 +141,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model AS "defaultModel",
           scripts_json AS "scripts",
+          thread_group_order_json AS "threadGroupOrder",
+          sort_order AS "sortOrder",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
         FROM projection_projects
-        ORDER BY created_at ASC, project_id ASC
+        ORDER BY sort_order ASC, created_at ASC, project_id ASC
       `,
   });
 
@@ -153,20 +157,32 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     execute: () =>
       sql`
         SELECT
-          thread_id AS "threadId",
-          project_id AS "projectId",
-          title,
-          model,
-          runtime_mode AS "runtimeMode",
-          interaction_mode AS "interactionMode",
-          branch,
-          worktree_path AS "worktreePath",
-          latest_turn_id AS "latestTurnId",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
-        FROM projection_threads
-        ORDER BY created_at ASC, thread_id ASC
+          threads.thread_id AS "threadId",
+          threads.project_id AS "projectId",
+          threads.title AS "title",
+          threads.model AS "model",
+          threads.runtime_mode AS "runtimeMode",
+          threads.interaction_mode AS "interactionMode",
+          threads.branch AS "branch",
+          COALESCE(
+            threads.worktree_path,
+            CASE
+              WHEN json_extract(runtime.runtime_payload_json, '$.cwd') IS NOT NULL
+                AND json_extract(runtime.runtime_payload_json, '$.cwd') <> projects.workspace_root
+              THEN json_extract(runtime.runtime_payload_json, '$.cwd')
+              ELSE NULL
+            END
+          ) AS "worktreePath",
+          threads.latest_turn_id AS "latestTurnId",
+          threads.created_at AS "createdAt",
+          threads.updated_at AS "updatedAt",
+          threads.deleted_at AS "deletedAt"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        LEFT JOIN provider_session_runtime AS runtime
+          ON runtime.thread_id = threads.thread_id
+        ORDER BY threads.created_at ASC, threads.thread_id ASC
       `,
   });
 
@@ -519,6 +535,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             workspaceRoot: row.workspaceRoot,
             defaultModel: row.defaultModel,
             scripts: row.scripts,
+            threadGroupOrder: row.threadGroupOrder,
+            sortOrder: row.sortOrder,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             deletedAt: row.deletedAt,

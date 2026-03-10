@@ -42,6 +42,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           workspace_root,
           default_model,
           scripts_json,
+          thread_group_order_json,
+          sort_order,
           created_at,
           updated_at,
           deleted_at
@@ -52,8 +54,37 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           '/tmp/project-1',
           'gpt-5-codex',
           '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
+          '["worktree:/tmp/project-1/.t3/worktrees/feature-a"]',
+          1,
           '2026-02-24T00:00:00.000Z',
           '2026-02-24T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model,
+          scripts_json,
+          thread_group_order_json,
+          sort_order,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-0',
+          'Project 0',
+          '/tmp/project-0',
+          NULL,
+          '[]',
+          '[]',
+          0,
+          '2026-02-25T00:00:00.000Z',
+          '2026-02-25T00:00:01.000Z',
           NULL
         )
       `;
@@ -82,6 +113,29 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           '2026-02-24T00:00:02.000Z',
           '2026-02-24T00:00:03.000Z',
           NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO provider_session_runtime (
+          thread_id,
+          provider_name,
+          adapter_key,
+          runtime_mode,
+          status,
+          last_seen_at,
+          resume_cursor_json,
+          runtime_payload_json
+        )
+        VALUES (
+          'thread-1',
+          'codex',
+          'codex',
+          'full-access',
+          'running',
+          '2026-02-24T00:00:03.500Z',
+          NULL,
+          '{"cwd":"/tmp/project-1/.t3/worktrees/feature-a"}'
         )
       `;
 
@@ -207,8 +261,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const snapshot = yield* snapshotQuery.getSnapshot();
 
       assert.equal(snapshot.snapshotSequence, 5);
-      assert.equal(snapshot.updatedAt, "2026-02-24T00:00:09.000Z");
+      assert.equal(snapshot.updatedAt, "2026-02-25T00:00:01.000Z");
       assert.deepEqual(snapshot.projects, [
+        {
+          id: asProjectId("project-0"),
+          title: "Project 0",
+          workspaceRoot: "/tmp/project-0",
+          defaultModel: null,
+          scripts: [],
+          threadGroupOrder: [],
+          sortOrder: 0,
+          createdAt: "2026-02-25T00:00:00.000Z",
+          updatedAt: "2026-02-25T00:00:01.000Z",
+          deletedAt: null,
+        },
         {
           id: asProjectId("project-1"),
           title: "Project 1",
@@ -223,6 +289,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               runOnWorktreeCreate: false,
             },
           ],
+          threadGroupOrder: ["worktree:/tmp/project-1/.t3/worktrees/feature-a"],
+          sortOrder: 1,
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
           deletedAt: null,
@@ -237,7 +305,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           interactionMode: "default",
           runtimeMode: "full-access",
           branch: null,
-          worktreePath: null,
+          worktreePath: "/tmp/project-1/.t3/worktrees/feature-a",
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",

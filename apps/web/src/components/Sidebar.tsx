@@ -39,6 +39,7 @@ import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraft
 import { getSidebarThreadSortTimestamp, sortSidebarThreadEntries } from "../sidebarThreadOrder";
 import { buildSidebarGroupContextMenuItems } from "../sidebarGroupContextMenu";
 import {
+  orderProjects,
   orderProjectsByIds,
   shouldClearOptimisticProjectOrder,
   reorderProjectOrder,
@@ -311,9 +312,7 @@ export default function Sidebar() {
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const [optimisticProjectOrder, setOptimisticProjectOrder] = useState<ProjectId[] | null>(null);
-  const [optimisticGroupOrderByProjectId, setOptimisticGroupOrderByProjectId] = useState<
-    Record<string, string[]>
-  >({});
+  const [isProjectReorderPending, setIsProjectReorderPending] = useState(false);
   const [draggedProjectId, setDraggedProjectId] = useState<ProjectId | null>(null);
   const [projectDropTarget, setProjectDropTarget] = useState<{ beforeProjectId: ProjectId | null } | null>(
     null,
@@ -337,6 +336,8 @@ export default function Sidebar() {
   const previousProjectOrderRef = useRef<Array<ProjectId>>([]);
   const previousProjectTopsRef = useRef<Map<ProjectId, number>>(new Map());
   const pendingProjectAnimationStartTopsRef = useRef<Map<ProjectId, number> | null>(null);
+  const pendingPersistedProjectOrderRef = useRef<ProjectId[] | null>(null);
+  const projectReorderFlushInFlightRef = useRef(false);
   const previousGroupOrderByProjectRef = useRef(new Map<ProjectId, Array<string>>());
   const previousGroupTopsRef = useRef<Map<string, number>>(new Map());
   const pendingGroupAnimationStartTopsRef = useRef<Map<string, number> | null>(null);
@@ -419,14 +420,14 @@ export default function Sidebar() {
       groupIdsByProjectId.set(
         project.id,
         orderProjectThreadGroups({
+          project,
           threads: [...threadEntries, ...draftEntries],
-          orderedGroupIds: optimisticGroupOrderByProjectId[project.id],
         }).map((group) => group.id),
       );
     }
 
     return groupIdsByProjectId;
-  }, [draftThreadsByThreadId, optimisticGroupOrderByProjectId, orderedProjects, threads]);
+  }, [draftThreadsByThreadId, orderedProjects, threads]);
   const gitStatusTargets = useMemo(
     () =>
       [
@@ -495,13 +496,14 @@ export default function Sidebar() {
     if (
       !shouldClearOptimisticProjectOrder({
         optimisticOrder: optimisticProjectOrder,
-        currentOrder: projects.map((project) => project.id),
+        persistedOrder: orderProjects(projects).map((project) => project.id),
+        hasPendingReorder: isProjectReorderPending,
       })
     ) {
       return;
     }
     setOptimisticProjectOrder(null);
-  }, [optimisticProjectOrder, projects]);
+  }, [isProjectReorderPending, optimisticProjectOrder, projects]);
 
   useLayoutEffect(() => {
     if (typeof window === "undefined") {
@@ -1399,12 +1401,14 @@ export default function Sidebar() {
   }, [desktopUpdateButtonAction, desktopUpdateButtonDisabled, desktopUpdateState]);
 
   const handleProjectGroupReorder = useCallback(
-    (projectId: ProjectId, movedGroupId: string, beforeGroupId: string | null) => {
-      const project = orderedProjects.find((entry) => entry.id === projectId);
-      if (!project || movedGroupId === MAIN_THREAD_GROUP_ID) {
+    async (projectId: ProjectId, movedGroupId: string, beforeGroupId: string | null) => {
+      const api = readNativeApi();
+      const project = projects.find((entry) => entry.id === projectId);
+      if (!api || !project || movedGroupId === MAIN_THREAD_GROUP_ID) {
         return;
       }
       const visibleGroupIds = orderProjectThreadGroups({
+        project,
         threads: [
           ...threads.filter((thread) => thread.projectId === projectId),
           ...Object.entries(projectGroupDraftThreadIdById)
@@ -1430,26 +1434,77 @@ export default function Sidebar() {
               ];
             }),
         ],
-        orderedGroupIds: optimisticGroupOrderByProjectId[projectId],
       }).map((group) => group.id);
-
-      setOptimisticGroupOrderByProjectId((prev) => ({
-        ...prev,
-        [projectId]: reorderProjectThreadGroupOrder({
-          currentOrder: visibleGroupIds.filter((groupId) => groupId !== MAIN_THREAD_GROUP_ID),
-          movedGroupId,
-          beforeGroupId,
-        }),
-      }));
+      const nextOrder = reorderProjectThreadGroupOrder({
+        currentOrder: visibleGroupIds.filter((groupId) => groupId !== MAIN_THREAD_GROUP_ID),
+        movedGroupId,
+        beforeGroupId,
+      });
+      await api.orchestration.dispatchCommand({
+        type: "project.meta.update",
+        commandId: newCommandId(),
+        projectId,
+        threadGroupOrder: nextOrder,
+      });
+      await api.orchestration
+        .getSnapshot()
+        .then((snapshot) => {
+          syncServerReadModel(snapshot);
+        })
+        .catch(() => undefined);
     },
-    [draftThreadsByThreadId, optimisticGroupOrderByProjectId, orderedProjects, projectGroupDraftThreadIdById, threads],
+    [draftThreadsByThreadId, projectGroupDraftThreadIdById, projects, syncServerReadModel, threads],
   );
 
   const handleProjectReorder = useCallback(
-    (nextOrder: ProjectId[]) => {
-      setOptimisticProjectOrder(nextOrder);
+    async (nextOrder: ProjectId[]) => {
+      const api = readNativeApi();
+      if (!api) {
+        setOptimisticProjectOrder(null);
+        setIsProjectReorderPending(false);
+        pendingPersistedProjectOrderRef.current = null;
+        projectReorderFlushInFlightRef.current = false;
+        return;
+      }
+
+      pendingPersistedProjectOrderRef.current = nextOrder;
+      if (projectReorderFlushInFlightRef.current) {
+        return;
+      }
+
+      projectReorderFlushInFlightRef.current = true;
+      setIsProjectReorderPending(true);
+      try {
+        while (pendingPersistedProjectOrderRef.current) {
+          const targetOrder = pendingPersistedProjectOrderRef.current;
+          pendingPersistedProjectOrderRef.current = null;
+
+          for (const [sortOrder, projectId] of targetOrder.entries()) {
+            const project = projects.find((entry) => entry.id === projectId);
+            if (!project || project.sortOrder === sortOrder) {
+              continue;
+            }
+            await api.orchestration.dispatchCommand({
+              type: "project.meta.update",
+              commandId: newCommandId(),
+              projectId,
+              sortOrder,
+            });
+          }
+
+          await api.orchestration
+            .getSnapshot()
+            .then((snapshot) => {
+              syncServerReadModel(snapshot);
+            })
+            .catch(() => undefined);
+        }
+      } finally {
+        projectReorderFlushInFlightRef.current = false;
+        setIsProjectReorderPending(false);
+      }
     },
-    [],
+    [projects, syncServerReadModel],
   );
 
   useEffect(() => {
@@ -1566,7 +1621,7 @@ export default function Sidebar() {
       });
       setOptimisticProjectOrder(nextProjectOrder);
       pendingProjectAnimationStartTopsRef.current = collectElementTopPositions(projectRowRefs.current);
-      handleProjectReorder(nextProjectOrder);
+      void handleProjectReorder(nextProjectOrder);
     };
 
     const onPointerUp = (event: PointerEvent) => {
@@ -1980,8 +2035,8 @@ export default function Sidebar() {
                 ...draftEntries,
               ];
               const orderedGroups = orderProjectThreadGroups({
+                project,
                 threads: projectEntries,
-                orderedGroupIds: optimisticGroupOrderByProjectId[project.id],
               });
               const groupPrById = resolveProjectThreadGroupPrById({
                 groups: orderedGroups,

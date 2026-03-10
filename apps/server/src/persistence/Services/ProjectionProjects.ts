@@ -6,7 +6,7 @@
  *
  * @module ProjectionProjectRepository
  */
-import { IsoDateTime, ProjectId, ProjectScript } from "@t3tools/contracts";
+import { IsoDateTime, NonNegativeInt, ProjectId, ProjectScript, ThreadGroupId } from "@t3tools/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
@@ -18,6 +18,8 @@ export const ProjectionProject = Schema.Struct({
   workspaceRoot: Schema.String,
   defaultModel: Schema.NullOr(Schema.String),
   scripts: Schema.Array(ProjectScript),
+  threadGroupOrder: Schema.Array(ThreadGroupId),
+  sortOrder: NonNegativeInt,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),

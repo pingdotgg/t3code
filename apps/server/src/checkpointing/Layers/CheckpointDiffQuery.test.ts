@@ -33,6 +33,8 @@ function makeSnapshot(input: {
         workspaceRoot: input.workspaceRoot,
         defaultModel: null,
         scripts: [],
+        threadGroupOrder: [],
+        sortOrder: 0,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
         deletedAt: null,

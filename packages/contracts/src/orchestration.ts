@@ -129,12 +129,19 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const ThreadGroupId = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^(main|worktree:.+|branch:.+)$/),
+);
+export type ThreadGroupId = typeof ThreadGroupId.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
+  threadGroupOrder: Schema.Array(ThreadGroupId).pipe(Schema.withDecodingDefault(() => [])),
+  sortOrder: NonNegativeInt.pipe(Schema.withDecodingDefault(() => 0)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -301,6 +308,8 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(TrimmedNonEmptyString),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  threadGroupOrder: Schema.optional(Schema.Array(ThreadGroupId)),
+  sortOrder: Schema.optional(NonNegativeInt),
 });
 
 const ProjectDeleteCommand = Schema.Struct({
@@ -593,6 +602,8 @@ export const ProjectCreatedPayload = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
+  threadGroupOrder: Schema.Array(ThreadGroupId).pipe(Schema.withDecodingDefault(() => [])),
+  sortOrder: NonNegativeInt.pipe(Schema.withDecodingDefault(() => 0)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -603,6 +614,8 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  threadGroupOrder: Schema.optional(Schema.Array(ThreadGroupId)),
+  sortOrder: Schema.optional(NonNegativeInt),
   updatedAt: IsoDateTime,
 });
 

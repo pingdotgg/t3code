@@ -1,5 +1,7 @@
 import { type ProjectId } from "@t3tools/contracts";
 
+import { type Project } from "./types";
+
 export function projectOrdersEqual<T extends string>(
   left: readonly T[] | null | undefined,
   right: readonly T[] | null | undefined,
@@ -15,23 +17,40 @@ export function projectOrdersEqual<T extends string>(
 
 export function shouldClearOptimisticProjectOrder<T extends string>(input: {
   optimisticOrder: readonly T[] | null | undefined;
-  currentOrder: readonly T[] | null | undefined;
+  persistedOrder: readonly T[] | null | undefined;
+  hasPendingReorder: boolean;
 }): boolean {
   if (!input.optimisticOrder || input.optimisticOrder.length === 0) {
     return false;
   }
-  return projectOrdersEqual(input.optimisticOrder, input.currentOrder);
+  if (input.hasPendingReorder) {
+    return false;
+  }
+  return projectOrdersEqual(input.optimisticOrder, input.persistedOrder);
 }
 
-export function orderProjectsByIds<T extends { id: ProjectId }>(
+export function orderProjects<T extends Pick<Project, "id" | "sortOrder">>(projects: readonly T[]): T[] {
+  return projects
+    .map((project, index) => ({ index, project }))
+    .toSorted((left, right) => {
+      if (left.project.sortOrder !== right.project.sortOrder) {
+        return left.project.sortOrder - right.project.sortOrder;
+      }
+      return left.index - right.index;
+    })
+    .map(({ project }) => project);
+}
+
+export function orderProjectsByIds<T extends Pick<Project, "id" | "sortOrder">>(
   projects: readonly T[],
   orderedIds: readonly ProjectId[] | null | undefined,
 ): T[] {
+  const orderedProjects = orderProjects(projects);
   if (!orderedIds || orderedIds.length === 0) {
-    return [...projects];
+    return orderedProjects;
   }
 
-  const projectById = new Map(projects.map((project) => [project.id, project] as const));
+  const projectById = new Map(orderedProjects.map((project) => [project.id, project] as const));
   const seenProjectIds = new Set<ProjectId>();
   const nextProjects: T[] = [];
 
@@ -44,7 +63,7 @@ export function orderProjectsByIds<T extends { id: ProjectId }>(
     seenProjectIds.add(project.id);
   }
 
-  for (const project of projects) {
+  for (const project of orderedProjects) {
     if (seenProjectIds.has(project.id)) {
       continue;
     }

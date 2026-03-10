@@ -11,11 +11,14 @@ import {
   ProjectionProjectRepository,
   type ProjectionProjectRepositoryShape,
 } from "../Services/ProjectionProjects.ts";
-import { ProjectScript } from "@t3tools/contracts";
+import { ProjectScript, ThreadGroupId } from "@t3tools/contracts";
 
 // Makes sure that the scripts are parsed from the JSON string the DB returns
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
-  Struct.assign({ scripts: Schema.fromJsonString(Schema.Array(ProjectScript)) }),
+  Struct.assign({
+    scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    threadGroupOrder: Schema.fromJsonString(Schema.Array(ThreadGroupId)),
+  }),
 );
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
@@ -38,6 +41,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               workspace_root,
               default_model,
               scripts_json,
+              thread_group_order_json,
+              sort_order,
               created_at,
               updated_at,
               deleted_at
@@ -48,6 +53,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               ${row.workspaceRoot},
               ${row.defaultModel},
               ${row.scripts},
+              ${row.threadGroupOrder},
+              ${row.sortOrder},
               ${row.createdAt},
               ${row.updatedAt},
               ${row.deletedAt}
@@ -58,6 +65,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               workspace_root = excluded.workspace_root,
               default_model = excluded.default_model,
               scripts_json = excluded.scripts_json,
+              thread_group_order_json = excluded.thread_group_order_json,
+              sort_order = excluded.sort_order,
               created_at = excluded.created_at,
               updated_at = excluded.updated_at,
               deleted_at = excluded.deleted_at
@@ -75,6 +84,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model AS "defaultModel",
           scripts_json AS "scripts",
+          thread_group_order_json AS "threadGroupOrder",
+          sort_order AS "sortOrder",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -94,11 +105,13 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model AS "defaultModel",
           scripts_json AS "scripts",
+          thread_group_order_json AS "threadGroupOrder",
+          sort_order AS "sortOrder",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
         FROM projection_projects
-        ORDER BY created_at ASC, project_id ASC
+        ORDER BY sort_order ASC, created_at ASC, project_id ASC
       `,
   });
 

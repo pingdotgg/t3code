@@ -1,7 +1,7 @@
-import type { GitStatusResult } from "@t3tools/contracts";
+import type { GitStatusResult, ThreadGroupId } from "@t3tools/contracts";
+import { type Project } from "./types";
 import { formatWorktreePathForDisplay } from "./worktreeCleanup";
 
-export type ThreadGroupId = string;
 export const MAIN_THREAD_GROUP_ID: ThreadGroupId = "main";
 
 export interface ThreadGroupIdentity {
@@ -65,8 +65,8 @@ function threadGroupLabel(input: ThreadGroupIdentity): string {
 }
 
 export function orderProjectThreadGroups<T extends ThreadGroupSeed>(input: {
+  project: Project;
   threads: T[];
-  orderedGroupIds?: readonly ThreadGroupId[] | null | undefined;
 }): OrderedProjectThreadGroup[] {
   const groups = new Map<string, OrderedProjectThreadGroup>();
   for (const thread of input.threads) {
@@ -104,7 +104,9 @@ export function orderProjectThreadGroups<T extends ThreadGroupSeed>(input: {
     } satisfies OrderedProjectThreadGroup);
 
   const nonMainGroups = [...groups.values()].filter((group) => group.id !== MAIN_THREAD_GROUP_ID);
-  const normalizedProjectThreadGroupOrder = normalizeProjectThreadGroupOrder(input.orderedGroupIds ?? []);
+  const normalizedProjectThreadGroupOrder = normalizeProjectThreadGroupOrder(
+    input.project.threadGroupOrder,
+  );
   const orderedKnownIds = new Set(normalizedProjectThreadGroupOrder);
   const newGroups = nonMainGroups
     .filter((group) => !orderedKnownIds.has(group.id))

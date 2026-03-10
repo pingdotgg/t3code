@@ -5,8 +5,10 @@ import { Effect, Schema } from "effect";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  OrchestrationReadModel,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
+  ProjectMetaUpdatedPayload,
   ProjectCreateCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
@@ -16,7 +18,9 @@ import {
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
+const decodeOrchestrationReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
+const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
@@ -95,6 +99,58 @@ it.effect("rejects command fields that become empty after trim", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("decodes project meta updates with trimmed thread group order entries", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectMetaUpdatedPayload({
+      projectId: "project-1",
+      threadGroupOrder: [" worktree:/tmp/feature-b ", "branch:feature/a"],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.deepStrictEqual(parsed.threadGroupOrder, [
+      "worktree:/tmp/feature-b",
+      "branch:feature/a",
+    ]);
+  }),
+);
+
+it.effect("defaults project thread group order to an empty array when omitted from read models", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationReadModel({
+      snapshotSequence: 1,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      projects: [
+        {
+          id: "project-1",
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModel: null,
+          scripts: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          deletedAt: null,
+        },
+      ],
+      threads: [],
+    });
+
+    assert.deepStrictEqual(parsed.projects[0]?.threadGroupOrder, []);
+    assert.strictEqual(parsed.projects[0]?.sortOrder, 0);
+  }),
+);
+
+it.effect("decodes project meta updates with explicit shared sort order", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectMetaUpdatedPayload({
+      projectId: "project-1",
+      sortOrder: 2,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.sortOrder, 2);
   }),
 );
 

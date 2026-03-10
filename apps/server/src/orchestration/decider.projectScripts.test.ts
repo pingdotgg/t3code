@@ -38,6 +38,55 @@ describe("decider project scripts", () => {
     const event = Array.isArray(result) ? result[0] : result;
     expect(event.type).toBe("project.created");
     expect((event.payload as { scripts: unknown[] }).scripts).toEqual([]);
+    expect((event.payload as { sortOrder: number }).sortOrder).toBe(0);
+  });
+
+  it("assigns the next shared sort order on project.create", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-first"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-first"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-first"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-first"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-first"),
+          title: "First",
+          workspaceRoot: "/tmp/first",
+          defaultModel: null,
+          scripts: [],
+          threadGroupOrder: [],
+          sortOrder: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-create-second"),
+          projectId: asProjectId("project-second"),
+          title: "Second",
+          workspaceRoot: "/tmp/second",
+          createdAt: now,
+        },
+        readModel: withProject,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("project.created");
+    expect((event.payload as { sortOrder: number }).sortOrder).toBe(1);
   });
 
   it("propagates scripts in project.meta.update payload", async () => {
@@ -61,6 +110,8 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/scripts",
           defaultModel: null,
           scripts: [],
+          threadGroupOrder: [],
+          sortOrder: 0,
           createdAt: now,
           updatedAt: now,
         },
@@ -94,6 +145,101 @@ describe("decider project scripts", () => {
     expect((event.payload as { scripts?: unknown[] }).scripts).toEqual(scripts);
   });
 
+  it("propagates thread group order in project.meta.update payload", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const readModel = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-groups"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-groups"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-groups"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-groups"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-groups"),
+          title: "Groups",
+          workspaceRoot: "/tmp/groups",
+          defaultModel: null,
+          scripts: [],
+          threadGroupOrder: [],
+          sortOrder: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-project-update-groups"),
+          projectId: asProjectId("project-groups"),
+          threadGroupOrder: ["worktree:/tmp/groups/.t3/worktrees/feature-a", "branch:release/1.0"],
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("project.meta-updated");
+    expect((event.payload as { threadGroupOrder?: string[] }).threadGroupOrder).toEqual([
+      "worktree:/tmp/groups/.t3/worktrees/feature-a",
+      "branch:release/1.0",
+    ]);
+  });
+
+  it("propagates shared sort order in project.meta.update payload", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const readModel = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-sort-order"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-order"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-sort-order"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-sort-order"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-order"),
+          title: "Order",
+          workspaceRoot: "/tmp/order",
+          defaultModel: null,
+          scripts: [],
+          threadGroupOrder: [],
+          sortOrder: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-project-update-sort-order"),
+          projectId: asProjectId("project-order"),
+          sortOrder: 3,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("project.meta-updated");
+    expect((event.payload as { sortOrder?: number }).sortOrder).toBe(3);
+  });
+
   it("emits user message and turn-start-requested events for thread.turn.start", async () => {
     const now = new Date().toISOString();
     const initial = createEmptyReadModel(now);
@@ -115,6 +261,8 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/project",
           defaultModel: null,
           scripts: [],
+          threadGroupOrder: [],
+          sortOrder: 0,
           createdAt: now,
           updatedAt: now,
         },
@@ -222,6 +370,8 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/project",
           defaultModel: null,
           scripts: [],
+          threadGroupOrder: [],
+          sortOrder: 0,
           createdAt: now,
           updatedAt: now,
         },
@@ -301,6 +451,8 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/project",
           defaultModel: null,
           scripts: [],
+          threadGroupOrder: [],
+          sortOrder: 0,
           createdAt: now,
           updatedAt: now,
         },

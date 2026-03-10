@@ -11,6 +11,8 @@ export default Effect.gen(function* () {
       workspace_root TEXT NOT NULL,
       default_model TEXT,
       scripts_json TEXT NOT NULL,
+      thread_group_order_json TEXT NOT NULL DEFAULT '[]',
+      sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       deleted_at TEXT

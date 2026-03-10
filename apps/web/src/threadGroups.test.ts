@@ -8,7 +8,21 @@ import {
   resolveProjectThreadGroupPrById,
   reorderProjectThreadGroupOrder,
 } from "./threadGroups";
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
+import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Project, type Thread } from "./types";
+
+function makeProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: ProjectId.makeUnsafe("project-1"),
+    name: "Project",
+    cwd: "/tmp/project",
+    model: "gpt-5-codex",
+    expanded: true,
+    scripts: [],
+    threadGroupOrder: [],
+    sortOrder: 0,
+    ...overrides,
+  };
+}
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -63,7 +77,9 @@ describe("threadGroups", () => {
   });
 
   it("labels worktree groups from the path when branch metadata is missing", () => {
+    const project = makeProject();
     const [mainGroup, worktreeGroup] = orderProjectThreadGroups({
+      project,
       threads: [
         makeThread({
           id: ThreadId.makeUnsafe("thread-main"),
@@ -81,7 +97,11 @@ describe("threadGroups", () => {
   });
 
   it("pins Main first, inserts new groups next, then keeps shared project order", () => {
+    const project = makeProject({
+      threadGroupOrder: ["worktree:/tmp/project/.t3/worktrees/feature-a", "branch:release/1.0"],
+    });
     const groups = orderProjectThreadGroups({
+      project,
       threads: [
         makeThread({
           id: ThreadId.makeUnsafe("thread-main"),
@@ -106,7 +126,6 @@ describe("threadGroups", () => {
           createdAt: "2026-03-03T00:00:00.000Z",
         }),
       ],
-      orderedGroupIds: ["worktree:/tmp/project/.t3/worktrees/feature-a", "branch:release/1.0"],
     });
 
     expect(groups.map((group) => group.id)).toEqual([
@@ -128,7 +147,16 @@ describe("threadGroups", () => {
   });
 
   it("ignores Main and duplicate ids from shared project order", () => {
+    const project = makeProject({
+      threadGroupOrder: [
+        MAIN_THREAD_GROUP_ID,
+        "branch:release/1.0",
+        "branch:release/1.0",
+        "worktree:/tmp/project/.t3/worktrees/feature-a",
+      ],
+    });
     const groups = orderProjectThreadGroups({
+      project,
       threads: [
         makeThread({
           id: ThreadId.makeUnsafe("thread-main"),
@@ -146,12 +174,6 @@ describe("threadGroups", () => {
           worktreePath: "/tmp/project/.t3/worktrees/feature-a",
           createdAt: "2026-03-04T00:00:00.000Z",
         }),
-      ],
-      orderedGroupIds: [
-        MAIN_THREAD_GROUP_ID,
-        "branch:release/1.0",
-        "branch:release/1.0",
-        "worktree:/tmp/project/.t3/worktrees/feature-a",
       ],
     });
 
@@ -180,7 +202,11 @@ describe("threadGroups", () => {
   });
 
   it("includes draft-only groups in ordering", () => {
+    const project = makeProject({
+      threadGroupOrder: [],
+    });
     const groups = orderProjectThreadGroups({
+      project,
       threads: [
         {
           branch: "feature/draft-only",
@@ -198,6 +224,7 @@ describe("threadGroups", () => {
 
   it("resolves PR state for worktree and branch groups but never Main", () => {
     const groups = orderProjectThreadGroups({
+      project: makeProject(),
       threads: [
         makeThread({
           id: ThreadId.makeUnsafe("thread-main"),
@@ -257,6 +284,7 @@ describe("threadGroups", () => {
 
   it("omits group PR state when the git status branch does not match the group branch", () => {
     const groups = orderProjectThreadGroups({
+      project: makeProject(),
       threads: [
         makeThread({
           id: ThreadId.makeUnsafe("thread-worktree"),

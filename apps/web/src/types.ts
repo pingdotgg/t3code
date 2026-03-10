@@ -2,6 +2,7 @@ import type {
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
+  ThreadGroupId as OrchestrationThreadGroupId,
   OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
   ThreadId,
@@ -81,6 +82,8 @@ export interface Project {
   model: string;
   expanded: boolean;
   scripts: ProjectScript[];
+  threadGroupOrder: OrchestrationThreadGroupId[];
+  sortOrder: number;
 }
 
 export interface Thread {

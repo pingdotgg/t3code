@@ -35,6 +35,27 @@ function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error"
   return "completed" as const;
 }
 
+function sessionStatusToLatestTurnState(status: string) {
+  if (status === "ready") return "completed" as const;
+  if (status === "error") return "error" as const;
+  if (status === "interrupted" || status === "stopped") return "interrupted" as const;
+  return null;
+}
+
+function isLatestTurnTerminal(
+  state: OrchestrationThread["latestTurn"] extends infer T
+    ? T extends { state: infer S }
+      ? S
+      : never
+    : never,
+) {
+  return state === "completed" || state === "error" || state === "interrupted";
+}
+
+function isSessionTurnTerminalStatus(status: OrchestrationSession["status"]) {
+  return status === "error" || status === "interrupted" || status === "stopped";
+}
+
 function updateThread(
   threads: ReadonlyArray<OrchestrationThread>,
   threadId: ThreadId,
@@ -183,6 +204,8 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModel: payload.defaultModel,
             scripts: payload.scripts,
+            threadGroupOrder: payload.threadGroupOrder,
+            sortOrder: payload.sortOrder,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
@@ -215,6 +238,10 @@ export function projectEvent(
                     ? { defaultModel: payload.defaultModel }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
+                  ...(payload.threadGroupOrder !== undefined
+                    ? { threadGroupOrder: payload.threadGroupOrder }
+                    : {}),
+                  ...(payload.sortOrder !== undefined ? { sortOrder: payload.sortOrder } : {}),
                   updatedAt: payload.updatedAt,
                 }
               : project,
@@ -415,13 +442,23 @@ export function projectEvent(
           event.type,
           "session",
         );
+        const terminalLatestTurnState = sessionStatusToLatestTurnState(session.status);
+        const sessionHasActiveTurn = session.activeTurnId !== null;
+        const shouldKeepRunningLatestTurn =
+          sessionHasActiveTurn && !isSessionTurnTerminalStatus(session.status);
+        const shouldPreserveTerminalLatestTurn =
+          shouldKeepRunningLatestTurn &&
+          thread.latestTurn?.turnId === session.activeTurnId &&
+          isLatestTurnTerminal(thread.latestTurn.state);
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
             latestTurn:
-              session.status === "running" && session.activeTurnId !== null
+              shouldPreserveTerminalLatestTurn
+                ? thread.latestTurn
+                : shouldKeepRunningLatestTurn
                 ? {
                     turnId: session.activeTurnId,
                     state: "running",
@@ -439,7 +476,16 @@ export function projectEvent(
                         ? thread.latestTurn.assistantMessageId
                         : null,
                   }
-                : thread.latestTurn,
+                : !sessionHasActiveTurn &&
+                    thread.latestTurn !== null &&
+                    !isLatestTurnTerminal(thread.latestTurn.state) &&
+                    terminalLatestTurnState !== null
+                  ? {
+                      ...thread.latestTurn,
+                      state: terminalLatestTurnState,
+                      completedAt: session.updatedAt,
+                    }
+                  : thread.latestTurn,
             updatedAt: event.occurredAt,
           }),
         };
@@ -516,20 +562,14 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             checkpoints,
-            latestTurn: {
-              turnId: payload.turnId,
-              state: checkpointStatusToLatestTurnState(payload.status),
-              requestedAt:
-                thread.latestTurn?.turnId === payload.turnId
-                  ? thread.latestTurn.requestedAt
-                  : payload.completedAt,
-              startedAt:
-                thread.latestTurn?.turnId === payload.turnId
-                  ? (thread.latestTurn.startedAt ?? payload.completedAt)
-                  : payload.completedAt,
-              completedAt: payload.completedAt,
-              assistantMessageId: payload.assistantMessageId,
-            },
+            latestTurn:
+              thread.latestTurn?.turnId === payload.turnId
+                ? {
+                    ...thread.latestTurn,
+                    assistantMessageId:
+                      payload.assistantMessageId ?? thread.latestTurn.assistantMessageId,
+                  }
+                : thread.latestTurn,
             updatedAt: event.occurredAt,
           }),
         };
