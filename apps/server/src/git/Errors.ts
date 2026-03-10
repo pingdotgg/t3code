@@ -65,3 +65,19 @@ export type GitManagerServiceError =
   | GitCommandError
   | GitHubCliError
   | TextGenerationError;
+
+/**
+ * WorktreeDotenvSyncError - Project dotenv sync into a worktree failed.
+ */
+export class WorktreeDotenvSyncError extends Schema.TaggedErrorClass<WorktreeDotenvSyncError>()(
+  "WorktreeDotenvSyncError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Worktree dotenv sync failed in ${this.operation}: ${this.detail}`;
+  }
+}

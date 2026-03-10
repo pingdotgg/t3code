@@ -129,12 +129,85 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+const PROJECT_DOTENV_SYNC_MAX_PATHS = 16;
+const PROJECT_DOTENV_SYNC_PATH_MAX_LENGTH = 512;
+
+function normalizeDotenvSyncPathForSchema(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > PROJECT_DOTENV_SYNC_PATH_MAX_LENGTH) {
+    return null;
+  }
+
+  const normalized = trimmed.replaceAll("\\", "/");
+  if (normalized.startsWith("/") || normalized.startsWith("//") || /^[a-zA-Z]:\//.test(normalized)) {
+    return null;
+  }
+
+  const resolved: string[] = [];
+  for (const rawSegment of normalized.split("/")) {
+    const segment = rawSegment.trim();
+    if (segment.length === 0 || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      return null;
+    }
+    resolved.push(segment);
+  }
+
+  const collapsed = resolved.join("/");
+  if (collapsed.length === 0) {
+    return null;
+  }
+
+  const fileName = collapsed.split("/").at(-1) ?? "";
+  if (!fileName.startsWith(".env")) {
+    return null;
+  }
+
+  return collapsed;
+}
+
+export const ProjectDotenvSyncPath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROJECT_DOTENV_SYNC_PATH_MAX_LENGTH),
+  Schema.makeFilter(
+    (value) =>
+      normalizeDotenvSyncPathForSchema(value) === value
+        ? true
+        : new SchemaIssue.InvalidValue(Option.some(value), {
+            message:
+              "Dotenv sync paths must be normalized relative project paths pointing to .env files.",
+          }),
+    { identifier: "ProjectDotenvSyncPath" },
+  ),
+);
+export type ProjectDotenvSyncPath = typeof ProjectDotenvSyncPath.Type;
+
+export const ProjectDotenvSyncConfig = Schema.Struct({
+  paths: Schema.Array(ProjectDotenvSyncPath).check(
+    Schema.makeFilter((paths) => paths.length <= PROJECT_DOTENV_SYNC_MAX_PATHS, {
+      identifier: "ProjectDotenvSyncPathsLength",
+    }),
+    Schema.makeFilter(
+      (paths) =>
+        new Set(paths).size === paths.length
+          ? true
+          : new SchemaIssue.InvalidValue(Option.some(paths), {
+              message: "Dotenv sync paths must be unique.",
+            }),
+      { identifier: "ProjectDotenvSyncPathsUnique" },
+    ),
+  ),
+});
+export type ProjectDotenvSyncConfig = typeof ProjectDotenvSyncConfig.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
+  dotenvSync: Schema.NullOr(ProjectDotenvSyncConfig).pipe(Schema.withDecodingDefault(() => null)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -301,6 +374,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(TrimmedNonEmptyString),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  dotenvSync: Schema.optional(Schema.NullOr(ProjectDotenvSyncConfig)),
 });
 
 const ProjectDeleteCommand = Schema.Struct({
@@ -593,6 +667,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
+  dotenvSync: Schema.NullOr(ProjectDotenvSyncConfig).pipe(Schema.withDecodingDefault(() => null)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -603,6 +678,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  dotenvSync: Schema.optional(Schema.NullOr(ProjectDotenvSyncConfig)),
   updatedAt: IsoDateTime,
 });
 

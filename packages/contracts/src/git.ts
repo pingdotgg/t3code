@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
+import { ProjectDotenvSyncPath } from "./orchestration";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
@@ -76,6 +77,13 @@ export const GitRemoveWorktreeInput = Schema.Struct({
 });
 export type GitRemoveWorktreeInput = typeof GitRemoveWorktreeInput.Type;
 
+export const GitSyncWorktreeDotenvFilesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  worktreePath: TrimmedNonEmptyStringSchema,
+  paths: Schema.Array(ProjectDotenvSyncPath),
+});
+export type GitSyncWorktreeDotenvFilesInput = typeof GitSyncWorktreeDotenvFilesInput.Type;
+
 export const GitCreateBranchInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   branch: TrimmedNonEmptyStringSchema,
@@ -135,6 +143,11 @@ export const GitCreateWorktreeResult = Schema.Struct({
   worktree: GitWorktree,
 });
 export type GitCreateWorktreeResult = typeof GitCreateWorktreeResult.Type;
+
+export const GitSyncWorktreeDotenvFilesResult = Schema.Struct({
+  copiedPaths: Schema.Array(ProjectDotenvSyncPath),
+});
+export type GitSyncWorktreeDotenvFilesResult = typeof GitSyncWorktreeDotenvFilesResult.Type;
 
 export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,

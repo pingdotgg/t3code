@@ -145,6 +145,7 @@ function mapProjectsFromReadModel(
           ? persistedExpandedProjectCwds.has(project.workspaceRoot)
           : true),
       scripts: project.scripts.map((script) => ({ ...script })),
+      dotenvSync: project.dotenvSync ? { paths: [...project.dotenvSync.paths] } : null,
     } satisfies Project;
   });
 

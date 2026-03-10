@@ -47,6 +47,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
+import { WorktreeDotenvSync } from "./git/Services/WorktreeDotenvSync.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
@@ -214,6 +215,7 @@ export type ServerCoreRuntimeServices =
 export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
   | GitManager
+  | WorktreeDotenvSync
   | GitCore
   | TerminalManager
   | Keybindings
@@ -252,6 +254,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const availableEditors = resolveAvailableEditors();
 
   const gitManager = yield* GitManager;
+  const worktreeDotenvSync = yield* WorktreeDotenvSync;
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
@@ -845,6 +848,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.gitRemoveWorktree: {
         const body = stripRequestTag(request.body);
         return yield* git.removeWorktree(body);
+      }
+
+      case WS_METHODS.gitSyncWorktreeDotenvFiles: {
+        const body = stripRequestTag(request.body);
+        return yield* worktreeDotenvSync.syncFiles(body);
       }
 
       case WS_METHODS.gitCreateBranch: {

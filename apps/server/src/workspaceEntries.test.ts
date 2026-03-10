@@ -43,6 +43,7 @@ describe("searchWorkspaceEntries", () => {
     writeFile(cwd, "src/index.ts");
     writeFile(cwd, "README.md");
     writeFile(cwd, ".git/HEAD");
+    writeFile(cwd, ".turn/state/session.json");
     writeFile(cwd, "node_modules/pkg/index.js");
 
     const result = await searchWorkspaceEntries({ cwd, query: "", limit: 100 });
@@ -53,6 +54,7 @@ describe("searchWorkspaceEntries", () => {
     assert.include(paths, "src/components/Composer.tsx");
     assert.include(paths, "README.md");
     assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".git")));
+    assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".turn")));
     assert.isFalse(paths.some((entryPath) => entryPath.startsWith("node_modules")));
     assert.isFalse(result.truncated);
   });

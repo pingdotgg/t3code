@@ -43,6 +43,7 @@ function makeState(thread: Thread): AppState {
         model: "gpt-5-codex",
         expanded: true,
         scripts: [],
+        dotenvSync: null,
       },
     ],
     threads: [thread],
@@ -87,6 +88,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         updatedAt: "2026-02-27T00:00:00.000Z",
         deletedAt: null,
         scripts: [],
+        dotenvSync: null,
       },
     ],
     threads: [thread],
@@ -105,6 +107,7 @@ function makeReadModelProject(
     updatedAt: "2026-02-27T00:00:00.000Z",
     deletedAt: null,
     scripts: [],
+    dotenvSync: null,
     ...overrides,
   };
 }
@@ -162,6 +165,7 @@ describe("store pure functions", () => {
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
+          dotenvSync: null,
         },
         {
           id: project2,
@@ -170,6 +174,7 @@ describe("store pure functions", () => {
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
+          dotenvSync: null,
         },
         {
           id: project3,
@@ -178,6 +183,7 @@ describe("store pure functions", () => {
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
+          dotenvSync: null,
         },
       ],
       threads: [],
@@ -217,6 +223,7 @@ describe("store read model sync", () => {
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
+          dotenvSync: null,
         },
         {
           id: project1,
@@ -225,6 +232,7 @@ describe("store read model sync", () => {
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
+          dotenvSync: null,
         },
       ],
       threads: [],

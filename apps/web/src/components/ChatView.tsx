@@ -7,6 +7,7 @@ import {
   type CodexReasoningEffort,
   type MessageId,
   type ProjectId,
+  type ProjectDotenvSyncConfig,
   type ProjectEntry,
   type ProjectScript,
   type ModelSlug,
@@ -29,6 +30,7 @@ import {
   normalizeModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
+import { normalizeDotenvSyncPath } from "@t3tools/shared/dotenvSync";
 import {
   memo,
   useCallback,
@@ -1532,6 +1534,96 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [queryClient],
   );
+  const saveProjectDotenvSync = useCallback(
+    async (dotenvSync: ProjectDotenvSyncConfig | null) => {
+      if (!activeProject) {
+        return;
+      }
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+      await api.orchestration.dispatchCommand({
+        type: "project.meta.update",
+        commandId: newCommandId(),
+        projectId: activeProject.id,
+        dotenvSync,
+      });
+    },
+    [activeProject],
+  );
+  const runProjectDotenvSync = useCallback(async () => {
+    if (!activeProject) {
+      throw new Error("Project dotenv sync is unavailable.");
+    }
+    if (!activeThread?.worktreePath) {
+      throw new Error("Open a worktree thread before running dotenv sync.");
+    }
+    const paths = activeProject.dotenvSync?.paths ?? [];
+    if (paths.length === 0) {
+      throw new Error("Save at least one dotenv path before syncing.");
+    }
+
+    const api = readNativeApi();
+    if (!api) {
+      throw new Error("Native API unavailable.");
+    }
+
+    try {
+      const result = await api.git.syncWorktreeDotenvFiles({
+        cwd: activeProject.cwd,
+        worktreePath: activeThread.worktreePath,
+        paths,
+      });
+      toastManager.add({
+        type: "success",
+        title:
+          result.copiedPaths.length === 1
+            ? `Synced ${result.copiedPaths[0]}`
+            : `Synced ${result.copiedPaths.length} dotenv files`,
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not sync dotenv files",
+        description: error instanceof Error ? error.message : "An unexpected error occurred.",
+      });
+      throw error;
+    }
+  }, [activeProject, activeThread?.worktreePath]);
+  const detectProjectDotenvSyncPaths = useCallback(async () => {
+    if (!activeProject) {
+      throw new Error("Project dotenv sync is unavailable.");
+    }
+
+    const api = readNativeApi();
+    if (!api) {
+      throw new Error("Native API unavailable.");
+    }
+
+    const result = await api.projects.searchEntries({
+      cwd: activeProject.cwd,
+      query: ".env",
+      limit: 200,
+    });
+
+    const detectedPaths: string[] = [];
+    const seen = new Set<string>();
+
+    for (const entry of result.entries) {
+      if (entry.kind !== "file") {
+        continue;
+      }
+      const normalizedPath = normalizeDotenvSyncPath(entry.path).normalizedPath;
+      if (!normalizedPath || seen.has(normalizedPath)) {
+        continue;
+      }
+      seen.add(normalizedPath);
+      detectedPaths.push(normalizedPath);
+    }
+
+    return detectedPaths.toSorted((left, right) => left.localeCompare(right));
+  }, [activeProject]);
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {
       if (!activeProject) return;
@@ -2558,6 +2650,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     let turnStartSucceeded = false;
     let nextThreadBranch = activeThread.branch;
     let nextThreadWorktreePath = activeThread.worktreePath;
+    const dotenvSyncPaths = activeProject.dotenvSync?.paths ?? [];
     await (async () => {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
@@ -2581,6 +2674,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
           setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
+        } else if (isLocalDraftThread) {
+          setDraftThreadContext(threadIdForSend, {
+            branch: result.worktree.branch,
+            worktreePath: result.worktree.path,
+            envMode: "worktree",
+          });
+        }
+
+        if (result.worktree.path && dotenvSyncPaths.length > 0) {
+          await api.git.syncWorktreeDotenvFiles({
+            cwd: activeProject.cwd,
+            worktreePath: result.worktree.path,
+            paths: dotenvSyncPaths,
+          });
         }
       }
 
@@ -2603,6 +2710,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
       let threadCreateModel: ModelSlug =
         selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
 
+      let setupScript: ProjectScript | null = null;
+      if (baseBranchForWorktree) {
+        setupScript = setupProjectScript(activeProject.scripts);
+      }
+      if (setupScript) {
+        const shouldRunSetupScript = isServerThread || isLocalDraftThread;
+        if (shouldRunSetupScript) {
+          const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
+            worktreePath: nextThreadWorktreePath,
+            rememberAsLastInvoked: false,
+            allowLocalDraftThread: isLocalDraftThread,
+          };
+          if (nextThreadWorktreePath) {
+            setupScriptOptions.cwd = nextThreadWorktreePath;
+          }
+          await runProjectScript(setupScript, setupScriptOptions);
+        }
+      }
+
       if (isLocalDraftThread) {
         await api.orchestration.dispatchCommand({
           type: "thread.create",
@@ -2618,32 +2744,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt: activeThread.createdAt,
         });
         createdServerThreadForLocalDraft = true;
-      }
-
-      let setupScript: ProjectScript | null = null;
-      if (baseBranchForWorktree) {
-        setupScript = setupProjectScript(activeProject.scripts);
-      }
-      if (setupScript) {
-        let shouldRunSetupScript = false;
-        if (isServerThread) {
-          shouldRunSetupScript = true;
-        } else {
-          if (createdServerThreadForLocalDraft) {
-            shouldRunSetupScript = true;
-          }
-        }
-        if (shouldRunSetupScript) {
-          const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
-            worktreePath: nextThreadWorktreePath,
-            rememberAsLastInvoked: false,
-            allowLocalDraftThread: createdServerThreadForLocalDraft,
-          };
-          if (nextThreadWorktreePath) {
-            setupScriptOptions.cwd = nextThreadWorktreePath;
-          }
-          await runProjectScript(setupScript, setupScriptOptions);
-        }
       }
 
       // Auto-title from first message
@@ -3463,6 +3563,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           isGitRepo={isGitRepo}
           openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
+          activeProjectDotenvSync={activeProject?.dotenvSync ?? null}
+          activeWorktreePath={activeThread.worktreePath ?? null}
           preferredScriptId={
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
           }
@@ -3474,6 +3576,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}
+          onSaveProjectDotenvSync={saveProjectDotenvSync}
+          onRunProjectDotenvSync={runProjectDotenvSync}
+          onDetectProjectDotenvSyncPaths={detectProjectDotenvSyncPaths}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
@@ -4149,6 +4254,8 @@ interface ChatHeaderProps {
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
+  activeProjectDotenvSync: ProjectDotenvSyncConfig | null;
+  activeWorktreePath: string | null;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
@@ -4156,6 +4263,9 @@ interface ChatHeaderProps {
   gitCwd: string | null;
   diffOpen: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
+  onSaveProjectDotenvSync: (dotenvSync: ProjectDotenvSyncConfig | null) => Promise<void>;
+  onRunProjectDotenvSync: () => Promise<void>;
+  onDetectProjectDotenvSyncPaths: () => Promise<string[]>;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
@@ -4169,6 +4279,8 @@ const ChatHeader = memo(function ChatHeader({
   isGitRepo,
   openInCwd,
   activeProjectScripts,
+  activeProjectDotenvSync,
+  activeWorktreePath,
   preferredScriptId,
   keybindings,
   availableEditors,
@@ -4176,6 +4288,9 @@ const ChatHeader = memo(function ChatHeader({
   gitCwd,
   diffOpen,
   onRunProjectScript,
+  onSaveProjectDotenvSync,
+  onRunProjectDotenvSync,
+  onDetectProjectDotenvSyncPaths,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
@@ -4206,9 +4321,14 @@ const ChatHeader = memo(function ChatHeader({
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
+            dotenvSync={activeProjectDotenvSync}
+            activeWorktreePath={activeWorktreePath}
             keybindings={keybindings}
             preferredScriptId={preferredScriptId}
             onRunScript={onRunProjectScript}
+            onSaveDotenvSync={onSaveProjectDotenvSync}
+            onRunDotenvSync={onRunProjectDotenvSync}
+            onDetectDotenvPaths={onDetectProjectDotenvSyncPaths}
             onAddScript={onAddProjectScript}
             onUpdateScript={onUpdateProjectScript}
             onDeleteScript={onDeleteProjectScript}

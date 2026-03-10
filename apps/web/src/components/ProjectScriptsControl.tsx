@@ -1,4 +1,5 @@
 import type {
+  ProjectDotenvSyncConfig,
   ProjectScript,
   ProjectScriptIcon,
   ResolvedKeybindingsConfig,
@@ -53,6 +54,7 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu"
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
+import ProjectDotenvSyncDialog from "./ProjectDotenvSyncDialog";
 
 const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
   { id: "play", label: "Play" },
@@ -88,9 +90,14 @@ export interface NewProjectScriptInput {
 
 interface ProjectScriptsControlProps {
   scripts: ProjectScript[];
+  dotenvSync: ProjectDotenvSyncConfig | null;
+  activeWorktreePath: string | null;
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   onRunScript: (script: ProjectScript) => void;
+  onSaveDotenvSync: (dotenvSync: ProjectDotenvSyncConfig | null) => Promise<void> | void;
+  onRunDotenvSync: () => Promise<void> | void;
+  onDetectDotenvPaths: () => Promise<string[]> | string[];
   onAddScript: (input: NewProjectScriptInput) => Promise<void> | void;
   onUpdateScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void> | void;
   onDeleteScript: (scriptId: string) => Promise<void> | void;
@@ -149,9 +156,14 @@ function keybindingFromEvent(event: KeyboardEvent<HTMLInputElement>): string | n
 
 export default function ProjectScriptsControl({
   scripts,
+  dotenvSync,
+  activeWorktreePath,
   keybindings,
   preferredScriptId = null,
   onRunScript,
+  onSaveDotenvSync,
+  onRunDotenvSync,
+  onDetectDotenvPaths,
   onAddScript,
   onUpdateScript,
   onDeleteScript,
@@ -167,6 +179,7 @@ export default function ProjectScriptsControl({
   const [keybinding, setKeybinding] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [dotenvDialogOpen, setDotenvDialogOpen] = useState(false);
 
   const primaryScript = useMemo(() => {
     if (preferredScriptId) {
@@ -336,16 +349,40 @@ export default function ProjectScriptsControl({
                 <PlusIcon className="size-4" />
                 Add action
               </MenuItem>
+              <MenuItem className={dropdownItemClassName} onClick={() => setDotenvDialogOpen(true)}>
+                <SettingsIcon className="size-4" />
+                Dotenv sync...
+              </MenuItem>
             </MenuPopup>
           </Menu>
         </Group>
       ) : (
-        <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
-          <PlusIcon className="size-3.5" />
-          <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
-            Add action
-          </span>
-        </Button>
+        <Group aria-label="Project scripts">
+          <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
+            <PlusIcon className="size-3.5" />
+            <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
+              Add action
+            </span>
+          </Button>
+          <GroupSeparator className="hidden @sm/header-actions:block" />
+          <Menu highlightItemOnHover={false}>
+            <MenuTrigger
+              render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
+            >
+              <ChevronDownIcon className="size-4" />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
+                <PlusIcon className="size-4" />
+                Add action
+              </MenuItem>
+              <MenuItem className={dropdownItemClassName} onClick={() => setDotenvDialogOpen(true)}>
+                <SettingsIcon className="size-4" />
+                Dotenv sync...
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        </Group>
       )}
 
       <Dialog
@@ -499,6 +536,16 @@ export default function ProjectScriptsControl({
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
+
+      <ProjectDotenvSyncDialog
+        open={dotenvDialogOpen}
+        dotenvSync={dotenvSync}
+        activeWorktreePath={activeWorktreePath}
+        onOpenChange={setDotenvDialogOpen}
+        onSave={onSaveDotenvSync}
+        onRunSync={onRunDotenvSync}
+        onDetectPaths={onDetectDotenvPaths}
+      />
     </>
   );
 }

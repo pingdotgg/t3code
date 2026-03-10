@@ -5,6 +5,7 @@ import {
   NonNegativeInt,
   OrchestrationCheckpointFile,
   OrchestrationReadModel,
+  ProjectDotenvSyncConfig,
   ProjectScript,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -44,6 +45,7 @@ const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    dotenvSync: Schema.NullOr(Schema.fromJsonString(ProjectDotenvSyncConfig)),
   }),
 );
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
@@ -139,6 +141,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model AS "defaultModel",
           scripts_json AS "scripts",
+          dotenv_sync_json AS "dotenvSync",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -519,6 +522,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             workspaceRoot: row.workspaceRoot,
             defaultModel: row.defaultModel,
             scripts: row.scripts,
+            dotenvSync: row.dotenvSync,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             deletedAt: row.deletedAt,

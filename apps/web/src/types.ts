@@ -3,6 +3,7 @@ import type {
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  ProjectDotenvSyncConfig,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -81,6 +82,7 @@ export interface Project {
   model: string;
   expanded: boolean;
   scripts: ProjectScript[];
+  dotenvSync: ProjectDotenvSyncConfig | null;
 }
 
 export interface Thread {

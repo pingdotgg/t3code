@@ -9,6 +9,8 @@ import type {
   GitPullInput,
   GitPullResult,
   GitRemoveWorktreeInput,
+  GitSyncWorktreeDotenvFilesInput,
+  GitSyncWorktreeDotenvFilesResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStatusInput,
@@ -131,6 +133,9 @@ export interface NativeApi {
     listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;
     createWorktree: (input: GitCreateWorktreeInput) => Promise<GitCreateWorktreeResult>;
     removeWorktree: (input: GitRemoveWorktreeInput) => Promise<void>;
+    syncWorktreeDotenvFiles: (
+      input: GitSyncWorktreeDotenvFilesInput,
+    ) => Promise<GitSyncWorktreeDotenvFilesResult>;
     createBranch: (input: GitCreateBranchInput) => Promise<void>;
     checkout: (input: GitCheckoutInput) => Promise<void>;
     init: (input: GitInitInput) => Promise<void>;

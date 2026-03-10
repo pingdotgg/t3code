@@ -79,6 +79,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           defaultModel: command.defaultModel ?? null,
           scripts: [],
+          dotenvSync: null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -106,6 +107,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
           ...(command.defaultModel !== undefined ? { defaultModel: command.defaultModel } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
+          ...(command.dotenvSync !== undefined ? { dotenvSync: command.dotenvSync } : {}),
           updatedAt: occurredAt,
         },
       };
