@@ -915,12 +915,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const body = stripRequestTag(request.body);
         const updatedStatuses = yield* providerHealth.recheckStatuses(body.codexBinaryPath);
         providers = updatedStatuses;
+        const keybindingsConfig = yield* keybindingsManager.loadConfigState;
         yield* broadcastPush({
           type: "push",
           channel: WS_CHANNELS.serverConfigUpdated,
-          data: { issues: [], providers: updatedStatuses },
+          data: { issues: keybindingsConfig.issues, providers: updatedStatuses },
         });
-        const keybindingsConfig = yield* keybindingsManager.loadConfigState;
         return {
           cwd,
           keybindingsConfigPath,

@@ -236,6 +236,14 @@ export const hasCustomModelProvider = Effect.map(
 
 // ── Effect-native command execution ─────────────────────────────────
 
+/**
+ * Reject binary paths containing shell metacharacters to prevent command
+ * injection when `shell: true` is used on Windows. Only path-like characters
+ * are allowed (letters, digits, path separators, dots, hyphens, underscores,
+ * spaces, colons for drive letters, and tildes for home dirs).
+ */
+const SAFE_BINARY_PATH_RE = /^[\w\s./:\\~-]+$/;
+
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   Stream.runFold(
     stream,
@@ -245,9 +253,21 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
 
 const runCodexCommand = (binaryPath: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
+    if (!SAFE_BINARY_PATH_RE.test(binaryPath)) {
+      return yield* Effect.die(
+        new Error(`Refusing to execute binary path containing invalid characters: ${binaryPath}`),
+      );
+    }
+
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make(binaryPath, [...args], {
-      shell: process.platform === "win32",
+    // On Windows, shell: true is needed for PATH resolution, but the binary
+    // path must be double-quoted to handle paths with spaces (e.g.
+    // "C:\Program Files\..."). The args array is kept separate so the shell
+    // doesn't re-split them.
+    const isWindows = process.platform === "win32";
+    const safeBinaryPath = isWindows ? `"${binaryPath}"` : binaryPath;
+    const command = ChildProcess.make(safeBinaryPath, [...args], {
+      shell: isWindows,
     });
 
     const child = yield* spawner.spawn(command);
@@ -413,7 +433,10 @@ export const ProviderHealthLive = Layer.effect(
     const codexStatusFiber = yield* runCheck().pipe(Effect.forkScoped);
 
     return {
-      getStatuses: Fiber.join(codexStatusFiber),
+      // Wait for the initial health check to complete (no-op if already done),
+      // then return the latest statuses from the ref — which may have been
+      // updated by a subsequent `recheckStatuses` call.
+      getStatuses: Fiber.join(codexStatusFiber).pipe(Effect.andThen(Ref.get(statusesRef))),
       recheckStatuses: (binaryPath?: string) => runCheck(binaryPath),
     } satisfies ProviderHealthShape;
   }),
