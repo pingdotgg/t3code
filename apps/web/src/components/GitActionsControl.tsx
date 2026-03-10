@@ -59,12 +59,17 @@ interface PendingDefaultBranchAction {
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
 
-function getMenuActionDisabledReason(
-  item: GitActionMenuItem,
-  gitStatus: GitStatusResult | null,
-  isBusy: boolean,
-  hasOriginRemote: boolean,
-): string | null {
+function getMenuActionDisabledReason({
+  item,
+  gitStatus,
+  isBusy,
+  hasOriginRemote,
+}: {
+  item: GitActionMenuItem;
+  gitStatus: GitStatusResult | null;
+  isBusy: boolean;
+  hasOriginRemote: boolean;
+}): string | null {
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
   if (!gitStatus) return "Git status is unavailable.";
@@ -654,12 +659,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
             </MenuTrigger>
             <MenuPopup align="end" className="w-full">
               {gitActionMenuItems.map((item) => {
-                const disabledReason = getMenuActionDisabledReason(
+                const disabledReason = getMenuActionDisabledReason({
                   item,
-                  gitStatusForActions,
-                  isGitActionRunning,
+                  gitStatus: gitStatusForActions,
+                  isBusy: isGitActionRunning,
                   hasOriginRemote,
-                );
+                });
                 if (item.disabled && disabledReason) {
                   return (
                     <Popover key={`${item.id}-${item.label}`}>
