@@ -470,12 +470,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
               : {}),
             ...(event.payload.dismissedSidebarKeys !== undefined
               ? {
-                  dismissedSidebarKeys: [
-                    ...new Set([
-                      ...existingRow.value.dismissedSidebarKeys,
-                      ...event.payload.dismissedSidebarKeys,
-                    ]),
-                  ],
+                  dismissedSidebarKeys: [...new Set(event.payload.dismissedSidebarKeys)],
                 }
               : {}),
             updatedAt: event.payload.updatedAt,

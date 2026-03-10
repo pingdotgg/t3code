@@ -44,11 +44,8 @@ function updateThread(
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
 }
 
-function appendUniqueStrings(
-  existing: ReadonlyArray<string>,
-  next: ReadonlyArray<string>,
-): string[] {
-  return [...new Set([...existing, ...next])];
+function uniqueStrings(values: ReadonlyArray<string>): string[] {
+  return [...new Set(values)];
 }
 
 function decodeForEvent<A>(
@@ -330,10 +327,7 @@ export function projectEvent(
                 : {}),
               ...(payload.dismissedSidebarKeys !== undefined && thread
                 ? {
-                    dismissedSidebarKeys: appendUniqueStrings(
-                      thread.dismissedSidebarKeys,
-                      payload.dismissedSidebarKeys,
-                    ),
+                    dismissedSidebarKeys: uniqueStrings(payload.dismissedSidebarKeys),
                   }
                 : {}),
               updatedAt: payload.updatedAt,

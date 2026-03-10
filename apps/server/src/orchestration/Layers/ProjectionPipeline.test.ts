@@ -1793,13 +1793,32 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
         },
       });
 
+      yield* appendAndProject({
+        type: "thread.sidebar-state-updated",
+        eventId: EventId.makeUnsafe("evt-sidebar-state-clear"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-sidebar"),
+        occurredAt: "2026-03-10T00:00:02.000Z",
+        commandId: CommandId.makeUnsafe("cmd-sidebar-state-clear"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-sidebar-state-clear"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-sidebar"),
+          dismissedSidebarKeys: [],
+          updatedAt: "2026-03-10T00:00:02.000Z",
+        },
+      });
+
       const threadRows = yield* sql<{
         readonly sidebarHiddenAt: string | null;
         readonly dismissedSidebarKeysJson: string;
+        readonly updatedAt: string;
       }>`
         SELECT
           sidebar_hidden_at AS "sidebarHiddenAt",
-          dismissed_sidebar_keys_json AS "dismissedSidebarKeysJson"
+          dismissed_sidebar_keys_json AS "dismissedSidebarKeysJson",
+          updated_at AS "updatedAt"
         FROM projection_threads
         WHERE thread_id = 'thread-sidebar'
       `;
@@ -1807,7 +1826,8 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
       assert.deepEqual(threadRows, [
         {
           sidebarHiddenAt: "2026-03-10T00:00:00.000Z",
-          dismissedSidebarKeysJson: '["plan-submitted:plan-1"]',
+          dismissedSidebarKeysJson: "[]",
+          updatedAt: "2026-03-10T00:00:02.000Z",
         },
       ]);
     }),

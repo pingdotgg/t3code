@@ -269,9 +269,10 @@ describe("orchestration projector", () => {
     expect(afterUpdate.threads[0]?.updatedAt).toBe(updatedAt);
   });
 
-  it("appends unique sidebar dismissal keys and updates hidden timestamp", async () => {
+  it("replaces sidebar dismissal keys and updates hidden timestamp", async () => {
     const createdAt = "2026-03-10T00:00:00.000Z";
     const updatedAt = "2026-03-10T00:00:01.000Z";
+    const clearedAt = "2026-03-10T00:00:02.000Z";
     const model = createEmptyReadModel(createdAt);
 
     const afterCreate = await Effect.runPromise(
@@ -323,12 +324,34 @@ describe("orchestration projector", () => {
       ),
     );
 
+    const cleared = await Effect.runPromise(
+      projectEvent(
+        next,
+        makeEvent({
+          sequence: 3,
+          type: "thread.sidebar-state-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: clearedAt,
+          commandId: "cmd-sidebar-clear",
+          payload: {
+            threadId: "thread-1",
+            dismissedSidebarKeys: [],
+            updatedAt: clearedAt,
+          },
+        }),
+      ),
+    );
+
     expect(next.threads[0]?.sidebarHiddenAt).toBe(createdAt);
     expect(next.threads[0]?.dismissedSidebarKeys).toEqual([
       "plan-submitted:plan-1",
       "questions-asked:req-1",
     ]);
     expect(next.threads[0]?.updatedAt).toBe(updatedAt);
+    expect(cleared.threads[0]?.sidebarHiddenAt).toBe(createdAt);
+    expect(cleared.threads[0]?.dismissedSidebarKeys).toEqual([]);
+    expect(cleared.threads[0]?.updatedAt).toBe(clearedAt);
   });
 
   it("marks assistant messages completed with non-streaming updates", async () => {
