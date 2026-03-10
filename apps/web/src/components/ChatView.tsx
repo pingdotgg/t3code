@@ -68,6 +68,7 @@ import {
   derivePhase,
   deriveTimelineEntries,
   deriveActiveWorkStartedAt,
+  shouldResetSendPhase,
   deriveActivePlanState,
   findLatestProposedPlan,
   type PendingApproval,
@@ -2185,20 +2186,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     if (
-      phase === "running" ||
-      activePendingApproval !== null ||
-      activePendingUserInput !== null ||
-      activeThread?.error
+      shouldResetSendPhase({
+        latestTurn: activeLatestTurn,
+        session: activeThread?.session ?? null,
+        sendStartedAt,
+        hasPendingApproval: activePendingApproval !== null,
+        hasPendingUserInput: activePendingUserInput !== null,
+        hasThreadError: Boolean(activeThread?.error),
+      })
     ) {
       resetSendPhase();
     }
   }, [
+    activeLatestTurn,
     activePendingApproval,
     activePendingUserInput,
     activeThread?.error,
-    phase,
     resetSendPhase,
+    sendStartedAt,
     sendPhase,
+    activeThread?.session,
   ]);
 
   useEffect(() => {
