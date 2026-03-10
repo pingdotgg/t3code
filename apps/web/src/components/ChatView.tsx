@@ -3640,7 +3640,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
               <div
                 className={`group relative overflow-visible rounded-[20px] border bg-card transition-colors duration-200 ${
                   isDragOverComposer
-                    ? "border-primary/70 bg-accent/30"
+                    ? interactionMode === "plan"
+                      ? "border-ring-plan/70 bg-accent/30"
+                      : "border-primary/70 bg-accent/30"
                     : interactionMode === "plan"
                       ? "border-border focus-within:border-ring-plan/45"
                       : "border-border focus-within:border-ring/45"
@@ -3651,7 +3653,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 onDrop={onComposerDrop}
               >
                 {interactionMode === "plan" && (
-                  <span className="absolute -top-3 left-5 rounded-full border border-border group-focus-within:border-ring-plan/45 bg-card transition-colors duration-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-ring-plan/50 group-focus-within:text-ring-plan">
+                  <span className={`absolute -top-3 left-5 rounded-full border bg-card transition-colors duration-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${isDragOverComposer ? "border-ring-plan/70 text-ring-plan" : "border-border group-focus-within:border-ring-plan/45 text-ring-plan/50 group-focus-within:text-ring-plan"}`}>
                     Plan
                   </span>
                 )}
