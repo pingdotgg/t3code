@@ -4,8 +4,27 @@ import {
   getAppModelOptions,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
+  resolveAppServiceTier,
+  shouldShowFastTierIcon,
   resolveAppModelSelection,
+  type AppSettings,
 } from "./appSettings";
+
+function createMockSettings(overrides: Partial<AppSettings> = {}): AppSettings {
+  return {
+    codexBinaryPath: "",
+    codexHomePath: "",
+    confirmThreadDelete: true,
+    enableAssistantStreaming: true,
+    codexServiceTier: "auto",
+    customCodexModels: [],
+    claudeCodeApiKey: "",
+    claudeCodeBaseUrl: "",
+    customClaudeCodeModels: [],
+    claudeCodeEndpoints: [],
+    ...overrides,
+  };
+}
 
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {
@@ -24,7 +43,10 @@ describe("normalizeCustomModelSlugs", () => {
 
 describe("getAppModelOptions", () => {
   it("appends saved custom models after the built-in options", () => {
-    const options = getAppModelOptions("codex", ["custom/internal-model"]);
+    const options = getAppModelOptions(
+      "codex",
+      createMockSettings({ customCodexModels: ["custom/internal-model"] }),
+    );
 
     expect(options.map((option) => option.slug)).toEqual([
       "gpt-5.4",
@@ -37,38 +59,82 @@ describe("getAppModelOptions", () => {
   });
 
   it("keeps the currently selected custom model available even if it is no longer saved", () => {
-    const options = getAppModelOptions("codex", [], "custom/selected-model");
+    const options = getAppModelOptions(
+      "codex",
+      createMockSettings(),
+      "custom/selected-model",
+    );
 
     expect(options.at(-1)).toEqual({
       slug: "custom/selected-model",
       name: "custom/selected-model",
       isCustom: true,
+      provider: "codex",
     });
   });
 });
 
 describe("resolveAppModelSelection", () => {
   it("preserves saved custom model slugs instead of falling back to the default", () => {
-    expect(resolveAppModelSelection("codex", ["galapagos-alpha"], "galapagos-alpha")).toBe(
-      "galapagos-alpha",
-    );
+    expect(
+      resolveAppModelSelection(
+        "codex",
+        createMockSettings({ customCodexModels: ["galapagos-alpha"] }),
+        "galapagos-alpha",
+      ),
+    ).toBe("galapagos-alpha");
   });
 
   it("falls back to the provider default when no model is selected", () => {
-    expect(resolveAppModelSelection("codex", [], "")).toBe("gpt-5.4");
+    expect(resolveAppModelSelection("codex", createMockSettings(), "")).toBe(
+      "gpt-5.4",
+    );
   });
 });
 
 describe("getSlashModelOptions", () => {
   it("includes saved custom model slugs for /model command suggestions", () => {
-    const options = getSlashModelOptions("codex", ["custom/internal-model"], "", "gpt-5.3-codex");
+    const options = getSlashModelOptions(
+      "codex",
+      createMockSettings({ customCodexModels: ["custom/internal-model"] }),
+      "",
+      "gpt-5.3-codex",
+    );
 
-    expect(options.some((option) => option.slug === "custom/internal-model")).toBe(true);
+    expect(
+      options.some((option) => option.slug === "custom/internal-model"),
+    ).toBe(true);
   });
 
   it("filters slash-model suggestions across built-in and custom model names", () => {
-    const options = getSlashModelOptions("codex", ["openai/gpt-oss-120b"], "oss", "gpt-5.3-codex");
+    const options = getSlashModelOptions(
+      "codex",
+      createMockSettings({ customCodexModels: ["openai/gpt-oss-120b"] }),
+      "oss",
+      "gpt-5.3-codex",
+    );
 
-    expect(options.map((option) => option.slug)).toEqual(["openai/gpt-oss-120b"]);
+    expect(options.map((option) => option.slug)).toEqual([
+      "openai/gpt-oss-120b",
+    ]);
+  });
+});
+
+describe("resolveAppServiceTier", () => {
+  it("maps automatic to no override", () => {
+    expect(resolveAppServiceTier("auto")).toBeNull();
+  });
+
+  it("preserves explicit service tier overrides", () => {
+    expect(resolveAppServiceTier("fast")).toBe("fast");
+    expect(resolveAppServiceTier("flex")).toBe("flex");
+  });
+});
+
+describe("shouldShowFastTierIcon", () => {
+  it("shows the fast-tier icon only for gpt-5.4 on fast tier", () => {
+    expect(shouldShowFastTierIcon("gpt-5.4", "fast")).toBe(true);
+    expect(shouldShowFastTierIcon("gpt-5.4", "auto")).toBe(false);
+    expect(shouldShowFastTierIcon("gpt-5.3-codex", "fast")).toBe(false);
   });
 });

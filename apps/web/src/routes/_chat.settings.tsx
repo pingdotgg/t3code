@@ -3,8 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import { ZapIcon } from "lucide-react";
 
-import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
+import {
+  APP_SERVICE_TIER_OPTIONS,
+  MAX_CUSTOM_MODEL_LENGTH,
+  shouldShowFastTierIcon,
+  useAppSettings,
+} from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -12,6 +18,13 @@ import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { APP_VERSION } from "../branding";
 import { SidebarInset } from "~/components/ui/sidebar";
@@ -44,9 +57,18 @@ const MODEL_PROVIDER_SETTINGS: Array<{
   {
     provider: "codex",
     title: "Codex",
-    description: "Save additional Codex model slugs for the picker and `/model` command.",
+    description:
+      "Save additional Codex model slugs for the picker and `/model` command.",
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
+  },
+  {
+    provider: "claudeCode",
+    title: "Claude Code",
+    description:
+      "Save additional Claude Code model slugs for the picker and `/model` command.",
+    placeholder: "your-claude-model-slug",
+    example: "claude-4-6-sonnet-20260217",
   },
 ] as const;
 
@@ -55,6 +77,8 @@ function getCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "claudeCode":
+      return settings.customClaudeCodeModels;
     case "codex":
     default:
       return settings.customCodexModels;
@@ -66,6 +90,8 @@ function getDefaultCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "claudeCode":
+      return defaults.customClaudeCodeModels;
     case "codex":
     default:
       return defaults.customCodexModels;
@@ -74,6 +100,8 @@ function getDefaultCustomModelsForProvider(
 
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
+    case "claudeCode":
+      return { customClaudeCodeModels: models };
     case "codex":
     default:
       return { customCodexModels: models };
@@ -85,11 +113,14 @@ function SettingsRouteView() {
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
-  const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [openKeybindingsError, setOpenKeybindingsError] = useState<
+    string | null
+  >(null);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
     codex: "",
+    claudeCode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -97,7 +128,11 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
-  const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const codexServiceTier = settings.codexServiceTier;
+  const claudeCodeApiKey = settings.claudeCodeApiKey;
+  const claudeCodeBaseUrl = settings.claudeCodeBaseUrl;
+  const keybindingsConfigPath =
+    serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -108,14 +143,104 @@ function SettingsRouteView() {
       .openInEditor(keybindingsConfigPath, preferredTerminalEditor())
       .catch((error) => {
         setOpenKeybindingsError(
-          error instanceof Error ? error.message : "Unable to open keybindings file.",
+          error instanceof Error
+            ? error.message
+            : "Unable to open keybindings file.",
         );
       })
       .finally(() => {
         setIsOpeningKeybindings(false);
       });
   }, [keybindingsConfigPath]);
+  const [newEndpointName, setNewEndpointName] = useState("");
+  const [newEndpointBaseUrl, setNewEndpointBaseUrl] = useState("");
+  const [newEndpointApiKey, setNewEndpointApiKey] = useState("");
+  const [newModelSlugByEndpointId, setNewModelSlugByEndpointId] = useState<
+    Record<string, string>
+  >({});
+  const [endpointModelErrorByEndpointId, setEndpointModelErrorByEndpointId] =
+    useState<Record<string, string | null>>({});
 
+  const addClaudeCodeEndpoint = useCallback(() => {
+    if (!newEndpointName.trim()) return;
+    const newEndpoint = {
+      id: crypto.randomUUID(),
+      name: newEndpointName.trim(),
+      baseUrl: newEndpointBaseUrl.trim() || undefined,
+      apiKey: newEndpointApiKey.trim() || undefined,
+      models: [],
+    };
+    updateSettings({
+      claudeCodeEndpoints: [...settings.claudeCodeEndpoints, newEndpoint],
+    });
+    setNewEndpointName("");
+    setNewEndpointBaseUrl("");
+    setNewEndpointApiKey("");
+  }, [
+    newEndpointName,
+    newEndpointBaseUrl,
+    newEndpointApiKey,
+    settings.claudeCodeEndpoints,
+    updateSettings,
+  ]);
+
+  const removeClaudeCodeEndpoint = useCallback(
+    (id: string) => {
+      updateSettings({
+        claudeCodeEndpoints: settings.claudeCodeEndpoints.filter(
+          (e) => e.id !== id,
+        ),
+      });
+    },
+    [settings.claudeCodeEndpoints, updateSettings],
+  );
+
+  const addModelToEndpoint = useCallback(
+    (endpointId: string) => {
+      const slug = newModelSlugByEndpointId[endpointId];
+      if (!slug) return;
+      const normalized = normalizeModelSlug(slug, "claudeCode");
+      if (!normalized) return;
+
+      const endpoint = settings.claudeCodeEndpoints.find(
+        (e) => e.id === endpointId,
+      );
+      if (!endpoint) return;
+
+      if (endpoint.models.includes(normalized)) {
+        setEndpointModelErrorByEndpointId((prev) => ({
+          ...prev,
+          [endpointId]: "Model already added to this endpoint.",
+        }));
+        return;
+      }
+
+      updateSettings({
+        claudeCodeEndpoints: settings.claudeCodeEndpoints.map((e) =>
+          e.id === endpointId ? { ...e, models: [...e.models, normalized] } : e,
+        ),
+      });
+      setNewModelSlugByEndpointId((prev) => ({ ...prev, [endpointId]: "" }));
+      setEndpointModelErrorByEndpointId((prev) => ({
+        ...prev,
+        [endpointId]: null,
+      }));
+    },
+    [newModelSlugByEndpointId, settings.claudeCodeEndpoints, updateSettings],
+  );
+
+  const removeModelFromEndpoint = useCallback(
+    (endpointId: string, slug: string) => {
+      updateSettings({
+        claudeCodeEndpoints: settings.claudeCodeEndpoints.map((e) =>
+          e.id === endpointId
+            ? { ...e, models: e.models.filter((m) => m !== slug) }
+            : e,
+        ),
+      });
+    },
+    [settings.claudeCodeEndpoints, updateSettings],
+  );
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
       const customModelInput = customModelInputByProvider[provider];
@@ -128,7 +253,9 @@ function SettingsRouteView() {
         }));
         return;
       }
-      if (getModelOptions(provider).some((option) => option.slug === normalized)) {
+      if (
+        getModelOptions(provider).some((option) => option.slug === normalized)
+      ) {
         setCustomModelErrorByProvider((existing) => ({
           ...existing,
           [provider]: "That model is already built in.",
@@ -150,7 +277,9 @@ function SettingsRouteView() {
         return;
       }
 
-      updateSettings(patchCustomModels(provider, [...customModels, normalized]));
+      updateSettings(
+        patchCustomModels(provider, [...customModels, normalized]),
+      );
       setCustomModelInputByProvider((existing) => ({
         ...existing,
         [provider]: "",
@@ -194,7 +323,9 @@ function SettingsRouteView() {
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
             <header className="space-y-1">
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">Settings</h1>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+                Settings
+              </h1>
               <p className="text-sm text-muted-foreground">
                 Configure app-level preferences for this device.
               </p>
@@ -202,13 +333,19 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Appearance</h2>
+                <h2 className="text-sm font-medium text-foreground">
+                  Appearance
+                </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Choose how T3 Code handles light and dark mode.
                 </p>
               </div>
 
-              <div className="space-y-2" role="radiogroup" aria-label="Theme preference">
+              <div
+                className="space-y-2"
+                role="radiogroup"
+                aria-label="Theme preference"
+              >
                 {THEME_OPTIONS.map((option) => {
                   const selected = theme === option.value;
                   return (
@@ -225,7 +362,9 @@ function SettingsRouteView() {
                       onClick={() => setTheme(option.value)}
                     >
                       <span className="flex flex-col">
-                        <span className="text-sm font-medium">{option.label}</span>
+                        <span className="text-sm font-medium">
+                          {option.label}
+                        </span>
                         <span className="text-xs">{option.description}</span>
                       </span>
                       {selected ? (
@@ -239,25 +378,35 @@ function SettingsRouteView() {
               </div>
 
               <p className="mt-4 text-xs text-muted-foreground">
-                Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
+                Active theme:{" "}
+                <span className="font-medium text-foreground">
+                  {resolvedTheme}
+                </span>
               </p>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Codex App Server</h2>
+                <h2 className="text-sm font-medium text-foreground">
+                  Codex App Server
+                </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  These overrides apply to new sessions and let you use a non-default Codex install.
+                  These overrides apply to new sessions and let you use a
+                  non-default Codex install.
                 </p>
               </div>
 
               <div className="space-y-4">
                 <label htmlFor="codex-binary-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Codex binary path</span>
+                  <span className="text-xs font-medium text-foreground">
+                    Codex binary path
+                  </span>
                   <Input
                     id="codex-binary-path"
                     value={codexBinaryPath}
-                    onChange={(event) => updateSettings({ codexBinaryPath: event.target.value })}
+                    onChange={(event) =>
+                      updateSettings({ codexBinaryPath: event.target.value })
+                    }
                     placeholder="codex"
                     spellCheck={false}
                   />
@@ -267,11 +416,15 @@ function SettingsRouteView() {
                 </label>
 
                 <label htmlFor="codex-home-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">CODEX_HOME path</span>
+                  <span className="text-xs font-medium text-foreground">
+                    CODEX_HOME path
+                  </span>
                   <Input
                     id="codex-home-path"
                     value={codexHomePath}
-                    onChange={(event) => updateSettings({ codexHomePath: event.target.value })}
+                    onChange={(event) =>
+                      updateSettings({ codexHomePath: event.target.value })
+                    }
                     placeholder="/Users/you/.codex"
                     spellCheck={false}
                   />
@@ -283,7 +436,9 @@ function SettingsRouteView() {
                 <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                   <p>
                     Binary source:{" "}
-                    <span className="font-medium text-foreground">{codexBinaryPath || "PATH"}</span>
+                    <span className="font-medium text-foreground">
+                      {codexBinaryPath || "PATH"}
+                    </span>
                   </p>
                   <Button
                     size="xs"
@@ -303,19 +458,132 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">
+                  Claude Code Configuration
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Overrides for the connection to the Claude Code agent CLI.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="claude-base-url" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">
+                    Base URL
+                  </span>
+                  <Input
+                    id="claude-base-url"
+                    value={claudeCodeBaseUrl}
+                    onChange={(event) =>
+                      updateSettings({ claudeCodeBaseUrl: event.target.value })
+                    }
+                    placeholder="https://api.anthropic.com"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Custom Anthropic Base URL (ANTHROPIC_BASE_URL).
+                  </span>
+                </label>
+
+                <label htmlFor="claude-api-key" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">
+                    API Key
+                  </span>
+                  <Input
+                    id="claude-api-key"
+                    value={claudeCodeApiKey}
+                    onChange={(event) =>
+                      updateSettings({ claudeCodeApiKey: event.target.value })
+                    }
+                    type="password"
+                    placeholder="sk-ant-..."
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Custom Anthropic API Key (ANTHROPIC_API_KEY).
+                  </span>
+                </label>
+
+                <div className="flex justify-end pt-2">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        claudeCodeApiKey: defaults.claudeCodeApiKey,
+                        claudeCodeBaseUrl: defaults.claudeCodeBaseUrl,
+                      })
+                    }
+                  >
+                    Reset Claude overrides
+                  </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Models</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Save additional provider model slugs so they appear in the chat model picker and
-                  `/model` command suggestions.
+                  Save additional provider model slugs so they appear in the
+                  chat model picker and `/model` command suggestions.
                 </p>
               </div>
 
               <div className="space-y-5">
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">
+                    Default service tier
+                  </span>
+                  <Select
+                    items={APP_SERVICE_TIER_OPTIONS.map((option) => ({
+                      label: option.label,
+                      value: option.value,
+                    }))}
+                    value={codexServiceTier}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      updateSettings({ codexServiceTier: value });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup alignItemWithTrigger={false}>
+                      {APP_SERVICE_TIER_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          <div className="flex min-w-0 items-center gap-2">
+                            {option.value === "fast" ? (
+                              <ZapIcon className="size-3.5 text-amber-500" />
+                            ) : (
+                              <span
+                                className="size-3.5 shrink-0"
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span className="truncate">{option.label}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                  <span className="text-xs text-muted-foreground">
+                    {APP_SERVICE_TIER_OPTIONS.find(
+                      (option) => option.value === codexServiceTier,
+                    )?.description ??
+                      "Use Codex defaults without forcing a service tier."}
+                  </span>
+                </label>
+
                 {MODEL_PROVIDER_SETTINGS.map((providerSettings) => {
                   const provider = providerSettings.provider;
-                  const customModels = getCustomModelsForProvider(settings, provider);
+                  const customModels = getCustomModelsForProvider(
+                    settings,
+                    provider,
+                  );
                   const customModelInput = customModelInputByProvider[provider];
-                  const customModelError = customModelErrorByProvider[provider] ?? null;
+                  const customModelError =
+                    customModelErrorByProvider[provider] ?? null;
                   return (
                     <div
                       key={provider}
@@ -378,7 +646,9 @@ function SettingsRouteView() {
                         </div>
 
                         {customModelError ? (
-                          <p className="text-xs text-destructive">{customModelError}</p>
+                          <p className="text-xs text-destructive">
+                            {customModelError}
+                          </p>
                         ) : null}
 
                         <div className="space-y-2">
@@ -391,7 +661,10 @@ function SettingsRouteView() {
                                 onClick={() =>
                                   updateSettings(
                                     patchCustomModels(provider, [
-                                      ...getDefaultCustomModelsForProvider(defaults, provider),
+                                      ...getDefaultCustomModelsForProvider(
+                                        defaults,
+                                        provider,
+                                      ),
                                     ]),
                                   )
                                 }
@@ -408,13 +681,24 @@ function SettingsRouteView() {
                                   key={`${provider}:${slug}`}
                                   className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
                                 >
-                                  <code className="min-w-0 flex-1 truncate text-xs text-foreground">
-                                    {slug}
-                                  </code>
+                                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                                    {provider === "codex" &&
+                                    shouldShowFastTierIcon(
+                                      slug,
+                                      codexServiceTier,
+                                    ) ? (
+                                      <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+                                    ) : null}
+                                    <code className="min-w-0 flex-1 truncate text-xs text-foreground">
+                                      {slug}
+                                    </code>
+                                  </div>
                                   <Button
                                     size="xs"
                                     variant="ghost"
-                                    onClick={() => removeCustomModel(provider, slug)}
+                                    onClick={() =>
+                                      removeCustomModel(provider, slug)
+                                    }
                                   >
                                     Remove
                                   </Button>
@@ -436,7 +720,173 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Responses</h2>
+                <h2 className="text-sm font-medium text-foreground">
+                  Claude Code Endpoints
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Configure custom Claude Code endpoints with specific API keys
+                  and base URLs.
+                </p>
+              </div>
+
+              <div className="space-y-6">
+                <div className="rounded-xl border border-border bg-background/50 p-4 space-y-4">
+                  <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                    Add New Endpoint
+                  </h3>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-medium text-foreground uppercase tracking-tight">
+                        Endpoint Name
+                      </label>
+                      <Input
+                        placeholder="e.g., Local Proxy"
+                        value={newEndpointName}
+                        onChange={(e) => setNewEndpointName(e.target.value)}
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-medium text-foreground uppercase tracking-tight">
+                        Base URL (optional)
+                      </label>
+                      <Input
+                        placeholder="https://api.anthropic.com"
+                        value={newEndpointBaseUrl}
+                        onChange={(e) => setNewEndpointBaseUrl(e.target.value)}
+                        className="h-9"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-foreground uppercase tracking-tight">
+                      API Key (optional)
+                    </label>
+                    <Input
+                      type="password"
+                      placeholder="sk-ant-..."
+                      value={newEndpointApiKey}
+                      onChange={(e) => setNewEndpointApiKey(e.target.value)}
+                      className="h-9"
+                    />
+                  </div>
+                  <Button
+                    onClick={addClaudeCodeEndpoint}
+                    disabled={!newEndpointName}
+                    className="w-full sm:w-auto"
+                  >
+                    Add Endpoint
+                  </Button>
+                </div>
+
+                <div className="space-y-4">
+                  {settings.claudeCodeEndpoints.map((endpoint) => (
+                    <div
+                      key={endpoint.id}
+                      className="rounded-xl border border-border bg-background/30 p-4 space-y-4"
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <h3 className="text-sm font-semibold text-foreground truncate">
+                          {endpoint.name}
+                        </h3>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          className="text-destructive hover:bg-destructive/10 shrink-0"
+                          onClick={() => removeClaudeCodeEndpoint(endpoint.id)}
+                        >
+                          Delete Endpoint
+                        </Button>
+                      </div>
+
+                      <div className="grid gap-2 text-[11px]">
+                        <div className="flex justify-between border-b border-border/50 py-1">
+                          <span className="text-muted-foreground">
+                            Base URL:
+                          </span>
+                          <span className="font-mono truncate ml-4">
+                            {endpoint.baseUrl || "Default"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between border-b border-border/50 py-1">
+                          <span className="text-muted-foreground">
+                            API Key:
+                          </span>
+                          <span className="font-mono">
+                            {endpoint.apiKey ? "********" : "Default"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2">
+                        <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                          Models
+                        </h4>
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="claude-3-5-sonnet-..."
+                            className="h-8 text-xs flex-1"
+                            value={newModelSlugByEndpointId[endpoint.id] || ""}
+                            onChange={(e) =>
+                              setNewModelSlugByEndpointId((prev) => ({
+                                ...prev,
+                                [endpoint.id]: e.target.value,
+                              }))
+                            }
+                            onKeyDown={(e) =>
+                              e.key === "Enter" &&
+                              addModelToEndpoint(endpoint.id)
+                            }
+                          />
+                          <Button
+                            size="xs"
+                            onClick={() => addModelToEndpoint(endpoint.id)}
+                          >
+                            Add
+                          </Button>
+                        </div>
+                        {endpointModelErrorByEndpointId[endpoint.id] && (
+                          <p className="text-[10px] text-destructive">
+                            {endpointModelErrorByEndpointId[endpoint.id]}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap gap-2">
+                          {endpoint.models.map((slug) => (
+                            <div
+                              key={slug}
+                              className="group flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs"
+                            >
+                              <code className="text-[11px] font-mono leading-none">
+                                {slug}
+                              </code>
+                              <button
+                                onClick={() =>
+                                  removeModelFromEndpoint(endpoint.id, slug)
+                                }
+                                className="text-muted-foreground/50 hover:text-destructive transition-colors"
+                              >
+                                &times;
+                              </button>
+                            </div>
+                          ))}
+                          {endpoint.models.length === 0 && (
+                            <span className="text-[11px] text-muted-foreground italic">
+                              No models added yet.
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">
+                  Responses
+                </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Control how assistant output is rendered during a turn.
                 </p>
@@ -444,7 +894,9 @@ function SettingsRouteView() {
 
               <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
                 <div>
-                  <p className="text-sm font-medium text-foreground">Stream assistant messages</p>
+                  <p className="text-sm font-medium text-foreground">
+                    Stream assistant messages
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     Show token-by-token output while a response is in progress.
                   </p>
@@ -460,14 +912,16 @@ function SettingsRouteView() {
                 />
               </div>
 
-              {settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
+              {settings.enableAssistantStreaming !==
+              defaults.enableAssistantStreaming ? (
                 <div className="mt-3 flex justify-end">
                   <Button
                     size="xs"
                     variant="outline"
                     onClick={() =>
                       updateSettings({
-                        enableAssistantStreaming: defaults.enableAssistantStreaming,
+                        enableAssistantStreaming:
+                          defaults.enableAssistantStreaming,
                       })
                     }
                   >
@@ -479,17 +933,21 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Keybindings</h2>
+                <h2 className="text-sm font-medium text-foreground">
+                  Keybindings
+                </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Open the persisted <code>keybindings.json</code> file to edit advanced bindings
-                  directly.
+                  Open the persisted <code>keybindings.json</code> file to edit
+                  advanced bindings directly.
                 </p>
               </div>
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-foreground">Config file path</p>
+                    <p className="text-xs font-medium text-foreground">
+                      Config file path
+                    </p>
                     <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
                       {keybindingsConfigPath ?? "Resolving keybindings path..."}
                     </p>
@@ -500,7 +958,9 @@ function SettingsRouteView() {
                     disabled={!keybindingsConfigPath || isOpeningKeybindings}
                     onClick={openKeybindingsFile}
                   >
-                    {isOpeningKeybindings ? "Opening..." : "Open keybindings.json"}
+                    {isOpeningKeybindings
+                      ? "Opening..."
+                      : "Open keybindings.json"}
                   </Button>
                 </div>
 
@@ -508,7 +968,9 @@ function SettingsRouteView() {
                   Opens in your preferred editor selection.
                 </p>
                 {openKeybindingsError ? (
-                  <p className="text-xs text-destructive">{openKeybindingsError}</p>
+                  <p className="text-xs text-destructive">
+                    {openKeybindingsError}
+                  </p>
                 ) : null}
               </div>
             </section>
@@ -523,9 +985,12 @@ function SettingsRouteView() {
 
               <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
                 <div>
-                  <p className="text-sm font-medium text-foreground">Confirm thread deletion</p>
+                  <p className="text-sm font-medium text-foreground">
+                    Confirm thread deletion
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    Ask for confirmation before deleting a thread and its chat history.
+                    Ask for confirmation before deleting a thread and its chat
+                    history.
                   </p>
                 </div>
                 <Switch

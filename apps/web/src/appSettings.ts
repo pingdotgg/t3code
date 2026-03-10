@@ -1,14 +1,56 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
-import { type ProviderKind } from "@t3tools/contracts";
-import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  type ProviderKind,
+  type ProviderServiceTier,
+} from "@t3tools/contracts";
+import {
+  getDefaultModel,
+  getModelOptions,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
-const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
+export const APP_SERVICE_TIER_OPTIONS = [
+  {
+    value: "auto",
+    label: "Automatic",
+    description: "Use Codex defaults without forcing a service tier.",
+  },
+  {
+    value: "fast",
+    label: "Fast",
+    description: "Request the fast service tier when the model supports it.",
+  },
+  {
+    value: "flex",
+    label: "Flex",
+    description: "Request the flex service tier when the model supports it.",
+  },
+] as const;
+export type AppServiceTier = (typeof APP_SERVICE_TIER_OPTIONS)[number]["value"];
+const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
+const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
+const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<
+  ProviderKind,
+  ReadonlySet<string>
+> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  claudeCode: new Set(
+    getModelOptions("claudeCode").map((option) => option.slug),
+  ),
 };
+
+const ClaudeCodeEndpointSchema = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String.check(Schema.isMaxLength(256)),
+  baseUrl: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  apiKey: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  models: Schema.Array(Schema.String),
+});
+export type ClaudeCodeEndpoint = typeof ClaudeCodeEndpointSchema.Type;
 
 const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
@@ -17,11 +59,28 @@ const AppSettingsSchema = Schema.Struct({
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
-  confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
+  confirmThreadDelete: Schema.Boolean.pipe(
+    Schema.withConstructorDefault(() => Option.some(true)),
+  ),
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
+  codexServiceTier: AppServiceTierSchema.pipe(
+    Schema.withConstructorDefault(() => Option.some("auto")),
+  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  claudeCodeApiKey: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeCodeBaseUrl: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  customClaudeCodeModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  claudeCodeEndpoints: Schema.Array(ClaudeCodeEndpointSchema).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -30,6 +89,26 @@ export interface AppModelOption {
   slug: string;
   name: string;
   isCustom: boolean;
+  provider: ProviderKind;
+  endpoint?: ClaudeCodeEndpoint;
+}
+
+export function resolveAppServiceTier(
+  serviceTier: AppServiceTier,
+): ProviderServiceTier | null {
+  return serviceTier === "auto" ? null : serviceTier;
+}
+
+export function shouldShowFastTierIcon(
+  model: string | null | undefined,
+  serviceTier: AppServiceTier,
+): boolean {
+  const normalizedModel = normalizeModelSlug(model);
+  return (
+    resolveAppServiceTier(serviceTier) === "fast" &&
+    normalizedModel !== null &&
+    MODELS_WITH_FAST_SUPPORT.has(normalizedModel)
+  );
 }
 
 const DEFAULT_APP_SETTINGS = AppSettingsSchema.makeUnsafe({});
@@ -70,41 +149,88 @@ export function normalizeCustomModelSlugs(
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
-    customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    customCodexModels: normalizeCustomModelSlugs(
+      settings.customCodexModels,
+      "codex",
+    ),
+    customClaudeCodeModels: normalizeCustomModelSlugs(
+      settings.customClaudeCodeModels,
+      "claudeCode",
+    ),
+    claudeCodeEndpoints: settings.claudeCodeEndpoints.map((endpoint) => ({
+      ...endpoint,
+      models: normalizeCustomModelSlugs(endpoint.models, "claudeCode"),
+    })),
   };
 }
 
 export function getAppModelOptions(
   provider: ProviderKind,
-  customModels: readonly string[],
+  settings: AppSettings,
   selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = getModelOptions(provider).map(({ slug, name }) => ({
-    slug,
-    name,
-    isCustom: false,
-  }));
-  const seen = new Set(options.map((option) => option.slug));
+  const options: AppModelOption[] = getModelOptions(provider).map(
+    ({ slug, name }) => ({
+      slug,
+      name,
+      isCustom: false,
+      provider,
+    }),
+  );
+  const seenSlugs = new Set(options.map((option) => option.slug));
 
-  for (const slug of normalizeCustomModelSlugs(customModels, provider)) {
-    if (seen.has(slug)) {
-      continue;
+  if (provider === "claudeCode") {
+    // Add models grouped by endpoint
+    for (const endpoint of settings.claudeCodeEndpoints) {
+      for (const slug of normalizeCustomModelSlugs(endpoint.models, provider)) {
+        options.push({
+          slug,
+          name: slug,
+          isCustom: true,
+          provider,
+          endpoint,
+        });
+      }
     }
 
-    seen.add(slug);
-    options.push({
-      slug,
-      name: slug,
-      isCustom: true,
-    });
+    // Add legacy custom models (global ones)
+    for (const slug of normalizeCustomModelSlugs(
+      settings.customClaudeCodeModels,
+      provider,
+    )) {
+      if (seenSlugs.has(slug)) continue;
+      seenSlugs.add(slug);
+      options.push({
+        slug,
+        name: slug,
+        isCustom: true,
+        provider,
+      });
+    }
+  } else {
+    const customModels = provider === "codex" ? settings.customCodexModels : [];
+    for (const slug of normalizeCustomModelSlugs(customModels, provider)) {
+      if (seenSlugs.has(slug)) continue;
+      seenSlugs.add(slug);
+      options.push({
+        slug,
+        name: slug,
+        isCustom: true,
+        provider,
+      });
+    }
   }
 
   const normalizedSelectedModel = normalizeModelSlug(selectedModel, provider);
-  if (normalizedSelectedModel && !seen.has(normalizedSelectedModel)) {
+  if (
+    normalizedSelectedModel &&
+    !options.some((o) => o.slug === normalizedSelectedModel)
+  ) {
     options.push({
       slug: normalizedSelectedModel,
       name: normalizedSelectedModel,
       isCustom: true,
+      provider,
     });
   }
 
@@ -113,19 +239,22 @@ export function getAppModelOptions(
 
 export function resolveAppModelSelection(
   provider: ProviderKind,
-  customModels: readonly string[],
+  settings: AppSettings,
   selectedModel: string | null | undefined,
 ): string {
-  const options = getAppModelOptions(provider, customModels, selectedModel);
+  const options = getAppModelOptions(provider, settings, selectedModel);
   const trimmedSelectedModel = selectedModel?.trim();
   if (trimmedSelectedModel) {
-    const direct = options.find((option) => option.slug === trimmedSelectedModel);
+    const direct = options.find(
+      (option) => option.slug === trimmedSelectedModel,
+    );
     if (direct) {
       return direct.slug;
     }
 
     const byName = options.find(
-      (option) => option.name.toLowerCase() === trimmedSelectedModel.toLowerCase(),
+      (option) =>
+        option.name.toLowerCase() === trimmedSelectedModel.toLowerCase(),
     );
     if (byName) {
       return byName.slug;
@@ -145,12 +274,12 @@ export function resolveAppModelSelection(
 
 export function getSlashModelOptions(
   provider: ProviderKind,
-  customModels: readonly string[],
+  settings: AppSettings,
   query: string,
   selectedModel?: string | null,
 ): AppModelOption[] {
   const normalizedQuery = query.trim().toLowerCase();
-  const options = getAppModelOptions(provider, customModels, selectedModel);
+  const options = getAppModelOptions(provider, settings, selectedModel);
   if (!normalizedQuery) {
     return options;
   }
@@ -158,7 +287,10 @@ export function getSlashModelOptions(
   return options.filter((option) => {
     const searchSlug = option.slug.toLowerCase();
     const searchName = option.name.toLowerCase();
-    return searchSlug.includes(normalizedQuery) || searchName.includes(normalizedQuery);
+    return (
+      searchSlug.includes(normalizedQuery) ||
+      searchName.includes(normalizedQuery)
+    );
   });
 }
 
@@ -174,7 +306,9 @@ function parsePersistedSettings(value: string | null): AppSettings {
   }
 
   try {
-    return normalizeAppSettings(Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema))(value));
+    return normalizeAppSettings(
+      Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema))(value),
+    );
   } catch {
     return DEFAULT_APP_SETTINGS;
   }

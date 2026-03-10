@@ -1,4 +1,9 @@
-import { EventId, MessageId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import {
+  EventId,
+  MessageId,
+  TurnId,
+  type OrchestrationThreadActivity,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -33,7 +38,9 @@ function makeActivity(overrides: {
     tone: overrides.tone ?? "tool",
     payload,
     turnId: overrides.turnId ? TurnId.makeUnsafe(overrides.turnId) : null,
-    ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
+    ...(overrides.sequence !== undefined
+      ? { sequence: overrides.sequence }
+      : {}),
   };
 }
 
@@ -251,7 +258,9 @@ describe("deriveActivePlanState", () => {
       }),
     ];
 
-    expect(deriveActivePlanState(activities, TurnId.makeUnsafe("turn-1"))).toEqual({
+    expect(
+      deriveActivePlanState(activities, TurnId.makeUnsafe("turn-1")),
+    ).toEqual({
       createdAt: "2026-02-23T00:00:02.000Z",
       turnId: "turn-1",
       explanation: "Refined plan",
@@ -375,17 +384,29 @@ describe("deriveWorkLogEntries", () => {
 
   it("filters by turn id when provided", () => {
     const activities: OrchestrationThreadActivity[] = [
-      makeActivity({ id: "turn-1", turnId: "turn-1", summary: "Tool call", kind: "tool.started" }),
+      makeActivity({
+        id: "turn-1",
+        turnId: "turn-1",
+        summary: "Tool call",
+        kind: "tool.started",
+      }),
       makeActivity({
         id: "turn-2",
         turnId: "turn-2",
         summary: "Tool call complete",
         kind: "tool.completed",
       }),
-      makeActivity({ id: "no-turn", summary: "Checkpoint captured", tone: "info" }),
+      makeActivity({
+        id: "no-turn",
+        summary: "Checkpoint captured",
+        tone: "info",
+      }),
     ];
 
-    const entries = deriveWorkLogEntries(activities, TurnId.makeUnsafe("turn-2"));
+    const entries = deriveWorkLogEntries(
+      activities,
+      TurnId.makeUnsafe("turn-2"),
+    );
     expect(entries.map((entry) => entry.id)).toEqual(["turn-2"]);
   });
 
@@ -512,7 +533,11 @@ describe("deriveTimelineEntries", () => {
       ],
     );
 
-    expect(entries.map((entry) => entry.kind)).toEqual(["message", "proposed-plan", "work"]);
+    expect(entries.map((entry) => entry.kind)).toEqual([
+      "message",
+      "proposed-plan",
+      "work",
+    ]);
     expect(entries[1]).toMatchObject({
       kind: "proposed-plan",
       proposedPlan: {
@@ -525,7 +550,12 @@ describe("deriveTimelineEntries", () => {
 describe("hasToolActivityForTurn", () => {
   it("returns false when turn id is missing", () => {
     const activities: OrchestrationThreadActivity[] = [
-      makeActivity({ id: "tool-1", turnId: "turn-1", kind: "tool.completed", tone: "tool" }),
+      makeActivity({
+        id: "tool-1",
+        turnId: "turn-1",
+        kind: "tool.completed",
+        tone: "tool",
+      }),
     ];
 
     expect(hasToolActivityForTurn(activities, undefined)).toBe(false);
@@ -534,12 +564,26 @@ describe("hasToolActivityForTurn", () => {
 
   it("returns true only for matching tool activity in the target turn", () => {
     const activities: OrchestrationThreadActivity[] = [
-      makeActivity({ id: "tool-1", turnId: "turn-1", kind: "tool.completed", tone: "tool" }),
-      makeActivity({ id: "info-1", turnId: "turn-2", kind: "turn.completed", tone: "info" }),
+      makeActivity({
+        id: "tool-1",
+        turnId: "turn-1",
+        kind: "tool.completed",
+        tone: "tool",
+      }),
+      makeActivity({
+        id: "info-1",
+        turnId: "turn-2",
+        kind: "turn.completed",
+        tone: "info",
+      }),
     ];
 
-    expect(hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-1"))).toBe(true);
-    expect(hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-2"))).toBe(false);
+    expect(
+      hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-1")),
+    ).toBe(true);
+    expect(
+      hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-2")),
+    ).toBe(false);
   });
 });
 
@@ -640,18 +684,20 @@ describe("deriveActiveWorkStartedAt", () => {
 });
 
 describe("PROVIDER_OPTIONS", () => {
-  it("keeps Claude Code and Cursor visible as unavailable placeholders in the stack base", () => {
-    const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeCode");
+  it("keeps Claude Code and Cursor visible in the stack base", () => {
+    const claude = PROVIDER_OPTIONS.find(
+      (option) => option.value === "claudeCode",
+    );
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "codex", label: "Codex", available: true },
-      { value: "claudeCode", label: "Claude Code", available: false },
+      { value: "claudeCode", label: "Claude Code", available: true },
       { value: "cursor", label: "Cursor", available: false },
     ]);
     expect(claude).toEqual({
       value: "claudeCode",
       label: "Claude Code",
-      available: false,
+      available: true,
     });
     expect(cursor).toEqual({
       value: "cursor",

@@ -9,24 +9,37 @@
  */
 import { Effect, Layer } from "effect";
 
-import { ProviderUnsupportedError, type ProviderAdapterError } from "../Errors.ts";
+import {
+  ProviderUnsupportedError,
+  type ProviderAdapterError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import {
   ProviderAdapterRegistry,
   type ProviderAdapterRegistryShape,
 } from "../Services/ProviderAdapterRegistry.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
+import { ClaudeCodeAdapterService } from "./ClaudeCodeAdapter.ts";
 
 export interface ProviderAdapterRegistryLiveOptions {
   readonly adapters?: ReadonlyArray<ProviderAdapterShape<ProviderAdapterError>>;
 }
 
-const makeProviderAdapterRegistry = (options?: ProviderAdapterRegistryLiveOptions) =>
+const makeProviderAdapterRegistry = (
+  options?: ProviderAdapterRegistryLiveOptions,
+) =>
   Effect.gen(function* () {
-    const adapters = options?.adapters !== undefined ? options.adapters : [yield* CodexAdapter];
-    const byProvider = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
+    const adapters =
+      options?.adapters !== undefined
+        ? options.adapters
+        : [yield* CodexAdapter, yield* ClaudeCodeAdapterService];
+    const byProvider = new Map(
+      adapters.map((adapter) => [adapter.provider, adapter]),
+    );
 
-    const getByProvider: ProviderAdapterRegistryShape["getByProvider"] = (provider) => {
+    const getByProvider: ProviderAdapterRegistryShape["getByProvider"] = (
+      provider,
+    ) => {
       const adapter = byProvider.get(provider);
       if (!adapter) {
         return Effect.fail(new ProviderUnsupportedError({ provider }));
