@@ -23,6 +23,7 @@ import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { useTokenUsageSync } from "../hooks/useTokenUsageSync";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -140,6 +141,7 @@ function errorDetails(error: unknown): string {
 }
 
 function EventRouter() {
+  useTokenUsageSync();
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setProjectExpanded = useStore((store) => store.setProjectExpanded);
   const removeOrphanedTerminalStates = useTerminalStateStore(

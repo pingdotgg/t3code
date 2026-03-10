@@ -476,6 +476,75 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "turn.completed": {
+      const usage = event.payload.usage as Record<string, unknown> | undefined;
+      const totalCostUsd = event.payload.totalCostUsd;
+      if (usage || totalCostUsd !== undefined) {
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: "turn.usage",
+            summary: "Token usage",
+            payload: {
+              ...(usage ?? {}),
+              ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
+              ...(event.payload.modelUsage ?? {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
+      return [];
+    }
+
+    case "thread.token-usage.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "thread.token-usage",
+          summary: "Thread token usage updated",
+          payload: event.payload.usage as Record<string, unknown>,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "account.rate-limits.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "account.rate-limits",
+          summary: "Rate limits updated",
+          payload: event.payload.rateLimits as Record<string, unknown>,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "account.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "account.updated",
+          summary: "Account info updated",
+          payload: event.payload.account as Record<string, unknown>,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     default:
       break;
   }

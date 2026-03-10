@@ -52,6 +52,7 @@ import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
+import { TokenUsageBadge } from "./TokenUsageBadge";
 import {
   parseDiffRouteSearch,
   stripCanvasSearchParams,
@@ -4573,6 +4574,7 @@ const ChatHeader = memo(function ChatHeader({
       </div>
       {hasProjectControls ? (
       <div className="@container/header-actions flex min-w-0 flex-wrap items-center gap-2 @sm/header-actions:gap-3">
+        <TokenUsageBadge threadId={activeThreadId} />
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

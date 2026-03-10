@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EDITORS, type EditorId, type ProviderKind, type ServerCliInstallation } from "@t3tools/contracts";
+import { useTokenUsageStore } from "../tokenUsageStore";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   BotIcon,
@@ -1545,6 +1546,8 @@ function SettingsRouteView() {
               ) : null}
             </section>
             ) : null}
+
+            <UsageAndStatusSection />
               </div>
             </div>
           </div>
@@ -1552,6 +1555,129 @@ function SettingsRouteView() {
       </div>
     </SidebarInset>
   );
+}
+
+// ── Usage & Provider Status ──────────────────────────────────────────
+
+function UsageAndStatusSection() {
+  const todayUsage = useTokenUsageStore((s) => s.getTodayUsage());
+  const weekUsage = useTokenUsageStore((s) => s.getWeekUsage());
+  const rateLimits = useTokenUsageStore((s) => s.rateLimits);
+  const [statusData, setStatusData] = useState<{
+    status: string;
+    description: string;
+    updatedAt: string;
+  } | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
+
+  const fetchOpenAIStatus = useCallback(() => {
+    setStatusLoading(true);
+    fetch("https://status.openai.com/api/v2/status.json")
+      .then((res) => res.json())
+      .then((data: { status: { indicator: string; description: string }; page: { updated_at: string } }) => {
+        setStatusData({
+          status: data.status.indicator,
+          description: data.status.description,
+          updatedAt: new Date(data.page.updated_at).toLocaleString(),
+        });
+      })
+      .catch(() => {
+        setStatusData({ status: "error", description: "Could not fetch status", updatedAt: "" });
+      })
+      .finally(() => setStatusLoading(false));
+  }, []);
+
+  const statusColor =
+    statusData?.status === "none"
+      ? "bg-green-500"
+      : statusData?.status === "minor"
+        ? "bg-yellow-500"
+        : statusData?.status === "major" || statusData?.status === "critical"
+          ? "bg-red-500"
+          : "bg-muted-foreground";
+
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5">
+      <div className="mb-4">
+        <h2 className="text-sm font-medium text-foreground">Usage & Provider Status</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Token consumption tracking and provider health.
+        </p>
+      </div>
+
+      {/* Usage stats */}
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-lg border border-border bg-background p-3">
+            <p className="text-xs text-muted-foreground">Today</p>
+            <p className="text-lg font-semibold text-foreground">
+              {formatTokens(todayUsage.totalTokens)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {todayUsage.turnCount} turns
+              {todayUsage.totalCostUsd > 0 && ` \u00b7 $${todayUsage.totalCostUsd.toFixed(2)}`}
+            </p>
+          </div>
+          <div className="rounded-lg border border-border bg-background p-3">
+            <p className="text-xs text-muted-foreground">This week</p>
+            <p className="text-lg font-semibold text-foreground">
+              {formatTokens(weekUsage.totalTokens)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {weekUsage.turnCount} turns
+              {weekUsage.totalCostUsd > 0 && ` \u00b7 $${weekUsage.totalCostUsd.toFixed(2)}`}
+            </p>
+          </div>
+        </div>
+
+        {/* Rate limits */}
+        {rateLimits.length > 0 && (
+          <div className="rounded-lg border border-border bg-background p-3">
+            <p className="mb-1 text-xs font-medium text-muted-foreground">Rate Limits</p>
+            {rateLimits.map((rl) => (
+              <div key={rl.provider} className="text-xs text-foreground">
+                <span className="font-medium">{rl.provider}:</span>{" "}
+                <span className="text-muted-foreground">
+                  {JSON.stringify(rl.limits).slice(0, 120)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* OpenAI Status */}
+        <div className="rounded-lg border border-border bg-background p-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-muted-foreground">OpenAI Status</p>
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={fetchOpenAIStatus}
+              disabled={statusLoading}
+            >
+              {statusLoading ? "Checking..." : statusData ? "Refresh" : "Check Status"}
+            </Button>
+          </div>
+          {statusData && (
+            <div className="mt-2 flex items-center gap-2">
+              <div className={`h-2 w-2 rounded-full ${statusColor}`} />
+              <span className="text-sm text-foreground">{statusData.description}</span>
+              {statusData.updatedAt && (
+                <span className="text-xs text-muted-foreground">({statusData.updatedAt})</span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function formatTokens(tokens: number): string {
+  if (tokens === 0) return "0";
+  if (tokens < 1_000) return String(tokens);
+  if (tokens < 1_000_000) return `${(tokens / 1_000).toFixed(1)}K`;
+  return `${(tokens / 1_000_000).toFixed(2)}M`;
 }
 
 export const Route = createFileRoute("/_chat/settings")({
