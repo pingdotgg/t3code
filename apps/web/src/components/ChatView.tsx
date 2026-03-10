@@ -52,7 +52,11 @@ import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  parseDiffRouteSearch,
+  stripBranchSearchParams,
+  stripDiffSearchParams,
+} from "../diffRouteSearch";
 import {
   type ComposerSlashCommand,
   type ComposerTrigger,
@@ -189,6 +193,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "./ui/dialog";
+import { Textarea } from "./ui/textarea";
 import { toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
@@ -217,6 +222,23 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { clamp } from "effect/Number";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import {
+  buildBranchedThreadTree,
+  buildVariantGroupId,
+  buildVariantSelectionKey,
+  getBranchedThreadLineage,
+  getBranchedThreadRecord,
+  getBranchedThreadRootId,
+  getVariantThreadIdsForGroup,
+  readBranchedThreadRecords,
+  readVariantSelections,
+  type BranchedThreadKind,
+  type BranchedThreadRecord,
+  type BranchedThreadTreeNode,
+  upsertBranchedThreadRecord,
+  writeVariantSelections,
+} from "../branchedThreads";
+
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -258,6 +280,14 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
+
+interface MessageVariantState {
+  variantGroupId: string;
+  anchorThreadId: ThreadId;
+  threadIds: ThreadId[];
+  currentThreadId: ThreadId;
+  currentIndex: number;
+}
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
@@ -293,6 +323,13 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
 interface ExpandedImageItem {
   src: string;
   name: string;
+}
+
+interface VisibleMessageNode {
+  message: ChatMessage;
+  originThreadId: ThreadId;
+  variantGroupId: string;
+  variantAnchorThreadId: ThreadId;
 }
 
 interface ExpandedImagePreview {
@@ -348,6 +385,96 @@ function buildLocalDraftThread(
   };
 }
 
+function buildVisibleMessageNodes(input: {
+  threadById: ReadonlyMap<ThreadId, Thread>;
+  rootThreadId: ThreadId;
+  selectedLeafThreadId: ThreadId;
+  branchedThreadRecords: ReadonlyArray<BranchedThreadRecord>;
+}): VisibleMessageNode[] {
+  const lineageSelection = getBranchedThreadLineage(
+    input.branchedThreadRecords,
+    input.selectedLeafThreadId,
+  );
+  const lineageByParentThreadId = new Map<ThreadId, BranchedThreadRecord>();
+  for (const record of lineageSelection.lineage) {
+    lineageByParentThreadId.set(record.parentThreadId, record);
+  }
+
+  const buildDefaultNodes = (threadId: ThreadId): VisibleMessageNode[] => {
+    const thread = input.threadById.get(threadId);
+    if (!thread) return [];
+    return thread.messages.flatMap((message) => {
+      if (message.role !== "user" && message.role !== "assistant") {
+        return [{ message, originThreadId: threadId, variantGroupId: "", variantAnchorThreadId: threadId }];
+      }
+      return [
+        {
+          message,
+          originThreadId: threadId,
+          variantGroupId: buildVariantGroupId(message.role === "user" ? "edit" : "retry", message.id),
+          variantAnchorThreadId: threadId,
+        },
+      ];
+    });
+  };
+
+  const materializeThread = (threadId: ThreadId): VisibleMessageNode[] => {
+    const thread = input.threadById.get(threadId);
+    if (!thread) return [];
+
+    const selectedChild = lineageByParentThreadId.get(threadId);
+    if (!selectedChild) {
+      return buildDefaultNodes(threadId);
+    }
+
+    const replaceAtIndex = thread.messages.findIndex(
+      (message) => message.id === selectedChild.sourceMessageId,
+    );
+    if (replaceAtIndex < 0) {
+      return buildDefaultNodes(threadId);
+    }
+
+    const prefixNodes = thread.messages
+      .slice(0, replaceAtIndex)
+      .flatMap((message) => {
+        if (message.role !== "user" && message.role !== "assistant") {
+          return [
+            {
+              message,
+              originThreadId: threadId,
+              variantGroupId: "",
+              variantAnchorThreadId: threadId,
+            },
+          ];
+        }
+        return [
+          {
+            message,
+            originThreadId: threadId,
+            variantGroupId: buildVariantGroupId(message.role === "user" ? "edit" : "retry", message.id),
+            variantAnchorThreadId: threadId,
+          },
+        ];
+      });
+
+    const childNodes = materializeThread(selectedChild.threadId);
+    const replacementNodes =
+      selectedChild.kind === "retry" ? childNodes.slice(1) : childNodes.slice();
+
+    if (replacementNodes[0]) {
+      replacementNodes[0] = {
+        ...replacementNodes[0],
+        variantGroupId: selectedChild.variantGroupId,
+        variantAnchorThreadId: selectedChild.anchorThreadId,
+      };
+    }
+
+    return [...prefixNodes, ...replacementNodes];
+  };
+
+  return materializeThread(lineageSelection.rootThreadId ?? input.rootThreadId);
+}
+
 function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
   if (!previewUrl || typeof URL === "undefined" || !previewUrl.startsWith("blob:")) {
     return;
@@ -378,6 +505,93 @@ function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[] {
     previewUrls.push(attachment.previewUrl);
   }
   return previewUrls;
+}
+
+function formatMessagePreview(message: ChatMessage): string {
+  const text = message.text?.trim() ?? "";
+  if (text.length > 0) {
+    return text.replace(/\s+/g, " ").slice(0, 140);
+  }
+  const attachmentCount = message.attachments?.length ?? 0;
+  if (attachmentCount > 0) {
+    return attachmentCount === 1 ? "[Image]" : `[Images x${attachmentCount}]`;
+  }
+  return "(empty message)";
+}
+
+function resolveLeafThreadId(input: {
+  rootThreadId: ThreadId;
+  startThreadId: ThreadId;
+  threadById: ReadonlyMap<ThreadId, Thread>;
+  branchedThreadRecords: ReadonlyArray<BranchedThreadRecord>;
+  variantSelections: Record<string, ThreadId>;
+}): ThreadId {
+  let currentThreadId = input.startThreadId;
+
+  if (!input.threadById.has(currentThreadId)) {
+    return input.rootThreadId;
+  }
+
+  while (true) {
+    const parentThread = input.threadById.get(currentThreadId);
+    if (!parentThread) {
+      return currentThreadId;
+    }
+
+    const childRecords = input.branchedThreadRecords.filter(
+      (record) => record.parentThreadId === currentThreadId,
+    );
+    if (childRecords.length === 0) {
+      return currentThreadId;
+    }
+
+    const messageIndexById = new Map<MessageId, number>();
+    parentThread.messages.forEach((message, index) => {
+      messageIndexById.set(message.id, index);
+    });
+
+    const groupedByVariant = new Map<
+      string,
+      { records: BranchedThreadRecord[]; messageIndex: number }
+    >();
+    for (const record of childRecords) {
+      const key = buildVariantSelectionKey(record.variantGroupId, record.anchorThreadId);
+      const messageIndex =
+        messageIndexById.get(record.sourceMessageId) ?? Number.MAX_SAFE_INTEGER;
+      const existing = groupedByVariant.get(key);
+      if (!existing) {
+        groupedByVariant.set(key, { records: [record], messageIndex });
+      } else {
+        existing.records.push(record);
+        existing.messageIndex = Math.min(existing.messageIndex, messageIndex);
+      }
+    }
+
+    const candidates: Array<{ record: BranchedThreadRecord; messageIndex: number }> = [];
+    for (const [key, group] of groupedByVariant.entries()) {
+      const selectedThreadId = input.variantSelections[key];
+      if (!selectedThreadId) continue;
+      const selectedRecord = group.records.find((record) => record.threadId === selectedThreadId);
+      if (!selectedRecord) continue;
+      candidates.push({ record: selectedRecord, messageIndex: group.messageIndex });
+    }
+
+    if (candidates.length === 0) {
+      return currentThreadId;
+    }
+
+    candidates.sort(
+      (left, right) =>
+        left.messageIndex - right.messageIndex ||
+        left.record.createdAt.localeCompare(right.record.createdAt),
+    );
+
+    const nextThreadId = candidates[0]?.record.threadId;
+    if (!nextThreadId || nextThreadId === currentThreadId) {
+      return currentThreadId;
+    }
+    currentThreadId = nextThreadId;
+  }
 }
 
 type ComposerCommandItem =
@@ -655,6 +869,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useState<
     Record<string, string>
   >(() => readLastInvokedScriptByProjectFromStorage());
+  const [branchedThreadRecords, setBranchedThreadRecords] = useState<BranchedThreadRecord[]>(
+    () => readBranchedThreadRecords(),
+  );
+  const [variantSelections, setVariantSelections] = useState<Record<string, ThreadId>>(() =>
+    readVariantSelections(),
+  );
+  const [treeViewerOpen, setTreeViewerOpen] = useState(false);
+  const [expandedBranchThreads, setExpandedBranchThreads] = useState<Record<string, boolean>>({});
+  const [editBranchMessageId, setEditBranchMessageId] = useState<MessageId | null>(null);
+  const [editBranchText, setEditBranchText] = useState("");
+  const [isCreatingBranch, setIsCreatingBranch] = useState(false);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const [messagesScrollElement, setMessagesScrollElement] = useState<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -721,9 +946,104 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [removeComposerDraftImage, threadId],
   );
 
-  const serverThread = threads.find((t) => t.id === threadId);
+  const threadById = useMemo(
+    () => new Map(threads.map((thread) => [thread.id, thread] as const)),
+    [threads],
+  );
+  const updateVariantSelections = useCallback(
+    (updater: (current: Record<string, ThreadId>) => Record<string, ThreadId>) => {
+      setVariantSelections((current) => {
+        const next = updater(current);
+        if (next === current) return current;
+        writeVariantSelections(next);
+        return next;
+      });
+    },
+    [],
+  );
+  const setVariantSelection = useCallback(
+    (variantGroupId: string, anchorThreadId: ThreadId, threadId: ThreadId) => {
+      updateVariantSelections((current) => {
+        const key = buildVariantSelectionKey(variantGroupId, anchorThreadId);
+        if (current[key] === threadId) return current;
+        return { ...current, [key]: threadId };
+      });
+    },
+    [updateVariantSelections],
+  );
+  const routeThreadRecord = useMemo(
+    () => getBranchedThreadRecord(branchedThreadRecords, threadId),
+    [branchedThreadRecords, threadId],
+  );
+  const routeRootThreadId = routeThreadRecord?.rootThreadId ?? threadId;
+  const requestedLeafThreadId =
+    rawSearch.branchThreadId ?? (routeThreadRecord ? threadId : routeRootThreadId);
+  const selectedLeafThreadId = useMemo(() => {
+    if (rawSearch.branchThreadId) {
+      if (requestedLeafThreadId === routeRootThreadId) {
+        return routeRootThreadId;
+      }
+      const record = getBranchedThreadRecord(branchedThreadRecords, requestedLeafThreadId);
+      if (!record || record.rootThreadId !== routeRootThreadId) {
+        return routeRootThreadId;
+      }
+      return resolveLeafThreadId({
+        rootThreadId: routeRootThreadId,
+        startThreadId: requestedLeafThreadId,
+        threadById,
+        branchedThreadRecords,
+        variantSelections,
+      });
+    }
+
+    return resolveLeafThreadId({
+      rootThreadId: routeRootThreadId,
+      startThreadId: routeRootThreadId,
+      threadById,
+      branchedThreadRecords,
+      variantSelections,
+    });
+  }, [
+    branchedThreadRecords,
+    rawSearch.branchThreadId,
+    requestedLeafThreadId,
+    routeRootThreadId,
+    threadById,
+    variantSelections,
+  ]);
+  const selectedBranchLineage = useMemo(
+    () => getBranchedThreadLineage(branchedThreadRecords, selectedLeafThreadId),
+    [branchedThreadRecords, selectedLeafThreadId],
+  );
+  const selectedBranchThreadIdSet = useMemo(() => {
+    const ids = new Set<ThreadId>([routeRootThreadId]);
+    for (const record of selectedBranchLineage.lineage) {
+      ids.add(record.threadId);
+    }
+    return ids;
+  }, [routeRootThreadId, selectedBranchLineage.lineage]);
+  useEffect(() => {
+    if (selectedBranchLineage.lineage.length === 0) {
+      return;
+    }
+    updateVariantSelections((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const record of selectedBranchLineage.lineage) {
+        const key = buildVariantSelectionKey(record.variantGroupId, record.anchorThreadId);
+        if (next[key] !== record.threadId) {
+          next[key] = record.threadId;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [selectedBranchLineage.lineage, updateVariantSelections]);
+  const rootServerThread = threadById.get(routeRootThreadId);
+  const selectedServerThread = threadById.get(selectedLeafThreadId);
+  const serverThread = selectedServerThread;
   const fallbackDraftProject = projects.find((project) => project.id === draftThread?.projectId);
-  const localDraftError = serverThread ? null : (localDraftErrorsByThreadId[threadId] ?? null);
+  const localDraftError = selectedServerThread ? null : (localDraftErrorsByThreadId[threadId] ?? null);
   const localDraftThread = useMemo(
     () =>
       draftThread
@@ -736,18 +1056,103 @@ export default function ChatView({ threadId }: ChatViewProps) {
         : undefined,
     [draftThread, fallbackDraftProject?.model, localDraftError, threadId],
   );
-  const activeThread = serverThread ?? localDraftThread;
+  const activeThread = selectedServerThread ?? localDraftThread;
   const runtimeMode =
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
-  const isServerThread = serverThread !== undefined;
+  const isServerThread = selectedServerThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const activeBranchRootThreadId = routeRootThreadId;
+  const branchTree = useMemo(
+    () =>
+      activeBranchRootThreadId
+        ? buildBranchedThreadTree(branchedThreadRecords, activeBranchRootThreadId)
+        : null,
+    [activeBranchRootThreadId, branchedThreadRecords],
+  );
+  const threadTitleById = useMemo(
+    () => new Map(threads.map((thread) => [thread.id, thread.title] as const)),
+    [threads],
+  );
+  const messagePreviewById = useMemo(() => {
+    const byId = new Map<MessageId, string>();
+    for (const thread of threadById.values()) {
+      for (const message of thread.messages) {
+        if (message.role !== "user" && message.role !== "assistant") continue;
+        if (!byId.has(message.id)) {
+          byId.set(message.id, formatMessagePreview(message));
+        }
+      }
+    }
+    return byId;
+  }, [threadById]);
+  const threadMessagePreviewsByThreadId = useMemo(() => {
+    const byThread = new Map<ThreadId, Array<{ id: MessageId; role: ChatMessage["role"]; preview: string }>>();
+    for (const thread of threadById.values()) {
+      const previews: Array<{ id: MessageId; role: ChatMessage["role"]; preview: string }> = [];
+      for (const message of thread.messages) {
+        if (message.role !== "user" && message.role !== "assistant") continue;
+        previews.push({
+          id: message.id,
+          role: message.role,
+          preview: formatMessagePreview(message),
+        });
+      }
+      byThread.set(thread.id, previews);
+    }
+    return byThread;
+  }, [threadById]);
+
+  useEffect(() => {
+    if (!routeThreadRecord) {
+      return;
+    }
+    if (threadId === routeRootThreadId && rawSearch.branchThreadId === selectedLeafThreadId) {
+      return;
+    }
+    if (threadId === routeRootThreadId && selectedLeafThreadId === routeRootThreadId && !rawSearch.branchThreadId) {
+      return;
+    }
+
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: routeRootThreadId },
+      replace: true,
+      search: (previous) => {
+        const rest = stripDiffSearchParams(stripBranchSearchParams(previous));
+        return {
+          ...rest,
+          ...(rawSearch.diff ? { diff: rawSearch.diff } : {}),
+          ...(rawSearch.diffTurnId ? { diffTurnId: rawSearch.diffTurnId } : {}),
+          ...(rawSearch.diffFilePath ? { diffFilePath: rawSearch.diffFilePath } : {}),
+          ...(selectedLeafThreadId !== routeRootThreadId
+            ? { branchThreadId: selectedLeafThreadId }
+            : {}),
+        };
+      },
+    });
+  }, [
+    navigate,
+    rawSearch.branchThreadId,
+    rawSearch.diff,
+    rawSearch.diffFilePath,
+    rawSearch.diffTurnId,
+    routeRootThreadId,
+    routeThreadRecord,
+    selectedLeafThreadId,
+    threadId,
+  ]);
+
+  useEffect(() => {
+    setEditBranchMessageId(null);
+    setEditBranchText("");
+  }, [activeThreadId]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -1014,9 +1419,73 @@ export default function ChatView({ threadId }: ChatViewProps) {
       delete attachmentPreviewHandoffTimeoutByMessageIdRef.current[messageId];
     }, ATTACHMENT_PREVIEW_HANDOFF_TTL_MS);
   }, []);
-  const serverMessages = activeThread?.messages;
+  const visibleMessageNodes = useMemo(
+    () =>
+      rootServerThread
+        ? buildVisibleMessageNodes({
+            threadById,
+            rootThreadId: routeRootThreadId,
+            selectedLeafThreadId,
+            branchedThreadRecords,
+          })
+        : activeThread
+          ? activeThread.messages
+              .filter((message) => message.role === "user" || message.role === "assistant")
+              .map((message) => ({
+                message,
+                originThreadId: activeThread.id,
+                variantGroupId: buildVariantGroupId(
+                  message.role === "user" ? "edit" : "retry",
+                  message.id,
+                ),
+                variantAnchorThreadId: activeThread.id,
+              }))
+          : [],
+    [activeThread, branchedThreadRecords, rootServerThread, routeRootThreadId, selectedLeafThreadId, threadById],
+  );
+  const visibleOriginThreadIdByMessageId = useMemo(
+    () =>
+      new Map(
+        visibleMessageNodes.map((node) => [node.message.id, node.originThreadId] as const),
+      ),
+    [visibleMessageNodes],
+  );
+  const visibleVariantSelectionByMessageId = useMemo(() => {
+    const selectedByVariantKey = new Map<string, ThreadId>();
+    for (const record of selectedBranchLineage.lineage) {
+      selectedByVariantKey.set(`${record.variantGroupId}\u0000${record.anchorThreadId}`, record.threadId);
+    }
+
+    const byMessageId = new Map<
+      MessageId,
+      Pick<MessageVariantState, "variantGroupId" | "anchorThreadId" | "threadIds" | "currentThreadId" | "currentIndex">
+    >();
+    for (const node of visibleMessageNodes) {
+      if (!node.variantGroupId) continue;
+      const threadIds = getVariantThreadIdsForGroup(
+        branchedThreadRecords,
+        node.variantGroupId,
+        node.variantAnchorThreadId,
+      );
+      const currentThreadId =
+        selectedByVariantKey.get(`${node.variantGroupId}\u0000${node.variantAnchorThreadId}`) ??
+        node.variantAnchorThreadId;
+      byMessageId.set(node.message.id, {
+        variantGroupId: node.variantGroupId,
+        anchorThreadId: node.variantAnchorThreadId,
+        threadIds,
+        currentThreadId,
+        currentIndex: Math.max(threadIds.indexOf(currentThreadId), 0),
+      });
+    }
+    return byMessageId;
+  }, [branchedThreadRecords, selectedBranchLineage.lineage, visibleMessageNodes]);
+  const projectedMessages = useMemo(
+    () => visibleMessageNodes.map((node) => node.message),
+    [visibleMessageNodes],
+  );
   const timelineMessages = useMemo(() => {
-    const messages = serverMessages ?? [];
+    const messages = projectedMessages;
     const serverMessagesWithPreviewHandoff =
       Object.keys(attachmentPreviewHandoffByMessageId).length === 0
         ? messages
@@ -1067,27 +1536,41 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return serverMessagesWithPreviewHandoff;
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [serverMessages, attachmentPreviewHandoffByMessageId, optimisticUserMessages]);
+  }, [attachmentPreviewHandoffByMessageId, optimisticUserMessages, projectedMessages]);
   const timelineEntries = useMemo(
-    () =>
-      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
+    () => deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
-  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
-    useTurnDiffSummaries(activeThread);
+  const { inferredCheckpointTurnCountByTurnId } = useTurnDiffSummaries(activeThread);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<MessageId, TurnDiffSummary>();
-    for (const summary of turnDiffSummaries) {
-      if (!summary.assistantMessageId) continue;
-      byMessageId.set(summary.assistantMessageId, summary);
+    for (const node of visibleMessageNodes) {
+      if (node.message.role !== "assistant") continue;
+      const sourceThread = threadById.get(node.originThreadId);
+      const summary = sourceThread?.turnDiffSummaries.find(
+        (entry) => entry.assistantMessageId === node.message.id,
+      );
+      if (!summary) continue;
+      byMessageId.set(node.message.id, summary);
     }
     return byMessageId;
-  }, [turnDiffSummaries]);
+  }, [threadById, visibleMessageNodes]);
+  const timelineMessageById = useMemo(() => {
+    const byMessageId = new Map<MessageId, TimelineMessage>();
+    for (const entry of timelineEntries) {
+      if (entry.kind !== "message") continue;
+      byMessageId.set(entry.message.id, entry.message);
+    }
+    return byMessageId;
+  }, [timelineEntries]);
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<MessageId, number>();
     for (let index = 0; index < timelineEntries.length; index += 1) {
       const entry = timelineEntries[index];
       if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+        continue;
+      }
+      if (visibleOriginThreadIdByMessageId.get(entry.message.id) !== activeThreadId) {
         continue;
       }
 
@@ -1114,7 +1597,48 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     return byUserMessageId;
-  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  }, [
+    activeThreadId,
+    inferredCheckpointTurnCountByTurnId,
+    timelineEntries,
+    turnDiffSummaryByAssistantMessageId,
+    visibleOriginThreadIdByMessageId,
+  ]);
+  const editableUserMessageIds = useMemo(() => {
+    const editableIds = new Set<MessageId>();
+    for (let index = 0; index < timelineEntries.length; index += 1) {
+      const entry = timelineEntries[index];
+      if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+        continue;
+      }
+
+      for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
+        const nextEntry = timelineEntries[nextIndex];
+        if (!nextEntry || nextEntry.kind !== "message") {
+          continue;
+        }
+        if (nextEntry.message.role === "user") {
+          break;
+        }
+        if (turnDiffSummaryByAssistantMessageId.has(nextEntry.message.id)) {
+          editableIds.add(entry.message.id);
+          break;
+        }
+      }
+    }
+    return editableIds;
+  }, [timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const retryableAssistantMessageIds = useMemo(
+    () => new Set(turnDiffSummaryByAssistantMessageId.keys()),
+    [turnDiffSummaryByAssistantMessageId],
+  );
+  const messageVariantStateByMessageId = useMemo(() => {
+    const byMessageId = new Map<MessageId, MessageVariantState>();
+    for (const [messageId, state] of visibleVariantSelectionByMessageId.entries()) {
+      byMessageId.set(messageId, state);
+    }
+    return byMessageId;
+  }, [visibleVariantSelectionByMessageId]);
 
   const completionSummary = useMemo(() => {
     if (!latestTurnSettled) return null;
@@ -3402,16 +3926,235 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (turnId: TurnId, filePath?: string) => {
       void navigate({
         to: "/$threadId",
-        params: { threadId },
+        params: { threadId: routeRootThreadId },
         search: (previous) => {
-          const rest = stripDiffSearchParams(previous);
+          const rest = stripDiffSearchParams(stripBranchSearchParams(previous));
           return filePath
-            ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath }
-            : { ...rest, diff: "1", diffTurnId: turnId };
+            ? {
+                ...rest,
+                ...(selectedLeafThreadId !== routeRootThreadId
+                  ? { branchThreadId: selectedLeafThreadId }
+                  : {}),
+                diff: "1",
+                diffTurnId: turnId,
+                diffFilePath: filePath,
+              }
+            : {
+                ...rest,
+                ...(selectedLeafThreadId !== routeRootThreadId
+                  ? { branchThreadId: selectedLeafThreadId }
+                  : {}),
+                diff: "1",
+                diffTurnId: turnId,
+              };
         },
       });
     },
-    [navigate, threadId],
+    [navigate, routeRootThreadId, selectedLeafThreadId],
+  );
+  const navigateToVisibleThread = useCallback(
+    (nextThreadId: ThreadId) => {
+      const nextRootThreadId = getBranchedThreadRootId(branchedThreadRecords, nextThreadId);
+      const targetRootThreadId = nextRootThreadId === routeRootThreadId ? routeRootThreadId : nextThreadId;
+      const targetLeafThreadId = nextRootThreadId === routeRootThreadId ? nextThreadId : targetRootThreadId;
+      void navigate({
+        to: "/$threadId",
+        params: { threadId: targetRootThreadId },
+        search: (previous) => {
+          const rest = stripDiffSearchParams(stripBranchSearchParams(previous));
+          return targetLeafThreadId !== targetRootThreadId
+            ? { ...rest, branchThreadId: targetLeafThreadId }
+            : rest;
+        },
+      });
+    },
+    [branchedThreadRecords, navigate, routeRootThreadId],
+  );
+  const createBranchedThreadFromMessage = useCallback(
+    async ({
+      sourceThreadId,
+      sourceMessage,
+      kind,
+      messageText,
+    }: {
+      sourceThreadId: ThreadId;
+      sourceMessage: TimelineMessage;
+      kind: BranchedThreadKind;
+      messageText?: string;
+    }) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !activeProject ||
+        !isServerThread ||
+        isWorking ||
+        isCreatingBranch
+      ) {
+        return;
+      }
+
+      const trimmedMessageText = messageText?.trim();
+      const createdAt = new Date().toISOString();
+      const nextThreadId = newThreadId();
+      const sourceThread = threadById.get(sourceThreadId) ?? activeThread;
+      const nextRecord: BranchedThreadRecord = {
+        threadId: nextThreadId,
+        parentThreadId: sourceThreadId,
+        rootThreadId: routeRootThreadId,
+        anchorThreadId: sourceThreadId,
+        sourceThreadId,
+        sourceMessageId: sourceMessage.id,
+        variantGroupId: buildVariantGroupId(kind, sourceMessage.id),
+        kind,
+        createdAt,
+      };
+      const titleSeed =
+        kind === "edit"
+          ? trimmedMessageText || sourceMessage.text.trim()
+          : sourceThread.title.trim();
+      const titleFallback =
+        kind === "edit" ? "Edited message" : `${sourceThread.title.trim() || "Thread"} retry`;
+
+      setIsCreatingBranch(true);
+      try {
+        await api.orchestration.createBranchedThread({
+          sourceThreadId,
+          newThreadId: nextThreadId,
+          projectId: activeProject.id,
+          sourceMessageId: sourceMessage.id,
+          kind,
+          title: truncateTitle(titleSeed || titleFallback),
+          model: selectedModel,
+          runtimeMode,
+          interactionMode,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
+          ...(trimmedMessageText !== undefined ? { messageText: trimmedMessageText } : {}),
+          provider: selectedProvider,
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
+          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          createdAt,
+        });
+        setBranchedThreadRecords(upsertBranchedThreadRecord(nextRecord));
+        setVariantSelection(nextRecord.variantGroupId, nextRecord.anchorThreadId, nextRecord.threadId);
+        const snapshot = await api.orchestration.getSnapshot();
+        syncServerReadModel(snapshot);
+        navigateToVisibleThread(nextThreadId);
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: kind === "edit" ? "Could not branch edited message" : "Could not retry response",
+          description:
+            error instanceof Error
+              ? error.message
+              : "An error occurred while creating the branched thread.",
+        });
+      } finally {
+        setIsCreatingBranch(false);
+      }
+    },
+    [
+      activeProject,
+      activeThread,
+      interactionMode,
+      isCreatingBranch,
+      isServerThread,
+      isWorking,
+      navigateToVisibleThread,
+      providerOptionsForDispatch,
+      routeRootThreadId,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedProvider,
+      setVariantSelection,
+      settings.enableAssistantStreaming,
+      threadById,
+      syncServerReadModel,
+    ],
+  );
+  const onEditUserMessage = useCallback(
+    (messageId: MessageId) => {
+      const message = timelineMessageById.get(messageId);
+      if (!message || message.role !== "user" || !editableUserMessageIds.has(messageId)) {
+        return;
+      }
+      setEditBranchMessageId(messageId);
+      setEditBranchText(message.text);
+    },
+    [editableUserMessageIds, timelineMessageById],
+  );
+  const onSubmitEditBranch = useCallback(() => {
+    if (!editBranchMessageId) {
+      return;
+    }
+    const message = timelineMessageById.get(editBranchMessageId);
+    const sourceThreadId = visibleOriginThreadIdByMessageId.get(editBranchMessageId);
+    if (!message || message.role !== "user" || !sourceThreadId) {
+      return;
+    }
+    void createBranchedThreadFromMessage({
+      sourceThreadId,
+      sourceMessage: message,
+      kind: "edit",
+      messageText: editBranchText,
+    });
+    setEditBranchMessageId(null);
+    setEditBranchText("");
+  }, [
+    createBranchedThreadFromMessage,
+    editBranchMessageId,
+    editBranchText,
+    timelineMessageById,
+    visibleOriginThreadIdByMessageId,
+  ]);
+  const onRetryAssistantMessage = useCallback(
+    (messageId: MessageId) => {
+      const message = timelineMessageById.get(messageId);
+      const sourceThreadId = visibleOriginThreadIdByMessageId.get(messageId);
+      if (
+        !message ||
+        message.role !== "assistant" ||
+        !retryableAssistantMessageIds.has(messageId) ||
+        !sourceThreadId
+      ) {
+        return;
+      }
+      void createBranchedThreadFromMessage({
+        sourceThreadId,
+        sourceMessage: message,
+        kind: "retry",
+      });
+    },
+    [
+      createBranchedThreadFromMessage,
+      retryableAssistantMessageIds,
+      timelineMessageById,
+      visibleOriginThreadIdByMessageId,
+    ],
+  );
+  const onNavigateMessageVariant = useCallback(
+    (messageId: MessageId, direction: -1 | 1) => {
+      const variantState = messageVariantStateByMessageId.get(messageId);
+      if (!variantState || variantState.threadIds.length < 2 || variantState.currentIndex < 0) {
+        return;
+      }
+      const nextIndex = variantState.currentIndex + direction;
+      if (nextIndex < 0 || nextIndex >= variantState.threadIds.length) {
+        return;
+      }
+      const nextThreadId = variantState.threadIds[nextIndex];
+      if (!nextThreadId) {
+        return;
+      }
+      setVariantSelection(variantState.variantGroupId, variantState.anchorThreadId, nextThreadId);
+      navigateToVisibleThread(nextThreadId);
+    },
+    [messageVariantStateByMessageId, navigateToVisibleThread, setVariantSelection],
   );
   const onRevertUserMessage = (messageId: MessageId) => {
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
@@ -3478,6 +4221,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
           onToggleDiff={onToggleDiff}
+          hasBranchTree={(branchTree?.children.length ?? 0) > 0}
+          onOpenBranchTree={() => setTreeViewerOpen(true)}
         />
       </header>
 
@@ -3521,9 +4266,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
               expandedWorkGroups={expandedWorkGroups}
               onToggleWorkGroup={onToggleWorkGroup}
               onOpenTurnDiff={onOpenTurnDiff}
+              editableUserMessageIds={editableUserMessageIds}
+              retryableAssistantMessageIds={retryableAssistantMessageIds}
+              messageVariantStateByMessageId={messageVariantStateByMessageId}
+              onEditUserMessage={onEditUserMessage}
+              onRetryAssistantMessage={onRetryAssistantMessage}
+              onNavigateMessageVariant={onNavigateMessageVariant}
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
               isRevertingCheckpoint={isRevertingCheckpoint}
+              isCreatingBranch={isCreatingBranch}
               onImageExpand={onExpandTimelineImage}
               markdownCwd={gitCwd ?? undefined}
               resolvedTheme={resolvedTheme}
@@ -4071,6 +4823,90 @@ export default function ChatView({ threadId }: ChatViewProps) {
         );
       })()}
 
+      <Dialog
+        open={editBranchMessageId !== null}
+        onOpenChange={(open) => {
+          if (!open && !isCreatingBranch) {
+            setEditBranchMessageId(null);
+            setEditBranchText("");
+          }
+        }}
+      >
+        <DialogPopup className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Edit message</DialogTitle>
+            <DialogDescription>
+              This creates a branched thread from the selected message. Existing image attachments are reused.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-3">
+            <Textarea
+              value={editBranchText}
+              onChange={(event) => setEditBranchText(event.target.value)}
+              rows={8}
+              disabled={isCreatingBranch}
+              spellCheck={false}
+            />
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isCreatingBranch}
+              onClick={() => {
+                setEditBranchMessageId(null);
+                setEditBranchText("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={isCreatingBranch}
+              onClick={onSubmitEditBranch}
+            >
+              {isCreatingBranch ? "Branching..." : "Create branch"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      <Dialog open={treeViewerOpen} onOpenChange={setTreeViewerOpen}>
+        <DialogPopup className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Thread tree</DialogTitle>
+            <DialogDescription>Branched+ variants for this thread family.</DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="max-h-[70vh] overflow-y-auto">
+            {branchTree ? (
+              <BranchGraph
+                rootNode={branchTree}
+                activeThreadId={activeThread.id}
+                selectedBranchThreadIdSet={selectedBranchThreadIdSet}
+                threadTitleById={threadTitleById}
+                messagePreviewById={messagePreviewById}
+                threadMessagePreviewsByThreadId={threadMessagePreviewsByThreadId}
+                expandedThreads={expandedBranchThreads}
+                onToggleExpandedThread={(threadId) => {
+                  setExpandedBranchThreads((existing) => ({
+                    ...existing,
+                    [threadId]: !existing[threadId],
+                  }));
+                }}
+                onSelectThread={(nextThreadId) => {
+                  setTreeViewerOpen(false);
+                  navigateToVisibleThread(nextThreadId);
+                }}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">No branches yet.</p>
+            )}
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
+
       {expandedImage && expandedImageItem && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
@@ -4160,6 +4996,8 @@ interface ChatHeaderProps {
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleDiff: () => void;
+  hasBranchTree: boolean;
+  onOpenBranchTree: () => void;
 }
 
 const ChatHeader = memo(function ChatHeader({
@@ -4180,6 +5018,8 @@ const ChatHeader = memo(function ChatHeader({
   onUpdateProjectScript,
   onDeleteProjectScript,
   onToggleDiff,
+  hasBranchTree,
+  onOpenBranchTree,
 }: ChatHeaderProps) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -4191,6 +5031,16 @@ const ChatHeader = memo(function ChatHeader({
         >
           {activeThreadTitle}
         </h2>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          className="shrink-0"
+          onClick={onOpenBranchTree}
+          title={hasBranchTree ? "Open thread tree" : "No branches yet"}
+        >
+          Tree
+        </Button>
         {activeProjectName && (
           <Badge variant="outline" className="min-w-0 shrink truncate">
             {activeProjectName}
@@ -4247,6 +5097,213 @@ const ChatHeader = memo(function ChatHeader({
           </TooltipPopup>
         </Tooltip>
       </div>
+    </div>
+  );
+});
+
+interface BranchGraphRow {
+  node: BranchedThreadTreeNode;
+  column: number;
+  depth: number;
+  isLeaf: boolean;
+}
+
+function buildBranchGraphRows(
+  rootNode: BranchedThreadTreeNode,
+): { rows: BranchGraphRow[]; columnCount: number } {
+  const rows: BranchGraphRow[] = [];
+  const columnByThreadId = new Map<ThreadId, number>();
+  let nextColumn = 0;
+
+  const allocateColumn = () => {
+    const column = nextColumn;
+    nextColumn += 1;
+    return column;
+  };
+
+  const walk = (node: BranchedThreadTreeNode, depth: number, forcedColumn?: number) => {
+    const existingColumn = columnByThreadId.get(node.threadId);
+    const column = forcedColumn ?? existingColumn ?? allocateColumn();
+    columnByThreadId.set(node.threadId, column);
+
+    rows.push({
+      node,
+      column,
+      depth,
+      isLeaf: node.children.length === 0,
+    });
+
+    if (node.children.length === 0) {
+      return;
+    }
+
+    const [firstChild, ...restChildren] = node.children;
+    if (firstChild) {
+      walk(firstChild, depth + 1, column);
+    }
+    for (const child of restChildren) {
+      walk(child, depth + 1, allocateColumn());
+    }
+  };
+
+  walk(rootNode, 0, allocateColumn());
+
+  return { rows, columnCount: Math.max(1, nextColumn) };
+}
+
+const BranchGraph = memo(function BranchGraph({
+  rootNode,
+  activeThreadId,
+  selectedBranchThreadIdSet,
+  threadTitleById,
+  messagePreviewById,
+  threadMessagePreviewsByThreadId,
+  expandedThreads,
+  onToggleExpandedThread,
+  onSelectThread,
+}: {
+  rootNode: BranchedThreadTreeNode;
+  activeThreadId: ThreadId;
+  selectedBranchThreadIdSet: Set<ThreadId>;
+  threadTitleById: Map<ThreadId, string>;
+  messagePreviewById: Map<MessageId, string>;
+  threadMessagePreviewsByThreadId: Map<
+    ThreadId,
+    Array<{ id: MessageId; role: ChatMessage["role"]; preview: string }>
+  >;
+  expandedThreads: Record<string, boolean>;
+  onToggleExpandedThread: (threadId: ThreadId) => void;
+  onSelectThread: (threadId: ThreadId) => void;
+}) {
+  const { rows, columnCount } = useMemo(
+    () => buildBranchGraphRows(rootNode),
+    [rootNode],
+  );
+  const columnSlots = useMemo(
+    () => Array.from({ length: columnCount }, (_, slot) => slot),
+    [columnCount],
+  );
+
+  return (
+    <div className="space-y-2">
+      {rows.map((row) => {
+        const { node, column, isLeaf } = row;
+        const title = threadTitleById.get(node.threadId) ?? node.threadId;
+        const kindLabel =
+          node.kind === "root" ? "Root" : node.kind === "edit" ? "Edit" : "Retry";
+        const previews = threadMessagePreviewsByThreadId.get(node.threadId) ?? [];
+        const sourcePreview = node.sourceMessageId
+          ? messagePreviewById.get(node.sourceMessageId)
+          : null;
+        const fallbackPreview =
+          previews.length > 0 ? previews[previews.length - 1]?.preview : "No messages yet.";
+        const summaryPreview = sourcePreview ?? fallbackPreview;
+        const isSelected = selectedBranchThreadIdSet.has(node.threadId);
+        const isActive = node.threadId === activeThreadId;
+        const isExpanded = Boolean(expandedThreads[node.threadId]);
+
+        return (
+          <div
+            key={node.threadId}
+            className={cn(
+              "rounded-lg border px-3 py-2 transition-colors",
+              isSelected ? "border-foreground/30 bg-accent/50" : "border-border/70",
+              isActive && "shadow-[0_0_0_1px_hsl(var(--foreground)/0.2)]",
+            )}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className="grid shrink-0"
+                style={{
+                  gridTemplateColumns: `repeat(${columnCount}, 12px)`,
+                }}
+              >
+                {columnSlots.map((slot) => {
+                  const isNodeColumn = slot === column;
+                  return (
+                    <div key={`${node.threadId}:col:${slot}`} className="relative h-full">
+                      <span
+                        className={cn(
+                          "absolute inset-y-0 left-1/2 w-px",
+                          isSelected ? "bg-foreground/40" : "bg-border/60",
+                        )}
+                      />
+                      {isNodeColumn && (
+                        <span
+                          className={cn(
+                            "absolute left-1/2 top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full",
+                            isActive ? "bg-foreground" : "bg-muted-foreground/70",
+                          )}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  className="flex w-full items-start justify-between gap-2 text-left"
+                  onClick={() => onSelectThread(node.threadId)}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">{title}</p>
+                    <p className="truncate text-xs text-muted-foreground/70">{summaryPreview}</p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/70">
+                      {kindLabel}
+                    </p>
+                    {node.kind !== "root" && (
+                      <p className="text-[10px] text-muted-foreground/60">
+                        {formatTimestamp(node.createdAt)}
+                      </p>
+                    )}
+                    {isLeaf && (
+                      <p className="mt-1 text-[10px] uppercase tracking-[0.12em] text-emerald-500/80">
+                        Leaf
+                      </p>
+                    )}
+                  </div>
+                </button>
+
+                {previews.length > 0 && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground/70 hover:text-foreground"
+                      onClick={() => onToggleExpandedThread(node.threadId)}
+                    >
+                      {isExpanded ? "Collapse messages" : `Expand ${previews.length} messages`}
+                    </button>
+                    {node.sourceMessageId && (
+                      <span className="text-[10px] text-muted-foreground/60">
+                        Source message highlighted
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {isExpanded && previews.length > 0 && (
+                  <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
+                    {previews.map((preview) => (
+                      <div key={preview.id} className="flex items-start gap-2 text-xs">
+                        <span className="mt-[2px] text-[10px] font-semibold text-muted-foreground/60">
+                          {preview.role === "user" ? "U" : "A"}
+                        </span>
+                        <span className="truncate text-muted-foreground/80">
+                          {preview.preview}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 });
@@ -4582,6 +5639,50 @@ const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBanner({
       {/* <div className="mt-2 text-xs text-muted-foreground">
         Review the plan
       </div> */}
+    </div>
+  );
+});
+
+const MessageVariantControls = memo(function MessageVariantControls({
+  variantState,
+  onNavigate,
+}: {
+  variantState: MessageVariantState | null;
+  onNavigate: (direction: -1 | 1) => void;
+}) {
+  if (!variantState || variantState.threadIds.length < 2 || variantState.currentIndex < 0) {
+    return null;
+  }
+
+  const currentLabel = `${variantState.currentIndex + 1}/${variantState.threadIds.length}`;
+  const canGoPrevious = variantState.currentIndex > 0;
+  const canGoNext = variantState.currentIndex < variantState.threadIds.length - 1;
+
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        disabled={!canGoPrevious}
+        onClick={() => onNavigate(-1)}
+        aria-label="Previous variant"
+      >
+        <ChevronLeftIcon className="size-3" />
+      </Button>
+      <span className="min-w-10 text-center text-[10px] text-muted-foreground/80">
+        {currentLabel}
+      </span>
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        disabled={!canGoNext}
+        onClick={() => onNavigate(1)}
+        aria-label="Next variant"
+      >
+        <ChevronRightIcon className="size-3" />
+      </Button>
     </div>
   );
 });
@@ -4949,9 +6050,16 @@ interface MessagesTimelineProps {
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  editableUserMessageIds: Set<MessageId>;
+  retryableAssistantMessageIds: Set<MessageId>;
+  messageVariantStateByMessageId: Map<MessageId, MessageVariantState>;
+  onEditUserMessage: (messageId: MessageId) => void;
+  onRetryAssistantMessage: (messageId: MessageId) => void;
+  onNavigateMessageVariant: (messageId: MessageId, direction: -1 | 1) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
+  isCreatingBranch: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
@@ -5003,9 +6111,16 @@ const MessagesTimeline = memo(function MessagesTimeline({
   expandedWorkGroups,
   onToggleWorkGroup,
   onOpenTurnDiff,
+  editableUserMessageIds,
+  retryableAssistantMessageIds,
+  messageVariantStateByMessageId,
+  onEditUserMessage,
+  onRetryAssistantMessage,
+  onNavigateMessageVariant,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
+  isCreatingBranch,
   onImageExpand,
   markdownCwd,
   resolvedTheme,
@@ -5298,7 +6413,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "user" &&
         (() => {
           const userImages = row.message.attachments ?? [];
+          const canEditMessage = editableUserMessageIds.has(row.message.id);
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
+          const variantState = messageVariantStateByMessageId.get(row.message.id) ?? null;
           return (
             <div className="flex justify-end">
               <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
@@ -5345,20 +6462,37 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   </pre>
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {row.message.text && <MessageCopyButton text={row.message.text} />}
-                    {canRevertAgentWork && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={isRevertingCheckpoint || isWorking}
-                        onClick={() => onRevertUserMessage(row.message.id)}
-                        title="Revert to this message"
-                      >
-                        <Undo2Icon className="size-3" />
-                      </Button>
-                    )}
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                      {canEditMessage && (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          disabled={isWorking || isCreatingBranch}
+                          onClick={() => onEditUserMessage(row.message.id)}
+                        >
+                          Edit
+                        </Button>
+                      )}
+                      {row.message.text && <MessageCopyButton text={row.message.text} />}
+                      {canRevertAgentWork && (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          disabled={isRevertingCheckpoint || isWorking}
+                          onClick={() => onRevertUserMessage(row.message.id)}
+                          title="Revert to this message"
+                        >
+                          <Undo2Icon className="size-3" />
+                        </Button>
+                      )}
+                    </div>
+                    <MessageVariantControls
+                      variantState={variantState}
+                      onNavigate={(direction) => onNavigateMessageVariant(row.message.id, direction)}
+                    />
                   </div>
                   <p className="text-right text-[10px] text-muted-foreground/30">
                     {formatTimestamp(row.message.createdAt)}
@@ -5373,6 +6507,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "assistant" &&
         (() => {
           const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+          const canRetryMessage =
+            !row.message.streaming && retryableAssistantMessageIds.has(row.message.id);
+          const variantState = messageVariantStateByMessageId.get(row.message.id) ?? null;
           return (
             <>
               {row.showCompletionDivider && (
@@ -5446,14 +6583,34 @@ const MessagesTimeline = memo(function MessagesTimeline({
                     </div>
                   );
                 })()}
-                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
-                  {formatMessageMeta(
-                    row.message.createdAt,
-                    row.message.streaming
-                      ? formatElapsed(row.message.createdAt, nowIso)
-                      : formatElapsed(row.message.createdAt, row.message.completedAt),
-                  )}
-                </p>
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {messageText && <MessageCopyButton text={messageText} />}
+                    {canRetryMessage && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={isWorking || isCreatingBranch}
+                        onClick={() => onRetryAssistantMessage(row.message.id)}
+                      >
+                        Try again
+                      </Button>
+                    )}
+                    <MessageVariantControls
+                      variantState={variantState}
+                      onNavigate={(direction) => onNavigateMessageVariant(row.message.id, direction)}
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground/30">
+                    {formatMessageMeta(
+                      row.message.createdAt,
+                      row.message.streaming
+                        ? formatElapsed(row.message.createdAt, nowIso)
+                        : formatElapsed(row.message.createdAt, row.message.completedAt),
+                    )}
+                  </p>
+                </div>
               </div>
             </>
           );

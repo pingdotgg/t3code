@@ -20,6 +20,7 @@ export interface ServerConfigShape {
   readonly port: number;
   readonly host: string | undefined;
   readonly cwd: string;
+  readonly defaultProjectsPath: string;
   readonly keybindingsConfigPath: string;
   readonly stateDir: string;
   readonly staticDir: string | undefined;
@@ -43,6 +44,7 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
         const path = yield* Path.Path;
         return {
           cwd,
+          defaultProjectsPath: path.join(cwd, "Projects"),
           stateDir: statedir,
           mode: "web",
           autoBootstrapProjectFromCwd: false,

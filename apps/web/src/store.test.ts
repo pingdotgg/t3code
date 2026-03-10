@@ -7,7 +7,14 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
+import {
+  markThreadUnread,
+  moveProject,
+  moveThread,
+  reorderProjects,
+  syncServerReadModel,
+  type AppState,
+} from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -42,6 +49,7 @@ function makeState(thread: Thread): AppState {
         cwd: "/tmp/project",
         model: "gpt-5-codex",
         expanded: true,
+        parentProjectId: null,
         scripts: [],
       },
     ],
@@ -161,6 +169,7 @@ describe("store pure functions", () => {
           cwd: "/tmp/project-1",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
+          parentProjectId: null,
           scripts: [],
         },
         {
@@ -169,6 +178,7 @@ describe("store pure functions", () => {
           cwd: "/tmp/project-2",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
+          parentProjectId: null,
           scripts: [],
         },
         {
@@ -177,6 +187,7 @@ describe("store pure functions", () => {
           cwd: "/tmp/project-3",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
+          parentProjectId: null,
           scripts: [],
         },
       ],
@@ -187,6 +198,83 @@ describe("store pure functions", () => {
     const next = reorderProjects(state, project1, project3);
 
     expect(next.projects.map((project) => project.id)).toEqual([project2, project3, project1]);
+  });
+
+  it("moveProject nests a project under another project", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const state: AppState = {
+      projects: [
+        {
+          id: project1,
+          name: "Project 1",
+          cwd: "/tmp/project-1",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          parentProjectId: null,
+          scripts: [],
+        },
+        {
+          id: project2,
+          name: "Project 2",
+          cwd: "/tmp/project-2",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          parentProjectId: null,
+          scripts: [],
+        },
+      ],
+      threads: [],
+      threadsHydrated: true,
+    };
+
+    const next = moveProject(state, project2, project1, 0);
+
+    expect(next.projects.find((project) => project.id === project2)?.parentProjectId).toBe(project1);
+  });
+
+  it("moveThread reassigns a thread to another project and preserves local order", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const thread1 = ThreadId.makeUnsafe("thread-1");
+    const thread2 = ThreadId.makeUnsafe("thread-2");
+    const thread3 = ThreadId.makeUnsafe("thread-3");
+    const state: AppState = {
+      projects: [
+        {
+          id: project1,
+          name: "Project 1",
+          cwd: "/tmp/project-1",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          parentProjectId: null,
+          scripts: [],
+        },
+        {
+          id: project2,
+          name: "Project 2",
+          cwd: "/tmp/project-2",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          parentProjectId: null,
+          scripts: [],
+        },
+      ],
+      threads: [
+        makeThread({ id: thread1, projectId: project1 }),
+        makeThread({ id: thread2, projectId: project2 }),
+        makeThread({ id: thread3, projectId: project2, createdAt: "2026-02-14T00:00:00.000Z" }),
+      ],
+      threadsHydrated: true,
+    };
+
+    const next = moveThread(state, thread1, project2, 1);
+
+    expect(next.threads.map((thread) => [thread.id, thread.projectId])).toEqual([
+      [thread2, project2],
+      [thread1, project2],
+      [thread3, project2],
+    ]);
   });
 });
 
@@ -216,6 +304,7 @@ describe("store read model sync", () => {
           cwd: "/tmp/project-2",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
+          parentProjectId: null,
           scripts: [],
         },
         {
@@ -224,6 +313,7 @@ describe("store read model sync", () => {
           cwd: "/tmp/project-1",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
+          parentProjectId: null,
           scripts: [],
         },
       ],

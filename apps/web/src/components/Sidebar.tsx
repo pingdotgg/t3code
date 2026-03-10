@@ -10,13 +10,14 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   DndContext,
   type DragCancelEvent,
   type CollisionDetection,
   PointerSensor,
   type DragStartEvent,
+  useDroppable,
   closestCorners,
   pointerWithin,
   useSensor,
@@ -24,7 +25,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
   DEFAULT_RUNTIME_MODE,
@@ -84,6 +85,8 @@ import {
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import { resolveThreadStatusPill } from "./Sidebar.logic";
+import { buildSidebarProjectTree } from "../sidebarTree";
+import { readBranchedThreadRecords, subscribeBranchedThreadRecords } from "../branchedThreads";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -103,6 +106,17 @@ function formatRelativeTime(iso: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function isProjectPathInput(input: string): boolean {
+  return (
+    input.startsWith("/") ||
+    input.startsWith("~") ||
+    input.startsWith(".") ||
+    input.includes("/") ||
+    input.includes("\\") ||
+    /^[A-Za-z]:[\\/]/.test(input)
+  );
 }
 
 interface TerminalStatusIndicator {
@@ -203,15 +217,78 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 
 type SortableProjectHandleProps = Pick<ReturnType<typeof useSortable>, "attributes" | "listeners">;
 
+const ROOT_PROJECT_CONTAINER_ID = "project-children:root";
+
+function projectItemId(projectId: ProjectId): string {
+  return `project:${projectId}`;
+}
+
+function threadItemId(threadId: ThreadId): string {
+  return `thread:${threadId}`;
+}
+
+function projectChildrenContainerId(parentProjectId: ProjectId | null): string {
+  return `project-children:${parentProjectId ?? "root"}`;
+}
+
+function projectThreadsContainerId(projectId: ProjectId): string {
+  return `project-threads:${projectId}`;
+}
+
+type TreeDragData =
+  | {
+      type: "project";
+      projectId: ProjectId;
+      parentProjectId: ProjectId | null;
+      index: number;
+    }
+  | {
+      type: "thread";
+      threadId: ThreadId;
+      projectId: ProjectId;
+      index: number;
+    }
+  | {
+      type: "project-container";
+      parentProjectId: ProjectId | null;
+      itemCount: number;
+    }
+  | {
+      type: "thread-container";
+      projectId: ProjectId;
+      itemCount: number;
+    };
+
+function resolveDragCenterY(event: DragEndEvent): number | null {
+  if (!event.over || !event.active.rect.current.initial) {
+    return null;
+  }
+  const translatedTop = event.active.rect.current.translated?.top;
+  if (translatedTop === undefined) {
+    return null;
+  }
+  return translatedTop + event.active.rect.current.initial.height / 2;
+}
+
+function resolveDropInsertAfter(event: DragEndEvent): boolean {
+  const dragCenterY = resolveDragCenterY(event);
+  if (dragCenterY === null || !event.over) {
+    return false;
+  }
+  return dragCenterY > event.over.rect.top + event.over.rect.height / 2;
+}
+
 function SortableProjectItem({
-  projectId,
+  id,
+  data,
   children,
 }: {
-  projectId: ProjectId;
+  id: string;
+  data: Extract<TreeDragData, { type: "project" }>;
   children: (handleProps: SortableProjectHandleProps) => React.ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } =
-    useSortable({ id: projectId });
+    useSortable({ id, data });
   return (
     <li
       ref={setNodeRef}
@@ -230,12 +307,78 @@ function SortableProjectItem({
   );
 }
 
+function SortableThreadItem({
+  id,
+  data,
+  children,
+}: {
+  id: string;
+  data: Extract<TreeDragData, { type: "thread" }>;
+  children: (handleProps: SortableProjectHandleProps) => React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } =
+    useSortable({ id, data });
+  return (
+    <li
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+      }}
+      className={`relative w-full rounded-md ${
+        isDragging ? "z-20 opacity-80" : ""
+      } ${isOver && !isDragging ? "ring-1 ring-primary/30" : ""}`}
+    >
+      {children({ attributes, listeners })}
+    </li>
+  );
+}
+
+function DroppableTreeContainer({
+  id,
+  data,
+  className,
+  children,
+}: {
+  id: string;
+  data: Exclude<TreeDragData, Extract<TreeDragData, { type: "project" | "thread" }>>;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id, data });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`${className ?? ""} ${
+        isOver ? "rounded-md bg-primary/6 ring-1 ring-primary/20" : ""
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function Sidebar() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
+  const branchedThreadRecords = useSyncExternalStore(
+    subscribeBranchedThreadRecords,
+    readBranchedThreadRecords,
+    () => [],
+  );
+  const branchedThreadIdSet = useMemo(
+    () => new Set(branchedThreadRecords.map((record) => record.threadId)),
+    [branchedThreadRecords],
+  );
+  const visibleThreads = useMemo(
+    () => threads.filter((thread) => !branchedThreadIdSet.has(thread.id)),
+    [branchedThreadIdSet, threads],
+  );
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
-  const reorderProjects = useStore((store) => store.reorderProjects);
+  const moveProject = useStore((store) => store.moveProject);
+  const moveThread = useStore((store) => store.moveThread);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
@@ -258,14 +401,12 @@ export default function Sidebar() {
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
-  const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
-    ...serverConfigQueryOptions(),
-    select: (config) => config.keybindings,
-  });
+  const { data: serverConfig } = useQuery(serverConfigQueryOptions());
+  const keybindings = serverConfig?.keybindings ?? EMPTY_KEYBINDINGS;
   const queryClient = useQueryClient();
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const [addingProject, setAddingProject] = useState(false);
-  const [newCwd, setNewCwd] = useState("");
+  const [projectInput, setProjectInput] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
@@ -280,8 +421,8 @@ export default function Sidebar() {
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
-  const shouldBrowseForProjectImmediately = isElectron;
-  const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
+  const defaultProjectsPath = serverConfig?.defaultProjectsPath ?? null;
+  const shouldShowProjectPathEntry = addingProject;
   const pendingApprovalByThreadId = useMemo(() => {
     const map = new Map<ThreadId, boolean>();
     for (const thread of threads) {
@@ -347,6 +488,17 @@ export default function Sidebar() {
     }
     return map;
   }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  const projectTree = useMemo(
+    () => buildSidebarProjectTree(projects, visibleThreads),
+    [projects, visibleThreads],
+  );
+  const childProjectCountByParentId = useMemo(() => {
+    const counts = new Map<ProjectId | null, number>();
+    for (const project of projects) {
+      counts.set(project.parentProjectId, (counts.get(project.parentProjectId) ?? 0) + 1);
+    }
+    return counts;
+  }, [projects]);
 
   const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -446,7 +598,7 @@ export default function Sidebar() {
 
   const focusMostRecentThreadForProject = useCallback(
     (projectId: ProjectId) => {
-      const latestThread = threads
+      const latestThread = visibleThreads
         .filter((thread) => thread.projectId === projectId)
         .toSorted((a, b) => {
           const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -460,20 +612,20 @@ export default function Sidebar() {
         params: { threadId: latestThread.id },
       });
     },
-    [navigate, threads],
+    [navigate, visibleThreads],
   );
 
   const addProjectFromPath = useCallback(
     async (rawCwd: string) => {
       const cwd = rawCwd.trim();
-      if (!cwd || isAddingProject) return;
+      if (!cwd) return;
       const api = readNativeApi();
       if (!api) return;
 
       setIsAddingProject(true);
       const finishAddingProject = () => {
         setIsAddingProject(false);
-        setNewCwd("");
+        setProjectInput("");
         setAddProjectError(null);
         setAddingProject(false);
       };
@@ -503,33 +655,39 @@ export default function Sidebar() {
         const description =
           error instanceof Error ? error.message : "An error occurred while adding the project.";
         setIsAddingProject(false);
-        if (shouldBrowseForProjectImmediately) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to add project",
-            description,
-          });
-        } else {
-          setAddProjectError(description);
-        }
+        setAddProjectError(description);
         return;
       }
       finishAddingProject();
     },
-    [
-      focusMostRecentThreadForProject,
-      handleNewThread,
-      isAddingProject,
-      projects,
-      shouldBrowseForProjectImmediately,
-    ],
+    [focusMostRecentThreadForProject, handleNewThread, projects],
   );
 
   const handleAddProject = () => {
-    void addProjectFromPath(newCwd);
+    const input = projectInput.trim();
+    if (input.length === 0 || isAddingProject) return;
+
+    if (isProjectPathInput(input)) {
+      void addProjectFromPath(input);
+      return;
+    }
+
+    const api = readNativeApi();
+    if (!api) return;
+
+    setIsAddingProject(true);
+    void api.projects
+      .createWorkspace({ name: input })
+      .then((result) => addProjectFromPath(result.cwd))
+      .catch((error) => {
+        setIsAddingProject(false);
+        setAddProjectError(
+          error instanceof Error ? error.message : "An error occurred while creating the project.",
+        );
+      });
   };
 
-  const canAddProject = newCwd.trim().length > 0 && !isAddingProject;
+  const canAddProject = projectInput.trim().length > 0 && !isAddingProject;
 
   const handlePickFolder = async () => {
     const api = readNativeApi();
@@ -543,7 +701,7 @@ export default function Sidebar() {
     }
     if (pickedPath) {
       await addProjectFromPath(pickedPath);
-    } else if (!shouldBrowseForProjectImmediately) {
+    } else {
       addProjectInputRef.current?.focus();
     }
     setIsPickingFolder(false);
@@ -551,10 +709,6 @@ export default function Sidebar() {
 
   const handleStartAddProject = () => {
     setAddProjectError(null);
-    if (shouldBrowseForProjectImmediately) {
-      void handlePickFolder();
-      return;
-    }
     setAddingProject((prev) => !prev);
   };
 
@@ -825,25 +979,127 @@ export default function Sidebar() {
     }),
   );
   const projectCollisionDetection = useCallback<CollisionDetection>((args) => {
-    const pointerCollisions = pointerWithin(args);
+    const activeData = args.active.data.current as TreeDragData | undefined;
+    const compatibleDroppableContainers = args.droppableContainers.filter((container) => {
+      const data = container.data.current as TreeDragData | undefined;
+      if (!activeData || !data) return true;
+      if (activeData.type === "project") {
+        return data.type === "project" || data.type === "project-container";
+      }
+      if (activeData.type === "thread") {
+        return data.type === "thread" || data.type === "thread-container" || data.type === "project";
+      }
+      return true;
+    });
+
+    const pointerCollisions = pointerWithin({
+      ...args,
+      droppableContainers: compatibleDroppableContainers,
+    });
     if (pointerCollisions.length > 0) {
       return pointerCollisions;
     }
 
-    return closestCorners(args);
+    return closestCorners({
+      ...args,
+      droppableContainers: compatibleDroppableContainers,
+    });
   }, []);
 
   const handleProjectDragEnd = useCallback(
     (event: DragEndEvent) => {
       dragInProgressRef.current = false;
       const { active, over } = event;
-      if (!over || active.id === over.id) return;
-      const activeProject = projects.find((project) => project.id === active.id);
-      const overProject = projects.find((project) => project.id === over.id);
-      if (!activeProject || !overProject) return;
-      reorderProjects(activeProject.id, overProject.id);
+      if (!over) return;
+
+      const activeData = active.data.current as TreeDragData | undefined;
+      const overData = over.data.current as TreeDragData | undefined;
+      if (!activeData || !overData) return;
+
+      if (activeData.type === "project") {
+        let targetParentProjectId: ProjectId | null = null;
+        let targetIndex = 0;
+
+        if (overData.type === "project") {
+          const dragCenterY = resolveDragCenterY(event);
+          const overTop = over.rect.top;
+          const overBottom = over.rect.top + over.rect.height;
+          const nestTop = overTop + over.rect.height * 0.3;
+          const nestBottom = overBottom - over.rect.height * 0.3;
+          const canNestIntoProject =
+            dragCenterY !== null &&
+            dragCenterY >= nestTop &&
+            dragCenterY <= nestBottom &&
+            activeData.projectId !== overData.projectId;
+
+          if (canNestIntoProject) {
+            targetParentProjectId = overData.projectId;
+            targetIndex = childProjectCountByParentId.get(overData.projectId) ?? 0;
+          } else {
+            targetParentProjectId = overData.parentProjectId;
+            targetIndex = overData.index + (resolveDropInsertAfter(event) ? 1 : 0);
+          }
+        } else if (overData.type === "project-container") {
+          targetParentProjectId = overData.parentProjectId;
+          targetIndex = overData.itemCount;
+        } else {
+          return;
+        }
+
+        moveProject(activeData.projectId, targetParentProjectId, targetIndex);
+        return;
+      }
+
+      if (activeData.type !== "thread") {
+        return;
+      }
+
+      let targetProjectId: ProjectId | null = null;
+      let targetIndex = 0;
+
+      if (overData.type === "thread") {
+        targetProjectId = overData.projectId;
+        targetIndex = overData.index + (resolveDropInsertAfter(event) ? 1 : 0);
+      } else if (overData.type === "thread-container") {
+        targetProjectId = overData.projectId;
+        targetIndex = overData.itemCount;
+      } else if (overData.type === "project") {
+        targetProjectId = overData.projectId;
+        targetIndex = threads.filter((thread) => thread.projectId === overData.projectId).length;
+      } else {
+        return;
+      }
+
+      if (targetProjectId === null) return;
+
+      if (targetProjectId === activeData.projectId) {
+        moveThread(activeData.threadId, targetProjectId, targetIndex);
+        return;
+      }
+
+      const api = readNativeApi();
+      if (!api) return;
+
+      void api.orchestration
+        .dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: activeData.threadId,
+          projectId: targetProjectId,
+        })
+        .then(() => {
+          moveThread(activeData.threadId, targetProjectId, targetIndex);
+        })
+        .catch((error) => {
+          toastManager.add({
+            type: "error",
+            title: "Failed to move thread",
+            description:
+              error instanceof Error ? error.message : "An unexpected error occurred.",
+          });
+        });
     },
-    [projects, reorderProjects],
+    [childProjectCountByParentId, moveProject, moveThread, threads],
   );
 
   const handleProjectDragStart = useCallback((_event: DragStartEvent) => {
@@ -888,6 +1144,27 @@ export default function Sidebar() {
       toggleProject(projectId);
     },
     [toggleProject],
+  );
+
+  const handleThreadItemClick = useCallback(
+    (event: React.MouseEvent<HTMLElement>, threadId: ThreadId) => {
+      if (dragInProgressRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (suppressProjectClickAfterDragRef.current) {
+        suppressProjectClickAfterDragRef.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+      });
+    },
+    [navigate],
   );
 
   useEffect(() => {
@@ -1065,6 +1342,314 @@ export default function Sidebar() {
     });
   }, []);
 
+  const renderProjectNode = (
+    node: (typeof projectTree)[number],
+    depth: number,
+    siblingIndex: number,
+  ): React.ReactNode => {
+    const { project, threads: projectThreads, childProjects } = node;
+    const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
+    const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
+    const visibleThreads =
+      hasHiddenThreads && !isThreadListExpanded
+        ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
+        : projectThreads;
+    const projectIndentStyle = depth > 0 ? { paddingLeft: `${depth * 12}px` } : undefined;
+
+    return (
+      <SortableProjectItem
+        key={project.id}
+        id={projectItemId(project.id)}
+        data={{
+          type: "project",
+          projectId: project.id,
+          parentProjectId: project.parentProjectId,
+          index: siblingIndex,
+        }}
+      >
+        {(dragHandleProps) => (
+          <div style={projectIndentStyle}>
+            <Collapsible className="group/collapsible" open={project.expanded}>
+              <div className="group/project-header relative">
+                <SidebarMenuButton
+                  size="sm"
+                  className="gap-2 px-2 py-1.5 text-left cursor-grab active:cursor-grabbing hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
+                  {...dragHandleProps.attributes}
+                  {...dragHandleProps.listeners}
+                  onPointerDownCapture={handleProjectTitlePointerDownCapture}
+                  onClick={(event) => handleProjectTitleClick(event, project.id)}
+                  onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    void handleProjectContextMenu(project.id, {
+                      x: event.clientX,
+                      y: event.clientY,
+                    });
+                  }}
+                >
+                  <ChevronRightIcon
+                    className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
+                      project.expanded ? "rotate-90" : ""
+                    }`}
+                  />
+                  <ProjectFavicon cwd={project.cwd} />
+                  <span className="flex-1 truncate text-xs font-medium text-foreground/90">
+                    {project.name}
+                  </span>
+                </SidebarMenuButton>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <SidebarMenuAction
+                        render={
+                          <button
+                            type="button"
+                            aria-label={`Create new thread in ${project.name}`}
+                          />
+                        }
+                        showOnHover
+                        className="top-1 right-1 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void handleNewThread(project.id);
+                        }}
+                      >
+                        <SquarePenIcon className="size-3.5" />
+                      </SidebarMenuAction>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    {newThreadShortcutLabel
+                      ? `New thread (${newThreadShortcutLabel})`
+                      : "New thread"}
+                  </TooltipPopup>
+                </Tooltip>
+              </div>
+
+              <CollapsibleContent keepMounted>
+                <DroppableTreeContainer
+                  id={projectThreadsContainerId(project.id)}
+                  data={{
+                    type: "thread-container",
+                    projectId: project.id,
+                    itemCount: projectThreads.length,
+                  }}
+                  className="min-h-2"
+                >
+                  <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0 px-1.5 py-0">
+                    <SortableContext
+                      items={visibleThreads.map((thread) => threadItemId(thread.id))}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {visibleThreads.map((thread) => {
+                        const isActive = routeThreadId === thread.id;
+                        const threadStatus = resolveThreadStatusPill({
+                          thread,
+                          hasPendingApprovals: pendingApprovalByThreadId.get(thread.id) === true,
+                          hasPendingUserInput: pendingUserInputByThreadId.get(thread.id) === true,
+                        });
+                        const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
+                        const terminalStatus = terminalStatusFromRunningIds(
+                          selectThreadTerminalState(terminalStateByThreadId, thread.id)
+                            .runningTerminalIds,
+                        );
+
+                        return (
+                          <SortableThreadItem
+                            key={thread.id}
+                            id={threadItemId(thread.id)}
+                            data={{
+                              type: "thread",
+                              threadId: thread.id,
+                              projectId: project.id,
+                              index: projectThreads.indexOf(thread),
+                            }}
+                          >
+                            {(threadDragHandleProps) => (
+                              <SidebarMenuSubButton
+                                render={<div role="button" tabIndex={0} />}
+                                size="sm"
+                                isActive={isActive}
+                                className={`h-7 w-full translate-x-0 cursor-grab active:cursor-grabbing justify-start px-2 text-left hover:bg-accent hover:text-foreground ${
+                                  isActive
+                                    ? "bg-accent/85 text-foreground font-medium ring-1 ring-border/70 dark:bg-accent/55 dark:ring-border/50"
+                                    : "text-muted-foreground"
+                                }`}
+                                {...threadDragHandleProps.attributes}
+                                {...threadDragHandleProps.listeners}
+                                onPointerDownCapture={handleProjectTitlePointerDownCapture}
+                                onClick={(event) => handleThreadItemClick(event, thread.id)}
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter" && event.key !== " ") return;
+                                  event.preventDefault();
+                                  void navigate({
+                                    to: "/$threadId",
+                                    params: { threadId: thread.id },
+                                  });
+                                }}
+                                onContextMenu={(event) => {
+                                  event.preventDefault();
+                                  void handleThreadContextMenu(thread.id, {
+                                    x: event.clientX,
+                                    y: event.clientY,
+                                  });
+                                }}
+                              >
+                                <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                                  {prStatus && (
+                                    <Tooltip>
+                                      <TooltipTrigger
+                                        render={
+                                          <button
+                                            type="button"
+                                            aria-label={prStatus.tooltip}
+                                            className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                                            onClick={(event) => {
+                                              openPrLink(event, prStatus.url);
+                                            }}
+                                          >
+                                            <GitPullRequestIcon className="size-3" />
+                                          </button>
+                                        }
+                                      />
+                                      <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+                                    </Tooltip>
+                                  )}
+                                  {threadStatus && (
+                                    <span
+                                      className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
+                                    >
+                                      <span
+                                        className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
+                                          threadStatus.pulse ? "animate-pulse" : ""
+                                        }`}
+                                      />
+                                      <span className="hidden md:inline">{threadStatus.label}</span>
+                                    </span>
+                                  )}
+                                  {renamingThreadId === thread.id ? (
+                                    <input
+                                      ref={(el) => {
+                                        if (el && renamingInputRef.current !== el) {
+                                          renamingInputRef.current = el;
+                                          el.focus();
+                                          el.select();
+                                        }
+                                      }}
+                                      className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
+                                      value={renamingTitle}
+                                      onChange={(e) => setRenamingTitle(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        e.stopPropagation();
+                                        if (e.key === "Enter") {
+                                          e.preventDefault();
+                                          renamingCommittedRef.current = true;
+                                          void commitRename(thread.id, renamingTitle, thread.title);
+                                        } else if (e.key === "Escape") {
+                                          e.preventDefault();
+                                          renamingCommittedRef.current = true;
+                                          cancelRename();
+                                        }
+                                      }}
+                                      onBlur={() => {
+                                        if (!renamingCommittedRef.current) {
+                                          void commitRename(thread.id, renamingTitle, thread.title);
+                                        }
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  ) : (
+                                    <span className="min-w-0 flex-1 truncate text-xs">
+                                      {thread.title}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                                  {terminalStatus && (
+                                    <span
+                                      role="img"
+                                      aria-label={terminalStatus.label}
+                                      title={terminalStatus.label}
+                                      className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+                                    >
+                                      <TerminalIcon
+                                        className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
+                                      />
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`text-[10px] ${
+                                      isActive ? "text-foreground/65" : "text-muted-foreground/40"
+                                    }`}
+                                  >
+                                    {formatRelativeTime(thread.createdAt)}
+                                  </span>
+                                </div>
+                              </SidebarMenuSubButton>
+                            )}
+                          </SortableThreadItem>
+                        );
+                      })}
+                    </SortableContext>
+
+                    {hasHiddenThreads && !isThreadListExpanded && (
+                      <SidebarMenuSubItem className="w-full">
+                        <SidebarMenuSubButton
+                          render={<button type="button" />}
+                          size="sm"
+                          className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                          onClick={() => {
+                            expandThreadListForProject(project.id);
+                          }}
+                        >
+                          <span>Show more</span>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    )}
+                    {hasHiddenThreads && isThreadListExpanded && (
+                      <SidebarMenuSubItem className="w-full">
+                        <SidebarMenuSubButton
+                          render={<button type="button" />}
+                          size="sm"
+                          className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                          onClick={() => {
+                            collapseThreadListForProject(project.id);
+                          }}
+                        >
+                          <span>Show less</span>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    )}
+                  </SidebarMenuSub>
+                </DroppableTreeContainer>
+
+                <DroppableTreeContainer
+                  id={projectChildrenContainerId(project.id)}
+                  data={{
+                    type: "project-container",
+                    parentProjectId: project.id,
+                    itemCount: childProjects.length,
+                  }}
+                  className="mt-1 space-y-1 min-h-2"
+                >
+                  <SortableContext
+                    items={childProjects.map((childProject) => projectItemId(childProject.project.id))}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {childProjects.map((childProject, childIndex) =>
+                      renderProjectNode(childProject, depth + 1, childIndex),
+                    )}
+                  </SortableContext>
+                </DroppableTreeContainer>
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
+        )}
+      </SortableProjectItem>
+    );
+  };
+
   const wordmark = (
     <div className="flex items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
@@ -1185,10 +1770,10 @@ export default function Sidebar() {
                       ? "border-red-500/70 focus:border-red-500"
                       : "border-border focus:border-ring"
                   }`}
-                  placeholder="/path/to/project"
-                  value={newCwd}
+                  placeholder="project-name or /path/to/project"
+                  value={projectInput}
                   onChange={(event) => {
-                    setNewCwd(event.target.value);
+                    setProjectInput(event.target.value);
                     setAddProjectError(null);
                   }}
                   onKeyDown={(event) => {
@@ -1209,6 +1794,11 @@ export default function Sidebar() {
                   {isAddingProject ? "Adding..." : "Add"}
                 </button>
               </div>
+              {defaultProjectsPath && (
+                <p className="mt-1 px-0.5 text-[11px] leading-tight text-muted-foreground/55">
+                  Names create a folder in <span className="font-mono">{defaultProjectsPath}</span>.
+                </p>
+              )}
               {addProjectError && (
                 <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
                   {addProjectError}
@@ -1232,274 +1822,28 @@ export default function Sidebar() {
           <DndContext
             sensors={projectDnDSensors}
             collisionDetection={projectCollisionDetection}
-            modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+            modifiers={[restrictToVerticalAxis]}
             onDragStart={handleProjectDragStart}
             onDragEnd={handleProjectDragEnd}
             onDragCancel={handleProjectDragCancel}
           >
             <SidebarMenu>
-              <SortableContext
-                items={projects.map((project) => project.id)}
-                strategy={verticalListSortingStrategy}
+              <DroppableTreeContainer
+                id={ROOT_PROJECT_CONTAINER_ID}
+                data={{
+                  type: "project-container",
+                  parentProjectId: null,
+                  itemCount: projectTree.length,
+                }}
+                className="space-y-1 min-h-2"
               >
-                {projects.map((project) => {
-                  const projectThreads = threads
-                    .filter((thread) => thread.projectId === project.id)
-                    .toSorted((a, b) => {
-                      const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-                      if (byDate !== 0) return byDate;
-                      return b.id.localeCompare(a.id);
-                    });
-                  const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
-                  const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
-                  const visibleThreads =
-                    hasHiddenThreads && !isThreadListExpanded
-                      ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
-                      : projectThreads;
-
-                  return (
-                    <SortableProjectItem key={project.id} projectId={project.id}>
-                      {(dragHandleProps) => (
-                        <Collapsible
-                          className="group/collapsible"
-                          open={project.expanded}
-                        >
-                          <div className="group/project-header relative">
-                            <SidebarMenuButton
-                              size="sm"
-                              className="gap-2 px-2 py-1.5 text-left cursor-grab active:cursor-grabbing hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
-                              {...dragHandleProps.attributes}
-                              {...dragHandleProps.listeners}
-                              onPointerDownCapture={handleProjectTitlePointerDownCapture}
-                              onClick={(event) => handleProjectTitleClick(event, project.id)}
-                              onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
-                              onContextMenu={(event) => {
-                                event.preventDefault();
-                                void handleProjectContextMenu(project.id, {
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                });
-                              }}
-                            >
-                              <ChevronRightIcon
-                                className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
-                                  project.expanded ? "rotate-90" : ""
-                                }`}
-                              />
-                              <ProjectFavicon cwd={project.cwd} />
-                              <span className="flex-1 truncate text-xs font-medium text-foreground/90">
-                                {project.name}
-                              </span>
-                            </SidebarMenuButton>
-                            <Tooltip>
-                              <TooltipTrigger
-                                render={
-                                  <SidebarMenuAction
-                                    render={
-                                      <button
-                                        type="button"
-                                        aria-label={`Create new thread in ${project.name}`}
-                                      />
-                                    }
-                                    showOnHover
-                                    className="top-1 right-1 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
-                                    onClick={(event) => {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      void handleNewThread(project.id);
-                                    }}
-                                  >
-                                    <SquarePenIcon className="size-3.5" />
-                                  </SidebarMenuAction>
-                                }
-                              />
-                              <TooltipPopup side="top">
-                                {newThreadShortcutLabel
-                                  ? `New thread (${newThreadShortcutLabel})`
-                                  : "New thread"}
-                              </TooltipPopup>
-                            </Tooltip>
-                          </div>
-
-                          <CollapsibleContent keepMounted>
-                            <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0 px-1.5 py-0">
-                                {visibleThreads.map((thread) => {
-                                  const isActive = routeThreadId === thread.id;
-                                  const threadStatus = resolveThreadStatusPill({
-                                    thread,
-                                    hasPendingApprovals: pendingApprovalByThreadId.get(thread.id) === true,
-                                    hasPendingUserInput: pendingUserInputByThreadId.get(thread.id) === true,
-                                  });
-                                  const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
-                                  const terminalStatus = terminalStatusFromRunningIds(
-                                    selectThreadTerminalState(terminalStateByThreadId, thread.id)
-                                      .runningTerminalIds,
-                                  );
-
-                                  return (
-                                    <SidebarMenuSubItem key={thread.id} className="w-full">
-                                      <SidebarMenuSubButton
-                                        render={<div role="button" tabIndex={0} />}
-                                        size="sm"
-                                        isActive={isActive}
-                                        className={`h-7 w-full translate-x-0 cursor-default justify-start px-2 text-left hover:bg-accent hover:text-foreground ${
-                                          isActive
-                                            ? "bg-accent/85 text-foreground font-medium ring-1 ring-border/70 dark:bg-accent/55 dark:ring-border/50"
-                                            : "text-muted-foreground"
-                                        }`}
-                                        onClick={() => {
-                                          void navigate({
-                                            to: "/$threadId",
-                                            params: { threadId: thread.id },
-                                          });
-                                        }}
-                                        onKeyDown={(event) => {
-                                          if (event.key !== "Enter" && event.key !== " ") return;
-                                          event.preventDefault();
-                                          void navigate({
-                                            to: "/$threadId",
-                                            params: { threadId: thread.id },
-                                          });
-                                        }}
-                                        onContextMenu={(event) => {
-                                          event.preventDefault();
-                                          void handleThreadContextMenu(thread.id, {
-                                            x: event.clientX,
-                                            y: event.clientY,
-                                          });
-                                        }}
-                                      >
-                                        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-                                          {prStatus && (
-                                            <Tooltip>
-                                              <TooltipTrigger
-                                                render={
-                                                  <button
-                                                    type="button"
-                                                    aria-label={prStatus.tooltip}
-                                                    className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
-                                                    onClick={(event) => {
-                                                      openPrLink(event, prStatus.url);
-                                                    }}
-                                                  >
-                                                    <GitPullRequestIcon className="size-3" />
-                                                  </button>
-                                                }
-                                              />
-                                              <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
-                                            </Tooltip>
-                                          )}
-                                          {threadStatus && (
-                                            <span
-                                              className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
-                                            >
-                                              <span
-                                                className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
-                                                  threadStatus.pulse ? "animate-pulse" : ""
-                                                }`}
-                                              />
-                                              <span className="hidden md:inline">{threadStatus.label}</span>
-                                            </span>
-                                          )}
-                                          {renamingThreadId === thread.id ? (
-                                            <input
-                                              ref={(el) => {
-                                                if (el && renamingInputRef.current !== el) {
-                                                  renamingInputRef.current = el;
-                                                  el.focus();
-                                                  el.select();
-                                                }
-                                              }}
-                                              className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
-                                              value={renamingTitle}
-                                              onChange={(e) => setRenamingTitle(e.target.value)}
-                                              onKeyDown={(e) => {
-                                                e.stopPropagation();
-                                                if (e.key === "Enter") {
-                                                  e.preventDefault();
-                                                  renamingCommittedRef.current = true;
-                                                  void commitRename(thread.id, renamingTitle, thread.title);
-                                                } else if (e.key === "Escape") {
-                                                  e.preventDefault();
-                                                  renamingCommittedRef.current = true;
-                                                  cancelRename();
-                                                }
-                                              }}
-                                              onBlur={() => {
-                                                if (!renamingCommittedRef.current) {
-                                                  void commitRename(thread.id, renamingTitle, thread.title);
-                                                }
-                                              }}
-                                              onClick={(e) => e.stopPropagation()}
-                                            />
-                                          ) : (
-                                            <span className="min-w-0 flex-1 truncate text-xs">
-                                              {thread.title}
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                                          {terminalStatus && (
-                                            <span
-                                              role="img"
-                                              aria-label={terminalStatus.label}
-                                              title={terminalStatus.label}
-                                              className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-                                            >
-                                              <TerminalIcon
-                                                className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
-                                              />
-                                            </span>
-                                          )}
-                                          <span
-                                            className={`text-[10px] ${
-                                              isActive ? "text-foreground/65" : "text-muted-foreground/40"
-                                            }`}
-                                          >
-                                            {formatRelativeTime(thread.createdAt)}
-                                          </span>
-                                        </div>
-                                      </SidebarMenuSubButton>
-                                    </SidebarMenuSubItem>
-                                  );
-                                })}
-
-                                {hasHiddenThreads && !isThreadListExpanded && (
-                                  <SidebarMenuSubItem className="w-full">
-                                    <SidebarMenuSubButton
-                                      render={<button type="button" />}
-                                      size="sm"
-                                      className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                                      onClick={() => {
-                                        expandThreadListForProject(project.id);
-                                      }}
-                                    >
-                                      <span>Show more</span>
-                                    </SidebarMenuSubButton>
-                                  </SidebarMenuSubItem>
-                                )}
-                                {hasHiddenThreads && isThreadListExpanded && (
-                                  <SidebarMenuSubItem className="w-full">
-                                    <SidebarMenuSubButton
-                                      render={<button type="button" />}
-                                      size="sm"
-                                      className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                                      onClick={() => {
-                                        collapseThreadListForProject(project.id);
-                                      }}
-                                    >
-                                      <span>Show less</span>
-                                    </SidebarMenuSubButton>
-                                  </SidebarMenuSubItem>
-                                )}
-                              </SidebarMenuSub>
-                          </CollapsibleContent>
-                        </Collapsible>
-                      )}
-                    </SortableProjectItem>
-                  );
-                })}
-              </SortableContext>
+                <SortableContext
+                  items={projectTree.map((projectNode) => projectItemId(projectNode.project.id))}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {projectTree.map((projectNode, index) => renderProjectNode(projectNode, 0, index))}
+                </SortableContext>
+              </DroppableTreeContainer>
             </SidebarMenu>
           </DndContext>
 

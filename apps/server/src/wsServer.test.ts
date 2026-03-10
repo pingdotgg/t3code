@@ -41,9 +41,11 @@ import type {
 } from "@t3tools/contracts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager";
 import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
+import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
 import { SqlClient, SqlError } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
+import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
@@ -405,7 +407,12 @@ describe("WebSocket Server", () => {
     const stateDir = options.stateDir ?? makeTempDir("t3code-ws-state-");
     const scope = await Effect.runPromise(Scope.make("sequential"));
     const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
-    const providerLayer = options.providerLayer ?? makeServerProviderLayer();
+    const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRuntimeRepositoryLive),
+    );
+    const providerLayer = options.providerLayer
+      ? Layer.merge(options.providerLayer, providerSessionDirectoryLayer)
+      : makeServerProviderLayer();
     const providerHealthLayer = Layer.succeed(
       ProviderHealth,
       options.providerHealth ?? defaultProviderHealthService,
@@ -416,6 +423,7 @@ describe("WebSocket Server", () => {
       port: 0,
       host: undefined,
       cwd: options.cwd ?? "/test/project",
+      defaultProjectsPath: "/test/Projects",
       keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
       stateDir,
       staticDir: options.staticDir,
@@ -503,6 +511,7 @@ describe("WebSocket Server", () => {
     expect(message.data).toEqual({
       cwd: "/test/project",
       projectName: "project",
+      serverVersion: expect.any(String),
     });
   });
 
@@ -646,6 +655,36 @@ describe("WebSocket Server", () => {
           worktreePath: null,
         }),
       ]),
+    );
+  });
+
+  it("routes createBranchedThread requests to the handler", async () => {
+    server = await createTestServer({ cwd: "/test/project" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws); // welcome
+
+    const response = await sendRequest(ws, ORCHESTRATION_WS_METHODS.createBranchedThread, {
+      sourceThreadId: "source-thread",
+      newThreadId: "branched-thread",
+      projectId: "project-id",
+      sourceMessageId: "source-message",
+      kind: "edit",
+      title: "Branched thread",
+      model: "gpt-5.4",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-03-10T00:00:00.000Z",
+    });
+
+    expect(response.error?.message).toBe(
+      "Cannot branch thread 'source-thread' because no provider session binding was found.",
     );
   });
 

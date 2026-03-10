@@ -94,6 +94,7 @@ function isoAt(offsetSeconds: number): string {
 function createBaseServerConfig(): ServerConfig {
   return {
     cwd: "/repo/project",
+    defaultProjectsPath: "/repo/Projects",
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
     keybindings: [],
     issues: [],
@@ -239,6 +240,7 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
     welcome: {
       cwd: "/repo/project",
       projectName: "Project",
+      serverVersion: "0.0.0",
       bootstrapProjectId: PROJECT_ID,
       bootstrapThreadId: THREAD_ID,
     },

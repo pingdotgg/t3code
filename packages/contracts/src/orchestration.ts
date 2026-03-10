@@ -18,6 +18,7 @@ import {
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
   dispatchCommand: "orchestration.dispatchCommand",
+  createBranchedThread: "orchestration.createBranchedThread",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   replayEvents: "orchestration.replayEvents",
@@ -335,6 +336,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
   threadId: ThreadId,
+  projectId: Schema.optional(ProjectId),
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -633,6 +635,7 @@ export const ThreadDeletedPayload = Schema.Struct({
 
 export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
+  projectId: Schema.optional(ProjectId),
   title: Schema.optional(TrimmedNonEmptyString),
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -963,6 +966,37 @@ export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInp
 const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
 
+export const OrchestrationBranchedThreadKind = Schema.Literals(["edit", "retry"]);
+export type OrchestrationBranchedThreadKind = typeof OrchestrationBranchedThreadKind.Type;
+
+export const OrchestrationCreateBranchedThreadInput = Schema.Struct({
+  sourceThreadId: ThreadId,
+  newThreadId: ThreadId,
+  projectId: ProjectId,
+  sourceMessageId: MessageId,
+  kind: OrchestrationBranchedThreadKind,
+  title: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  messageText: Schema.optional(Schema.String),
+  provider: Schema.optional(ProviderKind),
+  modelOptions: Schema.optional(ProviderModelOptions),
+  providerOptions: Schema.optional(ProviderStartOptions),
+  assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
+  createdAt: IsoDateTime,
+});
+export type OrchestrationCreateBranchedThreadInput =
+  typeof OrchestrationCreateBranchedThreadInput.Type;
+
+export const OrchestrationCreateBranchedThreadResult = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationCreateBranchedThreadResult =
+  typeof OrchestrationCreateBranchedThreadResult.Type;
+
 export const OrchestrationRpcSchemas = {
   getSnapshot: {
     input: OrchestrationGetSnapshotInput,
@@ -971,6 +1005,10 @@ export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
     output: DispatchResult,
+  },
+  createBranchedThread: {
+    input: OrchestrationCreateBranchedThreadInput,
+    output: OrchestrationCreateBranchedThreadResult,
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,

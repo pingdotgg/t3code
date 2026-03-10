@@ -7,6 +7,9 @@
  * @module Server
  */
 import http from "node:http";
+import { spawn } from "node:child_process";
+import nodePath from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -14,7 +17,9 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
+  type OrchestrationCreateBranchedThreadInput,
   type OrchestrationCommand,
+  MessageId,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -35,6 +40,7 @@ import {
   Exit,
   FileSystem,
   Layer,
+  Option,
   Path,
   Ref,
   Schema,
@@ -55,10 +61,12 @@ import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnap
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
+import { ProviderSessionDirectory } from "./provider/Services/ProviderSessionDirectory.ts";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
+import { getServerVersion } from "./version";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 import {
@@ -196,11 +204,24 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
 
+type WebSocketRequestBody = WebSocketRequest["body"];
+
+function castRequestBody<Tag extends WebSocketRequestBody["_tag"]>(
+  body: WebSocketRequestBody,
+  _tag: Tag,
+): Extract<WebSocketRequestBody, { _tag: Tag }> {
+  return body as Extract<WebSocketRequestBody, { _tag: Tag }>;
+}
+
 function messageFromCause(cause: Cause.Cause<unknown>): string {
   const squashed = Cause.squash(cause);
   const message =
     squashed instanceof Error ? squashed.message.trim() : String(squashed).trim();
   return message.length > 0 ? message : Cause.pretty(cause);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 export type ServerCoreRuntimeServices =
@@ -209,6 +230,7 @@ export type ServerCoreRuntimeServices =
   | CheckpointDiffQuery
   | OrchestrationReactor
   | ProviderService
+  | ProviderSessionDirectory
   | ProviderHealth;
 
 export type ServerRuntimeServices =
@@ -241,6 +263,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const {
     port,
     cwd,
+    defaultProjectsPath,
     keybindingsConfigPath,
     staticDir,
     devUrl,
@@ -255,6 +278,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
+  const providerService = yield* ProviderService;
+  const providerSessionDirectory = yield* ProviderSessionDirectory;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -419,6 +444,207 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     } satisfies OrchestrationCommand;
   });
 
+  const createBranchedThread = Effect.fnUntraced(function* (
+    input: OrchestrationCreateBranchedThreadInput,
+  ) {
+    const sourceBindingOption = yield* providerSessionDirectory.getBinding(input.sourceThreadId);
+    const sourceBinding = Option.getOrUndefined(sourceBindingOption);
+    if (!sourceBinding) {
+      return yield* new RouteRequestError({
+        message: `Cannot branch thread '${input.sourceThreadId}' because no provider session binding was found.`,
+      });
+    }
+
+    const snapshot = yield* projectionReadModelQuery.getSnapshot();
+    const sourceThread = snapshot.threads.find((thread) => thread.id === input.sourceThreadId);
+    if (!sourceThread || sourceThread.deletedAt !== null) {
+      return yield* new RouteRequestError({
+        message: `Source thread '${input.sourceThreadId}' was not found.`,
+      });
+    }
+    if (sourceThread.projectId !== input.projectId) {
+      return yield* new RouteRequestError({
+        message: "Branched threads must stay within the same project.",
+      });
+    }
+    if (snapshot.threads.some((thread) => thread.id === input.newThreadId)) {
+      return yield* new RouteRequestError({
+        message: `Thread '${input.newThreadId}' already exists.`,
+      });
+    }
+
+    const sourceMessage = sourceThread.messages.find((message) => message.id === input.sourceMessageId);
+    if (!sourceMessage) {
+      return yield* new RouteRequestError({
+        message: `Message '${input.sourceMessageId}' was not found in thread '${input.sourceThreadId}'.`,
+      });
+    }
+
+    const sourceUserMessage =
+      input.kind === "edit"
+        ? sourceMessage.role === "user"
+          ? sourceMessage
+          : null
+        : sourceMessage.role === "assistant" && sourceMessage.turnId !== null
+          ? sourceThread.messages.find(
+              (message) => message.role === "user" && message.turnId === sourceMessage.turnId,
+            ) ?? null
+          : null;
+    if (!sourceUserMessage) {
+      return yield* new RouteRequestError({
+        message:
+          input.kind === "edit"
+            ? "Edit branching requires a user message."
+            : "Retry branching requires an assistant message with a matching user turn.",
+      });
+    }
+
+    const targetCheckpoint =
+      input.kind === "edit"
+        ? (() => {
+            const sourceMessageIndex = sourceThread.messages.findIndex(
+              (message) => message.id === sourceMessage.id,
+            );
+            if (sourceMessageIndex < 0) {
+              return null;
+            }
+            for (let index = sourceMessageIndex + 1; index < sourceThread.messages.length; index += 1) {
+              const nextMessage = sourceThread.messages[index];
+              if (!nextMessage) {
+                continue;
+              }
+              if (nextMessage.role === "user") {
+                break;
+              }
+              if (nextMessage.role !== "assistant" || nextMessage.turnId === null) {
+                continue;
+              }
+              const checkpoint = sourceThread.checkpoints.find(
+                (entry) => entry.turnId === nextMessage.turnId,
+              );
+              if (checkpoint) {
+                return checkpoint;
+              }
+            }
+            return null;
+          })()
+        : sourceMessage.turnId !== null
+          ? sourceThread.checkpoints.find((checkpoint) => checkpoint.turnId === sourceMessage.turnId) ?? null
+          : null;
+    if (!targetCheckpoint) {
+      return yield* new RouteRequestError({
+        message:
+          input.kind === "edit"
+            ? "The selected message does not have a completed response to branch from yet."
+            : "The selected message does not have a checkpoint to branch from yet.",
+      });
+    }
+
+    const latestCheckpointTurnCount = sourceThread.checkpoints.reduce(
+      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+      0,
+    );
+    const turnsToRollback = Math.max(
+      0,
+      latestCheckpointTurnCount - targetCheckpoint.checkpointTurnCount + 1,
+    );
+    const nextMessageText =
+      input.kind === "edit" ? (input.messageText ?? sourceUserMessage.text) : sourceUserMessage.text;
+    if (nextMessageText.length === 0 && (sourceUserMessage.attachments?.length ?? 0) === 0) {
+      return yield* new RouteRequestError({
+        message: "Branched turns require message text or at least one attachment.",
+      });
+    }
+
+    let createdThread = false;
+    let persistedBinding = false;
+
+    return yield* Effect.gen(function* () {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        threadId: input.newThreadId,
+        projectId: input.projectId,
+        title: input.title,
+        model: input.model,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        branch: input.branch,
+        worktreePath: input.worktreePath,
+        createdAt: input.createdAt,
+      });
+      createdThread = true;
+
+      yield* providerSessionDirectory.upsert({
+        threadId: input.newThreadId,
+        provider: sourceBinding.provider,
+        ...(sourceBinding.adapterKey !== undefined ? { adapterKey: sourceBinding.adapterKey } : {}),
+        runtimeMode: input.runtimeMode,
+        ...(sourceBinding.status !== undefined ? { status: sourceBinding.status } : {}),
+        ...(sourceBinding.resumeCursor !== undefined
+          ? { resumeCursor: sourceBinding.resumeCursor }
+          : {}),
+        runtimePayload: isRecord(sourceBinding.runtimePayload)
+          ? {
+              ...sourceBinding.runtimePayload,
+              activeTurnId: null,
+              lastRuntimeEvent: "orchestration.createBranchedThread",
+              lastRuntimeEventAt: input.createdAt,
+            }
+          : sourceBinding.runtimePayload ?? null,
+      });
+      persistedBinding = true;
+
+      if (turnsToRollback > 0) {
+        yield* providerService.rollbackConversation({
+          threadId: input.newThreadId,
+          numTurns: turnsToRollback,
+        });
+      }
+
+      yield* orchestrationEngine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        threadId: input.newThreadId,
+        message: {
+          messageId: MessageId.makeUnsafe(crypto.randomUUID()),
+          role: "user",
+          text: nextMessageText,
+          attachments: sourceUserMessage.attachments ?? [],
+        },
+        provider: input.provider ?? sourceBinding.provider,
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.modelOptions ? { modelOptions: input.modelOptions } : {}),
+        ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+        ...(input.assistantDeliveryMode
+          ? { assistantDeliveryMode: input.assistantDeliveryMode }
+          : {}),
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        createdAt: input.createdAt,
+      });
+
+      return { threadId: input.newThreadId };
+    }).pipe(
+      Effect.tapError(() =>
+        Effect.all([
+          persistedBinding
+            ? providerSessionDirectory.remove(input.newThreadId).pipe(Effect.catch(() => Effect.void))
+            : Effect.void,
+          createdThread
+            ? orchestrationEngine
+                .dispatch({
+                  type: "thread.delete",
+                  commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+                  threadId: input.newThreadId,
+                })
+                .pipe(Effect.catch(() => Effect.void))
+            : Effect.void,
+        ]).pipe(Effect.asVoid),
+      ),
+    );
+  });
+
   // HTTP server — serves static files or redirects to Vite dev server
   const httpServer = http.createServer((req, res) => {
     const respond = (
@@ -494,6 +720,54 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           if (!res.writableEnded) {
             res.end();
           }
+          return;
+        }
+
+        if (url.pathname === "/api/dev-restart") {
+          const corsHeaders = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+          };
+          if (req.method === "OPTIONS") {
+            respond(204, corsHeaders);
+            return;
+          }
+          if (req.method !== "POST") {
+            respond(405, { ...corsHeaders, "Content-Type": "text/plain" }, "Method Not Allowed");
+            return;
+          }
+          if (!devUrl) {
+            respond(403, { ...corsHeaders, "Content-Type": "text/plain" }, "Dev restart unavailable");
+            return;
+          }
+
+          respond(
+            202,
+            { ...corsHeaders, "Content-Type": "application/json" },
+            JSON.stringify({ ok: true }),
+          );
+
+          setTimeout(() => {
+            try {
+              const serverRoot = nodePath.resolve(
+                nodePath.dirname(fileURLToPath(import.meta.url)),
+                "..",
+              );
+              const child = spawn("bun", ["run", "dev"], {
+                cwd: serverRoot,
+                env: process.env,
+                detached: true,
+                stdio: "ignore",
+              });
+              child.unref();
+            } catch {
+              // Swallow spawn errors so we still exit.
+            }
+            setTimeout(() => {
+              process.exit(0);
+            }, 150);
+          }, 50);
           return;
         }
 
@@ -743,28 +1017,44 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
 
   const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
-    switch (request.body._tag) {
+    const requestTag = String(request.body._tag);
+
+    switch (requestTag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot:
         return yield* projectionReadModelQuery.getSnapshot();
 
       case ORCHESTRATION_WS_METHODS.dispatchCommand: {
-        const { command } = request.body;
+        const { command } = castRequestBody(request.body, ORCHESTRATION_WS_METHODS.dispatchCommand);
         const normalizedCommand = yield* normalizeDispatchCommand({ command });
         return yield* orchestrationEngine.dispatch(normalizedCommand);
       }
 
+      case ORCHESTRATION_WS_METHODS.createBranchedThread: {
+        const body = stripRequestTag(
+          castRequestBody(request.body, ORCHESTRATION_WS_METHODS.createBranchedThread),
+        );
+        return yield* createBranchedThread(body);
+      }
+
       case ORCHESTRATION_WS_METHODS.getTurnDiff: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(
+          castRequestBody(request.body, ORCHESTRATION_WS_METHODS.getTurnDiff),
+        );
         return yield* checkpointDiffQuery.getTurnDiff(body);
       }
 
       case ORCHESTRATION_WS_METHODS.getFullThreadDiff: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(
+          castRequestBody(request.body, ORCHESTRATION_WS_METHODS.getFullThreadDiff),
+        );
         return yield* checkpointDiffQuery.getFullThreadDiff(body);
       }
 
       case ORCHESTRATION_WS_METHODS.replayEvents: {
-        const { fromSequenceExclusive } = request.body;
+        const { fromSequenceExclusive } = castRequestBody(
+          request.body,
+          ORCHESTRATION_WS_METHODS.replayEvents,
+        );
         return yield* Stream.runCollect(
           orchestrationEngine.readEvents(
             clamp(fromSequenceExclusive, {
@@ -776,7 +1066,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }
 
       case WS_METHODS.projectsSearchEntries: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(
+          castRequestBody(request.body, WS_METHODS.projectsSearchEntries),
+        );
         return yield* Effect.tryPromise({
           try: () => searchWorkspaceEntries(body),
           catch: (cause) =>
@@ -786,8 +1078,69 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         });
       }
 
+      case WS_METHODS.projectsCreateWorkspace: {
+        const body = stripRequestTag(
+          castRequestBody(request.body, WS_METHODS.projectsCreateWorkspace),
+        );
+        const workspaceName = body.name.trim();
+        if (
+          workspaceName.length === 0 ||
+          workspaceName === "." ||
+          workspaceName === ".." ||
+          workspaceName.includes("/") ||
+          workspaceName.includes("\\")
+        ) {
+          return yield* new RouteRequestError({
+            message: "Project name must be a single folder name.",
+          });
+        }
+
+        const normalizedProjectsRoot = path.resolve(defaultProjectsPath);
+        const targetCwd = path.resolve(normalizedProjectsRoot, workspaceName);
+        const relativeTargetPath = path.relative(normalizedProjectsRoot, targetCwd);
+        if (
+          relativeTargetPath.length === 0 ||
+          relativeTargetPath === "." ||
+          relativeTargetPath.startsWith("..") ||
+          path.isAbsolute(relativeTargetPath)
+        ) {
+          return yield* new RouteRequestError({
+            message: "Project name must stay within the default Projects directory.",
+          });
+        }
+
+        yield* fileSystem.makeDirectory(normalizedProjectsRoot, { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to prepare the default Projects directory: ${String(cause)}`,
+              }),
+          ),
+        );
+
+        const existingTarget = yield* fileSystem.stat(targetCwd).pipe(
+          Effect.catch(() => Effect.succeed(null)),
+        );
+        if (existingTarget && existingTarget.type !== "Directory") {
+          return yield* new RouteRequestError({
+            message: `Project path is not a directory: ${targetCwd}`,
+          });
+        }
+
+        yield* fileSystem.makeDirectory(targetCwd, { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to create project directory: ${String(cause)}`,
+              }),
+          ),
+        );
+
+        return { cwd: targetCwd };
+      }
+
       case WS_METHODS.projectsWriteFile: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.projectsWriteFile));
         const target = yield* resolveWorkspaceWritePath({
           workspaceRoot: body.cwd,
           relativePath: body.relativePath,
@@ -813,82 +1166,82 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }
 
       case WS_METHODS.shellOpenInEditor: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.shellOpenInEditor));
         return yield* openInEditor(body);
       }
 
       case WS_METHODS.gitStatus: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.gitStatus));
         return yield* gitManager.status(body);
       }
 
       case WS_METHODS.gitPull: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.gitPull));
         return yield* git.pullCurrentBranch(body.cwd);
       }
 
       case WS_METHODS.gitRunStackedAction: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.gitRunStackedAction));
         return yield* gitManager.runStackedAction(body);
       }
 
       case WS_METHODS.gitListBranches: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.gitListBranches));
         return yield* git.listBranches(body);
       }
 
       case WS_METHODS.gitCreateWorktree: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.gitCreateWorktree));
         return yield* git.createWorktree(body);
       }
 
       case WS_METHODS.gitRemoveWorktree: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.gitRemoveWorktree));
         return yield* git.removeWorktree(body);
       }
 
       case WS_METHODS.gitCreateBranch: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.gitCreateBranch));
         return yield* git.createBranch(body);
       }
 
       case WS_METHODS.gitCheckout: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.gitCheckout));
         return yield* Effect.scoped(git.checkoutBranch(body));
       }
 
       case WS_METHODS.gitInit: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.gitInit));
         return yield* git.initRepo(body);
       }
 
       case WS_METHODS.terminalOpen: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.terminalOpen));
         return yield* terminalManager.open(body);
       }
 
       case WS_METHODS.terminalWrite: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.terminalWrite));
         return yield* terminalManager.write(body);
       }
 
       case WS_METHODS.terminalResize: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.terminalResize));
         return yield* terminalManager.resize(body);
       }
 
       case WS_METHODS.terminalClear: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.terminalClear));
         return yield* terminalManager.clear(body);
       }
 
       case WS_METHODS.terminalRestart: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.terminalRestart));
         return yield* terminalManager.restart(body);
       }
 
       case WS_METHODS.terminalClose: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.terminalClose));
         return yield* terminalManager.close(body);
       }
 
@@ -896,6 +1249,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
         return {
           cwd,
+          defaultProjectsPath,
           keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
@@ -904,15 +1258,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         };
 
       case WS_METHODS.serverUpsertKeybinding: {
-        const body = stripRequestTag(request.body);
+        const body = stripRequestTag(castRequestBody(request.body, WS_METHODS.serverUpsertKeybinding));
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
       }
 
       default: {
-        const _exhaustiveCheck: never = request.body;
         return yield* new RouteRequestError({
-          message: `Unknown method: ${String(_exhaustiveCheck)}`,
+          message: `Unknown method: ${requestTag}`,
         });
       }
     }
@@ -988,6 +1341,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
+    const serverVersion = getServerVersion();
 
     const welcome: WsPush = {
       type: "push",
@@ -995,6 +1349,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       data: {
         cwd,
         projectName,
+        serverVersion,
         ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
         ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
       },

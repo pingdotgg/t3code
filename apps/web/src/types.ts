@@ -80,6 +80,7 @@ export interface Project {
   cwd: string;
   model: string;
   expanded: boolean;
+  parentProjectId: ProjectId | null;
   scripts: ProjectScript[];
 }
 

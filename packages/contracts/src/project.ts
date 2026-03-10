@@ -3,6 +3,7 @@ import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
+const PROJECT_WORKSPACE_NAME_MAX_LENGTH = 128;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
@@ -39,3 +40,13 @@ export const ProjectWriteFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
+
+export const ProjectCreateWorkspaceInput = Schema.Struct({
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WORKSPACE_NAME_MAX_LENGTH)),
+});
+export type ProjectCreateWorkspaceInput = typeof ProjectCreateWorkspaceInput.Type;
+
+export const ProjectCreateWorkspaceResult = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+});
+export type ProjectCreateWorkspaceResult = typeof ProjectCreateWorkspaceResult.Type;

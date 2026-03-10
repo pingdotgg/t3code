@@ -9,6 +9,7 @@
 import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { NetService } from "@t3tools/shared/Net";
+import * as OS from "node:os";
 import {
   DEFAULT_PORT,
   resolveStaticDir,
@@ -168,6 +169,7 @@ const ServerConfigLive = (input: CliInput) =>
       );
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const { join } = yield* Path.Path;
+      const defaultProjectsPath = join(OS.homedir(), "Projects");
       const keybindingsConfigPath = join(stateDir, "keybindings.json");
       const host =
         Option.getOrUndefined(input.host) ??
@@ -178,6 +180,7 @@ const ServerConfigLive = (input: CliInput) =>
         mode,
         port,
         cwd: cliConfig.cwd,
+        defaultProjectsPath,
         keybindingsConfigPath,
         host,
         stateDir,

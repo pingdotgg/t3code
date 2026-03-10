@@ -10,10 +10,12 @@ import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
+import { useDevServerRestart } from "../devServerRestart";
 
 const THEME_OPTIONS = [
   {
@@ -48,6 +50,7 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     example: "gpt-6.7-codex-ultra-preview",
   },
 ] as const;
+
 
 function getCustomModelsForProvider(
   settings: ReturnType<typeof useAppSettings>["settings"],
@@ -93,10 +96,19 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const { status: devServerStatus, restart, start, serverVersion } = useDevServerRestart();
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const restartLabel =
+    devServerStatus === "restarting"
+      ? "Restarting..."
+      : devServerStatus === "starting"
+        ? "Starting..."
+        : devServerStatus === "connected"
+        ? "Connected"
+        : null;
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -171,6 +183,14 @@ function SettingsRouteView() {
     [settings, updateSettings],
   );
 
+  const handleDevServerAction = useCallback(() => {
+    if (devServerStatus === "connected") {
+      void restart();
+      return;
+    }
+    void start();
+  }, [devServerStatus, restart, start]);
+
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
@@ -190,6 +210,81 @@ function SettingsRouteView() {
                 Configure app-level preferences for this device.
               </p>
             </header>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Development</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Restart the local dev server without closing the app.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Restart T3</p>
+                  <p className="text-xs text-muted-foreground">
+                    Starts or restarts the dev server and reloads this window when it reconnects.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={handleDevServerAction}
+                    disabled={devServerStatus === "restarting" || devServerStatus === "starting"}
+                    title={devServerStatus === "connected" ? "Restart dev server" : "Start dev server"}
+                  >
+                    {devServerStatus === "connected" ? "Restart T3" : "Start server"}
+                  </Button>
+                  {restartLabel && (
+                    <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                      {restartLabel}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Auto-restart on updates</p>
+                  <p className="text-xs text-muted-foreground">
+                    Automatically restart the dev server when the client detects a version update.
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.autoRestartDevServerOnVersionMismatch}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ autoRestartDevServerOnVersionMismatch: Boolean(checked) })
+                  }
+                  aria-label="Auto-restart dev server on version mismatch"
+                />
+              </div>
+
+              {settings.autoRestartDevServerOnVersionMismatch !==
+              defaults.autoRestartDevServerOnVersionMismatch ? (
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        autoRestartDevServerOnVersionMismatch:
+                          defaults.autoRestartDevServerOnVersionMismatch,
+                      })
+                    }
+                  >
+                    Restore default
+                  </Button>
+                </div>
+              ) : null}
+
+              {serverVersion && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Server version: <span className="font-medium text-foreground">{serverVersion}</span>
+                </p>
+              )}
+            </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">

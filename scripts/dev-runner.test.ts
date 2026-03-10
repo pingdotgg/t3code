@@ -5,10 +5,13 @@ import { Effect } from "effect";
 
 import {
   DEFAULT_DEV_STATE_DIR,
+  REPO_ROOT,
   createDevRunnerEnv,
   findFirstAvailableOffset,
   resolveModePortOffsets,
   resolveOffset,
+  resolveTurboCommand,
+  withWorkspaceBinOnPath,
 } from "./dev-runner.ts";
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
@@ -95,6 +98,30 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_LOG_WS_EVENTS, "1");
         assert.equal(env.T3CODE_HOST, "0.0.0.0");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
+      }),
+    );
+
+    it.effect("prepends the workspace bin directory to PATH", () =>
+      Effect.gen(function* () {
+        const repoRoot = yield* REPO_ROOT;
+        const env = yield* createDevRunnerEnv({
+          mode: "dev:web",
+          baseEnv: {
+            PATH: "/usr/bin",
+          },
+          serverOffset: 0,
+          webOffset: 0,
+          stateDir: undefined,
+          authToken: undefined,
+          noBrowser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.PATH, `${resolve(repoRoot, "node_modules/.bin")}:${"/usr/bin"}`);
       }),
     );
 
@@ -257,6 +284,34 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.deepStrictEqual(offsets, { serverOffset: 0, webOffset: 0 });
+      }),
+    );
+  });
+
+  describe("withWorkspaceBinOnPath", () => {
+    it.effect("keeps an existing workspace bin entry stable", () =>
+      Effect.sync(() => {
+        const env = withWorkspaceBinOnPath(
+          {
+            PATH: "/repo/node_modules/.bin:/usr/bin",
+          },
+          "/repo/node_modules/.bin",
+        );
+
+        assert.equal(env.PATH, "/repo/node_modules/.bin:/usr/bin");
+      }),
+    );
+  });
+
+  describe("resolveTurboCommand", () => {
+    it.effect("points at the repo-local turbo binary", () =>
+      Effect.sync(() => {
+        assert.equal(
+          resolveTurboCommand("/repo"),
+          process.platform === "win32"
+            ? "/repo/node_modules/.bin/turbo.cmd"
+            : "/repo/node_modules/.bin/turbo",
+        );
       }),
     );
   });

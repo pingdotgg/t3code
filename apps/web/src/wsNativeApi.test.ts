@@ -1,6 +1,7 @@
 import {
   CommandId,
   type ContextMenuItem,
+  MessageId,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
@@ -96,7 +97,7 @@ describe("wsNativeApi", () => {
     const listener = vi.fn();
     onServerWelcome(listener);
 
-    const payload = { cwd: "/tmp/workspace", projectName: "t3-code" };
+    const payload = { cwd: "/tmp/workspace", projectName: "t3-code", serverVersion: "0.0.0" };
     emitPush(WS_CHANNELS.serverWelcome, payload);
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -120,6 +121,7 @@ describe("wsNativeApi", () => {
     emitPush(WS_CHANNELS.serverWelcome, {
       cwd: "/tmp/workspace",
       projectName: "t3-code",
+      serverVersion: "0.0.0",
       bootstrapProjectId: "project-1",
       bootstrapThreadId: "thread-1",
     });
@@ -144,7 +146,11 @@ describe("wsNativeApi", () => {
     onServerWelcome(listener);
 
     emitPush(WS_CHANNELS.serverWelcome, { cwd: 42, projectName: "t3-code" });
-    emitPush(WS_CHANNELS.serverWelcome, { cwd: "/tmp/workspace", projectName: "t3-code" });
+    emitPush(WS_CHANNELS.serverWelcome, {
+      cwd: "/tmp/workspace",
+      projectName: "t3-code",
+      serverVersion: "0.0.0",
+    });
 
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith(
@@ -328,6 +334,48 @@ describe("wsNativeApi", () => {
 
     expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.dispatchCommand, {
       command,
+    });
+  });
+
+  it("forwards branched-thread creation requests with the orchestration rpc method name", async () => {
+    requestMock.mockResolvedValue({ threadId: "thread-2" });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.orchestration.createBranchedThread({
+      sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+      newThreadId: ThreadId.makeUnsafe("thread-2"),
+      projectId: ProjectId.makeUnsafe("project-1"),
+      sourceMessageId: "message-1" as MessageId,
+      kind: "edit",
+      title: "Edit branch",
+      model: "gpt-5",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "main",
+      worktreePath: null,
+      messageText: "edited text",
+      provider: "codex",
+      assistantDeliveryMode: "buffered",
+      createdAt: "2026-03-10T00:00:00.000Z",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith("orchestration.createBranchedThread", {
+      sourceThreadId: "thread-1",
+      newThreadId: "thread-2",
+      projectId: "project-1",
+      sourceMessageId: "message-1",
+      kind: "edit",
+      title: "Edit branch",
+      model: "gpt-5",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "main",
+      worktreePath: null,
+      messageText: "edited text",
+      provider: "codex",
+      assistantDeliveryMode: "buffered",
+      createdAt: "2026-03-10T00:00:00.000Z",
     });
   });
 

@@ -23,6 +23,9 @@ import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { useAppSettings } from "../appSettings";
+import { useDevServerRestart } from "../devServerRestart";
+import { APP_VERSION } from "../version";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -141,8 +144,41 @@ function EventRouter() {
   const pathnameRef = useRef(pathname);
   const lastConfigIssuesSignatureRef = useRef<string | null>(null);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
+  const lastVersionMismatchRef = useRef<string | null>(null);
+  const { settings } = useAppSettings();
+  const { serverVersion, restart } = useDevServerRestart();
 
   pathnameRef.current = pathname;
+
+  useEffect(() => {
+    if (!serverVersion) return;
+    if (serverVersion === APP_VERSION) return;
+    const signature = `${serverVersion}:${APP_VERSION}`;
+    if (lastVersionMismatchRef.current === signature) return;
+    lastVersionMismatchRef.current = signature;
+
+    if (settings.autoRestartDevServerOnVersionMismatch) {
+      toastManager.add({
+        type: "info",
+        title: "Server update detected",
+        description: `Restarting the dev server to load version ${APP_VERSION}.`,
+      });
+      void restart();
+      return;
+    }
+
+    toastManager.add({
+      type: "warning",
+      title: "Server update available",
+      description: `Server version ${serverVersion} doesn't match client ${APP_VERSION}.`,
+      actionProps: {
+        children: "Restart server",
+        onClick: () => {
+          void restart();
+        },
+      },
+    });
+  }, [restart, serverVersion, settings.autoRestartDevServerOnVersionMismatch]);
 
   useEffect(() => {
     const api = readNativeApi();

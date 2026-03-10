@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
+import { delimiter, join } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NetService } from "@t3tools/shared/Net";
 import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
-import { ChildProcess } from "effect/unstable/process";
 
 const BASE_SERVER_PORT = 3773;
 const BASE_WEB_PORT = 5733;
@@ -16,6 +18,9 @@ const MAX_PORT = 65535;
 
 export const DEFAULT_DEV_STATE_DIR = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(homedir(), ".t3", "dev"),
+);
+export const REPO_ROOT = Effect.flatMap(Effect.service(Path.Path), (path) =>
+  path.fromFileUrl(new URL("..", import.meta.url)),
 );
 
 const MODE_ARGS = {
@@ -73,6 +78,38 @@ const OffsetConfig = Config.all({
   portOffset: optionalIntegerConfig("T3CODE_PORT_OFFSET"),
   devInstance: optionalStringConfig("T3CODE_DEV_INSTANCE"),
 });
+
+function prependPathEntry(currentPath: string | undefined, entry: string): string {
+  if (!currentPath) {
+    return entry;
+  }
+
+  const parts = currentPath.split(delimiter);
+  if (parts.includes(entry)) {
+    return currentPath;
+  }
+
+  return `${entry}${delimiter}${currentPath}`;
+}
+
+export function withWorkspaceBinOnPath(
+  baseEnv: NodeJS.ProcessEnv,
+  workspaceBinDir: string,
+): NodeJS.ProcessEnv {
+  const pathKey = Object.keys(baseEnv).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const nextPath = prependPathEntry(baseEnv[pathKey], workspaceBinDir);
+
+  return {
+    ...baseEnv,
+    [pathKey]: nextPath,
+    ...(pathKey === "PATH" ? {} : { PATH: nextPath }),
+  };
+}
+
+export function resolveTurboCommand(repoRoot: string): string {
+  const executable = process.platform === "win32" ? "turbo.cmd" : "turbo";
+  return join(repoRoot, "node_modules", ".bin", executable);
+}
 
 export function resolveOffset(config: {
   readonly portOffset: number | undefined;
@@ -143,14 +180,18 @@ export function createDevRunnerEnv({
   host,
   port,
   devUrl,
-}: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
+}: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, unknown, Path.Path> {
   return Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const repoRoot = yield* REPO_ROOT;
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
     const resolvedStateDir = yield* resolveStateDir(stateDir);
+    const workspaceBinDir = path.join(repoRoot, "node_modules", ".bin");
+    const baseEnvWithWorkspaceBin = withWorkspaceBinOnPath(baseEnv, workspaceBinDir);
 
     const output: NodeJS.ProcessEnv = {
-      ...baseEnv,
+      ...baseEnvWithWorkspaceBin,
       T3CODE_PORT: String(serverPort),
       PORT: String(webPort),
       ELECTRON_RENDERER_PORT: String(webPort),
@@ -378,6 +419,7 @@ const resolveOptionalBooleanOverride = (
 
 export function runDevRunnerWithInput(input: DevRunnerCliInput) {
   return Effect.gen(function* () {
+    const repoRoot = yield* REPO_ROOT;
     const { portOffset, devInstance } = yield* OffsetConfig.asEffect().pipe(
       Effect.mapError(
         (cause) =>
@@ -446,26 +488,48 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       return;
     }
 
-    const child = yield* ChildProcess.make(
-      "turbo",
-      [...MODE_ARGS[input.mode], ...input.turboArgs],
-      {
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-        env,
-        extendEnv: false,
-        // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
-        shell: process.platform === "win32",
-        // Keep turbo in the same process group so terminal signals (Ctrl+C)
-        // reach it directly. Effect defaults to detached: true on non-Windows,
-        // which would put turbo in a new group and require manual forwarding.
-        detached: false,
-        forceKillAfter: "1500 millis",
-      },
-    );
+    const turboCommand = resolveTurboCommand(repoRoot);
+    const exitCode = yield* Effect.tryPromise({
+      try: () =>
+        new Promise<number>((resolve, reject) => {
+          const child = spawn(turboCommand, [...MODE_ARGS[input.mode], ...input.turboArgs], {
+            stdio: "inherit",
+            env,
+            shell: process.platform === "win32",
+            detached: false,
+          });
 
-    const exitCode = yield* child.exitCode;
+          child.once("error", (cause: Error) => {
+            reject(
+              new DevRunnerError({
+                message: `Failed to start turbo from ${turboCommand}`,
+                cause,
+              }),
+            );
+          });
+
+          child.once("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+            if (signal) {
+              reject(
+                new DevRunnerError({
+                  message: `turbo exited due to signal ${signal}`,
+                }),
+              );
+              return;
+            }
+
+            resolve(code ?? 0);
+          });
+        }),
+      catch: (cause) =>
+        cause instanceof DevRunnerError
+          ? cause
+          : new DevRunnerError({
+              message: "Failed to run turbo",
+              cause,
+            }),
+    });
+
     if (exitCode !== 0) {
       return yield* new DevRunnerError({
         message: `turbo exited with code ${exitCode}`,
@@ -549,6 +613,9 @@ const runtimeProgram = Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
   Effect.provide(cliRuntimeLayer),
 );
 
-if (import.meta.main) {
+const isMainModule =
+  typeof process.argv[1] === "string" && fileURLToPath(import.meta.url) === process.argv[1];
+
+if (isMainModule) {
   NodeRuntime.runMain(runtimeProgram);
 }
