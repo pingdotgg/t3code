@@ -6,7 +6,7 @@ import {
   type WsResponse as WsResponseMessage,
   WsResponse as WsResponseSchema,
 } from "@t3tools/contracts";
-import { decodeJsonString, formatJsonDecodeFailure } from "@t3tools/shared/schemaJson";
+import { decodeUnknownJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 import { Result, Schema } from "effect";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
@@ -25,7 +25,7 @@ type TransportState = "connecting" | "open" | "reconnecting" | "closed" | "dispo
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
-const decodeWsResponse = decodeJsonString(WsResponseSchema);
+const decodeWsResponse = decodeUnknownJsonResult(WsResponseSchema);
 const isWebSocketResponseEnvelope = Schema.is(WebSocketResponse);
 
 const isWsPushMessage = (value: WsResponseMessage): value is WsPush =>
@@ -194,9 +194,8 @@ export class WsTransport {
   private handleMessage(raw: unknown) {
     const result = decodeWsResponse(raw);
     if (Result.isFailure(result)) {
-      console.warn("Dropped inbound WebSocket envelope", {
-        phase: result.failure.phase,
-        message: formatJsonDecodeFailure(result.failure),
+      console.warn(`Dropped inbound WebSocket envelope: ${formatSchemaError(result.failure)}`, {
+        envelope: raw,
       });
       return;
     }

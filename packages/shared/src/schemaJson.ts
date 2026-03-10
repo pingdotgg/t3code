@@ -1,4 +1,4 @@
-import { Cause, Exit, Result, Schema } from "effect";
+import { Cause, Exit, Result, Schema, SchemaIssue } from "effect";
 
 export type SchemaJsonDecodePhase = "json" | "schema";
 
@@ -7,37 +7,35 @@ export interface SchemaJsonDecodeFailure {
   readonly cause: Cause.Cause<Schema.SchemaError>;
 }
 
-const decodeUnknownJson = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
-
-export const decodeJsonString = <S extends Schema.Top>(schema: S) => {
-  const decodeSchema = Schema.decodeUnknownExit(schema as never);
-
-  return (input: unknown): Result.Result<Schema.Schema.Type<S>, SchemaJsonDecodeFailure> => {
-    const parsed = decodeUnknownJson(input);
-    if (Exit.isFailure(parsed)) {
-      return Result.fail({
-        phase: "json" as const,
-        cause: parsed.cause,
-      });
+export const decodeJsonResult = <S extends Schema.Codec<unknown, unknown, never, never>>(
+  schema: S,
+) => {
+  const decode = Schema.decodeExit(Schema.fromJsonString(schema));
+  return (input: string) => {
+    const result = decode(input);
+    if (Exit.isFailure(result)) {
+      return Result.fail(result.cause);
     }
-
-    const decoded = decodeSchema(parsed.value);
-    if (Exit.isFailure(decoded)) {
-      return Result.fail({
-        phase: "schema" as const,
-        cause: decoded.cause,
-      });
-    }
-
-    return Result.succeed(decoded.value);
+    return Result.succeed(result.value);
   };
 };
 
-export const encodeJsonStringEffect =
-  <S extends Schema.Top>(schema: S) =>
-  (input: unknown) =>
-    Schema.encodeEffect(Schema.fromJsonString(schema as never) as never)(input as never);
+export const decodeUnknownJsonResult = <S extends Schema.Codec<unknown, unknown, never, never>>(
+  schema: S,
+) => {
+  const decode = Schema.decodeUnknownExit(schema);
+  return (input: unknown) => {
+    const result = decode(input);
+    if (Exit.isFailure(result)) {
+      return Result.fail(result.cause);
+    }
+    return Result.succeed(result.value);
+  };
+};
 
-export function formatJsonDecodeFailure(failure: SchemaJsonDecodeFailure): string {
-  return `${failure.phase === "json" ? "Invalid JSON" : "Schema validation failed"}: ${Cause.pretty(failure.cause)}`;
-}
+export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
+  const squashed = Cause.squash(cause);
+  return Schema.isSchemaError(squashed)
+    ? SchemaIssue.makeFormatterDefault()(squashed.issue)
+    : Cause.pretty(cause);
+};

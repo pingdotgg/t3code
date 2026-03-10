@@ -67,11 +67,7 @@ import {
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
 } from "./attachmentPaths";
-import {
-  decodeJsonString,
-  encodeJsonStringEffect,
-  formatJsonDecodeFailure,
-} from "@t3tools/shared/schemaJson";
+
 import {
   createAttachmentId,
   resolveAttachmentPath,
@@ -82,6 +78,7 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
+import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -203,8 +200,8 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
 
-const encodeWsResponse = encodeJsonStringEffect(WsResponse);
-const decodeWebSocketRequest = decodeJsonString(WebSocketRequest);
+const encodeWsResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
+const decodeWebSocketRequest = decodeJsonResult(WebSocketRequest);
 
 export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
@@ -925,7 +922,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (Result.isFailure(request)) {
       return yield* sendWsResponse({
         id: "unknown",
-        error: { message: `Invalid request format: ${formatJsonDecodeFailure(request.failure)}` },
+        error: { message: `Invalid request format: ${formatSchemaError(request.failure)}` },
       });
     }
 

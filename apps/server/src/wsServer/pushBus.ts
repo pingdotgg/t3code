@@ -4,8 +4,7 @@ import {
   type WsPushData,
   type WsPushEnvelopeBase,
 } from "@t3tools/contracts";
-import { encodeJsonStringEffect } from "@t3tools/shared/schemaJson";
-import { Deferred, Effect, Queue, Ref } from "effect";
+import { Deferred, Effect, Queue, Ref, Schema } from "effect";
 import type { Scope } from "effect";
 import type { WebSocket } from "ws";
 
@@ -39,7 +38,7 @@ export const makeServerPushBus = (input: {
   Effect.gen(function* () {
     const nextSequence = yield* Ref.make(0);
     const queue = yield* Queue.unbounded<PushJob>();
-    const encodePush = encodeJsonStringEffect(WsPush);
+    const encodePush = Schema.encodeUnknownEffect(Schema.fromJsonString(WsPush));
 
     const settleDelivery = (job: PushJob, delivered: boolean) =>
       job.delivered === null
