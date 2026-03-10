@@ -1,3 +1,4 @@
+import { type EditorId } from "@t3tools/contracts";
 import {
   getSharedHighlighter,
   type DiffsHighlighter,
@@ -23,10 +24,10 @@ import remarkGfm from "remark-gfm";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
+import { getPreferredEditor } from "../editorPreferences";
 import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
 import { readNativeApi } from "../nativeApi";
-import { preferredTerminalEditor } from "../terminal-links";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -52,6 +53,7 @@ class CodeHighlightErrorBoundary extends React.Component<
 interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
+  availableEditors: ReadonlyArray<EditorId>;
   isStreaming?: boolean;
 }
 
@@ -232,7 +234,7 @@ function SuspenseShikiCodeBlock({
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function ChatMarkdown({ text, cwd, availableEditors, isStreaming = false }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownComponents = useMemo<Components>(
@@ -251,11 +253,16 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
               event.preventDefault();
               event.stopPropagation();
               const api = readNativeApi();
-              if (api) {
-                void api.shell.openInEditor(targetPath, preferredTerminalEditor());
-              } else {
+              if (!api) {
                 console.warn("Native API not found. Unable to open file in editor.");
+                return;
               }
+              const preferredEditor = getPreferredEditor(availableEditors);
+              if (!preferredEditor) {
+                console.warn("No available editor found. Unable to open file in editor.");
+                return;
+              }
+              void api.shell.openInEditor(targetPath, preferredEditor);
             }}
           />
         );
@@ -282,7 +289,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
         );
       },
     }),
-    [cwd, diffThemeName, isStreaming],
+    [availableEditors, cwd, diffThemeName, isStreaming],
   );
 
   return (

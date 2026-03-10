@@ -52,6 +52,7 @@ import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
+import { EMPTY_AVAILABLE_EDITORS } from "../editorPreferences";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   type ComposerSlashCommand,
@@ -258,7 +259,6 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
-const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
@@ -3624,6 +3624,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               isRevertingCheckpoint={isRevertingCheckpoint}
               onImageExpand={onExpandTimelineImage}
               markdownCwd={gitCwd ?? undefined}
+              availableEditors={availableEditors}
               resolvedTheme={resolvedTheme}
               workspaceRoot={activeProject?.cwd ?? undefined}
             />
@@ -4144,6 +4145,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             activePlan={activePlan}
             activeProposedPlan={activeProposedPlan}
             markdownCwd={gitCwd ?? undefined}
+            availableEditors={availableEditors}
             workspaceRoot={activeProject?.cwd ?? undefined}
             onClose={() => {
               setPlanSidebarOpen(false);
@@ -4869,10 +4871,12 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
 const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
   cwd,
+  availableEditors,
   workspaceRoot,
 }: {
   planMarkdown: string;
   cwd: string | undefined;
+  availableEditors: ReadonlyArray<EditorId>;
   workspaceRoot: string | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -4977,9 +4981,19 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
           {canCollapse && !expanded ? (
-            <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
+            <ChatMarkdown
+              text={collapsedPreview ?? ""}
+              cwd={cwd}
+              availableEditors={availableEditors}
+              isStreaming={false}
+            />
           ) : (
-            <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
+            <ChatMarkdown
+              text={displayedPlanMarkdown}
+              cwd={cwd}
+              availableEditors={availableEditors}
+              isStreaming={false}
+            />
           )}
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
@@ -5069,6 +5083,7 @@ interface MessagesTimelineProps {
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
+  availableEditors: ReadonlyArray<EditorId>;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
 }
@@ -5123,6 +5138,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   isRevertingCheckpoint,
   onImageExpand,
   markdownCwd,
+  availableEditors,
   resolvedTheme,
   workspaceRoot,
 }: MessagesTimelineProps) {
@@ -5503,6 +5519,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                 <ChatMarkdown
                   text={messageText}
                   cwd={markdownCwd}
+                  availableEditors={availableEditors}
                   isStreaming={Boolean(row.message.streaming)}
                 />
                 {(() => {
@@ -5579,6 +5596,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
           <ProposedPlanCard
             planMarkdown={row.proposedPlan.planMarkdown}
             cwd={markdownCwd}
+            availableEditors={availableEditors}
             workspaceRoot={workspaceRoot}
           />
         </div>

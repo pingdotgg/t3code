@@ -1,6 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
-import { type ThreadId } from "@t3tools/contracts";
+import { type EditorId, type ThreadId } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -12,10 +12,10 @@ import {
   useState,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { getPreferredEditor, useAvailableEditors } from "~/editorPreferences";
 import {
   extractTerminalLinks,
   isTerminalLinkActivation,
-  preferredTerminalEditor,
   resolvePathLinkTarget,
 } from "../terminal-links";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
@@ -111,6 +111,7 @@ interface TerminalViewportProps {
   threadId: ThreadId;
   terminalId: string;
   cwd: string;
+  availableEditors: ReadonlyArray<EditorId>;
   runtimeEnv?: Record<string, string>;
   onSessionExited: () => void;
   focusRequestId: number;
@@ -123,6 +124,7 @@ function TerminalViewport({
   threadId,
   terminalId,
   cwd,
+  availableEditors,
   runtimeEnv,
   onSessionExited,
   focusRequestId,
@@ -135,10 +137,15 @@ function TerminalViewport({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onSessionExitedRef = useRef(onSessionExited);
   const hasHandledExitRef = useRef(false);
+  const availableEditorsRef = useRef<ReadonlyArray<EditorId>>(availableEditors);
 
   useEffect(() => {
     onSessionExitedRef.current = onSessionExited;
   }, [onSessionExited]);
+
+  useEffect(() => {
+    availableEditorsRef.current = availableEditors;
+  }, [availableEditors]);
 
   useEffect(() => {
     const mount = containerRef.current;
@@ -236,7 +243,12 @@ function TerminalViewport({
               }
 
               const target = resolvePathLinkTarget(match.text, cwd);
-              void api.shell.openInEditor(target, preferredTerminalEditor()).catch((error) => {
+              const editor = getPreferredEditor(availableEditorsRef.current);
+              if (!editor) {
+                writeSystemMessage(latestTerminal, "No available editor found.");
+                return;
+              }
+              void api.shell.openInEditor(target, editor).catch((error) => {
                 writeSystemMessage(
                   latestTerminal,
                   error instanceof Error ? error.message : "Unable to open path",
@@ -501,6 +513,7 @@ export default function ThreadTerminalDrawer({
   onCloseTerminal,
   onHeightChange,
 }: ThreadTerminalDrawerProps) {
+  const availableEditors = useAvailableEditors();
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
   const [resizeEpoch, setResizeEpoch] = useState(0);
   const drawerHeightRef = useRef(drawerHeight);
@@ -804,6 +817,7 @@ export default function ThreadTerminalDrawer({
                         threadId={threadId}
                         terminalId={terminalId}
                         cwd={cwd}
+                        availableEditors={availableEditors}
                         {...(runtimeEnv ? { runtimeEnv } : {})}
                         onSessionExited={() => onCloseTerminal(terminalId)}
                         focusRequestId={focusRequestId}
@@ -822,6 +836,7 @@ export default function ThreadTerminalDrawer({
                   threadId={threadId}
                   terminalId={resolvedActiveTerminalId}
                   cwd={cwd}
+                  availableEditors={availableEditors}
                   {...(runtimeEnv ? { runtimeEnv } : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   focusRequestId={focusRequestId}

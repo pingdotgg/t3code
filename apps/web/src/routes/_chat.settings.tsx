@@ -5,11 +5,11 @@ import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
+import { EMPTY_AVAILABLE_EDITORS, getPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
-import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
@@ -49,7 +49,6 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     example: "gpt-6.7-codex-ultra-preview",
   },
 ] as const;
-
 function getCustomModelsForProvider(
   settings: ReturnType<typeof useAppSettings>["settings"],
   provider: ProviderKind,
@@ -98,14 +97,22 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
+  const preferredEditor = getPreferredEditor(availableEditors);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
     setOpenKeybindingsError(null);
     setIsOpeningKeybindings(true);
+    const preferredEditor = getPreferredEditor(availableEditors);
+    if (!preferredEditor) {
+      setOpenKeybindingsError("No available editor found.");
+      setIsOpeningKeybindings(false);
+      return;
+    }
     const api = ensureNativeApi();
     void api.shell
-      .openInEditor(keybindingsConfigPath, preferredTerminalEditor())
+      .openInEditor(keybindingsConfigPath, preferredEditor)
       .catch((error) => {
         setOpenKeybindingsError(
           error instanceof Error ? error.message : "Unable to open keybindings file.",
@@ -114,7 +121,7 @@ function SettingsRouteView() {
       .finally(() => {
         setIsOpeningKeybindings(false);
       });
-  }, [keybindingsConfigPath]);
+  }, [availableEditors, keybindingsConfigPath]);
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -497,7 +504,7 @@ function SettingsRouteView() {
                   <Button
                     size="xs"
                     variant="outline"
-                    disabled={!keybindingsConfigPath || isOpeningKeybindings}
+                    disabled={!keybindingsConfigPath || !preferredEditor || isOpeningKeybindings}
                     onClick={openKeybindingsFile}
                   >
                     {isOpeningKeybindings ? "Opening..." : "Open keybindings.json"}

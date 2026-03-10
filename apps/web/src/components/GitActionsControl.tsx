@@ -2,6 +2,7 @@ import type { GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contr
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
+import { getPreferredEditor, useAvailableEditors } from "~/editorPreferences";
 import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
@@ -40,7 +41,7 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
-import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
+import { resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
 
 interface GitActionsControlProps {
@@ -151,6 +152,7 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
 }
 
 export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+  const availableEditors = useAvailableEditors();
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -218,7 +220,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const openExistingPr = useCallback(async () => {
     const api = readNativeApi();
-    if (!api) {
+      if (!api) {
       toastManager.add({
         type: "error",
         title: "Link opening is unavailable.",
@@ -582,8 +584,17 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         });
         return;
       }
+      const preferredEditor = getPreferredEditor(availableEditors);
+      if (!preferredEditor) {
+        toastManager.add({
+          type: "error",
+          title: "No available editor found.",
+          data: threadToastData,
+        });
+        return;
+      }
       const target = resolvePathLinkTarget(filePath, gitCwd);
-      void api.shell.openInEditor(target, preferredTerminalEditor()).catch((error) => {
+      void api.shell.openInEditor(target, preferredEditor).catch((error) => {
         toastManager.add({
           type: "error",
           title: "Unable to open file",
@@ -592,7 +603,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         });
       });
     },
-    [gitCwd, threadToastData],
+    [availableEditors, gitCwd, threadToastData],
   );
 
   if (!gitCwd) return null;

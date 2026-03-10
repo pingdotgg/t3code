@@ -1,3 +1,4 @@
+import { type EditorId } from "@t3tools/contracts";
 import { memo, useState, useCallback } from "react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -52,6 +53,7 @@ interface PlanSidebarProps {
   activePlan: ActivePlanState | null;
   activeProposedPlan: LatestProposedPlanState | null;
   markdownCwd: string | undefined;
+  availableEditors: ReadonlyArray<EditorId>;
   workspaceRoot: string | undefined;
   onClose: () => void;
 }
@@ -60,6 +62,7 @@ const PlanSidebar = memo(function PlanSidebar({
   activePlan,
   activeProposedPlan,
   markdownCwd,
+  availableEditors,
   workspaceRoot,
   onClose,
 }: PlanSidebarProps) {
@@ -238,6 +241,7 @@ const PlanSidebar = memo(function PlanSidebar({
                   <ChatMarkdown
                     text={displayedPlanMarkdown ?? ""}
                     cwd={markdownCwd}
+                    availableEditors={availableEditors}
                     isStreaming={false}
                   />
                 </div>

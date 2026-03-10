@@ -12,11 +12,12 @@ import {
   useRef,
   useState,
 } from "react";
+import { getPreferredEditor, useAvailableEditors } from "~/editorPreferences";
 import { gitBranchesQueryOptions } from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
-import { preferredTerminalEditor, resolvePathLinkTarget } from "../terminal-links";
+import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
@@ -162,6 +163,7 @@ interface DiffPanelProps {
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
+  const availableEditors = useAvailableEditors();
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
@@ -310,12 +312,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     (filePath: string) => {
       const api = readNativeApi();
       if (!api) return;
+      const preferredEditor = getPreferredEditor(availableEditors);
+      if (!preferredEditor) {
+        console.warn("No available editor found. Unable to open diff file in editor.");
+        return;
+      }
       const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
-      void api.shell.openInEditor(targetPath, preferredTerminalEditor()).catch((error) => {
+      void api.shell.openInEditor(targetPath, preferredEditor).catch((error) => {
         console.warn("Failed to open diff file in editor.", error);
       });
     },
-    [activeCwd],
+    [activeCwd, availableEditors],
   );
 
   const selectTurn = (turnId: TurnId) => {
