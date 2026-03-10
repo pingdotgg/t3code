@@ -162,7 +162,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    if (thread.checkpoints.some((checkpoint) => checkpoint.turnId === turnId)) {
+    if (thread.checkpoints.some((checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing")) {
       return;
     }
 
@@ -192,10 +192,9 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
+    const currentTurnCount = thread.checkpoints
+      .filter((checkpoint) => checkpoint.status !== "missing")
+      .reduce((maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount), 0);
     const nextTurnCount = currentTurnCount + 1;
     const fromTurnCount = Math.max(0, nextTurnCount - 1);
     const fromCheckpointRef = checkpointRefForThreadTurn(thread.id, fromTurnCount);
@@ -328,10 +327,9 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
+    const currentTurnCount = thread.checkpoints
+      .filter((checkpoint) => checkpoint.status !== "missing")
+      .reduce((maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount), 0);
     const baselineCheckpointRef = checkpointRefForThreadTurn(thread.id, currentTurnCount);
     const baselineExists = yield* checkpointStore.hasCheckpointRef({
       cwd: checkpointCwd,
@@ -390,10 +388,9 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
+    const currentTurnCount = thread.checkpoints
+      .filter((checkpoint) => checkpoint.status !== "missing")
+      .reduce((maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount), 0);
     const baselineCheckpointRef = checkpointRefForThreadTurn(threadId, currentTurnCount);
     const baselineExists = yield* checkpointStore.hasCheckpointRef({
       cwd: checkpointCwd,
@@ -446,10 +443,9 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
+    const currentTurnCount = thread.checkpoints
+      .filter((checkpoint) => checkpoint.status !== "missing")
+      .reduce((maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount), 0);
 
     if (event.payload.turnCount > currentTurnCount) {
       yield* appendRevertFailureActivity({
