@@ -14,12 +14,9 @@ const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
 
-const DEFAULT_BASE_DIR = Effect.map(Effect.service(Path.Path), (path) =>
+export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(homedir(), ".t3"),
 );
-
-export const getDevStateDir = (baseDir: string): Effect.Effect<string, never, Path.Path> =>
-  Effect.map(Effect.service(Path.Path), (path) => path.join(baseDir, "dev"));
 
 const MODE_ARGS = {
   dev: [
@@ -113,21 +110,7 @@ function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, neve
       return path.resolve(configured);
     }
 
-    return yield* DEFAULT_BASE_DIR;
-  });
-}
-
-function resolveStateDir(stateDir: string | undefined, baseDir: string): Effect.Effect<string, never, Path.Path> {
-  return Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const configured = stateDir?.trim();
-
-    if (configured) {
-      // Resolve relative paths against cwd (monorepo root) before turbo changes directories.
-      return path.resolve(configured);
-    }
-
-    return yield* getDevStateDir(baseDir);
+    return yield* DEFAULT_T3_HOME;
   });
 }
 
@@ -136,8 +119,7 @@ interface CreateDevRunnerEnvInput {
   readonly baseEnv: NodeJS.ProcessEnv;
   readonly serverOffset: number;
   readonly webOffset: number;
-  readonly baseDir: string | undefined;
-  readonly stateDir: string | undefined;
+  readonly t3Home: string | undefined;
   readonly authToken: string | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
@@ -152,8 +134,7 @@ export function createDevRunnerEnv({
   baseEnv,
   serverOffset,
   webOffset,
-  baseDir,
-  stateDir,
+  t3Home,
   authToken,
   noBrowser,
   autoBootstrapProjectFromCwd,
@@ -165,8 +146,7 @@ export function createDevRunnerEnv({
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
-    const resolvedBaseDir = yield* resolveBaseDir(baseDir);
-    const resolvedStateDir = yield* resolveStateDir(stateDir, resolvedBaseDir);
+    const resolvedBaseDir = yield* resolveBaseDir(t3Home);
 
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
@@ -175,8 +155,7 @@ export function createDevRunnerEnv({
       ELECTRON_RENDERER_PORT: String(webPort),
       VITE_WS_URL: `ws://localhost:${serverPort}`,
       VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://localhost:${webPort}`,
-      T3CODE_BASE_DIR: resolvedBaseDir,
-      T3CODE_STATE_DIR: resolvedStateDir,
+      T3CODE_HOME: resolvedBaseDir,
     };
 
     if (host !== undefined) {
@@ -355,8 +334,7 @@ export function resolveModePortOffsets<R = NetService>({
 
 interface DevRunnerCliInput {
   readonly mode: DevMode;
-  readonly baseDir: string | undefined;
-  readonly stateDir: string | undefined;
+  readonly t3Home: string | undefined;
   readonly authToken: string | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
@@ -436,8 +414,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       baseEnv: process.env,
       serverOffset,
       webOffset,
-      baseDir: input.baseDir,
-      stateDir: input.stateDir,
+      t3Home: input.t3Home,
       authToken: input.authToken,
       noBrowser: resolveOptionalBooleanOverride(input.noBrowser, envOverrides.noBrowser),
       autoBootstrapProjectFromCwd: resolveOptionalBooleanOverride(
@@ -459,7 +436,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         : "";
 
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} stateDir=${String(env.T3CODE_STATE_DIR)}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.T3CODE_HOME)}`,
     );
 
     if (input.dryRun) {
@@ -507,13 +484,9 @@ const devRunnerCli = Command.make("dev-runner", {
   mode: Argument.choice("mode", DEV_RUNNER_MODES).pipe(
     Argument.withDescription("Development mode to run."),
   ),
-  baseDir: Flag.string("base-dir").pipe(
-    Flag.withDescription("Base directory for all T3 Code data (forwards to T3CODE_BASE_DIR)."),
-    Flag.withFallbackConfig(optionalStringConfig("T3CODE_BASE_DIR")),
-  ),
-  stateDir: Flag.string("state-dir").pipe(
-    Flag.withDescription("State directory path (forwards to T3CODE_STATE_DIR)."),
-    Flag.withFallbackConfig(optionalStringConfig("T3CODE_STATE_DIR")),
+  t3Home: Flag.string("home-dir").pipe(
+    Flag.withDescription("Base directory for all T3 Code data (equivalent to T3CODE_HOME)."),
+    Flag.withFallbackConfig(optionalStringConfig("T3CODE_HOME")),
   ),
   authToken: Flag.string("auth-token").pipe(
     Flag.withDescription("Auth token (forwards to T3CODE_AUTH_TOKEN)."),

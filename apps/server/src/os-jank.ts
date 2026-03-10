@@ -35,10 +35,7 @@ export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
   return resolve(yield* expandHomePath(raw.trim()));
 });
 
-export const resolveStateDir = Effect.fn(function* (raw: string | undefined, baseDir: string) {
-  const { join, resolve } = yield* Path.Path;
-  if (!raw || raw.trim().length === 0) {
-    return join(baseDir, "userdata");
-  }
-  return resolve(yield* expandHomePath(raw.trim()));
+export const resolveStateDir = Effect.fn(function* (baseDir: string) {
+  const { join } = yield* Path.Path;
+  return join(baseDir, "userdata");
 });

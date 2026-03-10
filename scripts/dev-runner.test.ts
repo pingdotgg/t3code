@@ -5,7 +5,6 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
 import {
-  getDevStateDir,
   createDevRunnerEnv,
   findFirstAvailableOffset,
   resolveModePortOffsets,
@@ -47,28 +46,24 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("createDevRunnerEnv", () => {
-    it.effect("defaults state dir to ~/.t3/dev when not provided", () =>
+    it.effect("defaults T3CODE_HOME to ~/.t3 when not provided", () =>
       Effect.gen(function* () {
-        const [env, defaultStateDir] = yield* Effect.all([
-          createDevRunnerEnv({
-            mode: "dev",
-            baseEnv: {},
-            serverOffset: 0,
-            webOffset: 0,
-            baseDir: undefined,
-            stateDir: undefined,
-            authToken: undefined,
-            noBrowser: undefined,
-            autoBootstrapProjectFromCwd: undefined,
-            logWebSocketEvents: undefined,
-            host: undefined,
-            port: undefined,
-            devUrl: undefined,
-          }),
-          getDevStateDir(resolve(homedir(), ".t3")),
-        ]);
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {},
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          authToken: undefined,
+          noBrowser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
 
-        assert.equal(env.T3CODE_STATE_DIR, defaultStateDir);
+        assert.equal(env.T3CODE_HOME, resolve(homedir(), ".t3"));
       }),
     );
 
@@ -79,8 +74,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          baseDir: "/tmp/custom-base",
-          stateDir: "/tmp/override-state",
+          t3Home: "/tmp/custom-t3",
           authToken: "secret",
           noBrowser: true,
           autoBootstrapProjectFromCwd: false,
@@ -90,8 +84,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: new URL("http://localhost:7331"),
         });
 
-        assert.equal(env.T3CODE_BASE_DIR, resolve("/tmp/custom-base"));
-        assert.equal(env.T3CODE_STATE_DIR, resolve("/tmp/override-state"));
+        assert.equal(env.T3CODE_HOME, resolve("/tmp/custom-t3"));
         assert.equal(env.T3CODE_PORT, "4222");
         assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
         assert.equal(env.T3CODE_NO_BROWSER, "1");
@@ -111,8 +104,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           },
           serverOffset: 0,
           webOffset: 0,
-          baseDir: undefined,
-          stateDir: undefined,
+          t3Home: undefined,
           authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
@@ -134,8 +126,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          baseDir: undefined,
-          stateDir: undefined,
+          t3Home: undefined,
           authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
@@ -149,15 +140,14 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
-    it.effect("uses base dir for state dir when state dir not provided", () =>
+    it.effect("uses custom t3Home when provided", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          baseDir: "/tmp/my-t3",
-          stateDir: undefined,
+          t3Home: "/tmp/my-t3",
           authToken: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
@@ -167,8 +157,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.T3CODE_BASE_DIR, resolve("/tmp/my-t3"));
-        assert.equal(env.T3CODE_STATE_DIR, resolve("/tmp/my-t3/dev"));
+        assert.equal(env.T3CODE_HOME, resolve("/tmp/my-t3"));
       }),
     );
   });
