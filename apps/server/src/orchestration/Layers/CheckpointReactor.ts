@@ -14,6 +14,7 @@ import {
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
+import { clearWorkspaceIndexCache } from "../../workspaceEntries.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
@@ -217,6 +218,10 @@ const make = Effect.gen(function* () {
       cwd: checkpointCwd,
       checkpointRef: targetCheckpointRef,
     });
+
+    // Invalidate the workspace entry cache so the @-mention file picker
+    // reflects files created or deleted during this turn.
+    clearWorkspaceIndexCache(checkpointCwd);
 
     const files = yield* checkpointStore
       .diffCheckpoints({
@@ -492,6 +497,10 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.catch(() => Effect.void));
       return;
     }
+
+    // Invalidate the workspace entry cache so the @-mention file picker
+    // reflects the reverted filesystem state.
+    clearWorkspaceIndexCache(sessionRuntime.value.cwd);
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {
