@@ -1,37 +1,12 @@
 import type { ServerProviderStatus } from "@t3tools/contracts";
+import type {
+  ReplayFixture as BaseReplayFixture,
+  ReplayInteraction,
+  ReplayRef,
+  ReplayScopes,
+  ResolvedInteraction,
+} from "@t3tools/rr-e2e";
 
-export interface ReplayRef {
-  readonly $ref: string;
-}
+export type ReplayFixture = BaseReplayFixture<ServerProviderStatus>;
 
-export interface ReplayInteraction {
-  readonly name: string;
-  readonly service: string;
-  readonly match?: Record<string, unknown>;
-  readonly whenState?: Record<string, unknown>;
-  readonly capture?: Record<string, string>;
-  readonly setState?: Record<string, unknown>;
-  readonly result?: unknown;
-  readonly notifications?: ReadonlyArray<unknown>;
-  readonly error?: {
-    readonly message: string;
-  };
-}
-
-export interface ReplayFixture {
-  readonly version: 1;
-  readonly state?: Record<string, unknown>;
-  readonly providerStatuses?: ReadonlyArray<ServerProviderStatus>;
-  readonly interactions: ReadonlyArray<ReplayInteraction>;
-}
-
-export interface ReplayScopes {
-  readonly request: unknown;
-  readonly state: Record<string, unknown>;
-}
-
-export interface ResolvedInteraction<T> {
-  readonly interaction: ReplayInteraction;
-  readonly result: T;
-  readonly notifications: ReadonlyArray<unknown>;
-}
+export type { ReplayInteraction, ReplayRef, ReplayScopes, ResolvedInteraction };

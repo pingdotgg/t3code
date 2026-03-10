@@ -16,8 +16,8 @@ import { type OpenShape } from "../../src/open.ts";
 import type { ProcessRunResult } from "../../src/processRunner.ts";
 import { type TerminalManagerShape } from "../../src/terminal/Services/Manager.ts";
 
-import { createReplayCliInvoker } from "./cliReplay.ts";
-import type { ReplayFixture } from "./types.ts";
+import { createReplayCliInvoker } from "@t3tools/rr-e2e";
+import type { ReplayFixture } from "@t3tools/rr-e2e";
 
 export function defaultProviderStatuses(): ReadonlyArray<ServerProviderStatus> {
   return [

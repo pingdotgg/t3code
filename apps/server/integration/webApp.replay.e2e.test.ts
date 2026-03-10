@@ -154,7 +154,8 @@ describe("web app replay e2e", () => {
         const composer = page.locator('[contenteditable="true"]').first();
         await composer.click();
         await page.keyboard.insertText("Draft after completion");
-        await expect(composer).toContainText("Draft after completion");
+        const text = await composer.textContent();
+        expect(text).toContain("Draft after completion");
       });
     },
     30_000,

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { ServerProviderStatus } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Exit, Layer, Scope } from "effect";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright";
@@ -29,8 +30,7 @@ import { createServer } from "../../src/wsServer.ts";
 import webViteConfig from "../../../web/vite.config.ts";
 
 import { makeReplayCodexProcessController } from "./codexProcess.ts";
-import { readReplayFixture } from "./fixtureLoader.ts";
-import { cloneJson } from "./template.ts";
+import { cloneJson, readReplayFixture, type ReplayFixture } from "@t3tools/rr-e2e";
 import {
   defaultProviderStatuses,
   makeReplayGitHubCli,
@@ -38,7 +38,6 @@ import {
   noOpOpenService,
   noOpTerminalManager,
 } from "./services.ts";
-import type { ReplayFixture } from "./types.ts";
 
 export interface WebAppReplayHarness {
   readonly appUrl: string;
@@ -110,7 +109,10 @@ export async function createWebAppReplayHarness(
     logWebSocketEvents: false,
   } satisfies ServerConfigShape);
   const providerHealthLayer = Layer.succeed(ProviderHealth, {
-    getStatuses: Effect.succeed(fixture.providerStatuses ?? defaultProviderStatuses()),
+    getStatuses: Effect.succeed(
+      (fixture.providerStatuses as ReadonlyArray<ServerProviderStatus> | undefined) ??
+        defaultProviderStatuses(),
+    ),
   });
   const openLayer = Layer.succeed(Open, noOpOpenService);
   const runtimeLayer = Layer.merge(

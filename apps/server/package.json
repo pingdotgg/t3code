@@ -35,6 +35,7 @@
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/rr-e2e": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/web": "workspace:*",
     "@types/bun": "catalog:",
