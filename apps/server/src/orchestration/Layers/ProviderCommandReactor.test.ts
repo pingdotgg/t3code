@@ -382,6 +382,48 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("starts implementation turns from proposed plans while keeping the provider input hidden", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: CommandId.makeUnsafe("cmd-proposed-plan-upsert"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        proposedPlan: {
+          id: "plan-1",
+          turnId: null,
+          planMarkdown: "# Hidden plan\n\n- implement me",
+          createdAt: now,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.plan.implement",
+        commandId: CommandId.makeUnsafe("cmd-plan-implement-hidden"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        planId: "plan-1",
+        messageId: asMessageId("msg-plan-implement"),
+        messageText: "Implement this plan.",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      input: "PLEASE IMPLEMENT THIS PLAN:\n# Hidden plan\n\n- implement me",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    });
+  });
+
   it("reuses the same provider session when runtime mode is unchanged", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

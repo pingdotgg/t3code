@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  type TurnId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -20,6 +21,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { buildPlanImplementationMessageText } from "../proposedPlan";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
@@ -225,6 +227,80 @@ function createSnapshotForTargetUser(options: {
           activeTurnId: null,
           lastError: null,
           updatedAt: NOW_ISO,
+        },
+      },
+    ],
+    updatedAt: NOW_ISO,
+  };
+}
+
+function createPlanFollowUpSnapshot(): OrchestrationReadModel {
+  return {
+    snapshotSequence: 1,
+    projects: [
+      {
+        id: PROJECT_ID,
+        title: "Project",
+        workspaceRoot: "/repo/project",
+        defaultModel: "gpt-5",
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: [
+      {
+        id: THREAD_ID,
+        projectId: PROJECT_ID,
+        title: "Plan follow-up thread",
+        model: "gpt-5",
+        interactionMode: "plan",
+        runtimeMode: "full-access",
+        branch: "main",
+        worktreePath: null,
+        latestTurn: {
+          turnId: "turn-plan-1" as TurnId,
+          state: "completed",
+          requestedAt: isoAt(0),
+          startedAt: isoAt(1),
+          completedAt: isoAt(4),
+          assistantMessageId: "msg-assistant-plan-1" as MessageId,
+        },
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+        messages: [
+          createUserMessage({
+            id: "msg-user-plan-1" as MessageId,
+            text: "Plan the work",
+            offsetSeconds: 0,
+          }),
+          createAssistantMessage({
+            id: "msg-assistant-plan-1" as MessageId,
+            text: "<proposed_plan>\n# Hidden Plan\n\n- step 1\n</proposed_plan>",
+            offsetSeconds: 2,
+          }),
+        ],
+        activities: [],
+        proposedPlans: [
+          {
+            id: "plan-1",
+            turnId: "turn-plan-1" as TurnId,
+            planMarkdown: "# Hidden Plan\n\n- step 1",
+            createdAt: isoAt(3),
+            updatedAt: isoAt(4),
+          },
+        ],
+        checkpoints: [],
+        session: {
+          threadId: THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: isoAt(4),
         },
       },
     ],
@@ -802,6 +878,89 @@ describe("ChatView timeline estimator parity (full app)", () => {
       }
     },
   );
+
+  it("renders user markdown headings and lists inside the user bubble", async () => {
+    const targetMessageId = "msg-user-markdown" as MessageId;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId,
+        targetText: "# Markdown title\n\n- one\n- two",
+      }),
+    });
+
+    try {
+      await mounted.measureUserRow(targetMessageId);
+      const row = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            `[data-message-id="${targetMessageId}"][data-message-role="user"]`,
+          ),
+        "Unable to find user markdown row.",
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(row.querySelector("h1")?.textContent).toBe("Markdown title");
+          expect(row.querySelectorAll("ul li")).toHaveLength(2);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("dispatches plan implementation with a short visible user message instead of the full plan", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createPlanFollowUpSnapshot(),
+    });
+
+    try {
+      const initialUserRowCount = document.querySelectorAll('[data-message-role="user"]').length;
+      const visibleImplementationMessage = buildPlanImplementationMessageText();
+      const implementButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Implement",
+          ) as HTMLButtonElement | null,
+        "Unable to find Implement button.",
+      );
+
+      implementButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequests = wsRequests.filter(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          );
+          expect(
+            dispatchRequests.some(
+              (request) =>
+                (request.command as { type?: string } | undefined)?.type ===
+                "thread.plan.implement",
+            ),
+          ).toBe(true);
+          expect(
+            dispatchRequests.some(
+              (request) =>
+                (request.command as { type?: string } | undefined)?.type === "thread.turn.start",
+            ),
+          ).toBe(false);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(document.body.textContent?.includes("PLEASE IMPLEMENT THIS PLAN:")).toBe(false);
+      expect(document.querySelectorAll('[data-message-role="user"]')).toHaveLength(
+        initialUserRowCount + 1,
+      );
+      expect(document.body.textContent?.includes(visibleImplementationMessage)).toBe(true);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 
   it("opens the project cwd for draft threads without a worktree path", async () => {
     useComposerDraftStore.setState({
