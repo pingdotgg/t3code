@@ -881,6 +881,23 @@ const makeGitCore = Effect.gen(function* () {
         };
       }
 
+      const currentUpstream = yield* resolveCurrentUpstream(cwd).pipe(
+        Effect.catch(() => Effect.succeed(null)),
+      );
+      if (currentUpstream) {
+        yield* runGit("GitCore.pushCurrentBranch.pushUpstream", cwd, [
+          "push",
+          currentUpstream.remoteName,
+          `HEAD:${currentUpstream.upstreamBranch}`,
+        ]);
+        return {
+          status: "pushed" as const,
+          branch,
+          upstreamBranch: currentUpstream.upstreamRef,
+          setUpstream: false,
+        };
+      }
+
       yield* runGit("GitCore.pushCurrentBranch.push", cwd, ["push"]);
       return {
         status: "pushed" as const,

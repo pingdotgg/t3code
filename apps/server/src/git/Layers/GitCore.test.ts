@@ -1583,6 +1583,53 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect(
+      "pushes renamed PR worktree branches to their tracked upstream branch even when push.default is current",
+      () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          const fork = yield* makeTmpDir();
+          yield* git(fork, ["init", "--bare"]);
+
+          yield* initRepoWithCommit(tmp);
+          yield* git(tmp, ["remote", "add", "jasonLaster", fork]);
+          yield* git(tmp, ["checkout", "-b", "statemachine"]);
+          yield* writeTextFile(path.join(tmp, "fork.txt"), "fork branch\n");
+          yield* git(tmp, ["add", "fork.txt"]);
+          yield* git(tmp, ["commit", "-m", "fork branch"]);
+          yield* git(tmp, ["push", "-u", "jasonLaster", "statemachine"]);
+          yield* git(tmp, ["checkout", "main"]);
+          yield* git(tmp, ["branch", "-D", "statemachine"]);
+          yield* git(tmp, [
+            "checkout",
+            "-b",
+            "t3code/pr-488/statemachine",
+            "--track",
+            "jasonLaster/statemachine",
+          ]);
+          yield* git(tmp, ["config", "push.default", "current"]);
+          yield* writeTextFile(path.join(tmp, "fork.txt"), "updated fork branch\n");
+          yield* git(tmp, ["add", "fork.txt"]);
+          yield* git(tmp, ["commit", "-m", "update reviewed PR branch"]);
+
+          const core = yield* GitCore;
+          const pushed = yield* core.pushCurrentBranch(tmp, null);
+
+          expect(pushed.status).toBe("pushed");
+          expect(pushed.setUpstream).toBe(false);
+          expect(pushed.upstreamBranch).toBe("jasonLaster/statemachine");
+          expect(yield* git(tmp, ["rev-parse", "--abbrev-ref", "@{upstream}"])).toBe(
+            "jasonLaster/statemachine",
+          );
+          expect(
+            yield* git(tmp, ["ls-remote", "--heads", "jasonLaster", "statemachine"]),
+          ).toContain("statemachine");
+          expect(
+            yield* git(tmp, ["ls-remote", "--heads", "jasonLaster", "t3code/pr-488/statemachine"]),
+          ).toBe("");
+        }),
+    );
+
     it.effect("includes command context when worktree removal fails", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

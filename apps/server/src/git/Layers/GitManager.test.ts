@@ -1138,13 +1138,62 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const ownerSelectorCallIndex = ghCalls.findIndex((call) =>
           call.includes("pr list --head octocat:statemachine --state open --limit 1"),
         );
-        const bareSelectorCallIndex = ghCalls.findIndex((call) =>
-          call.includes("pr list --head statemachine --state open --limit 1"),
-        );
         expect(ownerSelectorCallIndex).toBeGreaterThanOrEqual(0);
-        expect(bareSelectorCallIndex).toBeGreaterThanOrEqual(0);
-        expect(ownerSelectorCallIndex).toBeLessThan(bareSelectorCallIndex);
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+      }),
+    12_000,
+  );
+
+  it.effect(
+    "stops probing head selectors after finding an existing PR",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+        yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-142/statemachine"]);
+        yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.fork-seed.url",
+          "git@github.com:octocat/codething-mvp.git",
+        ]);
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              "octocat:statemachine": JSON.stringify([
+                {
+                  number: 142,
+                  title: "Existing fork PR",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/142",
+                  baseRefName: "main",
+                  headRefName: "statemachine",
+                },
+              ]),
+              "fork-seed:statemachine": JSON.stringify([]),
+              "t3code/pr-142/statemachine": JSON.stringify([]),
+              statemachine: JSON.stringify([]),
+            },
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.pr.status).toBe("opened_existing");
+        expect(result.pr.number).toBe(142);
+
+        const prListCalls = ghCalls.filter((call) => call.startsWith("pr list "));
+        expect(prListCalls).toHaveLength(1);
+        expect(prListCalls[0]).toContain(
+          "pr list --head octocat:statemachine --state open --limit 1",
+        );
       }),
     12_000,
   );
