@@ -858,7 +858,9 @@ const makeKeybindings = Effect.gen(function* () {
     syncDefaultKeybindingsOnStartup,
     loadConfigState: loadConfigStateFromCacheOrDisk,
     getSnapshot: loadConfigStateFromCacheOrDisk,
-    streamChanges: Stream.fromPubSub(changesPubSub),
+    get streamChanges() {
+      return Stream.fromPubSub(changesPubSub);
+    },
     upsertKeybindingRule: (rule) =>
       upsertSemaphore.withPermits(1)(
         Effect.gen(function* () {
