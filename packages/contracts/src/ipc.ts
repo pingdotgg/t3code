@@ -1,6 +1,9 @@
 import type {
   GitCheckoutInput,
   GitCreateBranchInput,
+  GitPreparePullRequestThreadInput,
+  GitPreparePullRequestThreadResult,
+  GitPullRequestRefInput,
   GitCreateWorktreeInput,
   GitCreateWorktreeResult,
   GitInitInput,
@@ -9,6 +12,7 @@ import type {
   GitPullInput,
   GitPullResult,
   GitRemoveWorktreeInput,
+  GitResolvePullRequestResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStatusInput,
@@ -27,6 +31,7 @@ import type {
   TerminalEvent,
   TerminalOpenInput,
   TerminalResizeInput,
+  TerminalRestartInput,
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
@@ -59,6 +64,7 @@ export type DesktopUpdateStatus =
   | "error";
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
+export type DesktopTheme = "light" | "dark" | "system";
 
 export interface DesktopRuntimeInfo {
   hostArch: DesktopRuntimeArch;
@@ -94,6 +100,7 @@ export interface DesktopBridge {
   confirm: (message: string) => Promise<boolean>;
   writeClipboardText: (text: string) => Promise<void>;
   readClipboardText: () => Promise<string>;
+  setTheme: (theme: DesktopTheme) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
@@ -116,7 +123,7 @@ export interface NativeApi {
     write: (input: TerminalWriteInput) => Promise<void>;
     resize: (input: TerminalResizeInput) => Promise<void>;
     clear: (input: TerminalClearInput) => Promise<void>;
-    restart: (input: TerminalOpenInput) => Promise<TerminalSessionSnapshot>;
+    restart: (input: TerminalRestartInput) => Promise<TerminalSessionSnapshot>;
     close: (input: TerminalCloseInput) => Promise<void>;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
@@ -136,6 +143,10 @@ export interface NativeApi {
     createBranch: (input: GitCreateBranchInput) => Promise<void>;
     checkout: (input: GitCheckoutInput) => Promise<void>;
     init: (input: GitInitInput) => Promise<void>;
+    resolvePullRequest: (input: GitPullRequestRefInput) => Promise<GitResolvePullRequestResult>;
+    preparePullRequestThread: (
+      input: GitPreparePullRequestThreadInput,
+    ) => Promise<GitPreparePullRequestThreadResult>;
     // Stacked action API
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;

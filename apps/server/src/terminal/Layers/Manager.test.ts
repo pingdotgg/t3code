@@ -6,6 +6,7 @@ import {
   DEFAULT_TERMINAL_ID,
   type TerminalEvent,
   type TerminalOpenInput,
+  type TerminalRestartInput,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -125,6 +126,16 @@ function waitFor(predicate: () => boolean, timeoutMs = 800): Promise<void> {
 }
 
 function openInput(overrides: Partial<TerminalOpenInput> = {}): TerminalOpenInput {
+  return {
+    threadId: "thread-1",
+    cwd: process.cwd(),
+    cols: 100,
+    rows: 24,
+    ...overrides,
+  };
+}
+
+function restartInput(overrides: Partial<TerminalRestartInput> = {}): TerminalRestartInput {
   return {
     threadId: "thread-1",
     cwd: process.cwd(),
@@ -361,7 +372,7 @@ describe("TerminalManager", () => {
     firstProcess.emitData("before restart\n");
     await waitFor(() => fs.existsSync(historyLogPath(logsDir)));
 
-    const snapshot = await manager.restart(openInput());
+    const snapshot = await manager.restart(restartInput());
     expect(snapshot.history).toBe("");
     expect(snapshot.status).toBe("running");
     expect(ptyAdapter.spawnInputs).toHaveLength(2);
