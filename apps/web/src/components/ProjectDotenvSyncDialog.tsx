@@ -20,6 +20,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 interface ProjectDotenvSyncDialogProps {
   open: boolean;
   dotenvSync: ProjectDotenvSyncConfig | null;
+  projectRootPath: string | null;
   activeWorktreePath: string | null;
   onOpenChange: (open: boolean) => void;
   onSave: (dotenvSync: ProjectDotenvSyncConfig | null) => Promise<void> | void;
@@ -30,6 +31,7 @@ interface ProjectDotenvSyncDialogProps {
 export default function ProjectDotenvSyncDialog({
   open,
   dotenvSync,
+  projectRootPath,
   activeWorktreePath,
   onOpenChange,
   onSave,
@@ -184,6 +186,13 @@ export default function ProjectDotenvSyncDialog({
         </DialogHeader>
         <DialogPanel>
           <div className="space-y-4">
+            {projectRootPath ? (
+              <div className="rounded-lg border border-border bg-background px-3 py-3">
+                <p className="text-sm font-medium text-foreground">Scanning project root</p>
+                <p className="mt-1 break-all text-xs text-muted-foreground">{projectRootPath}</p>
+              </div>
+            ) : null}
+
             <div className="space-y-1.5">
               <Label htmlFor="dotenv-sync-path">Add dotenv path</Label>
               <div className="flex items-center gap-2">

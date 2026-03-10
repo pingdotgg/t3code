@@ -17,6 +17,8 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
+  ProjectListDotenvEntriesInput,
+  ProjectListDotenvEntriesResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
@@ -122,6 +124,9 @@ export interface NativeApi {
   };
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
+    listDotenvEntries: (
+      input: ProjectListDotenvEntriesInput,
+    ) => Promise<ProjectListDotenvEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
   shell: {

@@ -91,6 +91,7 @@ export interface NewProjectScriptInput {
 interface ProjectScriptsControlProps {
   scripts: ProjectScript[];
   dotenvSync: ProjectDotenvSyncConfig | null;
+  projectRootPath: string | null;
   activeWorktreePath: string | null;
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
@@ -157,6 +158,7 @@ function keybindingFromEvent(event: KeyboardEvent<HTMLInputElement>): string | n
 export default function ProjectScriptsControl({
   scripts,
   dotenvSync,
+  projectRootPath,
   activeWorktreePath,
   keybindings,
   preferredScriptId = null,
@@ -540,6 +542,7 @@ export default function ProjectScriptsControl({
       <ProjectDotenvSyncDialog
         open={dotenvDialogOpen}
         dotenvSync={dotenvSync}
+        projectRootPath={projectRootPath}
         activeWorktreePath={activeWorktreePath}
         onOpenChange={setDotenvDialogOpen}
         onSave={onSaveDotenvSync}

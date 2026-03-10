@@ -5,6 +5,8 @@ import { runProcess } from "./processRunner";
 
 import {
   ProjectEntry,
+  ProjectListDotenvEntriesInput,
+  ProjectListDotenvEntriesResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
@@ -80,9 +82,9 @@ function scoreEntry(entry: ProjectEntry, query: string): number {
 }
 
 function isPathInIgnoredDirectory(relativePath: string): boolean {
-  const firstSegment = relativePath.split("/")[0];
-  if (!firstSegment) return false;
-  return IGNORED_DIRECTORY_NAMES.has(firstSegment);
+  return relativePath
+    .split("/")
+    .some((segment) => segment.length > 0 && IGNORED_DIRECTORY_NAMES.has(segment));
 }
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
@@ -428,5 +430,86 @@ export async function searchWorkspaceEntries(
   return {
     entries: ranked.slice(0, input.limit),
     truncated: index.truncated || ranked.length > input.limit,
+  };
+}
+
+export async function listWorkspaceDotenvEntries(
+  input: ProjectListDotenvEntriesInput,
+): Promise<ProjectListDotenvEntriesResult> {
+  const entries: string[] = [];
+  let truncated = false;
+  let pendingDirectories: string[] = [""];
+
+  while (pendingDirectories.length > 0 && !truncated) {
+    const currentDirectories = pendingDirectories;
+    pendingDirectories = [];
+    const directoryEntries = await mapWithConcurrency(
+      currentDirectories,
+      WORKSPACE_SCAN_READDIR_CONCURRENCY,
+      async (relativeDir) => {
+        const absoluteDir = relativeDir ? path.join(input.cwd, relativeDir) : input.cwd;
+        try {
+          const dirents = await fs.readdir(absoluteDir, { withFileTypes: true });
+          return { relativeDir, dirents };
+        } catch (error) {
+          if (!relativeDir) {
+            throw new Error(
+              `Unable to scan dotenv files at '${input.cwd}': ${error instanceof Error ? error.message : "unknown error"}`,
+              { cause: error },
+            );
+          }
+          return { relativeDir, dirents: null };
+        }
+      },
+    );
+
+    for (const directoryEntry of directoryEntries) {
+      if (!directoryEntry.dirents) {
+        continue;
+      }
+
+      directoryEntry.dirents.sort((left, right) => left.name.localeCompare(right.name));
+      for (const dirent of directoryEntry.dirents) {
+        if (!dirent.name || dirent.name === "." || dirent.name === "..") {
+          continue;
+        }
+
+        const relativePath = toPosixPath(
+          directoryEntry.relativeDir
+            ? path.join(directoryEntry.relativeDir, dirent.name)
+            : dirent.name,
+        );
+
+        if (dirent.isDirectory()) {
+          if (IGNORED_DIRECTORY_NAMES.has(dirent.name) || isPathInIgnoredDirectory(relativePath)) {
+            continue;
+          }
+          pendingDirectories.push(relativePath);
+          continue;
+        }
+
+        if (!dirent.isFile() || !dirent.name.startsWith(".env")) {
+          continue;
+        }
+        if (isPathInIgnoredDirectory(relativePath)) {
+          continue;
+        }
+
+        entries.push(relativePath);
+        if (entries.length >= input.limit) {
+          truncated = true;
+          break;
+        }
+      }
+
+      if (truncated) {
+        break;
+      }
+    }
+  }
+
+  return {
+    entries,
+    truncated,
   };
 }

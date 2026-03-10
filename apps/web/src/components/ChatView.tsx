@@ -1601,28 +1601,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
       throw new Error("Native API unavailable.");
     }
 
-    const result = await api.projects.searchEntries({
+    const result = await api.projects.listDotenvEntries({
       cwd: activeProject.cwd,
-      query: ".env",
       limit: 200,
     });
 
-    const detectedPaths: string[] = [];
-    const seen = new Set<string>();
-
-    for (const entry of result.entries) {
-      if (entry.kind !== "file") {
-        continue;
-      }
-      const normalizedPath = normalizeDotenvSyncPath(entry.path).normalizedPath;
-      if (!normalizedPath || seen.has(normalizedPath)) {
-        continue;
-      }
-      seen.add(normalizedPath);
-      detectedPaths.push(normalizedPath);
-    }
-
-    return detectedPaths.toSorted((left, right) => left.localeCompare(right));
+    return result.entries
+      .map((entry) => normalizeDotenvSyncPath(entry).normalizedPath)
+      .filter((entry): entry is string => Boolean(entry))
+      .toSorted((left, right) => left.localeCompare(right));
   }, [activeProject]);
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {
@@ -3564,6 +3551,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
           activeProjectDotenvSync={activeProject?.dotenvSync ?? null}
+          activeProjectRootPath={activeProject?.cwd ?? null}
           activeWorktreePath={activeThread.worktreePath ?? null}
           preferredScriptId={
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
@@ -4255,6 +4243,7 @@ interface ChatHeaderProps {
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
   activeProjectDotenvSync: ProjectDotenvSyncConfig | null;
+  activeProjectRootPath: string | null;
   activeWorktreePath: string | null;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
@@ -4280,6 +4269,7 @@ const ChatHeader = memo(function ChatHeader({
   openInCwd,
   activeProjectScripts,
   activeProjectDotenvSync,
+  activeProjectRootPath,
   activeWorktreePath,
   preferredScriptId,
   keybindings,
@@ -4322,6 +4312,7 @@ const ChatHeader = memo(function ChatHeader({
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             dotenvSync={activeProjectDotenvSync}
+            projectRootPath={activeProjectRootPath}
             activeWorktreePath={activeWorktreePath}
             keybindings={keybindings}
             preferredScriptId={preferredScriptId}

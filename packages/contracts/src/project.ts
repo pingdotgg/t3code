@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
+const PROJECT_DOTENV_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
@@ -25,6 +26,18 @@ export const ProjectSearchEntriesResult = Schema.Struct({
   truncated: Schema.Boolean,
 });
 export type ProjectSearchEntriesResult = typeof ProjectSearchEntriesResult.Type;
+
+export const ProjectListDotenvEntriesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_DOTENV_ENTRIES_MAX_LIMIT)),
+});
+export type ProjectListDotenvEntriesInput = typeof ProjectListDotenvEntriesInput.Type;
+
+export const ProjectListDotenvEntriesResult = Schema.Struct({
+  entries: Schema.Array(TrimmedNonEmptyString),
+  truncated: Schema.Boolean,
+});
+export type ProjectListDotenvEntriesResult = typeof ProjectListDotenvEntriesResult.Type;
 
 export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,

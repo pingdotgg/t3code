@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 
 import { afterEach, assert, describe, it, vi } from "vitest";
 
-import { searchWorkspaceEntries } from "./workspaceEntries";
+import { listWorkspaceDotenvEntries, searchWorkspaceEntries } from "./workspaceEntries";
 
 const tempDirs: string[] = [];
 
@@ -44,6 +44,7 @@ describe("searchWorkspaceEntries", () => {
     writeFile(cwd, "README.md");
     writeFile(cwd, ".git/HEAD");
     writeFile(cwd, ".turn/state/session.json");
+    writeFile(cwd, "apps/web/node_modules/pkg/index.js");
     writeFile(cwd, "node_modules/pkg/index.js");
 
     const result = await searchWorkspaceEntries({ cwd, query: "", limit: 100 });
@@ -55,6 +56,7 @@ describe("searchWorkspaceEntries", () => {
     assert.include(paths, "README.md");
     assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".git")));
     assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".turn")));
+    assert.isFalse(paths.some((entryPath) => entryPath.includes("/node_modules/")));
     assert.isFalse(paths.some((entryPath) => entryPath.startsWith("node_modules")));
     assert.isFalse(result.truncated);
   });
@@ -118,6 +120,33 @@ describe("searchWorkspaceEntries", () => {
     assert.include(paths, "src");
     assert.include(paths, "src/keep.ts");
     assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".convex/")));
+  });
+
+  it("lists dotenv files even when they are gitignored", async () => {
+    const cwd = makeTempDir("t3code-workspace-dotenv-entries-");
+    runGit(cwd, ["init"]);
+    writeFile(cwd, ".gitignore", ".env.local\napps/web/.env.local\n");
+    writeFile(cwd, ".env.example", "ROOT=example");
+    writeFile(cwd, ".env.local", "ROOT=local");
+    writeFile(cwd, "apps/web/.env.local", "APP=local");
+    writeFile(cwd, ".next/.env.local", "IGNORED=true");
+
+    const result = await listWorkspaceDotenvEntries({ cwd, limit: 100 });
+
+    assert.deepEqual(result.entries, [".env.example", ".env.local", "apps/web/.env.local"]);
+    assert.isFalse(result.truncated);
+  });
+
+  it("excludes nested ignored directories from dotenv scans", async () => {
+    const cwd = makeTempDir("t3code-workspace-nested-dotenv-ignore-");
+    writeFile(cwd, "apps/web/.env.local", "APP=local");
+    writeFile(cwd, "apps/web/node_modules/pkg/.env", "IGNORED=true");
+    writeFile(cwd, "packages/site/.next/cache/.env.local", "IGNORED=true");
+
+    const result = await listWorkspaceDotenvEntries({ cwd, limit: 100 });
+
+    assert.deepEqual(result.entries, ["apps/web/.env.local"]);
+    assert.isFalse(result.truncated);
   });
 
   it("deduplicates concurrent index builds for the same cwd", async () => {
