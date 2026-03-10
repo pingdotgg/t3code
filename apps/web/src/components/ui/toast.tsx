@@ -27,6 +27,8 @@ const anchoredToastManager = Toast.createToastManager<ThreadToastData>();
 type ToastId = ReturnType<typeof toastManager.add>;
 const threadToastVisibleTimeoutRemainingMs = new Map<ToastId, number>();
 
+const DEFAULT_DISMISS_AFTER_VISIBLE_MS = 5_000;
+
 const TOAST_ICONS = {
   error: CircleAlertIcon,
   info: InfoIcon,
@@ -263,7 +265,7 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
               toast={toast}
             >
               <ThreadToastVisibleAutoDismiss
-                dismissAfterVisibleMs={toast.data?.dismissAfterVisibleMs}
+                dismissAfterVisibleMs={toast.data?.dismissAfterVisibleMs ?? (toast.type === "loading" ? undefined : DEFAULT_DISMISS_AFTER_VISIBLE_MS)}
                 toastId={toast.id}
               />
               <Toast.Content
