@@ -121,7 +121,7 @@ export default function BranchToolbar({
                 />
               }
             >
-              Local
+              {activeWorktreePath ? "Worktree" : "Local"}
             </PopoverTrigger>
             <PopoverPopup tooltipStyle side="bottom" align="start">
               Start a new thread to use worktrees
