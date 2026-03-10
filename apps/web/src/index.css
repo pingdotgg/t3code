@@ -344,11 +344,23 @@ label:has(> select#reasoning-effort) select {
   margin: 0;
 }
 
-.chat-markdown .chat-markdown-copy-button {
+.chat-markdown .chat-markdown-codeblock-actions {
   position: absolute;
   top: 0.5rem;
   right: 0.5rem;
   z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.chat-markdown .chat-markdown-codeblock-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -358,21 +370,19 @@ label:has(> select#reasoning-effort) select {
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--background) 82%, transparent);
   color: var(--muted-foreground);
-  opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
   transition:
-    opacity 120ms ease,
     color 120ms ease,
     border-color 120ms ease;
 }
 
-.chat-markdown .chat-markdown-codeblock:hover .chat-markdown-copy-button,
-.chat-markdown .chat-markdown-codeblock:focus-within .chat-markdown-copy-button {
+.chat-markdown .chat-markdown-codeblock:hover .chat-markdown-codeblock-actions,
+.chat-markdown .chat-markdown-codeblock:focus-within .chat-markdown-codeblock-actions {
   opacity: 1;
   pointer-events: auto;
 }
 
-.chat-markdown .chat-markdown-copy-button:hover {
+.chat-markdown .chat-markdown-codeblock-action:hover {
   color: var(--foreground);
   border-color: color-mix(in srgb, var(--border) 70%, var(--foreground));
 }

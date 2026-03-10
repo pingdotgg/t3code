@@ -3,7 +3,7 @@ import {
   type DiffsHighlighter,
   type SupportedLanguages,
 } from "@pierre/diffs";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, PlayIcon } from "lucide-react";
 import React, {
   Children,
   Suspense,
@@ -23,6 +23,7 @@ import remarkGfm from "remark-gfm";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
+import { extractRunnableCommandFromCodeBlock } from "../lib/runnableMarkdownCommand";
 import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
 import { readNativeApi } from "../nativeApi";
@@ -53,6 +54,7 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   isStreaming?: boolean;
+  onRunCommand?: (command: string) => void | Promise<void>;
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
@@ -133,9 +135,24 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
   return promise;
 }
 
-function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNode }) {
+function MarkdownCodeBlock({
+  className,
+  code,
+  children,
+  onRunCommand,
+}: {
+  className: string | undefined;
+  code: string;
+  children: ReactNode;
+  onRunCommand?: (command: string) => void | Promise<void>;
+}) {
   const [copied, setCopied] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runnableCommand = useMemo(
+    () => extractRunnableCommandFromCodeBlock(className, code),
+    [className, code],
+  );
   const handleCopy = useCallback(() => {
     if (typeof navigator === "undefined" || navigator.clipboard == null) {
       return;
@@ -154,6 +171,18 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
       })
       .catch(() => undefined);
   }, [code]);
+  const handleRun = useCallback(() => {
+    if (!onRunCommand || !runnableCommand || isRunning) {
+      return;
+    }
+
+    setIsRunning(true);
+    Promise.resolve(onRunCommand(runnableCommand))
+      .catch(() => undefined)
+      .finally(() => {
+        setIsRunning(false);
+      });
+  }, [isRunning, onRunCommand, runnableCommand]);
 
   useEffect(
     () => () => {
@@ -167,15 +196,29 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
 
   return (
     <div className="chat-markdown-codeblock">
-      <button
-        type="button"
-        className="chat-markdown-copy-button"
-        onClick={handleCopy}
-        title={copied ? "Copied" : "Copy code"}
-        aria-label={copied ? "Copied" : "Copy code"}
-      >
-        {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-      </button>
+      <div className="chat-markdown-codeblock-actions">
+        {onRunCommand && runnableCommand ? (
+          <button
+            type="button"
+            className="chat-markdown-codeblock-action"
+            onClick={handleRun}
+            disabled={isRunning}
+            title="Run in terminal"
+            aria-label="Run in terminal"
+          >
+            <PlayIcon className="size-3" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="chat-markdown-codeblock-action"
+          onClick={handleCopy}
+          title={copied ? "Copied" : "Copy code"}
+          aria-label={copied ? "Copied" : "Copy code"}
+        >
+          {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+        </button>
+      </div>
       {children}
     </div>
   );
@@ -232,7 +275,7 @@ function SuspenseShikiCodeBlock({
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function ChatMarkdown({ text, cwd, isStreaming = false, onRunCommand }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownComponents = useMemo<Components>(
@@ -267,7 +310,11 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
         }
 
         return (
-          <MarkdownCodeBlock code={codeBlock.code}>
+          <MarkdownCodeBlock
+            className={codeBlock.className}
+            code={codeBlock.code}
+            {...(onRunCommand ? { onRunCommand } : {})}
+          >
             <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>
                 <SuspenseShikiCodeBlock
@@ -282,7 +329,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
         );
       },
     }),
-    [cwd, diffThemeName, isStreaming],
+    [cwd, diffThemeName, isStreaming, onRunCommand],
   );
 
   return (

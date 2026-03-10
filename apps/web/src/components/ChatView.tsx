@@ -264,6 +264,17 @@ const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnsw
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+
+function normalizeTerminalCommandInput(command: string): string | null {
+  const normalized = command
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/^\n+|\n+$/g, "");
+  if (normalized.trim().length === 0) {
+    return null;
+  }
+  return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
+}
 const WORKTREE_BRANCH_PREFIX = "t3code";
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
@@ -1504,34 +1515,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [activeThreadId, storeCloseTerminal, terminalState.terminalIds.length],
   );
-  const runProjectScript = useCallback(
-    async (
-      script: ProjectScript,
-      options?: {
-        cwd?: string;
-        env?: Record<string, string>;
-        worktreePath?: string | null;
-        preferNewTerminal?: boolean;
-        rememberAsLastInvoked?: boolean;
-        allowLocalDraftThread?: boolean;
-      },
-    ) => {
+  const runCommandInTerminal = useCallback(
+    async (options: {
+      command: string;
+      cwd?: string;
+      env?: Record<string, string>;
+      worktreePath?: string | null;
+      preferNewTerminal?: boolean;
+      allowLocalDraftThread?: boolean;
+      errorMessage?: string;
+    }) => {
       const api = readNativeApi();
       if (!api || !activeThreadId || !activeProject || !activeThread) return;
-      if (!isServerThread && !options?.allowLocalDraftThread) return;
-      if (options?.rememberAsLastInvoked !== false) {
-        setLastInvokedScriptByProjectId((current) => {
-          if (current[activeProject.id] === script.id) return current;
-          return { ...current, [activeProject.id]: script.id };
-        });
-      }
-      const targetCwd = options?.cwd ?? gitCwd ?? activeProject.cwd;
+      if (!isServerThread && !options.allowLocalDraftThread) return;
+      const command = normalizeTerminalCommandInput(options.command);
+      if (!command) return;
+      const targetCwd = options.cwd ?? gitCwd ?? activeProject.cwd;
       const baseTerminalId =
         terminalState.activeTerminalId ||
         terminalState.terminalIds[0] ||
         DEFAULT_THREAD_TERMINAL_ID;
       const isBaseTerminalBusy = terminalState.runningTerminalIds.includes(baseTerminalId);
-      const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
+      const wantsNewTerminal = Boolean(options.preferNewTerminal) || isBaseTerminalBusy;
       const shouldCreateNewTerminal =
         wantsNewTerminal && terminalState.terminalIds.length < MAX_THREAD_TERMINAL_COUNT;
       const targetTerminalId = shouldCreateNewTerminal
@@ -1550,8 +1555,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         project: {
           cwd: activeProject.cwd,
         },
-        worktreePath: options?.worktreePath ?? activeThread.worktreePath ?? null,
-        ...(options?.env ? { extraEnv: options.env } : {}),
+        worktreePath: options.worktreePath ?? activeThread.worktreePath ?? null,
+        ...(options.env ? { extraEnv: options.env } : {}),
       });
       const openTerminalInput: Parameters<typeof api.terminal.open>[0] = shouldCreateNewTerminal
         ? {
@@ -1574,12 +1579,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         await api.terminal.write({
           threadId: activeThreadId,
           terminalId: targetTerminalId,
-          data: `${script.command}\r`,
+          data: command,
         });
       } catch (error) {
         setThreadError(
           activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          error instanceof Error
+            ? error.message
+            : (options.errorMessage ?? "Failed to run terminal command."),
         );
       }
     },
@@ -1596,6 +1603,46 @@ export default function ChatView({ threadId }: ChatViewProps) {
       terminalState.activeTerminalId,
       terminalState.runningTerminalIds,
       terminalState.terminalIds,
+    ],
+  );
+  const runProjectScript = useCallback(
+    async (
+      script: ProjectScript,
+      options?: {
+        cwd?: string;
+        env?: Record<string, string>;
+        worktreePath?: string | null;
+        preferNewTerminal?: boolean;
+        rememberAsLastInvoked?: boolean;
+        allowLocalDraftThread?: boolean;
+      },
+    ) => {
+      const api = readNativeApi();
+      if (!api || !activeThreadId || !activeProject || !activeThread) return;
+      if (!isServerThread && !options?.allowLocalDraftThread) return;
+      if (options?.rememberAsLastInvoked !== false) {
+        setLastInvokedScriptByProjectId((current) => {
+          if (current[activeProject.id] === script.id) return current;
+          return { ...current, [activeProject.id]: script.id };
+        });
+      }
+      await runCommandInTerminal({
+        command: script.command,
+        errorMessage: `Failed to run script "${script.name}".`,
+        ...(options?.cwd ? { cwd: options.cwd } : {}),
+        ...(options?.env ? { env: options.env } : {}),
+        ...(options?.worktreePath !== undefined ? { worktreePath: options.worktreePath } : {}),
+        ...(options?.preferNewTerminal ? { preferNewTerminal: true } : {}),
+        ...(options?.allowLocalDraftThread ? { allowLocalDraftThread: true } : {}),
+      });
+    },
+    [
+      activeProject,
+      activeThread,
+      activeThreadId,
+      isServerThread,
+      runCommandInTerminal,
+      setLastInvokedScriptByProjectId,
     ],
   );
   const persistProjectScripts = useCallback(
@@ -3624,6 +3671,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
               isRevertingCheckpoint={isRevertingCheckpoint}
               onImageExpand={onExpandTimelineImage}
               markdownCwd={gitCwd ?? undefined}
+              onRunMarkdownCommand={(command) => {
+                const commandCwd = gitCwd ?? activeProject?.cwd;
+                return void runCommandInTerminal(
+                  commandCwd ? { command, cwd: commandCwd } : { command },
+                );
+              }}
               resolvedTheme={resolvedTheme}
               workspaceRoot={activeProject?.cwd ?? undefined}
             />
@@ -4870,10 +4923,12 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
   cwd,
   workspaceRoot,
+  onRunCommand,
 }: {
   planMarkdown: string;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  onRunCommand?: (command: string) => void | Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -4977,9 +5032,19 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
           {canCollapse && !expanded ? (
-            <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
+            <ChatMarkdown
+              text={collapsedPreview ?? ""}
+              cwd={cwd}
+              isStreaming={false}
+              {...(onRunCommand ? { onRunCommand } : {})}
+            />
           ) : (
-            <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
+            <ChatMarkdown
+              text={displayedPlanMarkdown}
+              cwd={cwd}
+              isStreaming={false}
+              {...(onRunCommand ? { onRunCommand } : {})}
+            />
           )}
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
@@ -5069,6 +5134,7 @@ interface MessagesTimelineProps {
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
+  onRunMarkdownCommand?: (command: string) => void | Promise<void>;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
 }
@@ -5123,6 +5189,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   isRevertingCheckpoint,
   onImageExpand,
   markdownCwd,
+  onRunMarkdownCommand,
   resolvedTheme,
   workspaceRoot,
 }: MessagesTimelineProps) {
@@ -5504,6 +5571,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   text={messageText}
                   cwd={markdownCwd}
                   isStreaming={Boolean(row.message.streaming)}
+                  {...(onRunMarkdownCommand ? { onRunCommand: onRunMarkdownCommand } : {})}
                 />
                 {(() => {
                   const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
@@ -5580,6 +5648,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
             planMarkdown={row.proposedPlan.planMarkdown}
             cwd={markdownCwd}
             workspaceRoot={workspaceRoot}
+            {...(onRunMarkdownCommand ? { onRunCommand: onRunMarkdownCommand } : {})}
           />
         </div>
       )}
