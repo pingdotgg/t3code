@@ -8,7 +8,7 @@
  *
  * @module DrainableWorker
  */
-import { Effect, Queue, Ref, Schedule } from "effect";
+import { Deferred, Effect, Queue, Ref } from "effect";
 import type { Scope } from "effect";
 
 export interface DrainableWorker<A> {
@@ -22,9 +22,6 @@ export interface DrainableWorker<A> {
 
   /**
    * Resolves when the queue is empty and the worker is idle (not processing).
-   *
-   * Uses a tight `Schedule.spaced("1 millis")` poll which resolves in
-   * microseconds in practice — intended for test use only.
    */
   readonly drain: Effect.Effect<void>;
 }
@@ -43,16 +40,36 @@ export const makeDrainableWorker = <A, E, R>(
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<A>();
-    const outstanding = yield* Ref.make(0);
+    const initialIdle = yield* Deferred.make<void>();
+    yield* Deferred.succeed(initialIdle, undefined).pipe(Effect.orDie);
+    const state = yield* Ref.make({
+      outstanding: 0,
+      idle: initialIdle,
+    });
 
     yield* Effect.addFinalizer(() => Queue.shutdown(queue).pipe(Effect.asVoid));
+
+    const finishOne = Ref.modify(state, (current) => {
+      const remaining = Math.max(0, current.outstanding - 1);
+      return [
+        remaining === 0 ? current.idle : null,
+        {
+          outstanding: remaining,
+          idle: current.idle,
+        },
+      ] as const;
+    }).pipe(
+      Effect.flatMap((idle) =>
+        idle === null ? Effect.void : Deferred.succeed(idle, undefined).pipe(Effect.orDie),
+      ),
+    );
 
     yield* Effect.forkScoped(
       Effect.forever(
         Queue.take(queue).pipe(
           Effect.flatMap((item) =>
             process(item).pipe(
-              Effect.ensuring(Ref.update(outstanding, (count) => Math.max(0, count - 1))),
+              Effect.ensuring(finishOne),
             ),
           ),
         ),
@@ -60,22 +77,28 @@ export const makeDrainableWorker = <A, E, R>(
     );
 
     const enqueue: DrainableWorker<A>["enqueue"] = (item) =>
-      Ref.update(outstanding, (count) => count + 1).pipe(
-        Effect.flatMap(() => Queue.offer(queue, item)),
-        Effect.flatMap((accepted) =>
-          accepted === false
-            ? Ref.update(outstanding, (count) => Math.max(0, count - 1))
-            : Effect.void,
-        ),
-        Effect.asVoid,
-      );
+      Effect.gen(function* () {
+        const nextIdle = yield* Deferred.make<void>();
+        yield* Ref.update(state, (current) =>
+          current.outstanding === 0
+            ? {
+                outstanding: 1,
+                idle: nextIdle,
+              }
+            : {
+                outstanding: current.outstanding + 1,
+                idle: current.idle,
+              },
+        );
 
-    const drain: DrainableWorker<A>["drain"] = Ref.get(outstanding).pipe(
-      Effect.repeat({
-        while: (count) => count > 0,
-        schedule: Schedule.spaced("1 millis"),
-      }),
-      Effect.asVoid,
+        const accepted = yield* Queue.offer(queue, item);
+        if (!accepted) {
+          yield* finishOne;
+        }
+      });
+
+    const drain: DrainableWorker<A>["drain"] = Ref.get(state).pipe(
+      Effect.flatMap(({ idle }) => Deferred.await(idle)),
     );
 
     return { enqueue, drain } satisfies DrainableWorker<A>;

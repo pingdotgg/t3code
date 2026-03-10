@@ -54,22 +54,21 @@ describe("makeDrainableWorker", () => {
     await Effect.runPromise(worker.enqueue("first"));
     await Effect.runPromise(Deferred.await(firstStarted));
 
-    const drainPromise = Effect.runPromise(worker.drain);
+    const drained = await Effect.runPromise(Deferred.make<void>());
+    void Effect.runPromise(
+      worker.drain.pipe(
+        Effect.tap(() => Deferred.succeed(drained, undefined).pipe(Effect.orDie)),
+      ),
+    );
 
     await Effect.runPromise(worker.enqueue("second"));
     await Effect.runPromise(Deferred.succeed(releaseFirst, undefined));
     await Effect.runPromise(Deferred.await(secondStarted));
 
-    const earlyResult = await Promise.race([
-      drainPromise.then(() => "resolved" as const),
-      new Promise<"pending">((resolve) => {
-        setTimeout(() => resolve("pending"), 20);
-      }),
-    ]);
-    expect(earlyResult).toBe("pending");
+    expect(await Effect.runPromise(Deferred.isDone(drained))).toBe(false);
 
     await Effect.runPromise(Deferred.succeed(releaseSecond, undefined));
-    await drainPromise;
+    await Effect.runPromise(Deferred.await(drained));
 
     expect(processed).toEqual(["first", "second"]);
   });

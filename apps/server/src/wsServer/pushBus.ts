@@ -1,4 +1,10 @@
-import { type WsPushChannel, type WsPushData, type WsPush } from "@t3tools/contracts";
+import {
+  WsPush,
+  type WsPushChannel,
+  type WsPushData,
+  type WsPushEnvelopeBase,
+} from "@t3tools/contracts";
+import { encodeJsonStringEffect } from "@t3tools/shared/schemaJson";
 import { Deferred, Effect, Queue, Ref } from "effect";
 import type { Scope } from "effect";
 import type { WebSocket } from "ws";
@@ -28,11 +34,12 @@ export interface ServerPushBus {
 
 export const makeServerPushBus = (input: {
   readonly clients: Ref.Ref<Set<WebSocket>>;
-  readonly logOutgoingPush: (push: WsPush, recipients: number) => void;
+  readonly logOutgoingPush: (push: WsPushEnvelopeBase, recipients: number) => void;
 }): Effect.Effect<ServerPushBus, never, Scope.Scope> =>
   Effect.gen(function* () {
     const nextSequence = yield* Ref.make(0);
     const queue = yield* Queue.unbounded<PushJob>();
+    const encodePush = encodeJsonStringEffect(WsPush);
 
     const settleDelivery = (job: PushJob, delivered: boolean) =>
       job.delivered === null
@@ -41,28 +48,30 @@ export const makeServerPushBus = (input: {
 
     const send = Effect.fnUntraced(function* (job: PushJob) {
       const sequence = yield* Ref.updateAndGet(nextSequence, (current) => current + 1);
-      const push = {
+      const push: WsPushEnvelopeBase = {
         type: "push",
         sequence,
         channel: job.channel,
         data: job.data,
-      } as WsPush;
-
-      const message = JSON.stringify(push);
+      };
       const recipients =
         job.target.kind === "all" ? yield* Ref.get(input.clients) : new Set([job.target.client]);
 
-      let recipientCount = 0;
-      for (const client of recipients) {
-        if (client.readyState !== client.OPEN) {
-          continue;
-        }
-        client.send(message);
-        recipientCount += 1;
-      }
+      return yield* encodePush(push).pipe(
+        Effect.map((message) => {
+          let recipientCount = 0;
+          for (const client of recipients) {
+            if (client.readyState !== client.OPEN) {
+              continue;
+            }
+            client.send(message);
+            recipientCount += 1;
+          }
 
-      input.logOutgoingPush(push, recipientCount);
-      return recipientCount > 0;
+          input.logOutgoingPush(push, recipientCount);
+          return recipientCount > 0;
+        }),
+      );
     });
 
     yield* Effect.forkScoped(

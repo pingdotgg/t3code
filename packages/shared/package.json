@@ -27,6 +27,10 @@
     "./DrainableWorker": {
       "types": "./src/DrainableWorker.ts",
       "import": "./src/DrainableWorker.ts"
+    },
+    "./schemaJson": {
+      "types": "./src/schemaJson.ts",
+      "import": "./src/schemaJson.ts"
     }
   },
   "scripts": {

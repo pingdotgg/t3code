@@ -23,8 +23,8 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   WebSocketRequest,
-  WsPush,
   WsResponse,
+  type WsPushEnvelopeBase,
 } from "@t3tools/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -65,6 +65,7 @@ import {
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
 } from "./attachmentPaths";
+import { decodeJsonString, encodeJsonStringEffect, formatJsonDecodeFailure } from "@t3tools/shared/schemaJson";
 import {
   createAttachmentId,
   resolveAttachmentPath,
@@ -196,6 +197,9 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
 
+const encodeWsResponse = encodeJsonStringEffect(WsResponse);
+const decodeWebSocketRequest = decodeJsonString(WebSocketRequest);
+
 export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
@@ -268,7 +272,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const logger = createLogger("ws");
   const readiness = yield* makeServerReadiness;
 
-  function logOutgoingPush(push: WsPush, recipients: number) {
+  function logOutgoingPush(push: WsPushEnvelopeBase, recipients: number) {
     if (!logWebSocketEvents) return;
     logger.event("outgoing push", {
       channel: push.channel,
@@ -897,44 +901,40 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {
-    const encodeResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
+    const sendWsResponse = (response: unknown) =>
+      encodeWsResponse(response).pipe(
+        Effect.tap((encodedResponse) => Effect.sync(() => ws.send(encodedResponse))),
+        Effect.asVoid,
+      );
 
     const messageText = websocketRawToString(raw);
     if (messageText === null) {
-      const errorResponse = yield* encodeResponse({
+      return yield* sendWsResponse({
         id: "unknown",
         error: { message: "Invalid request format: Failed to read message" },
       });
-      ws.send(errorResponse);
-      return;
     }
 
-    const request = Schema.decodeExit(Schema.fromJsonString(WebSocketRequest))(messageText);
+    const request = decodeWebSocketRequest(messageText);
     if (request._tag === "Failure") {
-      const errorResponse = yield* encodeResponse({
+      return yield* sendWsResponse({
         id: "unknown",
-        error: { message: `Invalid request format: ${Cause.pretty(request.cause)}` },
+        error: { message: `Invalid request format: ${formatJsonDecodeFailure(request.failure)}` },
       });
-      ws.send(errorResponse);
-      return;
     }
 
     const result = yield* Effect.exit(routeRequest(request.value));
-    if (result._tag === "Failure") {
-      const errorResponse = yield* encodeResponse({
+    if (Exit.isFailure(result)) {
+      return yield* sendWsResponse({
         id: request.value.id,
         error: { message: Cause.pretty(result.cause) },
       });
-      ws.send(errorResponse);
-      return;
     }
 
-    const response = yield* encodeResponse({
+    return yield* sendWsResponse({
       id: request.value.id,
       result: result.value,
     });
-
-    ws.send(response);
   });
 
   httpServer.on("upgrade", (request, socket, head) => {
