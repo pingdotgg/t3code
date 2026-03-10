@@ -1577,6 +1577,7 @@ describe("WebSocket Server", () => {
       Effect.succeed({
         branches: [],
         isRepo: false,
+        hasOriginRemote: false,
       }),
     );
     const initRepo = vi.fn(() => Effect.void);
@@ -1608,7 +1609,7 @@ describe("WebSocket Server", () => {
 
     const listResponse = await sendRequest(ws, WS_METHODS.gitListBranches, { cwd: "/repo/path" });
     expect(listResponse.error).toBeUndefined();
-    expect(listResponse.result).toEqual({ branches: [], isRepo: false });
+    expect(listResponse.result).toEqual({ branches: [], isRepo: false, hasOriginRemote: false });
     expect(listBranches).toHaveBeenCalledWith({ cwd: "/repo/path" });
 
     const initResponse = await sendRequest(ws, WS_METHODS.gitInit, { cwd: "/repo/path" });

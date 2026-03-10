@@ -409,6 +409,11 @@ async function getWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
   return nextPromise;
 }
 
+export function clearWorkspaceIndexCache(cwd: string): void {
+  workspaceIndexCache.delete(cwd);
+  inFlightWorkspaceIndexBuilds.delete(cwd);
+}
+
 export async function searchWorkspaceEntries(
   input: ProjectSearchEntriesInput,
 ): Promise<ProjectSearchEntriesResult> {

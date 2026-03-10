@@ -321,6 +321,7 @@ function resolveWsRpc(tag: string): unknown {
   if (tag === WS_METHODS.gitListBranches) {
     return {
       isRepo: true,
+      hasOriginRemote: true,
       branches: [
         {
           name: "main",

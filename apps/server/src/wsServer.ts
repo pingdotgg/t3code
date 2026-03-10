@@ -99,8 +99,7 @@ export interface ServerShape {
  */
 export class Server extends ServiceMap.Service<Server, ServerShape>()("t3/wsServer/Server") {}
 
-const isServerNotRunningError = (error: unknown): boolean => {
-  if (!(error instanceof Error)) return false;
+const isServerNotRunningError = (error: Error): boolean => {
   const maybeCode = (error as NodeJS.ErrnoException).code;
   return (
     maybeCode === "ERR_SERVER_NOT_RUNNING" || error.message.toLowerCase().includes("not running")
@@ -194,12 +193,6 @@ function resolveWorkspaceWritePath(params: {
 
 function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
-}
-
-function messageFromCause(cause: Cause.Cause<unknown>): string {
-  const squashed = Cause.squash(cause);
-  const message = squashed instanceof Error ? squashed.message.trim() : String(squashed).trim();
-  return message.length > 0 ? message : Cause.pretty(cause);
 }
 
 export type ServerCoreRuntimeServices =
@@ -943,7 +936,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (request._tag === "Failure") {
       const errorResponse = yield* encodeResponse({
         id: "unknown",
-        error: { message: `Invalid request format: ${messageFromCause(request.cause)}` },
+        error: { message: `Invalid request format: ${Cause.pretty(request.cause)}` },
       });
       ws.send(errorResponse);
       return;
@@ -953,7 +946,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (result._tag === "Failure") {
       const errorResponse = yield* encodeResponse({
         id: request.value.id,
-        error: { message: messageFromCause(result.cause) },
+        error: { message: Cause.pretty(result.cause) },
       });
       ws.send(errorResponse);
       return;

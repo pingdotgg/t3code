@@ -16,7 +16,7 @@ import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Schema, Stream } 
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
-import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import { ProviderAdapterRequestError, ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../git/Services/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -73,18 +73,8 @@ const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const WORKTREE_BRANCH_PREFIX = "t3code";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
-}
-
-function isUnknownPendingApprovalRequestError(error: unknown): boolean {
+function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
+  const error = Cause.squash(cause);
   if (Schema.is(ProviderAdapterRequestError)(error)) {
     const detail = error.detail.toLowerCase();
     return (
@@ -92,7 +82,7 @@ function isUnknownPendingApprovalRequestError(error: unknown): boolean {
       detail.includes("unknown pending permission request")
     );
   }
-  const message = toErrorMessage(error).toLowerCase();
+  const message = Cause.pretty(cause);
   return (
     message.includes("unknown pending approval request") ||
     message.includes("unknown pending permission request")
@@ -539,19 +529,17 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
-            const error = Cause.squash(cause);
-            const detail = toErrorMessage(error);
             yield* appendProviderFailureActivity({
               threadId: event.payload.threadId,
               kind: "provider.approval.respond.failed",
               summary: "Provider approval response failed",
-              detail,
+              detail: Cause.pretty(cause),
               turnId: null,
               createdAt: event.payload.createdAt,
               requestId: event.payload.requestId,
             });
 
-            if (!isUnknownPendingApprovalRequestError(error)) return;
+            if (!isUnknownPendingApprovalRequestError(cause)) return;
           }),
         ),
       );
@@ -586,12 +574,11 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
-            const error = Cause.squash(cause);
             yield* appendProviderFailureActivity({
               threadId: event.payload.threadId,
               kind: "provider.user-input.respond.failed",
               summary: "Provider user input response failed",
-              detail: toErrorMessage(error),
+              detail: Cause.pretty(cause),
               turnId: null,
               createdAt: event.payload.createdAt,
               requestId: event.payload.requestId,

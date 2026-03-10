@@ -13,6 +13,7 @@ import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
+import { APP_VERSION } from "../branding";
 import { SidebarInset } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
@@ -279,14 +280,17 @@ function SettingsRouteView() {
                   </span>
                 </label>
 
-                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <p>
-                    Binary source:{" "}
-                    <span className="font-medium text-foreground">{codexBinaryPath || "PATH"}</span>
-                  </p>
+                <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p>Binary source</p>
+                    <p className="mt-1 break-all font-mono text-[11px] text-foreground">
+                      {codexBinaryPath || "PATH"}
+                    </p>
+                  </div>
                   <Button
                     size="xs"
                     variant="outline"
+                    className="self-start"
                     onClick={() =>
                       updateSettings({
                         codexBinaryPath: defaults.codexBinaryPath,
@@ -553,6 +557,24 @@ function SettingsRouteView() {
                   </Button>
                 </div>
               ) : null}
+            </section>
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">About</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Application version and environment information.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Version</p>
+                  <p className="text-xs text-muted-foreground">
+                    Current version of the application.
+                  </p>
+                </div>
+                <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
+              </div>
             </section>
           </div>
         </div>
