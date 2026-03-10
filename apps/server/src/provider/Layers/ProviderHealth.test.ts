@@ -246,40 +246,36 @@ describe("checkCodexProviderStatus with custom model provider", () => {
   });
   afterEach(() => cleanup());
 
-  it.effect(
-    "skips auth probe and returns ready when a custom model provider is configured",
-    () =>
-      Effect.gen(function* () {
-        const status = yield* checkCodexProviderStatus;
-        assert.strictEqual(status.provider, "codex");
-        assert.strictEqual(status.status, "ready");
-        assert.strictEqual(status.available, true);
-        assert.strictEqual(status.authStatus, "unknown");
-        assert.strictEqual(
-          status.message,
-          "Using a custom Codex model provider; OpenAI login check skipped.",
-        );
-      }).pipe(
-        Effect.provide(
-          // The spawner only handles --version; if the test attempts
-          // "login status" the throw proves the auth probe was NOT skipped.
-          mockSpawnerLayer((args) => {
-            const joined = args.join(" ");
-            if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-            throw new Error(`Auth probe should have been skipped but got args: ${joined}`);
-          }),
-        ),
+  it.effect("skips auth probe and returns ready when a custom model provider is configured", () =>
+    Effect.gen(function* () {
+      const status = yield* checkCodexProviderStatus;
+      assert.strictEqual(status.provider, "codex");
+      assert.strictEqual(status.status, "ready");
+      assert.strictEqual(status.available, true);
+      assert.strictEqual(status.authStatus, "unknown");
+      assert.strictEqual(
+        status.message,
+        "Using a custom Codex model provider; OpenAI login check skipped.",
+      );
+    }).pipe(
+      Effect.provide(
+        // The spawner only handles --version; if the test attempts
+        // "login status" the throw proves the auth probe was NOT skipped.
+        mockSpawnerLayer((args) => {
+          const joined = args.join(" ");
+          if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+          throw new Error(`Auth probe should have been skipped but got args: ${joined}`);
+        }),
       ),
+    ),
   );
 
-  it.effect(
-    "still reports error when codex CLI is missing even with custom provider",
-    () =>
-      Effect.gen(function* () {
-        const status = yield* checkCodexProviderStatus;
-        assert.strictEqual(status.status, "error");
-        assert.strictEqual(status.available, false);
-      }).pipe(Effect.provide(failingSpawnerLayer("spawn codex ENOENT"))),
+  it.effect("still reports error when codex CLI is missing even with custom provider", () =>
+    Effect.gen(function* () {
+      const status = yield* checkCodexProviderStatus;
+      assert.strictEqual(status.status, "error");
+      assert.strictEqual(status.available, false);
+    }).pipe(Effect.provide(failingSpawnerLayer("spawn codex ENOENT"))),
   );
 });
 
@@ -302,8 +298,7 @@ describe("checkCodexProviderStatus with openai model provider", () => {
         mockSpawnerLayer((args) => {
           const joined = args.join(" ");
           if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-          if (joined === "login status")
-            return { stdout: "Not logged in\n", stderr: "", code: 1 };
+          if (joined === "login status") return { stdout: "Not logged in\n", stderr: "", code: 1 };
           throw new Error(`Unexpected args: ${joined}`);
         }),
       ),
@@ -405,10 +400,7 @@ describe("readCodexConfigModelProvider", () => {
   });
 
   it("handles single-quoted values in TOML", () => {
-    fs.writeFileSync(
-      path.join(tmpDir, "config.toml"),
-      "model_provider = 'mistral'\n",
-    );
+    fs.writeFileSync(path.join(tmpDir, "config.toml"), "model_provider = 'mistral'\n");
     assert.strictEqual(readCodexConfigModelProvider(), "mistral");
   });
 });
