@@ -20,7 +20,7 @@ export function shouldClearOptimisticProjectOrder<T extends string>(input: {
   persistedOrder: readonly T[] | null | undefined;
   hasPendingReorder: boolean;
 }): boolean {
-  if (!input.optimisticOrder || input.optimisticOrder.length === 0) {
+  if (!input.optimisticOrder) {
     return false;
   }
   if (input.hasPendingReorder) {
@@ -78,6 +78,9 @@ export function reorderProjectOrder(input: {
   movedProjectId: ProjectId;
   beforeProjectId: ProjectId | null;
 }): ProjectId[] {
+  if (input.beforeProjectId === input.movedProjectId) {
+    return [...input.currentOrder];
+  }
   const withoutMoved = input.currentOrder.filter((projectId) => projectId !== input.movedProjectId);
 
   if (input.beforeProjectId === null) {

@@ -23,12 +23,19 @@ export interface OrderedProjectThreadGroup {
 
 export type ThreadGroupPrStatus = GitStatusResult["pr"];
 
-function normalizeWorktreePath(worktreePath: string): string {
-  return worktreePath.trim();
+function normalizeMetadataString(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
-function normalizeBranchName(branch: string): string {
-  return branch.trim();
+function normalizeThreadGroupIdentity(input: ThreadGroupIdentity): ThreadGroupIdentity {
+  return {
+    branch: normalizeMetadataString(input.branch),
+    worktreePath: normalizeMetadataString(input.worktreePath),
+  };
 }
 
 function normalizeProjectThreadGroupOrder(threadGroupOrder: readonly ThreadGroupId[]): ThreadGroupId[] {
@@ -45,21 +52,23 @@ function normalizeProjectThreadGroupOrder(threadGroupOrder: readonly ThreadGroup
 }
 
 export function buildThreadGroupId(input: ThreadGroupIdentity): ThreadGroupId {
-  if (input.worktreePath) {
-    return `worktree:${normalizeWorktreePath(input.worktreePath)}`;
+  const normalized = normalizeThreadGroupIdentity(input);
+  if (normalized.worktreePath) {
+    return `worktree:${normalized.worktreePath}`;
   }
-  if (input.branch) {
-    return `branch:${normalizeBranchName(input.branch)}`;
+  if (normalized.branch) {
+    return `branch:${normalized.branch}`;
   }
   return MAIN_THREAD_GROUP_ID;
 }
 
 function threadGroupLabel(input: ThreadGroupIdentity): string {
-  if (input.worktreePath) {
-    return input.branch ?? formatWorktreePathForDisplay(input.worktreePath);
+  const normalized = normalizeThreadGroupIdentity(input);
+  if (normalized.worktreePath) {
+    return normalized.branch ?? formatWorktreePathForDisplay(normalized.worktreePath);
   }
-  if (input.branch) {
-    return input.branch;
+  if (normalized.branch) {
+    return normalized.branch;
   }
   return "Main";
 }
@@ -70,26 +79,27 @@ export function orderProjectThreadGroups<T extends ThreadGroupSeed>(input: {
 }): OrderedProjectThreadGroup[] {
   const groups = new Map<string, OrderedProjectThreadGroup>();
   for (const thread of input.threads) {
-    const id = buildThreadGroupId({
+    const identity = normalizeThreadGroupIdentity({
       branch: thread.branch,
       worktreePath: thread.worktreePath,
     });
+    const id = buildThreadGroupId(identity);
     const existing = groups.get(id);
     if (!existing) {
       groups.set(id, {
         id,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        label: threadGroupLabel({
-          branch: thread.branch,
-          worktreePath: thread.worktreePath,
-        }),
+        branch: identity.branch,
+        worktreePath: identity.worktreePath,
+        label: threadGroupLabel(identity),
         latestActivityAt: thread.createdAt,
       });
       continue;
     }
     if (thread.createdAt > existing.latestActivityAt) {
       existing.latestActivityAt = thread.createdAt;
+      existing.branch = identity.branch;
+      existing.worktreePath = identity.worktreePath;
+      existing.label = threadGroupLabel(identity);
     }
   }
 
@@ -125,6 +135,9 @@ export function reorderProjectThreadGroupOrder(input: {
 }): ThreadGroupId[] {
   const normalizedCurrentOrder = normalizeProjectThreadGroupOrder(input.currentOrder);
   if (input.movedGroupId === MAIN_THREAD_GROUP_ID) {
+    return normalizedCurrentOrder;
+  }
+  if (input.beforeGroupId === input.movedGroupId) {
     return normalizedCurrentOrder;
   }
   const withoutMoved = normalizedCurrentOrder.filter((groupId) => groupId !== input.movedGroupId);

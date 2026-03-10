@@ -260,6 +260,24 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
   };
 }
 
+function normalizeDraftThreadMetadataValue(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeDraftThreadState(draftThread: DraftThreadState): DraftThreadState {
+  const worktreePath = normalizeDraftThreadMetadataValue(draftThread.worktreePath);
+  return {
+    ...draftThread,
+    branch: normalizeDraftThreadMetadataValue(draftThread.branch),
+    worktreePath,
+    envMode: worktreePath ? "worktree" : draftThread.envMode,
+  };
+}
+
 function composerImageDedupKey(image: ComposerImageAttachment): string {
   // Keep this independent from File.lastModified so dedupe is stable for hydrated
   // images reconstructed from localStorage (which get a fresh lastModified value).
@@ -358,9 +376,12 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       const candidateDraftThread = rawDraftThread as Record<string, unknown>;
       const projectId = candidateDraftThread.projectId;
       const createdAt = candidateDraftThread.createdAt;
-      const branch = candidateDraftThread.branch;
-      const worktreePath = candidateDraftThread.worktreePath;
-      const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
+      const normalizedBranch = normalizeDraftThreadMetadataValue(
+        typeof candidateDraftThread.branch === "string" ? candidateDraftThread.branch : null,
+      );
+      const normalizedWorktreePath = normalizeDraftThreadMetadataValue(
+        typeof candidateDraftThread.worktreePath === "string" ? candidateDraftThread.worktreePath : null,
+      );
       if (typeof projectId !== "string" || projectId.length === 0) {
         continue;
       }
@@ -380,7 +401,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
           candidateDraftThread.interactionMode === "default"
             ? candidateDraftThread.interactionMode
             : DEFAULT_INTERACTION_MODE,
-        branch: typeof branch === "string" ? branch : null,
+        branch: normalizedBranch,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
       };
@@ -711,37 +732,44 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const existingThread = state.draftThreadsByThreadId[threadId];
           const mappingId = toProjectGroupDraftMapId(projectId, groupId);
           const previousThreadIdForGroup = state.projectGroupDraftThreadIdById[mappingId];
+          const normalizedExistingThread = existingThread
+            ? normalizeDraftThreadState(existingThread)
+            : null;
           const nextWorktreePath =
             options?.worktreePath === undefined
-              ? (existingThread?.worktreePath ?? null)
-              : (options.worktreePath ?? null);
-          const nextDraftThread: DraftThreadState = {
+              ? (normalizedExistingThread?.worktreePath ?? null)
+              : normalizeDraftThreadMetadataValue(options.worktreePath ?? null);
+          const nextDraftThread = normalizeDraftThreadState({
             projectId,
-            createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
-            runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+            createdAt:
+              options?.createdAt ?? normalizedExistingThread?.createdAt ?? new Date().toISOString(),
+            runtimeMode:
+              options?.runtimeMode ??
+              normalizedExistingThread?.runtimeMode ??
+              DEFAULT_RUNTIME_MODE,
             interactionMode:
               options?.interactionMode ??
-              existingThread?.interactionMode ??
+              normalizedExistingThread?.interactionMode ??
               DEFAULT_INTERACTION_MODE,
             branch:
               options?.branch === undefined
-                ? (existingThread?.branch ?? null)
-                : (options.branch ?? null),
+                ? (normalizedExistingThread?.branch ?? null)
+                : normalizeDraftThreadMetadataValue(options.branch ?? null),
             worktreePath: nextWorktreePath,
             envMode:
               options?.envMode ??
-              (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
-          };
+              (nextWorktreePath ? "worktree" : (normalizedExistingThread?.envMode ?? "local")),
+          });
           const hasSameGroupMapping = previousThreadIdForGroup === threadId;
           const hasSameDraftThread =
-            existingThread &&
-            existingThread.projectId === nextDraftThread.projectId &&
-            existingThread.createdAt === nextDraftThread.createdAt &&
-            existingThread.runtimeMode === nextDraftThread.runtimeMode &&
-            existingThread.interactionMode === nextDraftThread.interactionMode &&
-            existingThread.branch === nextDraftThread.branch &&
-            existingThread.worktreePath === nextDraftThread.worktreePath &&
-            existingThread.envMode === nextDraftThread.envMode;
+            normalizedExistingThread &&
+            normalizedExistingThread.projectId === nextDraftThread.projectId &&
+            normalizedExistingThread.createdAt === nextDraftThread.createdAt &&
+            normalizedExistingThread.runtimeMode === nextDraftThread.runtimeMode &&
+            normalizedExistingThread.interactionMode === nextDraftThread.interactionMode &&
+            normalizedExistingThread.branch === nextDraftThread.branch &&
+            normalizedExistingThread.worktreePath === nextDraftThread.worktreePath &&
+            normalizedExistingThread.envMode === nextDraftThread.envMode;
           if (hasSameGroupMapping && hasSameDraftThread) {
             return state;
           }
@@ -785,34 +813,40 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           if (!existing) {
             return state;
           }
+          const normalizedExisting = normalizeDraftThreadState(existing);
           const nextProjectId = options.projectId ?? existing.projectId;
           if (nextProjectId.length === 0) {
             return state;
           }
           const nextWorktreePath =
-            options.worktreePath === undefined ? existing.worktreePath : (options.worktreePath ?? null);
-          const nextDraftThread: DraftThreadState = {
+            options.worktreePath === undefined
+              ? normalizedExisting.worktreePath
+              : normalizeDraftThreadMetadataValue(options.worktreePath ?? null);
+          const nextDraftThread = normalizeDraftThreadState({
             projectId: nextProjectId,
             createdAt:
               options.createdAt === undefined
-                ? existing.createdAt
-                : options.createdAt || existing.createdAt,
-            runtimeMode: options.runtimeMode ?? existing.runtimeMode,
-            interactionMode: options.interactionMode ?? existing.interactionMode,
-            branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
+                ? normalizedExisting.createdAt
+                : options.createdAt || normalizedExisting.createdAt,
+            runtimeMode: options.runtimeMode ?? normalizedExisting.runtimeMode,
+            interactionMode: options.interactionMode ?? normalizedExisting.interactionMode,
+            branch:
+              options.branch === undefined
+                ? normalizedExisting.branch
+                : normalizeDraftThreadMetadataValue(options.branch ?? null),
             worktreePath: nextWorktreePath,
             envMode:
               options.envMode ??
-              (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
-          };
+              (nextWorktreePath ? "worktree" : (normalizedExisting.envMode ?? "local")),
+          });
           const isUnchanged =
-            nextDraftThread.projectId === existing.projectId &&
-            nextDraftThread.createdAt === existing.createdAt &&
-            nextDraftThread.runtimeMode === existing.runtimeMode &&
-            nextDraftThread.interactionMode === existing.interactionMode &&
-            nextDraftThread.branch === existing.branch &&
-            nextDraftThread.worktreePath === existing.worktreePath &&
-            nextDraftThread.envMode === existing.envMode;
+            nextDraftThread.projectId === normalizedExisting.projectId &&
+            nextDraftThread.createdAt === normalizedExisting.createdAt &&
+            nextDraftThread.runtimeMode === normalizedExisting.runtimeMode &&
+            nextDraftThread.interactionMode === normalizedExisting.interactionMode &&
+            nextDraftThread.branch === normalizedExisting.branch &&
+            nextDraftThread.worktreePath === normalizedExisting.worktreePath &&
+            nextDraftThread.envMode === normalizedExisting.envMode;
           if (isUnchanged) {
             return state;
           }
@@ -894,11 +928,14 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           return;
         }
         const projectPrefix = `${projectId}\u0000`;
-        for (const [mappingId, draftThreadId] of Object.entries(get().projectGroupDraftThreadIdById)) {
-          if (mappingId.startsWith(projectPrefix) && draftThreadId === threadId) {
-            get().clearProjectGroupDraftThreadId(projectId, mappingId.slice(projectPrefix.length));
-            return;
-          }
+        const groupIdsToClear = Object.entries(get().projectGroupDraftThreadIdById).flatMap(
+          ([mappingId, draftThreadId]) =>
+            mappingId.startsWith(projectPrefix) && draftThreadId === threadId
+              ? [mappingId.slice(projectPrefix.length)]
+              : [],
+        );
+        for (const groupId of groupIdsToClear) {
+          get().clearProjectGroupDraftThreadId(projectId, groupId);
         }
       },
       clearDraftThread: (threadId) => {
@@ -1385,7 +1422,12 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         }
         return {
           draftsByThreadId: persistedDraftsByThreadId,
-          draftThreadsByThreadId: state.draftThreadsByThreadId,
+          draftThreadsByThreadId: Object.fromEntries(
+            Object.entries(state.draftThreadsByThreadId).map(([threadId, draftThread]) => [
+              threadId,
+              normalizeDraftThreadState(draftThread),
+            ]),
+          ) as PersistedComposerDraftStoreState["draftThreadsByThreadId"],
           projectGroupDraftThreadIdById: state.projectGroupDraftThreadIdById,
           projectDraftThreadIdByProjectId: state.projectDraftThreadIdByProjectId,
         };

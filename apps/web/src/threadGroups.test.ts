@@ -96,6 +96,77 @@ describe("threadGroups", () => {
     expect(worktreeGroup?.label).toBe("feature-draft-only");
   });
 
+  it("normalizes branch and worktree metadata stored on ordered groups", () => {
+    const groups = orderProjectThreadGroups({
+      project: makeProject(),
+      threads: [
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-worktree-spaced"),
+          branch: " feature/a ",
+          worktreePath: " /tmp/project/.t3/worktrees/feature-a ",
+        }),
+      ],
+    });
+
+    expect(groups[1]).toMatchObject({
+      id: "worktree:/tmp/project/.t3/worktrees/feature-a",
+      branch: "feature/a",
+      worktreePath: "/tmp/project/.t3/worktrees/feature-a",
+      label: "feature/a",
+    });
+
+    const prByGroupId = resolveProjectThreadGroupPrById({
+      groups,
+      projectCwd: "/tmp/project",
+      statusByCwd: new Map<string, GitStatusResult>([
+        [
+          "/tmp/project/.t3/worktrees/feature-a",
+          makeGitStatus({
+            branch: "feature/a",
+            pr: {
+              number: 12,
+              title: "Feature A",
+              url: "https://example.com/pr/12",
+              baseBranch: "main",
+              headBranch: "feature/a",
+              state: "open",
+            },
+          }),
+        ],
+      ]),
+    });
+
+    expect(prByGroupId.get("worktree:/tmp/project/.t3/worktrees/feature-a")?.number).toBe(12);
+  });
+
+  it("refreshes group metadata when a newer thread in the same normalized group arrives", () => {
+    const groups = orderProjectThreadGroups({
+      project: makeProject(),
+      threads: [
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-worktree-older"),
+          branch: null,
+          worktreePath: "/tmp/project/.t3/worktrees/feature-a",
+          createdAt: "2026-03-01T00:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-worktree-newer"),
+          branch: "feature/a",
+          worktreePath: " /tmp/project/.t3/worktrees/feature-a ",
+          createdAt: "2026-03-05T00:00:00.000Z",
+        }),
+      ],
+    });
+
+    expect(groups[1]).toMatchObject({
+      id: "worktree:/tmp/project/.t3/worktrees/feature-a",
+      branch: "feature/a",
+      worktreePath: "/tmp/project/.t3/worktrees/feature-a",
+      label: "feature/a",
+      latestActivityAt: "2026-03-05T00:00:00.000Z",
+    });
+  });
+
   it("pins Main first, inserts new groups next, then keeps shared project order", () => {
     const project = makeProject({
       threadGroupOrder: ["worktree:/tmp/project/.t3/worktrees/feature-a", "branch:release/1.0"],
@@ -198,6 +269,24 @@ describe("threadGroups", () => {
     ).toEqual([
       "worktree:/tmp/project/.t3/worktrees/feature-a",
       "branch:release/1.0",
+    ]);
+  });
+
+  it("treats dropping a group onto itself as a no-op", () => {
+    expect(
+      reorderProjectThreadGroupOrder({
+        currentOrder: [
+          "worktree:/tmp/project/.t3/worktrees/feature-a",
+          "branch:release/1.0",
+          "worktree:/tmp/project/.t3/worktrees/feature-b",
+        ],
+        movedGroupId: "branch:release/1.0",
+        beforeGroupId: "branch:release/1.0",
+      }),
+    ).toEqual([
+      "worktree:/tmp/project/.t3/worktrees/feature-a",
+      "branch:release/1.0",
+      "worktree:/tmp/project/.t3/worktrees/feature-b",
     ]);
   });
 

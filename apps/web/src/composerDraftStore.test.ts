@@ -200,6 +200,26 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("normalizes stored branch and worktree metadata", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: " feature/test ",
+      worktreePath: " /tmp/worktree-test ",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toEqual({
+      projectId,
+      branch: "feature/test",
+      worktreePath: "/tmp/worktree-test",
+      envMode: "worktree",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+  });
+
   it("clears only matching project draft mapping entries", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectId, threadId);
@@ -331,6 +351,29 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: null,
       envMode: "worktree",
     });
+  });
+
+  it("clears every matching project-group mapping for a thread id", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProjectDraftThreadId(projectId, threadId);
+    store.setProjectGroupDraftThreadId(projectId, "branch:feature/test", threadId, {
+      branch: "feature/test",
+      worktreePath: null,
+      envMode: "worktree",
+    });
+    store.setPrompt(threadId, "remove all mappings");
+
+    store.clearProjectDraftThreadById(projectId, threadId);
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toBeNull();
+    expect(
+      useComposerDraftStore
+        .getState()
+        .getDraftThreadByProjectGroupId(projectId, "branch:feature/test"),
+    ).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });
 });
 
