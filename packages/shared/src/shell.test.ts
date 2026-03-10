@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { extractPathFromShellOutput, readPathFromLoginShell } from "./shell";
+import {
+  defaultShellCandidates,
+  extractPathFromShellOutput,
+  readPathFromLoginShell,
+  resolvePathFromLoginShells,
+} from "./shell";
 
 describe("extractPathFromShellOutput", () => {
   it("extracts the path between capture markers", () => {
@@ -53,5 +58,112 @@ describe("readPathFromLoginShell", () => {
     expect(args?.[1]).toContain("__T3CODE_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_PATH_END__");
     expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+  });
+
+  it("falls back to non-interactive login mode when interactive login fails", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >((_, args) => {
+      if (args[0] === "-ilc") {
+        throw new Error("interactive login unsupported");
+      }
+      return "__T3CODE_PATH_START__\n/a:/b\n__T3CODE_PATH_END__\n";
+    });
+
+    expect(readPathFromLoginShell("/bin/sh", execFile)).toBe("/a:/b");
+    expect(execFile).toHaveBeenCalledTimes(2);
+    expect(execFile.mock.calls[0]?.[1]?.[0]).toBe("-ilc");
+    expect(execFile.mock.calls[1]?.[1]?.[0]).toBe("-lc");
+  });
+
+  describe("resolvePathFromLoginShells", () => {
+    it("returns the first resolved PATH from the provided shells", () => {
+      const execFile = vi.fn<
+        (
+          file: string,
+          args: ReadonlyArray<string>,
+          options: { encoding: "utf8"; timeout: number },
+        ) => string
+      >((file) => {
+        if (file === "/bin/zsh") {
+          throw new Error("zsh unavailable");
+        }
+        return "__T3CODE_PATH_START__\n/a:/b\n__T3CODE_PATH_END__\n";
+      });
+
+      const result = resolvePathFromLoginShells(["/bin/zsh", "/bin/bash"], execFile);
+      expect(result).toBe("/a:/b");
+      expect(execFile).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns undefined when all shells fail to resolve PATH", () => {
+      const execFile = vi.fn<
+        (
+          file: string,
+          args: ReadonlyArray<string>,
+          options: { encoding: "utf8"; timeout: number },
+        ) => string
+      >(() => {
+        throw new Error("no shells available");
+      });
+
+      const result = resolvePathFromLoginShells(["/bin/zsh", "/bin/bash"], execFile);
+      expect(result).toBeUndefined();
+      expect(execFile).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+describe("defaultShellCandidates", () => {
+  it("limits Linux candidates to the configured shell and POSIX fallback", () => {
+    const originalShell = process.env.SHELL;
+    process.env.SHELL = "/bin/bash";
+
+    try {
+      expect(defaultShellCandidates("linux")).toEqual(["/bin/bash", "/bin/sh"]);
+    } finally {
+      process.env.SHELL = originalShell;
+    }
+  });
+
+  it("dedupes repeated Linux shell candidates", () => {
+    const originalShell = process.env.SHELL;
+    process.env.SHELL = "/bin/sh";
+
+    try {
+      expect(defaultShellCandidates("linux")).toEqual(["/bin/sh"]);
+    } finally {
+      process.env.SHELL = originalShell;
+    }
+  });
+
+  it("limits macOS candidates to a small bounded fallback set", () => {
+    const originalShell = process.env.SHELL;
+    process.env.SHELL = "/opt/homebrew/bin/fish";
+
+    try {
+      expect(defaultShellCandidates("darwin")).toEqual([
+        "/opt/homebrew/bin/fish",
+        "/bin/zsh",
+        "/bin/bash",
+      ]);
+    } finally {
+      process.env.SHELL = originalShell;
+    }
+  });
+
+  it("dedupes repeated macOS shell candidates", () => {
+    const originalShell = process.env.SHELL;
+    process.env.SHELL = "/bin/zsh";
+
+    try {
+      expect(defaultShellCandidates("darwin")).toEqual(["/bin/zsh", "/bin/bash"]);
+    } finally {
+      process.env.SHELL = originalShell;
+    }
   });
 });
