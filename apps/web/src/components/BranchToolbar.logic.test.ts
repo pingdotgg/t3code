@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  resolveDraftContextForEnvModeChange,
   resolveDraftEnvModeAfterBranchChange,
   resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
@@ -71,6 +72,50 @@ describe("resolveBranchToolbarValue", () => {
         currentGitBranch: "main",
       }),
     ).toBe("main");
+  });
+});
+
+describe("resolveDraftContextForEnvModeChange", () => {
+  it("clears staged branch and worktree identity when switching a draft back to local", () => {
+    expect(
+      resolveDraftContextForEnvModeChange({
+        nextMode: "local",
+        currentBranch: "main",
+        currentWorktreePath: null,
+      }),
+    ).toEqual({
+      envMode: "local",
+      branch: null,
+      worktreePath: null,
+    });
+  });
+
+  it("preserves the draft branch when switching from local to new-worktree mode", () => {
+    expect(
+      resolveDraftContextForEnvModeChange({
+        nextMode: "worktree",
+        currentBranch: "feature/base",
+        currentWorktreePath: null,
+      }),
+    ).toEqual({
+      envMode: "worktree",
+      branch: "feature/base",
+      worktreePath: null,
+    });
+  });
+
+  it("does not clear a realized worktree path when resolving a local toggle", () => {
+    expect(
+      resolveDraftContextForEnvModeChange({
+        nextMode: "local",
+        currentBranch: "feature/base",
+        currentWorktreePath: "/repo/.t3/worktrees/feature-base",
+      }),
+    ).toEqual({
+      envMode: "local",
+      branch: "feature/base",
+      worktreePath: "/repo/.t3/worktrees/feature-base",
+    });
   });
 });
 

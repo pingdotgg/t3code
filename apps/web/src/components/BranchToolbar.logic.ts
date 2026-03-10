@@ -2,6 +2,12 @@ import type { GitBranch } from "@t3tools/contracts";
 
 export type EnvMode = "local" | "worktree";
 
+export interface DraftContextForEnvModeChange {
+  envMode: EnvMode;
+  branch: string | null;
+  worktreePath: string | null;
+}
+
 export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;
@@ -26,6 +32,26 @@ export function resolveDraftEnvModeAfterBranchChange(input: {
     return "worktree";
   }
   return "local";
+}
+
+export function resolveDraftContextForEnvModeChange(input: {
+  nextMode: EnvMode;
+  currentBranch: string | null;
+  currentWorktreePath: string | null;
+}): DraftContextForEnvModeChange {
+  const { nextMode, currentBranch, currentWorktreePath } = input;
+  if (nextMode === "local" && currentWorktreePath === null) {
+    return {
+      envMode: "local",
+      branch: null,
+      worktreePath: null,
+    };
+  }
+  return {
+    envMode: nextMode,
+    branch: currentBranch,
+    worktreePath: currentWorktreePath,
+  };
 }
 
 export function resolveBranchToolbarValue(input: {

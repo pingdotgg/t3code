@@ -310,6 +310,32 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("clears staged branch identity when a project draft switches back to local mode", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+    });
+    store.setPrompt(threadId, "keep draft content");
+
+    store.setDraftThreadContext(threadId, {
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toMatchObject({
+      threadId,
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+    });
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.prompt).toBe(
+      "keep draft content",
+    );
+  });
+
   it("preserves worktree env mode without a worktree path", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectId, threadId, {

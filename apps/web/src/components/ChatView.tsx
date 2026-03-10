@@ -118,6 +118,7 @@ import {
   summarizeTurnDiffStats,
   type TurnDiffTreeNode,
 } from "../lib/turnDiffTree";
+import { resolveDraftContextForEnvModeChange } from "./BranchToolbar.logic";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
@@ -3172,11 +3173,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
       if (isLocalDraftThread) {
-        setDraftThreadContext(threadId, { envMode: mode });
+        setDraftThreadContext(
+          threadId,
+          resolveDraftContextForEnvModeChange({
+            nextMode: mode,
+            currentBranch: draftThread?.branch ?? null,
+            currentWorktreePath: draftThread?.worktreePath ?? null,
+          }),
+        );
       }
       scheduleComposerFocus();
     },
-    [isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext, threadId],
+    [
+      draftThread?.branch,
+      draftThread?.worktreePath,
+      isLocalDraftThread,
+      scheduleComposerFocus,
+      setDraftThreadContext,
+      threadId,
+    ],
   );
 
   const applyPromptReplacement = useCallback(
