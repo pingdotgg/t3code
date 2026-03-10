@@ -3,9 +3,9 @@ import { createReplayJsonRpcProcessController } from "@t3tools/rr-e2e";
 import type {
   CodexAppServerProcessController,
   CodexCliVersionCheckResult,
-} from "../../src/codexAppServerManager.ts";
+} from "../../../src/codexAppServerManager.ts";
 
-import type { ReplayFixture } from "@t3tools/rr-e2e";
+import type { ReplayFixture } from "../types.ts";
 
 export function makeReplayCodexProcessController(
   fixture: ReplayFixture,
@@ -25,6 +25,7 @@ export function makeReplayCodexProcessController(
   return {
     spawnAppServer: controller.spawnAppServer,
     runVersionCheck: (input) => controller.runVersionCheck(input) as CodexCliVersionCheckResult,
-    kill: (child) => controller.kill(child as unknown as import("@t3tools/rr-e2e").ReplayJsonRpcChildProcess),
+    kill: (child) =>
+      controller.kill(child as unknown as import("@t3tools/rr-e2e").ReplayJsonRpcChildProcess),
   };
 }

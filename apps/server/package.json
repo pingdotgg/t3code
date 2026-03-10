@@ -20,7 +20,7 @@
     "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "T3CODE_E2E=1 vitest run integration/webApp.replay.e2e.test.ts"
+    "test:e2e": "T3CODE_E2E=1 vitest run --maxWorkers=1 integration/*.rr-e2e.test.ts"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

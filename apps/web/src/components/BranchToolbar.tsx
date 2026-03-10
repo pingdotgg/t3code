@@ -106,7 +106,10 @@ export default function BranchToolbar({
     <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-5 pb-3 pt-1">
       <div className="flex items-center gap-2">
         {envLocked || activeWorktreePath ? (
-          <span className="border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
+          <span
+            className="border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs"
+            data-testid="branch-toolbar-env-mode"
+          >
             {activeWorktreePath ? "Worktree" : "Local"}
           </span>
         ) : (
@@ -115,6 +118,7 @@ export default function BranchToolbar({
             variant="ghost"
             className="text-muted-foreground/70 hover:text-foreground/80"
             size="xs"
+            data-testid="branch-toolbar-env-mode"
             onClick={() => onEnvModeChange(effectiveEnvMode === "local" ? "worktree" : "local")}
           >
             {effectiveEnvMode === "worktree" ? "New worktree" : "Local"}

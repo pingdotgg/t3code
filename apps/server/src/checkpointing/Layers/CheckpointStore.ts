@@ -15,7 +15,6 @@ import { Effect, Layer, FileSystem, Path } from "effect";
 
 import { CheckpointInvariantError } from "../Errors.ts";
 import { GitCommandError } from "../../git/Errors.ts";
-import { GitServiceLive } from "../../git/Layers/GitService.ts";
 import { GitService } from "../../git/Services/GitService.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointRef } from "@t3tools/contracts";
@@ -277,6 +276,4 @@ const makeCheckpointStore = Effect.gen(function* () {
   } satisfies CheckpointStoreShape;
 });
 
-export const CheckpointStoreLive = Layer.effect(CheckpointStore, makeCheckpointStore).pipe(
-  Layer.provideMerge(GitServiceLive),
-);
+export const CheckpointStoreLive = Layer.effect(CheckpointStore, makeCheckpointStore);

@@ -1,3 +1,3 @@
-export { createWebAppReplayHarness } from "./createHarness.ts";
-export type { WebAppReplayHarness } from "./createHarness.ts";
+export { createWebAppReplayHarness } from "./createWebAppReplayHarness.ts";
+export type { WebAppReplayHarness } from "./createWebAppReplayHarness.ts";
 export type { ReplayFixture, ReplayInteraction } from "./types.ts";

@@ -1433,7 +1433,10 @@ export default function Sidebar() {
                     <SortableProjectItem key={project.id} projectId={project.id}>
                       {(dragHandleProps) => (
                         <Collapsible className="group/collapsible" open={project.expanded}>
-                          <div className="group/project-header relative">
+                          <div
+                            className="group/project-header relative"
+                            data-testid="sidebar-project-section"
+                          >
                             <SidebarMenuButton
                               size="sm"
                               className="gap-2 px-2 py-1.5 text-left cursor-grab active:cursor-grabbing hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
@@ -1468,6 +1471,7 @@ export default function Sidebar() {
                                       <button
                                         type="button"
                                         aria-label={`Create new thread in ${project.name}`}
+                                        data-testid="sidebar-create-thread-button"
                                       />
                                     }
                                     showOnHover

@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import type {
   ServerProviderStatus,
   TerminalOpenInput,
@@ -5,19 +8,20 @@ import type {
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 
-import { GitCommandError, GitHubCliError } from "../../src/git/Errors.ts";
-import { type GitHubCliShape } from "../../src/git/Services/GitHubCli.ts";
+import { GitCommandError, GitHubCliError } from "../../../src/git/Errors.ts";
+import { type GitHubCliShape } from "../../../src/git/Services/GitHubCli.ts";
 import {
   type ExecuteGitInput,
   type ExecuteGitResult,
   type GitServiceShape,
-} from "../../src/git/Services/GitService.ts";
-import { type OpenShape } from "../../src/open.ts";
-import type { ProcessRunResult } from "../../src/processRunner.ts";
-import { type TerminalManagerShape } from "../../src/terminal/Services/Manager.ts";
+} from "../../../src/git/Services/GitService.ts";
+import { type OpenShape } from "../../../src/open.ts";
+import type { ProcessRunResult } from "../../../src/processRunner.ts";
+import { type TerminalManagerShape } from "../../../src/terminal/Services/Manager.ts";
 
 import { createReplayCliInvoker } from "@t3tools/rr-e2e";
-import type { ReplayFixture } from "@t3tools/rr-e2e";
+
+import type { ReplayFixture } from "../types.ts";
 
 export function defaultProviderStatuses(): ReadonlyArray<ServerProviderStatus> {
   return [
@@ -61,6 +65,10 @@ export const noOpOpenService: OpenShape = {
   openInEditor: () => Effect.void,
 };
 
+function ensureReplayGitDirectory(cwd: string): void {
+  fs.mkdirSync(path.join(cwd, ".git"), { recursive: true });
+}
+
 function replayGitCommandFailure(input: ExecuteGitInput, cause: unknown): GitCommandError {
   return new GitCommandError({
     operation: input.operation,
@@ -91,7 +99,19 @@ export function makeReplayGitService(
         input,
         mapResult: (result) => result as ExecuteGitResult,
         mapError: (cause) => replayGitCommandFailure(input, cause),
-      }),
+      }).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            if (input.operation !== "GitCore.createWorktree") {
+              return;
+            }
+            const worktreePath = state.worktreePath;
+            if (typeof worktreePath === "string" && worktreePath.length > 0) {
+              ensureReplayGitDirectory(worktreePath);
+            }
+          }),
+        ),
+      ),
   };
 }
 
