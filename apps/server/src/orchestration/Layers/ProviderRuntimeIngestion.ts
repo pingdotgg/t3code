@@ -182,6 +182,31 @@ function isToolLifecycleItemType(itemType: string): boolean {
   );
 }
 
+function humanReadableItemType(itemType: string): string {
+  switch (itemType) {
+    case "command_execution":
+      return "Command";
+    case "file_change":
+      return "File change";
+    case "mcp_tool_call":
+      return "MCP tool";
+    case "dynamic_tool_call":
+      return "Tool call";
+    case "collab_agent_tool_call":
+      return "Agent tool";
+    case "web_search":
+      return "Web search";
+    case "image_view":
+      return "Image view";
+    default:
+      return "Tool";
+  }
+}
+
+function resolveToolTitle(payload: { title?: string | undefined; itemType: string }): string {
+  return payload.title || humanReadableItemType(payload.itemType);
+}
+
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
 ): ReadonlyArray<OrchestrationThreadActivity> {
@@ -419,7 +444,7 @@ function runtimeEventToActivities(
           createdAt: event.createdAt,
           tone: "tool",
           kind: "tool.updated",
-          summary: event.payload.title ?? "Tool updated",
+          summary: resolveToolTitle(event.payload),
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
@@ -442,7 +467,7 @@ function runtimeEventToActivities(
           createdAt: event.createdAt,
           tone: "tool",
           kind: "tool.completed",
-          summary: `${event.payload.title ?? "Tool"} complete`,
+          summary: `${resolveToolTitle(event.payload)} complete`,
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
@@ -463,7 +488,7 @@ function runtimeEventToActivities(
           createdAt: event.createdAt,
           tone: "tool",
           kind: "tool.started",
-          summary: `${event.payload.title ?? "Tool"} started`,
+          summary: `${resolveToolTitle(event.payload)} started`,
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),

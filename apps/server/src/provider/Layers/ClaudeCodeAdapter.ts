@@ -87,7 +87,8 @@ interface ToolInFlight {
   readonly itemType: CanonicalItemType;
   readonly toolName: string;
   readonly title: string;
-  readonly detail?: string;
+  detail?: string;
+  inputJsonChunks: string[];
 }
 
 interface ClaudeSessionContext {
@@ -254,7 +255,20 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
   return `${toolName}: ${serialized.slice(0, 397)}...`;
 }
 
-function titleForTool(itemType: CanonicalItemType): string {
+function rebuildToolDetail(toolName: string, chunks: string[]): string | undefined {
+  const rawJson = chunks.join("");
+  try {
+    const parsedInput = JSON.parse(rawJson) as Record<string, unknown>;
+    return summarizeToolRequest(toolName, parsedInput);
+  } catch {
+    return undefined;
+  }
+}
+
+function titleForTool(itemType: CanonicalItemType, toolName?: string): string {
+  if (toolName) {
+    return toolName;
+  }
   switch (itemType) {
     case "command_execution":
       return "Command run";
@@ -817,6 +831,16 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               },
             });
           }
+
+          // Accumulate tool input JSON from streaming deltas
+          if (event.delta.type === "input_json_delta") {
+            const tool = context.inFlightTools.get(event.index);
+            if (tool) {
+              tool.inputJsonChunks.push(
+                (event.delta as { partial_json?: string }).partial_json ?? "",
+              );
+            }
+          }
           return;
         }
 
@@ -843,8 +867,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             itemId,
             itemType,
             toolName,
-            title: titleForTool(itemType),
+            title: titleForTool(itemType, toolName),
             detail,
+            inputJsonChunks: [],
           };
           context.inFlightTools.set(index, tool);
 
@@ -889,6 +914,14 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           }
           context.inFlightTools.delete(index);
 
+          // Rebuild detail from accumulated input JSON if available
+          if (tool.inputJsonChunks.length > 0) {
+            const rebuilt = rebuildToolDetail(tool.toolName, tool.inputJsonChunks);
+            if (rebuilt) {
+              tool.detail = rebuilt;
+            }
+          }
+
           const stamp = yield* makeEventStamp();
           yield* offerRuntimeEvent({
             type: "item.completed",
@@ -903,6 +936,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               status: "completed",
               title: tool.title,
               ...(tool.detail ? { detail: tool.detail } : {}),
+              data: {
+                toolName: tool.toolName,
+              },
             },
             providerRefs: {
               ...providerThreadRef(context),
