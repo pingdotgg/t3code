@@ -13,9 +13,35 @@ import {
 import { Effect } from "effect";
 import { assertSuccess } from "@effect/vitest/utils";
 
+function withTempDir(run: (dir: string) => void): void {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-open-"));
+  try {
+    run(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 describe("resolveEditorLaunch", () => {
   it.effect("returns commands for command-based editors", () =>
     Effect.gen(function* () {
+      withTempDir((dir) => {
+        const agyPath = path.join(dir, "agy");
+        fs.writeFileSync(agyPath, "#!/bin/sh\nexit 0\n", "utf8");
+        fs.chmodSync(agyPath, 0o755);
+        const env = {
+          PATH: dir,
+        } satisfies NodeJS.ProcessEnv;
+
+        const antigravityLaunch = Effect.runSync(
+          resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "antigravity" }, "darwin", env),
+        );
+        assert.deepEqual(antigravityLaunch, {
+          command: "agy",
+          args: ["/tmp/workspace"],
+        });
+      });
+
       const cursorLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "cursor" },
         "darwin",
@@ -41,6 +67,49 @@ describe("resolveEditorLaunch", () => {
       assert.deepEqual(zedLaunch, {
         command: "zed",
         args: ["/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("falls back to the Antigravity app bundle on macOS", () =>
+    Effect.sync(() => {
+      withTempDir((dir) => {
+        const env = {
+          HOME: dir,
+          PATH: "",
+        } satisfies NodeJS.ProcessEnv;
+        fs.mkdirSync(path.join(dir, "Applications", "Antigravity.app"), { recursive: true });
+
+        const launch = Effect.runSync(
+          resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "antigravity" }, "darwin", env),
+        );
+        assert.deepEqual(launch, {
+          command: "open",
+          args: ["-b", "com.google.antigravity", "/tmp/workspace"],
+        });
+      });
+    }),
+  );
+
+  it.effect("falls back to the Antigravity executable on Windows", () =>
+    Effect.sync(() => {
+      withTempDir((dir) => {
+        const exePath = path.join(dir, "Programs", "Antigravity", "Antigravity.exe");
+        fs.mkdirSync(path.dirname(exePath), { recursive: true });
+        fs.writeFileSync(exePath, "MZ", "utf8");
+        const env = {
+          PATH: "",
+          LOCALAPPDATA: dir,
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        } satisfies NodeJS.ProcessEnv;
+
+        const launch = Effect.runSync(
+          resolveEditorLaunch({ cwd: "C:\\workspace", editor: "antigravity" }, "win32", env),
+        );
+        assert.deepEqual(launch, {
+          command: exePath,
+          args: ["C:\\workspace"],
+        });
       });
     }),
   );
@@ -140,15 +209,6 @@ describe("launchDetached", () => {
 });
 
 describe("isCommandAvailable", () => {
-  function withTempDir(run: (dir: string) => void): void {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-open-"));
-    try {
-      run(dir);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  }
-
   it("resolves win32 commands with PATHEXT", () => {
     withTempDir((dir) => {
       fs.writeFileSync(path.join(dir, "code.CMD"), "@echo off\r\n", "utf8");
@@ -205,16 +265,38 @@ describe("isCommandAvailable", () => {
 });
 
 describe("resolveAvailableEditors", () => {
-  it("returns only editors whose launch commands are available", () => {
+  it("returns Antigravity when the app bundle exists on macOS", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-editors-"));
+    try {
+      fs.mkdirSync(path.join(dir, "Applications", "Antigravity.app"), { recursive: true });
+      fs.writeFileSync(path.join(dir, "cursor"), "#!/bin/sh\nexit 0\n", "utf8");
+      fs.chmodSync(path.join(dir, "cursor"), 0o755);
+      fs.writeFileSync(path.join(dir, "open"), "#!/bin/sh\nexit 0\n", "utf8");
+      fs.chmodSync(path.join(dir, "open"), 0o755);
+      const editors = resolveAvailableEditors("darwin", {
+        HOME: dir,
+        PATH: dir,
+      });
+      assert.deepEqual(editors, ["cursor", "antigravity", "file-manager"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns installed editors for Windows app and command launches", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-editors-"));
     try {
       fs.writeFileSync(path.join(dir, "cursor.CMD"), "@echo off\r\n", "utf8");
       fs.writeFileSync(path.join(dir, "explorer.EXE"), "MZ", "utf8");
+      const exePath = path.join(dir, "Programs", "Antigravity", "Antigravity.exe");
+      fs.mkdirSync(path.dirname(exePath), { recursive: true });
+      fs.writeFileSync(exePath, "MZ", "utf8");
       const editors = resolveAvailableEditors("win32", {
         PATH: dir,
+        LOCALAPPDATA: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
-      assert.deepEqual(editors, ["cursor", "file-manager"]);
+      assert.deepEqual(editors, ["cursor", "antigravity", "file-manager"]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

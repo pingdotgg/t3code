@@ -869,6 +869,63 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("prefers Antigravity over Finder when both are available", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["antigravity", "file-manager"],
+        };
+      },
+    });
+
+    try {
+      const openButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button.",
+      );
+      openButton.click();
+
+      await vi.waitFor(
+        () => {
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenInEditor,
+          );
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd: "/repo/project",
+            editor: "antigravity",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("toggles plan mode with Shift+Tab only while the composer is focused", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

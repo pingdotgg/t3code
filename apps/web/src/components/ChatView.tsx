@@ -6067,6 +6067,11 @@ const OpenInPicker = memo(function OpenInPicker({
         value: "zed",
       },
       {
+        label: "Antigravity",
+        Icon: Gemini,
+        value: "antigravity",
+      },
+      {
         label: isMacPlatform(navigator.platform)
           ? "Finder"
           : isWindowsPlatform(navigator.platform)

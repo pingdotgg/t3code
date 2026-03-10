@@ -6,7 +6,7 @@
  *
  * @module Open
  */
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
@@ -38,6 +38,9 @@ interface CommandAvailabilityOptions {
 }
 
 const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const ANTIGRAVITY_BUNDLE_IDENTIFIER = "com.google.antigravity";
+const ANTIGRAVITY_MAC_APP_NAME = "Antigravity.app";
+const ANTIGRAVITY_WINDOWS_EXECUTABLE = "Antigravity.exe";
 
 function shouldUseGotoFlag(editorId: EditorId, target: string): boolean {
   return (
@@ -60,8 +63,24 @@ function stripWrappingQuotes(value: string): string {
   return value.replace(/^"+|"+$/g, "");
 }
 
+function pathExists(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function resolvePathEnvironmentVariable(env: NodeJS.ProcessEnv): string {
   return env.PATH ?? env.Path ?? env.path ?? "";
+}
+
+function readEnvironmentVariable(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const direct = env[name];
+  if (direct !== undefined) return direct;
+  const match = Object.keys(env).find((key) => key.toLowerCase() === name.toLowerCase());
+  return match ? env[match] : undefined;
 }
 
 function resolveWindowsPathExtensions(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
@@ -129,6 +148,121 @@ function resolvePathDelimiter(platform: NodeJS.Platform): string {
   return platform === "win32" ? ";" : ":";
 }
 
+function stripLineColumnSuffix(target: string): string {
+  return target.replace(LINE_COLUMN_SUFFIX_PATTERN, "");
+}
+
+function resolveAntigravityMacAppPaths(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+  const home = readEnvironmentVariable(env, "HOME");
+  return [
+    "/Applications/Antigravity.app",
+    ...(home ? [join(home, "Applications", ANTIGRAVITY_MAC_APP_NAME)] : []),
+  ];
+}
+
+function isAntigravityMacAppAvailable(env: NodeJS.ProcessEnv): boolean {
+  return resolveAntigravityMacAppPaths(env).some((appPath) => pathExists(appPath));
+}
+
+function expandWindowsEnvironmentVariables(value: string, env: NodeJS.ProcessEnv): string {
+  return value.replace(/%([^%]+)%/g, (_, variableName: string) => {
+    return readEnvironmentVariable(env, variableName) ?? `%${variableName}%`;
+  });
+}
+
+function normalizeWindowsExecutablePath(
+  value: string,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  const windowsPathExtensions = resolveWindowsPathExtensions(env);
+  const normalized = expandWindowsEnvironmentVariables(
+    stripWrappingQuotes(value.trim()).replace(/,\d+$/, ""),
+    env,
+  );
+  return isExecutableFile(normalized, "win32", windowsPathExtensions) ? normalized : undefined;
+}
+
+function resolveAntigravityWindowsExecutableFromRegistry(
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  try {
+    const result = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        [
+          "$roots = @(",
+          "  'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+          "  'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+          "  'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'",
+          ");",
+          "$entry = Get-ItemProperty $roots -ErrorAction SilentlyContinue |",
+          "  Where-Object { $_.DisplayName -eq 'Antigravity' } |",
+          "  Select-Object -First 1;",
+          "if ($entry) {",
+          "  if ($entry.DisplayIcon) { Write-Output $entry.DisplayIcon }",
+          "  elseif ($entry.InstallLocation) { Write-Output (Join-Path $entry.InstallLocation 'Antigravity.exe') }",
+          "}",
+        ].join(" "),
+      ],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+
+    return result.length > 0 ? normalizeWindowsExecutablePath(result, env) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveAntigravityWindowsExecutable(env: NodeJS.ProcessEnv): string | undefined {
+  const candidates = [
+    readEnvironmentVariable(env, "LOCALAPPDATA")
+      ? join(readEnvironmentVariable(env, "LOCALAPPDATA")!, "Programs", "Antigravity", ANTIGRAVITY_WINDOWS_EXECUTABLE)
+      : undefined,
+    readEnvironmentVariable(env, "PROGRAMFILES")
+      ? join(readEnvironmentVariable(env, "PROGRAMFILES")!, "Antigravity", ANTIGRAVITY_WINDOWS_EXECUTABLE)
+      : undefined,
+    readEnvironmentVariable(env, "PROGRAMFILES(X86)")
+      ? join(readEnvironmentVariable(env, "PROGRAMFILES(X86)")!, "Antigravity", ANTIGRAVITY_WINDOWS_EXECUTABLE)
+      : undefined,
+  ].filter((candidate): candidate is string => candidate !== undefined);
+
+  for (const candidate of candidates) {
+    const normalized = normalizeWindowsExecutablePath(candidate, env);
+    if (normalized) return normalized;
+  }
+
+  return resolveAntigravityWindowsExecutableFromRegistry(env);
+}
+
+function resolveAntigravityLaunch(
+  target: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): EditorLaunch | undefined {
+  if (isCommandAvailable("agy", { platform, env })) {
+    return { command: "agy", args: [target] };
+  }
+
+  if (platform === "darwin" && isAntigravityMacAppAvailable(env)) {
+    return {
+      command: "open",
+      args: ["-b", ANTIGRAVITY_BUNDLE_IDENTIFIER, stripLineColumnSuffix(target)],
+    };
+  }
+
+  if (platform === "win32") {
+    const executable = resolveAntigravityWindowsExecutable(env);
+    if (executable) {
+      return { command: executable, args: [stripLineColumnSuffix(target)] };
+    }
+  }
+
+  return undefined;
+}
+
 export function isCommandAvailable(
   command: string,
   options: CommandAvailabilityOptions = {},
@@ -168,6 +302,13 @@ export function resolveAvailableEditors(
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
+    if (editor.id === "antigravity") {
+      if (resolveAntigravityLaunch(".", platform, env)) {
+        available.push(editor.id);
+      }
+      continue;
+    }
+
     const command = editor.command ?? fileManagerCommandForPlatform(platform);
     if (isCommandAvailable(command, { platform, env })) {
       available.push(editor.id);
@@ -206,10 +347,20 @@ export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
 export const resolveEditorLaunch = Effect.fnUntraced(function* (
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<EditorLaunch, OpenError> {
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });
+  }
+
+  if (editorDef.id === "antigravity") {
+    const antigravityLaunch = resolveAntigravityLaunch(input.cwd, platform, env);
+    if (antigravityLaunch) {
+      return antigravityLaunch;
+    }
+
+    return yield* new OpenError({ message: "Antigravity is not installed or available." });
   }
 
   if (editorDef.command) {
