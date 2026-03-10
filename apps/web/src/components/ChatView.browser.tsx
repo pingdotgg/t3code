@@ -42,6 +42,7 @@ interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
   welcome: WsWelcomePayload;
+  wsRpcOverrides?: Partial<Record<string, unknown | ((request: WsRequestEnvelope["body"]) => unknown)>>;
 }
 
 let fixture: TestFixture;
@@ -242,6 +243,7 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
       bootstrapProjectId: PROJECT_ID,
       bootstrapThreadId: THREAD_ID,
     },
+    wsRpcOverrides: {},
   };
 }
 
@@ -311,7 +313,139 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-pending-input" as MessageId,
+    targetText: "pending input thread",
+  });
+  const turnId = "turn-pending-user-input" as TurnId;
+  const pendingUserInputActivity: OrchestrationReadModel["threads"][number]["activities"][number] = {
+    id: "activity-pending-user-input" as OrchestrationReadModel["threads"][number]["activities"][number]["id"],
+    createdAt: isoAt(102),
+    tone: "info",
+    kind: "user-input.requested",
+    summary: "User input requested",
+    turnId,
+    payload: {
+      requestId: "req-user-input-browser",
+      questions: [
+        {
+          id: "affected_course",
+          header: "Affected Course",
+          question: "Which student calendar is broken?",
+          options: [
+            {
+              label: "The Combine (Recommended)",
+              description: "Matches the report.",
+            },
+            {
+              label: "The Invitational",
+              description: "Alternative calendar.",
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const threads = [...snapshot.threads];
+  const threadIndex = threads.findIndex((thread) => thread.id === THREAD_ID);
+  if (threadIndex >= 0) {
+    threads[threadIndex] = {
+      ...threads[threadIndex]!,
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: isoAt(100),
+        startedAt: isoAt(101),
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      session: {
+        threadId: THREAD_ID,
+        status: "running",
+        providerName: "codex",
+        runtimeMode: "full-access",
+        activeTurnId: turnId,
+        lastError: null,
+        updatedAt: isoAt(101),
+      },
+      activities: [pendingUserInputActivity],
+    };
+  }
+  return {
+    ...snapshot,
+    threads,
+  };
+}
+
+function createSnapshotWithProposedPlan(options?: {
+  branch?: string | null;
+  worktreePath?: string | null;
+  scripts?: OrchestrationReadModel["projects"][number]["scripts"];
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-plan-target" as MessageId,
+    targetText: "plan thread",
+  });
+  const turnId = "turn-proposed-plan-browser" as TurnId;
+  const projects = [...snapshot.projects];
+  const projectIndex = projects.findIndex((project) => project.id === PROJECT_ID);
+  if (projectIndex >= 0) {
+    projects[projectIndex] = {
+      ...projects[projectIndex]!,
+      scripts: options?.scripts ?? [],
+    };
+  }
+  const threads = [...snapshot.threads];
+  const threadIndex = threads.findIndex((thread) => thread.id === THREAD_ID);
+  if (threadIndex >= 0) {
+    threads[threadIndex] = {
+      ...threads[threadIndex]!,
+      interactionMode: "plan",
+      branch: options?.branch ?? "main",
+      worktreePath: options?.worktreePath ?? null,
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: isoAt(100),
+        startedAt: isoAt(101),
+        completedAt: isoAt(102),
+        assistantMessageId: "msg-assistant-plan" as MessageId,
+      },
+      proposedPlans: [
+        {
+          id: "plan-browser" as OrchestrationReadModel["threads"][number]["proposedPlans"][number]["id"],
+          turnId,
+          planMarkdown: "# Build this feature\n\nImplement the approved plan.",
+          createdAt: isoAt(102),
+          updatedAt: isoAt(102),
+        },
+      ],
+      session: {
+        threadId: THREAD_ID,
+        status: "ready",
+        providerName: "codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: isoAt(102),
+      },
+    };
+  }
+  return {
+    ...snapshot,
+    projects,
+    threads,
+  };
+}
+
 function resolveWsRpc(tag: string): unknown {
+  const override = fixture.wsRpcOverrides?.[tag];
+  if (override !== undefined) {
+    return typeof override === "function"
+      ? (override as (request: WsRequestEnvelope["body"]) => unknown)(wsRequests.at(-1)!)
+      : override;
+  }
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
   }
@@ -376,12 +510,23 @@ const worker = setupWorker(
       const method = request.body?._tag;
       if (typeof method !== "string") return;
       wsRequests.push(request.body);
-      client.send(
-        JSON.stringify({
-          id: request.id,
-          result: resolveWsRpc(method),
-        }),
-      );
+      try {
+        client.send(
+          JSON.stringify({
+            id: request.id,
+            result: resolveWsRpc(method),
+          }),
+        );
+      } catch (error) {
+        client.send(
+          JSON.stringify({
+            id: request.id,
+            error: {
+              message: error instanceof Error ? error.message : "Mock RPC failed",
+            },
+          }),
+        );
+      }
     });
   }),
   http.get("*/attachments/:attachmentId", () =>
@@ -858,6 +1003,213 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps a local draft thread registered until the synced server thread arrives", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "draft send regression");
+      await waitForLayout();
+
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      composerForm.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+      await vi.waitFor(
+        () => {
+          const commandTags = wsRequests
+            .filter((request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand)
+            .map((request) => {
+              const command = request.command as { type?: string } | undefined;
+              return command?.type ?? null;
+            });
+          expect(commandTags).toContain("thread.create");
+          expect(commandTags).toContain("thread.turn.start");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).not.toBeNull();
+
+      await mounted.syncSnapshot(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-target-created-thread" as MessageId,
+          targetText: "draft send regression",
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows implement-in-new-worktree in the plan implementation actions", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithProposedPlan(),
+    });
+
+    try {
+      await page.getByRole("button", { name: "Implementation actions" }).click();
+      await expect.element(page.getByRole("menuitem", { name: "Implement in new thread" })).toBeVisible();
+      await expect.element(
+        page.getByRole("menuitem", { name: "Implement in new worktree" }),
+      ).toBeVisible();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("starts plan implementation in a newly created worktree from the current branch", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithProposedPlan(),
+      configureFixture: (nextFixture) => {
+        nextFixture.wsRpcOverrides = {
+          [WS_METHODS.gitCreateWorktree]: {
+            worktree: {
+              path: "/repo/project/.t3/worktrees/t3code-abcd1234",
+              branch: "t3code/abcd1234",
+            },
+          },
+        };
+      },
+    });
+
+    try {
+      await page.getByRole("button", { name: "Implementation actions" }).click();
+      await page.getByRole("menuitem", { name: "Implement in new worktree" }).click();
+
+      await vi.waitFor(
+        () => {
+          const createWorktreeRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.gitCreateWorktree,
+          );
+          expect(createWorktreeRequest).toMatchObject({
+            _tag: WS_METHODS.gitCreateWorktree,
+            cwd: "/repo/project",
+            branch: "main",
+          });
+
+          const dispatches = wsRequests.filter(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          );
+          const createThreadCommand = dispatches
+            .map((request) => request.command as { type?: string; branch?: string; worktreePath?: string })
+            .find((command) => command.type === "thread.create");
+          expect(createThreadCommand).toMatchObject({
+            type: "thread.create",
+            branch: "t3code/abcd1234",
+            worktreePath: "/repo/project/.t3/worktrees/t3code-abcd1234",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows rollback options when worktree creation succeeds but the implementation thread fails", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithProposedPlan(),
+      configureFixture: (nextFixture) => {
+        nextFixture.wsRpcOverrides = {
+          [WS_METHODS.gitCreateWorktree]: {
+            worktree: {
+              path: "/repo/project/.t3/worktrees/t3code-abcd1234",
+              branch: "t3code/abcd1234",
+            },
+          },
+          [ORCHESTRATION_WS_METHODS.dispatchCommand]: (request: WsRequestEnvelope["body"]) => {
+            const command = request.command as { type?: string } | undefined;
+            if (command?.type === "thread.create") {
+              throw new Error("thread.create failed");
+            }
+            return {};
+          },
+        };
+      },
+    });
+
+    try {
+      await page.getByRole("button", { name: "Implementation actions" }).click();
+      await page.getByRole("menuitem", { name: "Implement in new worktree" }).click();
+
+      await expect.element(page.getByText(/keep worktree/i)).toBeVisible();
+      await expect.element(page.getByText(/delete worktree/i)).toBeVisible();
+      await expect.element(
+        page.getByText("/repo/project/.t3/worktrees/t3code-abcd1234"),
+      ).toBeVisible();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("submits structured user-input answers from a running thread", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInput(),
+    });
+
+    try {
+      const optionButton = page.getByRole("button", { name: /The Combine \(Recommended\)/i });
+      await expect.element(optionButton).toBeVisible();
+      await optionButton.click();
+
+      const submitButton = page.getByRole("button", { name: /Submit answers/i });
+      await expect.element(submitButton).toBeEnabled();
+      await submitButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatches = wsRequests.filter(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          );
+          const userInputCommand = dispatches
+            .map((request) => request.command as { type?: string; requestId?: string } | undefined)
+            .find((command) => command?.type === "thread.user-input.respond");
+          expect(userInputCommand).toEqual(
+            expect.objectContaining({
+              type: "thread.user-input.respond",
+              requestId: "req-user-input-browser",
+            }),
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
   it("toggles plan mode with Shift+Tab only while the composer is focused", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

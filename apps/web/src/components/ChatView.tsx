@@ -47,7 +47,11 @@ import {
   type VirtualItem,
   useVirtualizer,
 } from "@tanstack/react-virtual";
-import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
+import {
+  gitBranchesQueryOptions,
+  gitCreateWorktreeMutationOptions,
+  invalidateGitQueries,
+} from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
@@ -189,6 +193,15 @@ import {
   DialogPopup,
   DialogTitle,
 } from "./ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
@@ -407,6 +420,12 @@ type ComposerCommandItem =
 
 type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
 
+interface ImplementationWorktreeFailureState {
+  projectCwd: string;
+  worktreePath: string;
+  errorMessage: string;
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -621,6 +640,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
     Record<ThreadId, string | null>
   >({});
+  const [implementationWorktreeFailure, setImplementationWorktreeFailure] =
+    useState<ImplementationWorktreeFailureState | null>(null);
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
   const [isConnecting, _setIsConnecting] = useState(false);
@@ -1411,54 +1432,71 @@ export default function ChatView({ threadId }: ChatViewProps) {
     async (
       script: ProjectScript,
       options?: {
+        targetThreadId?: ThreadId;
+        targetProject?: { id: ProjectId; cwd: string };
+        targetThreadWorktreePath?: string | null;
         cwd?: string;
         env?: Record<string, string>;
         worktreePath?: string | null;
         preferNewTerminal?: boolean;
         rememberAsLastInvoked?: boolean;
         allowLocalDraftThread?: boolean;
+        throwOnError?: boolean;
       },
     ) => {
       const api = readNativeApi();
-      if (!api || !activeThreadId || !activeProject || !activeThread) return;
-      if (!isServerThread && !options?.allowLocalDraftThread) return;
+      const targetThreadId = options?.targetThreadId ?? activeThreadId;
+      const targetProject = options?.targetProject ?? activeProject;
+      const targetThreadWorktreePath =
+        options?.targetThreadWorktreePath ?? activeThread?.worktreePath ?? null;
+      if (!api || !targetThreadId || !targetProject) return;
+      if (targetThreadId === activeThreadId && !isServerThread && !options?.allowLocalDraftThread) {
+        return;
+      }
       if (options?.rememberAsLastInvoked !== false) {
         setLastInvokedScriptByProjectId((current) => {
-          if (current[activeProject.id] === script.id) return current;
-          return { ...current, [activeProject.id]: script.id };
+          if (current[targetProject.id] === script.id) return current;
+          return { ...current, [targetProject.id]: script.id };
         });
       }
-      const targetCwd = options?.cwd ?? gitCwd ?? activeProject.cwd;
+      const terminalStore = useTerminalStateStore.getState();
+      const targetTerminalState = selectThreadTerminalState(
+        terminalStore.terminalStateByThreadId,
+        targetThreadId,
+      );
+      const targetCwd = options?.cwd ?? options?.worktreePath ?? targetThreadWorktreePath ?? targetProject.cwd;
       const baseTerminalId =
-        terminalState.activeTerminalId ||
-        terminalState.terminalIds[0] ||
+        targetTerminalState.activeTerminalId ||
+        targetTerminalState.terminalIds[0] ||
         DEFAULT_THREAD_TERMINAL_ID;
-      const isBaseTerminalBusy = terminalState.runningTerminalIds.includes(baseTerminalId);
+      const isBaseTerminalBusy = targetTerminalState.runningTerminalIds.includes(baseTerminalId);
       const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
       const shouldCreateNewTerminal =
-        wantsNewTerminal && terminalState.terminalIds.length < MAX_THREAD_TERMINAL_COUNT;
+        wantsNewTerminal && targetTerminalState.terminalIds.length < MAX_THREAD_TERMINAL_COUNT;
       const targetTerminalId = shouldCreateNewTerminal
         ? `terminal-${crypto.randomUUID()}`
         : baseTerminalId;
 
-      setTerminalOpen(true);
+      terminalStore.setTerminalOpen(targetThreadId, true);
       if (shouldCreateNewTerminal) {
-        storeNewTerminal(activeThreadId, targetTerminalId);
+        terminalStore.newTerminal(targetThreadId, targetTerminalId);
       } else {
-        storeSetActiveTerminal(activeThreadId, targetTerminalId);
+        terminalStore.setActiveTerminal(targetThreadId, targetTerminalId);
       }
-      setTerminalFocusRequestId((value) => value + 1);
+      if (targetThreadId === activeThreadId) {
+        setTerminalFocusRequestId((value) => value + 1);
+      }
 
       const runtimeEnv = projectScriptRuntimeEnv({
         project: {
-          cwd: activeProject.cwd,
+          cwd: targetProject.cwd,
         },
-        worktreePath: options?.worktreePath ?? activeThread.worktreePath ?? null,
+        worktreePath: options?.worktreePath ?? targetThreadWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
       const openTerminalInput: Parameters<typeof api.terminal.open>[0] = shouldCreateNewTerminal
         ? {
-            threadId: activeThreadId,
+            threadId: targetThreadId,
             terminalId: targetTerminalId,
             cwd: targetCwd,
             env: runtimeEnv,
@@ -1466,7 +1504,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             rows: SCRIPT_TERMINAL_ROWS,
           }
         : {
-            threadId: activeThreadId,
+            threadId: targetThreadId,
             terminalId: targetTerminalId,
             cwd: targetCwd,
             env: runtimeEnv,
@@ -1475,31 +1513,88 @@ export default function ChatView({ threadId }: ChatViewProps) {
       try {
         await api.terminal.open(openTerminalInput);
         await api.terminal.write({
-          threadId: activeThreadId,
+          threadId: targetThreadId,
           terminalId: targetTerminalId,
           data: `${script.command}\r`,
         });
       } catch (error) {
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-        );
+        const message =
+          error instanceof Error ? error.message : `Failed to run script "${script.name}".`;
+        if (options?.throwOnError) {
+          throw new Error(message, { cause: error });
+        }
+        setThreadError(targetThreadId, message);
       }
     },
     [
       activeProject,
       activeThread,
       activeThreadId,
-      gitCwd,
       isServerThread,
-      setTerminalOpen,
       setThreadError,
-      storeNewTerminal,
-      storeSetActiveTerminal,
-      terminalState.activeTerminalId,
-      terminalState.runningTerminalIds,
-      terminalState.terminalIds,
     ],
+  );
+  const runWorktreeSetupScript = useCallback(
+    async (input: {
+      targetThreadId: ThreadId;
+      targetProject: { id: ProjectId; cwd: string; scripts: ProjectScript[] };
+      targetThreadWorktreePath: string | null;
+      allowLocalDraftThread?: boolean;
+      throwOnError?: boolean;
+    }) => {
+      const setupScript = setupProjectScript(input.targetProject.scripts);
+      if (!setupScript) {
+        return;
+      }
+      await runProjectScript(setupScript, {
+        targetThreadId: input.targetThreadId,
+        targetProject: input.targetProject,
+        targetThreadWorktreePath: input.targetThreadWorktreePath,
+        worktreePath: input.targetThreadWorktreePath,
+        ...(input.targetThreadWorktreePath ? { cwd: input.targetThreadWorktreePath } : {}),
+        rememberAsLastInvoked: false,
+        ...(input.allowLocalDraftThread !== undefined
+          ? { allowLocalDraftThread: input.allowLocalDraftThread }
+          : {}),
+        ...(input.throwOnError !== undefined ? { throwOnError: input.throwOnError } : {}),
+      });
+    },
+    [runProjectScript],
+  );
+  const createWorktreeFromBaseBranch = useCallback(
+    async (input: { projectCwd: string; baseBranch: string }) => {
+      const result = await createWorktreeMutation.mutateAsync({
+        cwd: input.projectCwd,
+        branch: input.baseBranch,
+        newBranch: buildTemporaryWorktreeBranchName(),
+      });
+      return {
+        branch: result.worktree.branch,
+        worktreePath: result.worktree.path,
+      };
+    },
+    [createWorktreeMutation],
+  );
+  const syncLatestSnapshot = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api) return;
+    const snapshot = await api.orchestration.getSnapshot();
+    syncServerReadModel(snapshot);
+  }, [syncServerReadModel]);
+  const cleanupImplementationThreadCreation = useCallback(
+    async (targetThreadId: ThreadId) => {
+      const api = readNativeApi();
+      if (!api) return;
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.delete",
+          commandId: newCommandId(),
+          threadId: targetThreadId,
+        })
+        .catch(() => undefined);
+      await syncLatestSnapshot().catch(() => undefined);
+    },
+    [syncLatestSnapshot],
   );
   const persistProjectScripts = useCallback(
     async (input: {
@@ -2562,25 +2657,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
         beginSendPhase("preparing-worktree");
-        const newBranch = buildTemporaryWorktreeBranchName();
-        const result = await createWorktreeMutation.mutateAsync({
-          cwd: activeProject.cwd,
-          branch: baseBranchForWorktree,
-          newBranch,
+        const worktree = await createWorktreeFromBaseBranch({
+          projectCwd: activeProject.cwd,
+          baseBranch: baseBranchForWorktree,
         });
-        nextThreadBranch = result.worktree.branch;
-        nextThreadWorktreePath = result.worktree.path;
+        nextThreadBranch = worktree.branch;
+        nextThreadWorktreePath = worktree.worktreePath;
         if (isServerThread) {
           await api.orchestration.dispatchCommand({
             type: "thread.meta.update",
             commandId: newCommandId(),
             threadId: threadIdForSend,
-            branch: result.worktree.branch,
-            worktreePath: result.worktree.path,
+            branch: worktree.branch,
+            worktreePath: worktree.worktreePath,
           });
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
-          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
+          setStoreThreadBranch(threadIdForSend, worktree.branch, worktree.worktreePath);
         }
       }
 
@@ -2620,11 +2713,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         createdServerThreadForLocalDraft = true;
       }
 
-      let setupScript: ProjectScript | null = null;
       if (baseBranchForWorktree) {
-        setupScript = setupProjectScript(activeProject.scripts);
-      }
-      if (setupScript) {
         let shouldRunSetupScript = false;
         if (isServerThread) {
           shouldRunSetupScript = true;
@@ -2634,15 +2723,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
         }
         if (shouldRunSetupScript) {
-          const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
-            worktreePath: nextThreadWorktreePath,
-            rememberAsLastInvoked: false,
+          await runWorktreeSetupScript({
+            targetThreadId: threadIdForSend,
+            targetProject: activeProject,
+            targetThreadWorktreePath: nextThreadWorktreePath,
             allowLocalDraftThread: createdServerThreadForLocalDraft,
-          };
-          if (nextThreadWorktreePath) {
-            setupScriptOptions.cwd = nextThreadWorktreePath;
-          }
-          await runProjectScript(setupScript, setupScriptOptions);
+          });
         }
       }
 
@@ -3006,10 +3092,88 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ],
   );
 
+  const startImplementationThread = useCallback(
+    async (input: {
+      nextThreadId: ThreadId;
+      createdAt: string;
+      implementationPrompt: string;
+      nextThreadTitle: string;
+      nextThreadModel: ModelSlug;
+      branch: string | null;
+      worktreePath: string | null;
+      runWorktreeSetup?: boolean;
+    }) => {
+      const api = readNativeApi();
+      if (!api || !activeProject) {
+        throw new Error("Implementation thread could not be started.");
+      }
+
+      await api.orchestration.dispatchCommand({
+        type: "thread.create",
+        commandId: newCommandId(),
+        threadId: input.nextThreadId,
+        projectId: activeProject.id,
+        title: input.nextThreadTitle,
+        model: input.nextThreadModel,
+        runtimeMode,
+        interactionMode: "default",
+        branch: input.branch,
+        worktreePath: input.worktreePath,
+        createdAt: input.createdAt,
+      });
+
+      if (input.runWorktreeSetup && input.worktreePath) {
+        await runWorktreeSetupScript({
+          targetThreadId: input.nextThreadId,
+          targetProject: activeProject,
+          targetThreadWorktreePath: input.worktreePath,
+          throwOnError: true,
+        });
+      }
+
+      await api.orchestration.dispatchCommand({
+        type: "thread.turn.start",
+        commandId: newCommandId(),
+        threadId: input.nextThreadId,
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          text: input.implementationPrompt,
+          attachments: [],
+        },
+        provider: selectedProvider,
+        model: selectedModel || undefined,
+        ...(selectedModelOptionsForDispatch ? { modelOptions: selectedModelOptionsForDispatch } : {}),
+        ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+        assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+        runtimeMode,
+        interactionMode: "default",
+        createdAt: input.createdAt,
+      });
+
+      await syncLatestSnapshot();
+      planSidebarOpenOnNextThreadRef.current = true;
+      await navigate({
+        to: "/$threadId",
+        params: { threadId: input.nextThreadId },
+      });
+    },
+    [
+      activeProject,
+      navigate,
+      providerOptionsForDispatch,
+      runWorktreeSetupScript,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedProvider,
+      settings.enableAssistantStreaming,
+      syncLatestSnapshot,
+    ],
+  );
+
   const onImplementPlanInNewThread = useCallback(async () => {
-    const api = readNativeApi();
     if (
-      !api ||
       !activeThread ||
       !activeProject ||
       !activeProposedPlan ||
@@ -3039,67 +3203,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
       resetSendPhase();
     };
 
-    await api.orchestration
-      .dispatchCommand({
-        type: "thread.create",
-        commandId: newCommandId(),
-        threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: nextThreadTitle,
-        model: nextThreadModel,
-        runtimeMode,
-        interactionMode: "default",
-        branch: activeThread.branch,
-        worktreePath: activeThread.worktreePath,
-        createdAt,
-      })
-      .then(() => {
-        return api.orchestration.dispatchCommand({
-          type: "thread.turn.start",
-          commandId: newCommandId(),
-          threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: implementationPrompt,
-            attachments: [],
-          },
-          provider: selectedProvider,
-          model: selectedModel || undefined,
-          ...(selectedModelOptionsForDispatch
-            ? { modelOptions: selectedModelOptionsForDispatch }
-            : {}),
-          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
-          runtimeMode,
-          interactionMode: "default",
-          createdAt,
-        });
-      })
-      .then(() => api.orchestration.getSnapshot())
-      .then((snapshot) => {
-        syncServerReadModel(snapshot);
-        // Signal that the plan sidebar should open on the new thread.
-        planSidebarOpenOnNextThreadRef.current = true;
-        return navigate({
-          to: "/$threadId",
-          params: { threadId: nextThreadId },
-        });
-      })
+    await startImplementationThread({
+      nextThreadId,
+      createdAt,
+      implementationPrompt,
+      nextThreadTitle,
+      nextThreadModel,
+      branch: activeThread.branch,
+      worktreePath: activeThread.worktreePath,
+    })
       .catch(async (err) => {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.delete",
-            commandId: newCommandId(),
-            threadId: nextThreadId,
-          })
-          .catch(() => undefined);
-        await api.orchestration
-          .getSnapshot()
-          .then((snapshot) => {
-            syncServerReadModel(snapshot);
-          })
-          .catch(() => undefined);
+        await cleanupImplementationThreadCreation(nextThreadId);
         toastManager.add({
           type: "error",
           title: "Could not start implementation thread",
@@ -3113,19 +3227,150 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeProposedPlan,
     activeThread,
     beginSendPhase,
+    cleanupImplementationThreadCreation,
     isConnecting,
     isSendBusy,
     isServerThread,
-    navigate,
     resetSendPhase,
-    runtimeMode,
     selectedModel,
-    selectedModelOptionsForDispatch,
-    providerOptionsForDispatch,
-    selectedProvider,
-    settings.enableAssistantStreaming,
-    syncServerReadModel,
+    startImplementationThread,
   ]);
+
+  const onImplementPlanInNewWorktree = useCallback(async () => {
+    if (
+      !activeThread ||
+      !activeProject ||
+      !activeProposedPlan ||
+      !isServerThread ||
+      !isGitRepo ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+
+    const baseBranch =
+      branchesQuery.data?.branches.find((branch) => branch.current)?.name ?? activeThread.branch;
+    if (!baseBranch) {
+      toastManager.add({
+        type: "error",
+        title: "Could not create implementation worktree",
+        description: "Check out or select a branch before starting implementation in a new worktree.",
+      });
+      return;
+    }
+
+    const createdAt = new Date().toISOString();
+    const nextThreadId = newThreadId();
+    const planMarkdown = activeProposedPlan.planMarkdown;
+    const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
+    const nextThreadTitle = truncateTitle(buildPlanImplementationThreadTitle(planMarkdown));
+    const nextThreadModel: ModelSlug =
+      selectedModel ||
+      (activeThread.model as ModelSlug) ||
+      (activeProject.model as ModelSlug) ||
+      DEFAULT_MODEL_BY_PROVIDER.codex;
+
+    sendInFlightRef.current = true;
+    beginSendPhase("preparing-worktree");
+    const finish = () => {
+      sendInFlightRef.current = false;
+      resetSendPhase();
+    };
+
+    let createdWorktreePath: string | null = null;
+    await createWorktreeFromBaseBranch({
+      projectCwd: activeProject.cwd,
+      baseBranch,
+    })
+      .then(async (worktree) => {
+        createdWorktreePath = worktree.worktreePath;
+        await startImplementationThread({
+          nextThreadId,
+          createdAt,
+          implementationPrompt,
+          nextThreadTitle,
+          nextThreadModel,
+          branch: worktree.branch,
+          worktreePath: worktree.worktreePath,
+          runWorktreeSetup: true,
+        });
+      })
+      .catch(async (err) => {
+        await cleanupImplementationThreadCreation(nextThreadId);
+        const message =
+          err instanceof Error ? err.message : "An error occurred while creating the new worktree.";
+        if (createdWorktreePath) {
+          setImplementationWorktreeFailure({
+            projectCwd: activeProject.cwd,
+            worktreePath: createdWorktreePath,
+            errorMessage: message,
+          });
+          return;
+        }
+        toastManager.add({
+          type: "error",
+          title: "Could not start implementation worktree",
+          description: message,
+        });
+      })
+      .then(finish, finish);
+  }, [
+    activeProject,
+    activeProposedPlan,
+    activeThread,
+    beginSendPhase,
+    branchesQuery.data?.branches,
+    cleanupImplementationThreadCreation,
+    createWorktreeFromBaseBranch,
+    isConnecting,
+    isGitRepo,
+    isSendBusy,
+    isServerThread,
+    resetSendPhase,
+    selectedModel,
+    startImplementationThread,
+  ]);
+
+  const onKeepImplementationWorktree = useCallback(() => {
+    if (!implementationWorktreeFailure) {
+      return;
+    }
+    toastManager.add({
+      type: "warning",
+      title: "Implementation worktree kept",
+      description: implementationWorktreeFailure.errorMessage,
+    });
+    setImplementationWorktreeFailure(null);
+  }, [implementationWorktreeFailure]);
+
+  const onDeleteImplementationWorktree = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || !implementationWorktreeFailure) {
+      return;
+    }
+    const { projectCwd, worktreePath, errorMessage } = implementationWorktreeFailure;
+    setImplementationWorktreeFailure(null);
+    try {
+      await api.git.removeWorktree({
+        cwd: projectCwd,
+        path: worktreePath,
+      });
+      await invalidateGitQueries(queryClient);
+      toastManager.add({
+        type: "success",
+        title: "Implementation worktree deleted",
+        description: worktreePath,
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not delete implementation worktree",
+        description: error instanceof Error ? error.message : errorMessage,
+      });
+    }
+  }, [implementationWorktreeFailure, queryClient]);
 
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: ModelSlug) => {
@@ -4070,6 +4315,41 @@ export default function ChatView({ threadId }: ChatViewProps) {
           />
         );
       })()}
+
+      <AlertDialog
+        open={implementationWorktreeFailure !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setImplementationWorktreeFailure(null);
+          }
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Implementation worktree created, but startup failed</AlertDialogTitle>
+            <AlertDialogDescription>
+              {implementationWorktreeFailure?.errorMessage ??
+                "The implementation thread could not be started after creating its worktree."}
+            </AlertDialogDescription>
+            {implementationWorktreeFailure ? (
+              <p className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 font-mono text-xs text-muted-foreground">
+                {implementationWorktreeFailure.worktreePath}
+              </p>
+            ) : null}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              Close
+            </AlertDialogClose>
+            <Button variant="outline" onClick={onKeepImplementationWorktree}>
+              Keep worktree
+            </Button>
+            <Button variant="destructive" onClick={() => void onDeleteImplementationWorktree()}>
+              Delete worktree
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
 
       {expandedImage && expandedImageItem && (
         <div
