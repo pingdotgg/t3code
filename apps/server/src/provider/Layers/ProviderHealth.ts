@@ -14,7 +14,7 @@ import type {
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Array, Effect, Layer, Option, Ref, Result, Stream } from "effect";
+import { Effect, Layer, Option, Ref, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -340,7 +340,7 @@ export const ProviderHealthLive = Layer.effect(
     const refreshStatuses = Effect.gen(function* () {
       const overrides = yield* Ref.get(overridesRef);
       const codexStatus = yield* runCheck(overrides.codex);
-      const statuses = Array.of(codexStatus);
+      const statuses = [codexStatus];
       yield* Ref.set(statusRef, statuses);
       return statuses;
     });
