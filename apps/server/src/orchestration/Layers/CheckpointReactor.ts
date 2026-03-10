@@ -165,15 +165,15 @@ const make = Effect.gen(function* () {
     });
 
     const cwd = input.preferSessionRuntime
-      ? Option.match(fromSession, {
+      ? (Option.match(fromSession, {
           onNone: () => undefined,
           onSome: (runtime) => runtime.cwd,
-        }) ?? fromThread
-      : fromThread ??
+        }) ?? fromThread)
+      : (fromThread ??
         Option.match(fromSession, {
           onNone: () => undefined,
           onSome: (runtime) => runtime.cwd,
-        });
+        }));
 
     if (!cwd) {
       return undefined;
@@ -190,7 +190,13 @@ const make = Effect.gen(function* () {
   const captureAndDispatchCheckpoint = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly turnId: TurnId;
-    readonly thread: { readonly messages: ReadonlyArray<{ readonly id: MessageId; readonly role: string; readonly turnId: TurnId | null }> };
+    readonly thread: {
+      readonly messages: ReadonlyArray<{
+        readonly id: MessageId;
+        readonly role: string;
+        readonly turnId: TurnId | null;
+      }>;
+    };
     readonly cwd: string;
     readonly turnCount: number;
     readonly status: "ready" | "missing" | "error";
@@ -400,7 +406,9 @@ const make = Effect.gen(function* () {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
     if (!thread) {
-      yield* Effect.logWarning("checkpoint capture from placeholder skipped: thread not found", { threadId });
+      yield* Effect.logWarning("checkpoint capture from placeholder skipped: thread not found", {
+        threadId,
+      });
       return;
     }
 
@@ -410,7 +418,10 @@ const make = Effect.gen(function* () {
         (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
       )
     ) {
-      yield* Effect.logDebug("checkpoint capture from placeholder skipped: real checkpoint already exists", { threadId, turnId });
+      yield* Effect.logDebug(
+        "checkpoint capture from placeholder skipped: real checkpoint already exists",
+        { threadId, turnId },
+      );
       return;
     }
 
