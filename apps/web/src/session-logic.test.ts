@@ -9,10 +9,17 @@ import {
   derivePendingUserInputs,
   deriveTimelineEntries,
   deriveWorkLogEntries,
+  findLatestDiffableTurnDiffSummary,
+  findLatestReadyCheckpointTurnCount,
   findLatestProposedPlan,
+  findLatestTurnDiffSummary,
   hasToolActivityForTurn,
+  isTurnDiffSummaryDiffable,
   isLatestTurnSettled,
+  listDiffableTurnIds,
+  orderTurnDiffSummariesByRecency,
 } from "./session-logic";
+import type { TurnDiffSummary } from "./types";
 
 function makeActivity(overrides: {
   id?: string;
@@ -133,6 +140,205 @@ describe("derivePendingApprovals", () => {
     ];
 
     expect(derivePendingApprovals(activities)).toEqual([]);
+  });
+});
+
+describe("orderTurnDiffSummariesByRecency", () => {
+  it("prefers higher explicit checkpoint turn counts over recency", () => {
+    const summaries: TurnDiffSummary[] = [
+      {
+        turnId: TurnId.makeUnsafe("turn-older-higher-count"),
+        completedAt: "2026-02-23T00:00:01.000Z",
+        files: [],
+        checkpointTurnCount: 3,
+      },
+      {
+        turnId: TurnId.makeUnsafe("turn-newer-lower-count"),
+        completedAt: "2026-02-23T00:00:09.000Z",
+        files: [],
+        checkpointTurnCount: 2,
+      },
+    ];
+
+    expect(orderTurnDiffSummariesByRecency(summaries).map((summary) => summary.turnId)).toEqual([
+      "turn-older-higher-count",
+      "turn-newer-lower-count",
+    ]);
+  });
+
+  it("falls back to inferred checkpoint turn counts when explicit values are missing", () => {
+    const summaries: TurnDiffSummary[] = [
+      {
+        turnId: TurnId.makeUnsafe("turn-1"),
+        completedAt: "2026-02-23T00:00:01.000Z",
+        files: [],
+      },
+      {
+        turnId: TurnId.makeUnsafe("turn-2"),
+        completedAt: "2026-02-23T00:00:02.000Z",
+        files: [],
+      },
+      {
+        turnId: TurnId.makeUnsafe("turn-3"),
+        completedAt: "2026-02-23T00:00:03.000Z",
+        files: [],
+      },
+    ];
+
+    expect(orderTurnDiffSummariesByRecency(summaries).map((summary) => summary.turnId)).toEqual([
+      "turn-3",
+      "turn-2",
+      "turn-1",
+    ]);
+  });
+
+  it("uses completion time to break turn-count ties", () => {
+    const summaries: TurnDiffSummary[] = [
+      {
+        turnId: TurnId.makeUnsafe("turn-earlier"),
+        completedAt: "2026-02-23T00:00:01.000Z",
+        files: [],
+        checkpointTurnCount: 2,
+      },
+      {
+        turnId: TurnId.makeUnsafe("turn-later"),
+        completedAt: "2026-02-23T00:00:02.000Z",
+        files: [],
+        checkpointTurnCount: 2,
+      },
+    ];
+
+    expect(orderTurnDiffSummariesByRecency(summaries).map((summary) => summary.turnId)).toEqual([
+      "turn-later",
+      "turn-earlier",
+    ]);
+  });
+});
+
+describe("findLatestTurnDiffSummary", () => {
+  it("returns the latest ordered turn summary", () => {
+    const summaries: TurnDiffSummary[] = [
+      {
+        turnId: TurnId.makeUnsafe("turn-1"),
+        completedAt: "2026-02-23T00:00:01.000Z",
+        files: [],
+      },
+      {
+        turnId: TurnId.makeUnsafe("turn-2"),
+        completedAt: "2026-02-23T00:00:02.000Z",
+        files: [],
+      },
+    ];
+
+    expect(findLatestTurnDiffSummary(summaries)?.turnId).toBe("turn-2");
+  });
+
+  it("returns null when no turn summaries exist", () => {
+    expect(findLatestTurnDiffSummary([])).toBeNull();
+  });
+});
+
+describe("isTurnDiffSummaryDiffable", () => {
+  it("treats the first ready checkpoint as diffable", () => {
+    const summary: TurnDiffSummary = {
+      turnId: TurnId.makeUnsafe("turn-1"),
+      completedAt: "2026-02-23T00:00:01.000Z",
+      files: [],
+      checkpointTurnCount: 1,
+      status: "ready",
+    };
+
+    expect(isTurnDiffSummaryDiffable(summary, [summary])).toBe(true);
+  });
+
+  it("requires the previous checkpoint count for later turns", () => {
+    const summaries: TurnDiffSummary[] = [
+      {
+        turnId: TurnId.makeUnsafe("turn-2"),
+        completedAt: "2026-02-23T00:00:02.000Z",
+        files: [],
+        checkpointTurnCount: 2,
+        status: "ready",
+      },
+    ];
+
+    expect(isTurnDiffSummaryDiffable(summaries[0]!, summaries)).toBe(false);
+  });
+
+  it("rejects non-ready checkpoint summaries", () => {
+    const summaries: TurnDiffSummary[] = [
+      {
+        turnId: TurnId.makeUnsafe("turn-1"),
+        completedAt: "2026-02-23T00:00:01.000Z",
+        files: [],
+        checkpointTurnCount: 1,
+        status: "missing",
+      },
+      {
+        turnId: TurnId.makeUnsafe("turn-2"),
+        completedAt: "2026-02-23T00:00:02.000Z",
+        files: [],
+        checkpointTurnCount: 2,
+        status: "error",
+      },
+    ];
+
+    expect(isTurnDiffSummaryDiffable(summaries[0]!, summaries)).toBe(false);
+    expect(isTurnDiffSummaryDiffable(summaries[1]!, summaries)).toBe(false);
+  });
+});
+
+describe("findLatestDiffableTurnDiffSummary", () => {
+  it("skips newer unusable summaries and returns the latest diffable turn", () => {
+    const summaries: TurnDiffSummary[] = [
+      {
+        turnId: TurnId.makeUnsafe("turn-1"),
+        completedAt: "2026-02-23T00:00:01.000Z",
+        files: [],
+        checkpointTurnCount: 1,
+        status: "ready",
+      },
+      {
+        turnId: TurnId.makeUnsafe("turn-3"),
+        completedAt: "2026-02-23T00:00:03.000Z",
+        files: [],
+        checkpointTurnCount: 3,
+        status: "ready",
+      },
+    ];
+
+    expect(findLatestDiffableTurnDiffSummary(summaries)?.turnId).toBe("turn-1");
+    expect(listDiffableTurnIds(summaries)).toEqual(["turn-1"]);
+  });
+});
+
+describe("findLatestReadyCheckpointTurnCount", () => {
+  it("returns the latest ready count even when the newest summary is unusable", () => {
+    const summaries: TurnDiffSummary[] = [
+      {
+        turnId: TurnId.makeUnsafe("turn-1"),
+        completedAt: "2026-02-23T00:00:01.000Z",
+        files: [],
+        checkpointTurnCount: 1,
+        status: "ready",
+      },
+      {
+        turnId: TurnId.makeUnsafe("turn-2"),
+        completedAt: "2026-02-23T00:00:02.000Z",
+        files: [],
+        checkpointTurnCount: 2,
+        status: "ready",
+      },
+      {
+        turnId: TurnId.makeUnsafe("turn-3"),
+        completedAt: "2026-02-23T00:00:03.000Z",
+        files: [],
+        checkpointTurnCount: 3,
+        status: "missing",
+      },
+    ];
+
+    expect(findLatestReadyCheckpointTurnCount(summaries)).toBe(2);
   });
 });
 

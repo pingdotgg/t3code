@@ -108,7 +108,6 @@ type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number]
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
 type ProviderRuntimeTestProposedPlan = ProviderRuntimeTestThread["proposedPlans"][number];
 type ProviderRuntimeTestActivity = ProviderRuntimeTestThread["activities"][number];
-type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][number];
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
@@ -1231,8 +1230,8 @@ describe("ProviderRuntimeIngestion", () => {
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "runtime.warning",
         ) &&
-        entry.checkpoints.some(
-          (checkpoint: ProviderRuntimeTestCheckpoint) => checkpoint.turnId === "turn-p1",
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "turn.diff.preview.updated",
         ),
     );
 
@@ -1269,12 +1268,63 @@ describe("ProviderRuntimeIngestion", () => {
     expect(warning?.kind).toBe("runtime.warning");
     expect(warningPayload?.message).toBe("Provider got slow");
 
-    const checkpoint = thread.checkpoints.find(
-      (entry: ProviderRuntimeTestCheckpoint) => entry.turnId === "turn-p1",
+    const diffPreview = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-turn-diff-updated",
     );
-    expect(checkpoint?.status).toBe("missing");
-    expect(checkpoint?.assistantMessageId).toBe("assistant:item-p1-assistant");
-    expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
+    const diffPreviewPayload =
+      diffPreview?.payload && typeof diffPreview.payload === "object"
+        ? (diffPreview.payload as Record<string, unknown>)
+        : undefined;
+    expect(diffPreview?.kind).toBe("turn.diff.preview.updated");
+    expect(diffPreviewPayload?.itemId).toBe("item-p1-assistant");
+    expect(diffPreviewPayload?.unifiedDiff).toBe("diff --git a/file.txt b/file.txt\n+hello\n");
+    expect(thread.checkpoints).toHaveLength(0);
+  });
+
+  it("keeps repeated turn diff preview updates out of checkpoint history", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.diff.updated",
+      eventId: asEventId("evt-turn-diff-updated-1"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-preview"),
+      itemId: asItemId("item-preview-1"),
+      payload: {
+        unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello\n",
+      },
+    });
+
+    harness.emit({
+      type: "turn.diff.updated",
+      eventId: asEventId("evt-turn-diff-updated-2"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-preview"),
+      itemId: asItemId("item-preview-2"),
+      payload: {
+        unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello again\n",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.activities.filter(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "turn.diff.preview.updated",
+        ).length === 2,
+    );
+
+    expect(thread.checkpoints).toHaveLength(0);
+    expect(
+      thread.activities.filter(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "turn.diff.preview.updated",
+      ),
+    ).toHaveLength(2);
   });
 
   it("projects Codex task lifecycle chunks into thread activities", async () => {

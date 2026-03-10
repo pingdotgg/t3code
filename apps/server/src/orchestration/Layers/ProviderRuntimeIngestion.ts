@@ -4,7 +4,6 @@ import {
   CommandId,
   MessageId,
   type OrchestrationEvent,
-  CheckpointRef,
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
@@ -13,8 +12,6 @@ import {
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
-import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
-import { isGitRepository } from "../../git/isRepo.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   ProviderRuntimeIngestionService,
@@ -306,6 +303,24 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "turn.diff.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "turn.diff.preview.updated",
+          summary: "Diff preview updated",
+          payload: {
+            unifiedDiff: event.payload.unifiedDiff,
+            ...(event.itemId ? { itemId: event.itemId } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "user-input.requested": {
       return [
         {
@@ -507,22 +522,6 @@ const make = Effect.gen(function* () {
     capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
-  });
-
-  const isGitRepoForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
-    const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find((entry) => entry.id === threadId);
-    if (!thread) {
-      return false;
-    }
-    const workspaceCwd = resolveThreadWorkspaceCwd({
-      thread,
-      projects: readModel.projects,
-    });
-    if (!workspaceCwd) {
-      return false;
-    }
-    return isGitRepository(workspaceCwd);
   });
 
   const rememberAssistantMessageId = (
@@ -1059,28 +1058,6 @@ const make = Effect.gen(function* () {
           threadId: thread.id,
           title: event.payload.name,
         });
-      }
-
-      if (event.type === "turn.diff.updated") {
-        const turnId = toTurnId(event.turnId);
-        if (turnId && (yield* isGitRepoForThread(thread.id))) {
-          const assistantMessageId = MessageId.makeUnsafe(
-            `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
-          );
-          yield* orchestrationEngine.dispatch({
-            type: "thread.turn.diff.complete",
-            commandId: providerCommandId(event, "thread-turn-diff-complete"),
-            threadId: thread.id,
-            turnId,
-            completedAt: now,
-            checkpointRef: CheckpointRef.makeUnsafe(`provider-diff:${event.eventId}`),
-            status: "missing",
-            files: [],
-            assistantMessageId,
-            checkpointTurnCount: thread.checkpoints.length + 1,
-            createdAt: now,
-          });
-        }
       }
 
       const activities = runtimeEventToActivities(event);

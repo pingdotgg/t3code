@@ -1,7 +1,13 @@
 import { ThreadId, type NativeApi } from "@t3tools/contracts";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkpointDiffQueryOptions, providerQueryKeys } from "./providerReactQuery";
+import {
+  checkpointDiffQueryOptions,
+  isCheckpointRecoverableSelectionError,
+  isCheckpointTemporarilyUnavailable,
+  normalizeCheckpointErrorMessage,
+  providerQueryKeys,
+} from "./providerReactQuery";
 import * as nativeApi from "../nativeApi";
 
 const threadId = ThreadId.makeUnsafe("thread-id");
@@ -157,5 +163,40 @@ describe("checkpointDiffQueryOptions", () => {
     expect(typeof checkpointDelay).toBe("number");
     expect(typeof genericDelay).toBe("number");
     expect((checkpointDelay ?? 0) > (genericDelay ?? 0)).toBe(true);
+  });
+});
+
+describe("normalizeCheckpointErrorMessage", () => {
+  it("rephrases missing checkpoint ref errors for recovery UX", () => {
+    expect(normalizeCheckpointErrorMessage("Checkpoint ref is unavailable for turn 5.")).toBe(
+      "This turn's checkpoint diff is no longer available. Showing the latest available diff when possible.",
+    );
+  });
+
+  it("rephrases checkpoint continuity errors", () => {
+    expect(
+      normalizeCheckpointErrorMessage(
+        "Checkpoint invariant violation in thread thread-1: Checkpoint turn-count sequence is inconsistent for thread 'thread-1': missing checkpoint row for turn 5.",
+      ),
+    ).toBe("This thread's diff history is out of sync. Showing the latest available diff when possible.");
+  });
+});
+
+describe("checkpoint error classification", () => {
+  it("keeps temporary unavailability retryable", () => {
+    expect(
+      isCheckpointTemporarilyUnavailable(
+        new Error("Filesystem checkpoint is unavailable for turn 2 in thread thread-1."),
+      ),
+    ).toBe(true);
+  });
+
+  it("marks continuity mismatches as recoverable but not temporary", () => {
+    const error = new Error(
+      "Checkpoint invariant violation in thread thread-1: Checkpoint turn-count sequence is inconsistent for thread 'thread-1': missing checkpoint row for turn 5.",
+    );
+
+    expect(isCheckpointRecoverableSelectionError(error)).toBe(true);
+    expect(isCheckpointTemporarilyUnavailable(error)).toBe(false);
   });
 });

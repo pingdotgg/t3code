@@ -1,21 +1,31 @@
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@t3tools/contracts";
 import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
 import { type WheelEvent as ReactWheelEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { gitBranchesQueryOptions } from "~/lib/gitReactQuery";
-import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
+import {
+  checkpointDiffQueryOptions,
+  isCheckpointRecoverableSelectionError,
+  providerQueryKeys,
+} from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "../terminal-links";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import { buildOpenDiffSearch, parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import {
+  findLatestDiffableTurnDiffSummary,
+  findLatestReadyCheckpointTurnCount,
+  listDiffableTurnIds,
+  orderTurnDiffSummariesByRecency,
+} from "../session-logic";
 import { useStore } from "../store";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
@@ -156,10 +166,12 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { resolvedTheme } = useTheme();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
+  const recoveryKeyRef = useRef<string | null>(null);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
   const routeThreadId = useParams({
@@ -181,29 +193,31 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
-    () =>
-      [...turnDiffSummaries].toSorted((left, right) => {
-        const leftTurnCount =
-          left.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[left.turnId] ?? 0;
-        const rightTurnCount =
-          right.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[right.turnId] ?? 0;
-        if (leftTurnCount !== rightTurnCount) {
-          return rightTurnCount - leftTurnCount;
-        }
-        return right.completedAt.localeCompare(left.completedAt);
-      }),
-    [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
+    () => orderTurnDiffSummariesByRecency(turnDiffSummaries),
+    [turnDiffSummaries],
+  );
+  const diffableTurnIds = useMemo(() => listDiffableTurnIds(turnDiffSummaries), [turnDiffSummaries]);
+  const diffableTurnIdSet = useMemo(() => new Set(diffableTurnIds), [diffableTurnIds]);
+  const latestDiffableTurnSummary = useMemo(
+    () => findLatestDiffableTurnDiffSummary(turnDiffSummaries),
+    [turnDiffSummaries],
   );
 
   const selectedTurnId = diffSearch.diffTurnId ?? null;
   const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
-  const selectedTurn =
+  const selectedTurn = useMemo(
+    () =>
+      selectedTurnId === null
+        ? undefined
+        : orderedTurnDiffSummaries.find((summary) => summary.turnId === selectedTurnId),
+    [orderedTurnDiffSummaries, selectedTurnId],
+  );
+  const selectedTurnIsDiffable = selectedTurn ? diffableTurnIdSet.has(selectedTurn.turnId) : false;
+  const selectedCheckpointTurnCount =
     selectedTurnId === null
       ? undefined
-      : (orderedTurnDiffSummaries.find((summary) => summary.turnId === selectedTurnId) ??
-        orderedTurnDiffSummaries[0]);
-  const selectedCheckpointTurnCount =
-    selectedTurn &&
+      : selectedTurn &&
+        selectedTurnIsDiffable &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
   const selectedCheckpointRange = useMemo(
     () =>
@@ -215,19 +229,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         : null,
     [selectedCheckpointTurnCount],
   );
-  const conversationCheckpointTurnCount = useMemo(() => {
-    const turnCounts = orderedTurnDiffSummaries
-      .map(
-        (summary) =>
-          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId],
-      )
-      .filter((value): value is number => typeof value === "number");
-    if (turnCounts.length === 0) {
-      return undefined;
-    }
-    const latest = Math.max(...turnCounts);
-    return latest > 0 ? latest : undefined;
-  }, [inferredCheckpointTurnCountByTurnId, orderedTurnDiffSummaries]);
+  const conversationCheckpointTurnCount = useMemo(
+    () => findLatestReadyCheckpointTurnCount(turnDiffSummaries),
+    [turnDiffSummaries],
+  );
   const conversationCheckpointRange = useMemo(
     () =>
       !selectedTurn && typeof conversationCheckpointTurnCount === "number"
@@ -238,9 +243,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         : null,
     [conversationCheckpointTurnCount, selectedTurn],
   );
-  const activeCheckpointRange = selectedTurn
-    ? selectedCheckpointRange
-    : conversationCheckpointRange;
+  const activeCheckpointRange =
+    selectedTurn === undefined
+      ? conversationCheckpointRange
+      : selectedTurnIsDiffable
+        ? selectedCheckpointRange
+        : null;
   const conversationCacheScope = useMemo(() => {
     if (selectedTurn || orderedTurnDiffSummaries.length === 0) {
       return null;
@@ -269,6 +277,119 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       : activeCheckpointDiffQuery.error
         ? "Failed to load checkpoint diff."
         : null;
+
+  const navigateToBestAvailableDiff = useCallback(
+    (input?: { replace?: boolean }) => {
+      if (!activeThread) {
+        return false;
+      }
+
+      if (latestDiffableTurnSummary) {
+        void navigate({
+          to: "/$threadId",
+          params: { threadId: activeThread.id },
+          replace: input?.replace ?? false,
+          search: (previous) => buildOpenDiffSearch(previous, latestDiffableTurnSummary.turnId),
+        });
+        return true;
+      }
+
+      if (typeof conversationCheckpointTurnCount === "number") {
+        void navigate({
+          to: "/$threadId",
+          params: { threadId: activeThread.id },
+          replace: input?.replace ?? false,
+          search: (previous) => buildOpenDiffSearch(previous),
+        });
+        return true;
+      }
+
+      return false;
+    },
+    [activeThread, conversationCheckpointTurnCount, latestDiffableTurnSummary, navigate],
+  );
+
+  useEffect(() => {
+    if (selectedTurnId === null) {
+      return;
+    }
+    if (selectedTurn && selectedTurnIsDiffable) {
+      return;
+    }
+
+    void navigateToBestAvailableDiff({ replace: true });
+  }, [navigateToBestAvailableDiff, selectedTurn, selectedTurnId, selectedTurnIsDiffable]);
+
+  useEffect(() => {
+    recoveryKeyRef.current = null;
+  }, [activeThreadId, selectedTurnId]);
+
+  useEffect(() => {
+    if (!activeThreadId || !activeCheckpointDiffQuery.error) {
+      return;
+    }
+    if (!isCheckpointRecoverableSelectionError(activeCheckpointDiffQuery.error)) {
+      return;
+    }
+
+    const message =
+      activeCheckpointDiffQuery.error instanceof Error
+        ? activeCheckpointDiffQuery.error.message
+        : String(activeCheckpointDiffQuery.error);
+    const recoveryKey = `${activeThreadId}:${selectedTurnId ?? "all"}:${message}`;
+    if (recoveryKeyRef.current === recoveryKey) {
+      return;
+    }
+    recoveryKeyRef.current = recoveryKey;
+
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const snapshot = await api.orchestration.getSnapshot();
+        useStore.getState().syncServerReadModel(snapshot);
+      } catch {
+        // Keep prior state; best-effort refresh only.
+      }
+
+      await queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
+
+      const refreshedThread = useStore
+        .getState()
+        .threads.find((thread) => thread.id === activeThreadId);
+      const refreshedSummaries = refreshedThread?.turnDiffSummaries ?? [];
+      const fallbackTurn = findLatestDiffableTurnDiffSummary(refreshedSummaries);
+      const fallbackConversationTurnCount = findLatestReadyCheckpointTurnCount(refreshedSummaries);
+
+      if (refreshedThread && fallbackTurn) {
+        void navigate({
+          to: "/$threadId",
+          params: { threadId: refreshedThread.id },
+          replace: true,
+          search: (previous) => buildOpenDiffSearch(previous, fallbackTurn.turnId),
+        });
+        return;
+      }
+
+      if (refreshedThread && typeof fallbackConversationTurnCount === "number") {
+        void navigate({
+          to: "/$threadId",
+          params: { threadId: refreshedThread.id },
+          replace: true,
+          search: (previous) => buildOpenDiffSearch(previous),
+        });
+      }
+    })().catch(() => undefined);
+  }, [
+    activeCheckpointDiffQuery.error,
+    activeThreadId,
+    queryClient,
+    selectedTurnId,
+    navigate,
+  ]);
 
   const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
   const hasResolvedPatch = typeof selectedPatch === "string";
@@ -312,7 +433,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   );
 
   const selectTurn = (turnId: TurnId) => {
-    if (!activeThread) return;
+    if (!activeThread || !diffableTurnIdSet.has(turnId)) return;
     void navigate({
       to: "/$threadId",
       params: { threadId: activeThread.id },
@@ -454,37 +575,47 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               <div className="text-[10px] leading-tight font-medium">All turns</div>
             </div>
           </button>
-          {orderedTurnDiffSummaries.map((summary) => (
-            <button
-              key={summary.turnId}
-              type="button"
-              className="shrink-0 rounded-md"
-              onClick={() => selectTurn(summary.turnId)}
-              title={summary.turnId}
-              data-turn-chip-selected={summary.turnId === selectedTurn?.turnId}
-            >
-              <div
-                className={cn(
-                  "rounded-md border px-2 py-1 text-left transition-colors",
-                  summary.turnId === selectedTurn?.turnId
-                    ? "border-border bg-accent text-accent-foreground"
-                    : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
-                )}
+          {orderedTurnDiffSummaries.map((summary) => {
+            const isDiffable = diffableTurnIdSet.has(summary.turnId);
+
+            return (
+              <button
+                key={summary.turnId}
+                type="button"
+                className="shrink-0 rounded-md"
+                onClick={() => selectTurn(summary.turnId)}
+                title={
+                  isDiffable ? summary.turnId : "Checkpoint diff unavailable for this turn."
+                }
+                disabled={!isDiffable}
+                aria-disabled={!isDiffable}
+                data-turn-chip-selected={summary.turnId === selectedTurn?.turnId}
               >
-                <div className="flex items-center gap-1">
-                  <span className="text-[10px] leading-tight font-medium">
-                    Turn{" "}
-                    {summary.checkpointTurnCount ??
-                      inferredCheckpointTurnCountByTurnId[summary.turnId] ??
-                      "?"}
-                  </span>
-                  <span className="text-[9px] leading-tight opacity-70">
-                    {formatTurnChipTimestamp(summary.completedAt)}
-                  </span>
+                <div
+                  className={cn(
+                    "rounded-md border px-2 py-1 text-left transition-colors",
+                    summary.turnId === selectedTurn?.turnId
+                      ? "border-border bg-accent text-accent-foreground"
+                      : isDiffable
+                        ? "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80"
+                        : "cursor-not-allowed border-border/40 bg-background/50 text-muted-foreground/45",
+                  )}
+                >
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] leading-tight font-medium">
+                      Turn{" "}
+                      {summary.checkpointTurnCount ??
+                        inferredCheckpointTurnCountByTurnId[summary.turnId] ??
+                        "?"}
+                    </span>
+                    <span className="text-[9px] leading-tight opacity-70">
+                      {formatTurnChipTimestamp(summary.completedAt)}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
       </div>
       <ToggleGroup

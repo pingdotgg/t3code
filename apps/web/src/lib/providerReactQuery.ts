@@ -53,7 +53,7 @@ function asCheckpointErrorMessage(error: unknown): string {
   return "";
 }
 
-function normalizeCheckpointErrorMessage(error: unknown): string {
+export function normalizeCheckpointErrorMessage(error: unknown): string {
   const message = asCheckpointErrorMessage(error).trim();
   if (message.length === 0) {
     return "Failed to load checkpoint diff.";
@@ -62,6 +62,20 @@ function normalizeCheckpointErrorMessage(error: unknown): string {
   const lower = message.toLowerCase();
   if (lower.includes("not a git repository")) {
     return "Turn diffs are unavailable because this project is not a git repository.";
+  }
+
+  if (
+    lower.includes("checkpoint ref is unavailable for turn") ||
+    lower.includes("filesystem checkpoint is unavailable for turn")
+  ) {
+    return "This turn's checkpoint diff is no longer available. Showing the latest available diff when possible.";
+  }
+
+  if (
+    lower.includes("checkpoint turn-count sequence is inconsistent") ||
+    lower.includes("missing checkpoint row for turn")
+  ) {
+    return "This thread's diff history is out of sync. Showing the latest available diff when possible.";
   }
 
   if (
@@ -80,12 +94,22 @@ function normalizeCheckpointErrorMessage(error: unknown): string {
   return message;
 }
 
-function isCheckpointTemporarilyUnavailable(error: unknown): boolean {
+export function isCheckpointTemporarilyUnavailable(error: unknown): boolean {
   const message = asCheckpointErrorMessage(error).toLowerCase();
   return (
     message.includes("exceeds current turn count") ||
     message.includes("checkpoint is unavailable for turn") ||
     message.includes("filesystem checkpoint is unavailable")
+  );
+}
+
+export function isCheckpointRecoverableSelectionError(error: unknown): boolean {
+  const message = asCheckpointErrorMessage(error).toLowerCase();
+  return (
+    isCheckpointTemporarilyUnavailable(error) ||
+    message.includes("checkpoint turn-count sequence is inconsistent") ||
+    message.includes("missing checkpoint row for turn") ||
+    message.includes("checkpoint ref is unavailable for turn")
   );
 }
 

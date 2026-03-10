@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { TurnId } from "@t3tools/contracts";
 
-import { parseDiffRouteSearch } from "./diffRouteSearch";
+import { buildOpenDiffSearch, parseDiffRouteSearch, stripDiffSearchParams } from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
   it("parses valid diff search values", () => {
@@ -69,6 +70,54 @@ describe("parseDiffRouteSearch", () => {
 
     expect(parsed).toEqual({
       diff: "1",
+    });
+  });
+});
+
+describe("buildOpenDiffSearch", () => {
+  it("strips stale diff params and seeds the latest turn id when available", () => {
+    expect(
+      buildOpenDiffSearch(
+        {
+          tab: "chat",
+          diff: "1",
+          diffTurnId: "turn-old",
+          diffFilePath: "src/old.ts",
+        },
+        TurnId.makeUnsafe("turn-latest"),
+      ),
+    ).toEqual({
+      tab: "chat",
+      diff: "1",
+      diffTurnId: "turn-latest",
+    });
+  });
+
+  it("opens aggregate diff when no latest turn id is available", () => {
+    expect(
+      buildOpenDiffSearch({
+        tab: "chat",
+        diffTurnId: "turn-old",
+        diffFilePath: "src/old.ts",
+      }),
+    ).toEqual({
+      tab: "chat",
+      diff: "1",
+    });
+  });
+});
+
+describe("stripDiffSearchParams", () => {
+  it("supports the diff toggle close path by clearing all diff params", () => {
+    expect(
+      stripDiffSearchParams({
+        tab: "chat",
+        diff: "1",
+        diffTurnId: "turn-latest",
+        diffFilePath: "src/file.ts",
+      }),
+    ).toEqual({
+      tab: "chat",
     });
   });
 });

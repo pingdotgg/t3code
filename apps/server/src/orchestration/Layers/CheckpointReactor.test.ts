@@ -400,6 +400,78 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
+  it("treats duplicate turn completion events for the same turn as idempotent", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const createdAt = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-set-duplicate-capture"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.makeUnsafe("evt-turn-started-duplicate"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-duplicate"),
+    });
+    await waitForGitRefExists(
+      harness.cwd,
+      checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0),
+    );
+
+    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.makeUnsafe("evt-turn-completed-duplicate-1"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-duplicate"),
+      payload: { state: "completed" },
+    });
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
+    const firstThread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.latestTurn?.turnId === "turn-duplicate" && entry.checkpoints.length === 1,
+    );
+    expect(firstThread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.makeUnsafe("evt-turn-completed-duplicate-2"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-duplicate"),
+      payload: { state: "completed" },
+    });
+
+    await Effect.runPromise(Effect.sleep("40 millis"));
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+
+    expect(thread?.checkpoints).toHaveLength(1);
+    expect(thread?.checkpoints[0]?.checkpointTurnCount).toBe(1);
+  });
+
   it("ignores auxiliary thread turn completion while primary turn is active", async () => {
     const harness = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = new Date().toISOString();

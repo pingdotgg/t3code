@@ -1,11 +1,12 @@
 import { ThreadId } from "@t3tools/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
+import { Suspense, lazy, type ReactNode, useCallback, useEffect, useMemo } from "react";
 
 import ChatView from "../components/ChatView";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import { buildOpenDiffSearch, parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { findLatestDiffableTurnDiffSummary } from "../session-logic";
 import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
@@ -155,13 +156,18 @@ function ChatThreadRouteView() {
     select: (params) => ThreadId.makeUnsafe(params.threadId),
   });
   const search = Route.useSearch();
-  const threadExists = useStore((store) => store.threads.some((thread) => thread.id === threadId));
+  const activeThread = useStore((store) => store.threads.find((thread) => thread.id === threadId));
+  const threadExists = activeThread !== undefined;
   const draftThreadExists = useComposerDraftStore(
     (store) => Object.hasOwn(store.draftThreadsByThreadId, threadId),
   );
   const routeThreadExists = threadExists || draftThreadExists;
   const diffOpen = search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
+  const latestTurnDiffSummary = useMemo(
+    () => findLatestDiffableTurnDiffSummary(activeThread?.turnDiffSummaries ?? []),
+    [activeThread?.turnDiffSummaries],
+  );
   const closeDiff = useCallback(() => {
     void navigate({
       to: "/$threadId",
@@ -176,11 +182,10 @@ function ChatThreadRouteView() {
       to: "/$threadId",
       params: { threadId },
       search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
+        return buildOpenDiffSearch(previous, latestTurnDiffSummary?.turnId);
       },
     });
-  }, [navigate, threadId]);
+  }, [latestTurnDiffSummary?.turnId, navigate, threadId]);
 
   useEffect(() => {
     if (!threadsHydrated) {

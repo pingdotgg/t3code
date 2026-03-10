@@ -613,6 +613,109 @@ export function inferCheckpointTurnCountByTurnId(
   return result;
 }
 
+function resolveTurnDiffSummaryCheckpointTurnCount(
+  summary: TurnDiffSummary,
+  inferredCheckpointTurnCountByTurnId: Record<TurnId, number>,
+): number | undefined {
+  return summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+}
+
+function buildTurnDiffSummaryResolution(summaries: TurnDiffSummary[]) {
+  const inferredCheckpointTurnCountByTurnId = inferCheckpointTurnCountByTurnId(summaries);
+  const availableCheckpointTurnCounts = new Set<number>();
+  const readyCheckpointTurnCounts = new Set<number>();
+
+  for (const summary of summaries) {
+    const checkpointTurnCount = resolveTurnDiffSummaryCheckpointTurnCount(
+      summary,
+      inferredCheckpointTurnCountByTurnId,
+    );
+    if (checkpointTurnCount === undefined) {
+      continue;
+    }
+    availableCheckpointTurnCounts.add(checkpointTurnCount);
+    if (summary.status === undefined || summary.status === "ready") {
+      readyCheckpointTurnCounts.add(checkpointTurnCount);
+    }
+  }
+
+  return {
+    inferredCheckpointTurnCountByTurnId,
+    availableCheckpointTurnCounts,
+    readyCheckpointTurnCounts,
+  };
+}
+
+export function orderTurnDiffSummariesByRecency(
+  summaries: TurnDiffSummary[],
+): TurnDiffSummary[] {
+  const inferredCheckpointTurnCountByTurnId = inferCheckpointTurnCountByTurnId(summaries);
+
+  return [...summaries].toSorted((left, right) => {
+    const leftTurnCount =
+      left.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[left.turnId] ?? 0;
+    const rightTurnCount =
+      right.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[right.turnId] ?? 0;
+
+    if (leftTurnCount !== rightTurnCount) {
+      return rightTurnCount - leftTurnCount;
+    }
+
+    return right.completedAt.localeCompare(left.completedAt);
+  });
+}
+
+export function findLatestTurnDiffSummary(summaries: TurnDiffSummary[]): TurnDiffSummary | null {
+  return orderTurnDiffSummariesByRecency(summaries)[0] ?? null;
+}
+
+export function isTurnDiffSummaryDiffable(
+  summary: TurnDiffSummary,
+  summaries: TurnDiffSummary[],
+): boolean {
+  if (summary.status !== undefined && summary.status !== "ready") {
+    return false;
+  }
+
+  const { inferredCheckpointTurnCountByTurnId, availableCheckpointTurnCounts } =
+    buildTurnDiffSummaryResolution(summaries);
+  const checkpointTurnCount = resolveTurnDiffSummaryCheckpointTurnCount(
+    summary,
+    inferredCheckpointTurnCountByTurnId,
+  );
+  if (checkpointTurnCount === undefined) {
+    return false;
+  }
+
+  return checkpointTurnCount === 1 || availableCheckpointTurnCounts.has(checkpointTurnCount - 1);
+}
+
+export function listDiffableTurnIds(summaries: TurnDiffSummary[]): TurnId[] {
+  return orderTurnDiffSummariesByRecency(summaries)
+    .filter((summary) => isTurnDiffSummaryDiffable(summary, summaries))
+    .map((summary) => summary.turnId);
+}
+
+export function findLatestDiffableTurnDiffSummary(
+  summaries: TurnDiffSummary[],
+): TurnDiffSummary | null {
+  return (
+    orderTurnDiffSummariesByRecency(summaries).find((summary) =>
+      isTurnDiffSummaryDiffable(summary, summaries),
+    ) ?? null
+  );
+}
+
+export function findLatestReadyCheckpointTurnCount(
+  summaries: TurnDiffSummary[],
+): number | undefined {
+  const { readyCheckpointTurnCounts } = buildTurnDiffSummaryResolution(summaries);
+  if (readyCheckpointTurnCounts.size === 0) {
+    return undefined;
+  }
+  return Math.max(...readyCheckpointTurnCounts);
+}
+
 export function derivePhase(session: ThreadSession | null): SessionPhase {
   if (!session || session.status === "closed") return "disconnected";
   if (session.status === "connecting") return "connecting";

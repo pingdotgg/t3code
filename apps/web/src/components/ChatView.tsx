@@ -52,7 +52,7 @@ import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import { buildOpenDiffSearch, parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   type ComposerSlashCommand,
   type ComposerTrigger,
@@ -69,6 +69,7 @@ import {
   deriveTimelineEntries,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  findLatestDiffableTurnDiffSummary,
   findLatestProposedPlan,
   type PendingApproval,
   type PendingUserInput,
@@ -1075,6 +1076,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
+  const latestTurnDiffSummary = useMemo(
+    () => findLatestDiffableTurnDiffSummary(turnDiffSummaries),
+    [turnDiffSummaries],
+  );
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<MessageId, TurnDiffSummary>();
     for (const summary of turnDiffSummaries) {
@@ -1304,10 +1309,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       replace: true,
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
-        return diffOpen ? rest : { ...rest, diff: "1" };
+        return diffOpen ? rest : buildOpenDiffSearch(rest, latestTurnDiffSummary?.turnId);
       },
     });
-  }, [diffOpen, navigate, threadId]);
+  }, [diffOpen, latestTurnDiffSummary?.turnId, navigate, threadId]);
 
   const envLocked = Boolean(
     activeThread &&

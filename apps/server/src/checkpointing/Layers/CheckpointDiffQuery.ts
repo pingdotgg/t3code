@@ -1,5 +1,6 @@
 import {
   OrchestrationGetTurnDiffResult,
+  type CheckpointRef,
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
@@ -16,6 +17,45 @@ import {
 } from "../Services/CheckpointDiffQuery.ts";
 
 const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
+
+function buildCheckpointIndex(input: {
+  readonly operation: string;
+  readonly threadId: string;
+  readonly checkpoints: ReadonlyArray<{
+    readonly checkpointTurnCount: number;
+    readonly checkpointRef: CheckpointRef;
+  }>;
+}): Effect.Effect<
+  {
+    readonly checkpointByTurnCount: Map<number, (typeof input.checkpoints)[number]>;
+    readonly maxTurnCount: number;
+  },
+  CheckpointInvariantError
+> {
+  const checkpointByTurnCount = new Map<number, (typeof input.checkpoints)[number]>();
+
+  for (const checkpoint of input.checkpoints) {
+    if (checkpointByTurnCount.has(checkpoint.checkpointTurnCount)) {
+      return Effect.fail(
+        new CheckpointInvariantError({
+          operation: input.operation,
+          detail: `Checkpoint turn-count sequence is inconsistent for thread '${input.threadId}': duplicate checkpoint row for turn ${checkpoint.checkpointTurnCount}.`,
+        }),
+      );
+    }
+    checkpointByTurnCount.set(checkpoint.checkpointTurnCount, checkpoint);
+  }
+
+  const maxTurnCount = input.checkpoints.reduce(
+    (max, checkpoint) => Math.max(max, checkpoint.checkpointTurnCount),
+    0,
+  );
+
+  return Effect.succeed({
+    checkpointByTurnCount,
+    maxTurnCount,
+  });
+}
 
 const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -50,10 +90,12 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const maxTurnCount = thread.checkpoints.reduce(
-        (max, checkpoint) => Math.max(max, checkpoint.checkpointTurnCount),
-        0,
-      );
+      const { checkpointByTurnCount, maxTurnCount } = yield* buildCheckpointIndex({
+        operation,
+        threadId: input.threadId,
+        checkpoints: thread.checkpoints,
+      });
+
       if (input.toTurnCount > maxTurnCount) {
         return yield* new CheckpointUnavailableError({
           threadId: input.threadId,
@@ -76,25 +118,19 @@ const make = Effect.gen(function* () {
       const fromCheckpointRef =
         input.fromTurnCount === 0
           ? checkpointRefForThreadTurn(input.threadId, 0)
-          : thread.checkpoints.find(
-              (checkpoint) => checkpoint.checkpointTurnCount === input.fromTurnCount,
-            )?.checkpointRef;
+          : checkpointByTurnCount.get(input.fromTurnCount)?.checkpointRef;
       if (!fromCheckpointRef) {
-        return yield* new CheckpointUnavailableError({
-          threadId: input.threadId,
-          turnCount: input.fromTurnCount,
-          detail: `Checkpoint ref is unavailable for turn ${input.fromTurnCount}.`,
+        return yield* new CheckpointInvariantError({
+          operation,
+          detail: `Checkpoint turn-count sequence is inconsistent for thread '${input.threadId}': missing checkpoint row for turn ${input.fromTurnCount}.`,
         });
       }
 
-      const toCheckpointRef = thread.checkpoints.find(
-        (checkpoint) => checkpoint.checkpointTurnCount === input.toTurnCount,
-      )?.checkpointRef;
+      const toCheckpointRef = checkpointByTurnCount.get(input.toTurnCount)?.checkpointRef;
       if (!toCheckpointRef) {
-        return yield* new CheckpointUnavailableError({
-          threadId: input.threadId,
-          turnCount: input.toTurnCount,
-          detail: `Checkpoint ref is unavailable for turn ${input.toTurnCount}.`,
+        return yield* new CheckpointInvariantError({
+          operation,
+          detail: `Checkpoint turn-count sequence is inconsistent for thread '${input.threadId}': missing checkpoint row for turn ${input.toTurnCount}.`,
         });
       }
 

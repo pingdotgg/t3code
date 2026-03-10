@@ -166,7 +166,13 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    if (thread.checkpoints.some((checkpoint) => checkpoint.turnId === turnId)) {
+    const existingCheckpoint = thread.checkpoints.find((checkpoint) => checkpoint.turnId === turnId);
+    if (existingCheckpoint) {
+      yield* Effect.logDebug("checkpoint completion ignored: checkpoint already exists for turn", {
+        threadId: thread.id,
+        turnId,
+        checkpointTurnCount: existingCheckpoint.checkpointTurnCount,
+      });
       return;
     }
 
