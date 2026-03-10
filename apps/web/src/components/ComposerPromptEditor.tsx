@@ -705,9 +705,7 @@ function ComposerPromptEditorInner({
       focus: () => {
         focusAt(snapshotRef.current.cursor);
       },
-      focusAt: (nextCursor: number) => {
-        focusAt(nextCursor);
-      },
+      focusAt,
       focusAtEnd: () => {
         focusAt(snapshotRef.current.value.length);
       },
