@@ -1,5 +1,6 @@
 import { Encoding } from "effect";
 import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
+import { expandTilde } from "../os-jank.js";
 
 export const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 
@@ -24,5 +25,7 @@ export function resolveThreadWorkspaceCwd(input: {
     return worktreeCwd;
   }
 
-  return input.projects.find((project) => project.id === input.thread.projectId)?.workspaceRoot;
+  const raw = input.projects.find((project) => project.id === input.thread.projectId)
+    ?.workspaceRoot;
+  return raw ? expandTilde(raw) : undefined;
 }
