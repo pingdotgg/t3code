@@ -15,10 +15,7 @@ import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
-import {
-  getAutoUpdateDisabledReason,
-  shouldBroadcastDownloadProgress,
-} from "./updateState";
+import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -702,7 +699,9 @@ async function checkForUpdates(reason: string): Promise<void> {
     await autoUpdater.checkForUpdates();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    setUpdateState(reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()));
+    setUpdateState(
+      reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()),
+    );
     console.error(`[desktop-updater] Failed to check for updates: ${message}`);
   } finally {
     updateCheckInFlight = false;
@@ -764,9 +763,7 @@ function configureAutoUpdater(): void {
   updaterConfigured = true;
 
   const githubToken =
-    process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() ||
-    process.env.GH_TOKEN?.trim() ||
-    "";
+    process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim() || "";
   if (githubToken) {
     // When a token is provided, re-configure the feed with `private: true` so
     // electron-updater uses the GitHub API (api.github.com) instead of the
@@ -801,7 +798,13 @@ function configureAutoUpdater(): void {
     console.info("[desktop-updater] Looking for updates...");
   });
   autoUpdater.on("update-available", (info) => {
-    setUpdateState(reduceDesktopUpdateStateOnUpdateAvailable(updateState, info.version, new Date().toISOString()));
+    setUpdateState(
+      reduceDesktopUpdateStateOnUpdateAvailable(
+        updateState,
+        info.version,
+        new Date().toISOString(),
+      ),
+    );
     lastLoggedDownloadMilestone = -1;
     console.info(`[desktop-updater] Update available: ${info.version}`);
   });

@@ -403,7 +403,9 @@ function asRuntimeTaskId(taskId: string): RuntimeTaskId {
   return RuntimeTaskId.makeUnsafe(taskId);
 }
 
-function codexEventMessage(payload: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+function codexEventMessage(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
   return asObject(payload?.msg);
 }
 
@@ -1037,7 +1039,9 @@ function mapToRuntimeEvents(
         type: "content.delta",
         payload: {
           streamKind:
-            asNumber(msg?.summary_index) !== undefined ? "reasoning_summary_text" : "reasoning_text",
+            asNumber(msg?.summary_index) !== undefined
+              ? "reasoning_summary_text"
+              : "reasoning_text",
           delta,
           ...(asNumber(msg?.summary_index) !== undefined
             ? { summaryIndex: asNumber(msg?.summary_index) }
@@ -1314,9 +1318,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
             detail: toMessage(cause, "Failed to start Codex adapter session."),
             cause,
           }),
-      }).pipe(
-        Effect.map((session) => session),
-      );
+      }).pipe(Effect.map((session) => session));
     };
 
     const sendTurn: CodexAdapterShape["sendTurn"] = (input) =>

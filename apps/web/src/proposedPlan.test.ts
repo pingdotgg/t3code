@@ -31,9 +31,12 @@ describe("buildPlanImplementationPrompt", () => {
 describe("buildCollapsedProposedPlanPreviewMarkdown", () => {
   it("drops the redundant title heading and preserves the following markdown lines", () => {
     expect(
-      buildCollapsedProposedPlanPreviewMarkdown("# Integrate RPC\n\n## Summary\n\n- step 1\n- step 2", {
-        maxLines: 4,
-      }),
+      buildCollapsedProposedPlanPreviewMarkdown(
+        "# Integrate RPC\n\n## Summary\n\n- step 1\n- step 2",
+        {
+          maxLines: 4,
+        },
+      ),
     ).toBe("- step 1\n- step 2");
   });
 

@@ -9,11 +9,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import {
-  DEFAULT_INTERACTION_MODE,
-  DEFAULT_RUNTIME_MODE,
-  type ChatImageAttachment,
-} from "./types";
+import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
@@ -495,8 +491,7 @@ function hydreatePersistedComposerImageAttachment(
   attachment: PersistedComposerImageAttachment,
 ): File | null {
   const commaIndex = attachment.dataUrl.indexOf(",");
-  const header =
-    commaIndex === -1 ? attachment.dataUrl : attachment.dataUrl.slice(0, commaIndex);
+  const header = commaIndex === -1 ? attachment.dataUrl : attachment.dataUrl.slice(0, commaIndex);
   const payload = commaIndex === -1 ? "" : attachment.dataUrl.slice(commaIndex + 1);
   if (payload.length === 0) {
     return null;
@@ -605,7 +600,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const nextDraftThread: DraftThreadState = {
             projectId,
             createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
-            runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+            runtimeMode:
+              options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
             interactionMode:
               options?.interactionMode ??
               existingThread?.interactionMode ??
@@ -673,7 +669,9 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             return state;
           }
           const nextWorktreePath =
-            options.worktreePath === undefined ? existing.worktreePath : (options.worktreePath ?? null);
+            options.worktreePath === undefined
+              ? existing.worktreePath
+              : (options.worktreePath ?? null);
           const nextDraftThread: DraftThreadState = {
             projectId: nextProjectId,
             createdAt:
@@ -685,8 +683,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
             worktreePath: nextWorktreePath,
             envMode:
-              options.envMode ??
-              (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
+              options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
           };
           const isUnchanged =
             nextDraftThread.projectId === existing.projectId &&

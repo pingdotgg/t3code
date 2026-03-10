@@ -14,11 +14,7 @@ const GitPushStepStatus = Schema.Literals([
   "skipped_up_to_date",
 ]);
 const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
-const GitPrStepStatus = Schema.Literals([
-  "created",
-  "opened_existing",
-  "skipped_not_requested",
-]);
+const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_not_requested"]);
 const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);

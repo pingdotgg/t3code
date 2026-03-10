@@ -1,5 +1,15 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "useTabs": false,
+  "tabWidth": 2,
+  "printWidth": 100,
+  "singleQuote": false,
+  "jsxSingleQuote": false,
+  "quoteProps": "as-needed",
+  "semi": true,
+  "trailingComma": "all",
+  "endOfLine": "lf",
+  "insertFinalNewline": true,
   "ignorePatterns": [
     ".plans",
     "dist",
@@ -7,7 +17,8 @@
     "node_modules",
     "bun.lock",
     "*.tsbuildinfo",
-    "**/routeTree.gen.ts"
+    "**/routeTree.gen.ts",
+    "apps/web/public/mockServiceWorker.js"
   ],
-  "experimentalSortPackageJson": {}
+  "sortPackageJson": {}
 }

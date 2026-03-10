@@ -5744,10 +5744,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         }
       >
         <span
-          className={cn(
-            "flex min-w-0 items-center gap-2",
-            props.compact ? "max-w-36" : undefined,
-          )}
+          className={cn("flex min-w-0 items-center gap-2", props.compact ? "max-w-36" : undefined)}
         >
           <ProviderIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
           <span className="truncate">{selectedModelLabel}</span>

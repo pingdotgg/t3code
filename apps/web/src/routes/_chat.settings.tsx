@@ -115,54 +115,62 @@ function SettingsRouteView() {
       });
   }, [keybindingsConfigPath]);
 
-  const addCustomModel = useCallback((provider: ProviderKind) => {
-    const customModelInput = customModelInputByProvider[provider];
-    const customModels = getCustomModelsForProvider(settings, provider);
-    const normalized = normalizeModelSlug(customModelInput, provider);
-    if (!normalized) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "Enter a model slug.",
-      }));
-      return;
-    }
-    if (getModelOptions(provider).some((option) => option.slug === normalized)) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "That model is already built in.",
-      }));
-      return;
-    }
-    if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
-      }));
-      return;
-    }
-    if (customModels.includes(normalized)) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "That custom model is already saved.",
-      }));
-      return;
-    }
+  const addCustomModel = useCallback(
+    (provider: ProviderKind) => {
+      const customModelInput = customModelInputByProvider[provider];
+      const customModels = getCustomModelsForProvider(settings, provider);
+      const normalized = normalizeModelSlug(customModelInput, provider);
+      if (!normalized) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: "Enter a model slug.",
+        }));
+        return;
+      }
+      if (getModelOptions(provider).some((option) => option.slug === normalized)) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: "That model is already built in.",
+        }));
+        return;
+      }
+      if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
+        }));
+        return;
+      }
+      if (customModels.includes(normalized)) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: "That custom model is already saved.",
+        }));
+        return;
+      }
 
-    updateSettings(patchCustomModels(provider, [...customModels, normalized]));
-    setCustomModelInputByProvider((existing) => ({
-      ...existing,
-      [provider]: "",
-    }));
-    setCustomModelErrorByProvider((existing) => ({
-      ...existing,
-      [provider]: null,
-    }));
-  }, [customModelInputByProvider, settings, updateSettings]);
+      updateSettings(patchCustomModels(provider, [...customModels, normalized]));
+      setCustomModelInputByProvider((existing) => ({
+        ...existing,
+        [provider]: "",
+      }));
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: null,
+      }));
+    },
+    [customModelInputByProvider, settings, updateSettings],
+  );
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
       const customModels = getCustomModelsForProvider(settings, provider);
-      updateSettings(patchCustomModels(provider, customModels.filter((model) => model !== slug)));
+      updateSettings(
+        patchCustomModels(
+          provider,
+          customModels.filter((model) => model !== slug),
+        ),
+      );
       setCustomModelErrorByProvider((existing) => ({
         ...existing,
         [provider]: null,
@@ -381,10 +389,9 @@ function SettingsRouteView() {
                                 variant="outline"
                                 onClick={() =>
                                   updateSettings(
-                                    patchCustomModels(
-                                      provider,
-                                      [...getDefaultCustomModelsForProvider(defaults, provider)],
-                                    ),
+                                    patchCustomModels(provider, [
+                                      ...getDefaultCustomModelsForProvider(defaults, provider),
+                                    ]),
                                   )
                                 }
                               >

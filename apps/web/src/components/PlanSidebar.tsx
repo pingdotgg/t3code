@@ -106,8 +106,7 @@ const PlanSidebar = memo(function PlanSidebar({
         toastManager.add({
           type: "error",
           title: "Could not save plan",
-          description:
-            error instanceof Error ? error.message : "An error occurred.",
+          description: error instanceof Error ? error.message : "An error occurred.",
         });
       })
       .then(
@@ -199,9 +198,7 @@ const PlanSidebar = memo(function PlanSidebar({
                     step.status === "completed" && "bg-emerald-500/5",
                   )}
                 >
-                  <div className="mt-0.5">
-                    {stepStatusIcon(step.status)}
-                  </div>
+                  <div className="mt-0.5">{stepStatusIcon(step.status)}</div>
                   <p
                     className={cn(
                       "text-[13px] leading-snug",
@@ -251,9 +248,7 @@ const PlanSidebar = memo(function PlanSidebar({
           {/* Empty state */}
           {!activePlan && !planMarkdown ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <p className="text-[13px] text-muted-foreground/40">
-                No active plan yet.
-              </p>
+              <p className="text-[13px] text-muted-foreground/40">No active plan yet.</p>
               <p className="mt-1 text-[11px] text-muted-foreground/30">
                 Plans will appear here when generated.
               </p>

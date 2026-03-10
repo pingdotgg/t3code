@@ -198,8 +198,7 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
 
 function messageFromCause(cause: Cause.Cause<unknown>): string {
   const squashed = Cause.squash(cause);
-  const message =
-    squashed instanceof Error ? squashed.message.trim() : String(squashed).trim();
+  const message = squashed instanceof Error ? squashed.message.trim() : String(squashed).trim();
   return message.length > 0 ? message : Cause.pretty(cause);
 }
 
@@ -330,10 +329,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       } satisfies OrchestrationCommand;
     }
 
-    if (
-      input.command.type === "project.meta.update" &&
-      input.command.workspaceRoot !== undefined
-    ) {
+    if (input.command.type === "project.meta.update" && input.command.workspaceRoot !== undefined) {
       return {
         ...input.command,
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
@@ -793,14 +789,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           relativePath: body.relativePath,
           path,
         });
-        yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new RouteRequestError({
-                message: `Failed to prepare workspace path: ${String(cause)}`,
-              }),
-          ),
-        );
+        yield* fileSystem
+          .makeDirectory(path.dirname(target.absolutePath), { recursive: true })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new RouteRequestError({
+                  message: `Failed to prepare workspace path: ${String(cause)}`,
+                }),
+            ),
+          );
         yield* fileSystem.writeFileString(target.absolutePath, body.contents).pipe(
           Effect.mapError(
             (cause) =>

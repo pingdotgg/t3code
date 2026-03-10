@@ -123,12 +123,7 @@ export function buildMenuItems(
   const canCommit = !isBusy && hasChanges;
   const canPush = !isBusy && hasBranch && !hasChanges && !isBehind && gitStatus.aheadCount > 0;
   const canCreatePr =
-    !isBusy &&
-    hasBranch &&
-    !hasChanges &&
-    !hasOpenPr &&
-    gitStatus.aheadCount > 0 &&
-    !isBehind;
+    !isBusy && hasBranch && !hasChanges && !hasOpenPr && gitStatus.aheadCount > 0 && !isBehind;
   const canOpenPr = !isBusy && hasOpenPr;
 
   return [

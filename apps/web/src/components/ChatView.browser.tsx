@@ -414,9 +414,9 @@ async function setViewport(viewport: ViewportSpec): Promise<void> {
 async function waitForProductionStyles(): Promise<void> {
   await vi.waitFor(
     () => {
-      expect(getComputedStyle(document.documentElement).getPropertyValue("--background").trim()).not.toBe(
-        "",
-      );
+      expect(
+        getComputedStyle(document.documentElement).getPropertyValue("--background").trim(),
+      ).not.toBe("");
       expect(getComputedStyle(document.body).marginTop).toBe("0px");
     },
     {
@@ -454,7 +454,9 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
-async function waitForInteractionModeButton(expectedLabel: "Chat" | "Plan"): Promise<HTMLButtonElement> {
+async function waitForInteractionModeButton(
+  expectedLabel: "Chat" | "Plan",
+): Promise<HTMLButtonElement> {
   return waitForElement(
     () =>
       Array.from(document.querySelectorAll("button")).find(
@@ -697,7 +699,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const measurements: Array<UserRowMeasurement & { viewport: ViewportSpec; estimatedHeightPx: number }> = [];
+      const measurements: Array<
+        UserRowMeasurement & { viewport: ViewportSpec; estimatedHeightPx: number }
+      > = [];
 
       for (const viewport of TEXT_VIEWPORT_MATRIX) {
         await mounted.setViewport(viewport);
@@ -714,7 +718,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
         measurements.push({ ...measurement, viewport, estimatedHeightPx });
       }
 
-      expect(new Set(measurements.map((measurement) => Math.round(measurement.timelineWidthMeasuredPx))).size).toBeGreaterThanOrEqual(3);
+      expect(
+        new Set(measurements.map((measurement) => Math.round(measurement.timelineWidthMeasuredPx)))
+          .size,
+      ).toBeGreaterThanOrEqual(3);
 
       const byMeasuredWidth = measurements.toSorted(
         (left, right) => left.timelineWidthMeasuredPx - right.timelineWidthMeasuredPx,
@@ -756,7 +763,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       { timelineWidthPx: mobileMeasurement.timelineWidthMeasuredPx },
     );
 
-    const measuredDeltaPx = mobileMeasurement.measuredRowHeightPx - desktopMeasurement.measuredRowHeightPx;
+    const measuredDeltaPx =
+      mobileMeasurement.measuredRowHeightPx - desktopMeasurement.measuredRowHeightPx;
     const estimatedDeltaPx = estimatedMobilePx - estimatedDesktopPx;
     expect(measuredDeltaPx).toBeGreaterThan(0);
     expect(estimatedDeltaPx).toBeGreaterThan(0);
@@ -844,7 +852,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === WS_METHODS.shellOpenInEditor);
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenInEditor,
+          );
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.shellOpenInEditor,
             cwd: "/repo/project",

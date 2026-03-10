@@ -31,7 +31,11 @@ const baseState: DesktopUpdateState = {
 
 describe("desktop update button state", () => {
   it("shows a download action when an update is available", () => {
-    const state: DesktopUpdateState = { ...baseState, status: "available", availableVersion: "1.1.0" };
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "available",
+      availableVersion: "1.1.0",
+    };
     expect(shouldShowDesktopUpdateButton(state)).toBe(true);
     expect(resolveDesktopUpdateButtonAction(state)).toBe("download");
   });

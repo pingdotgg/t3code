@@ -441,7 +441,9 @@ it.layer(TestLayer)("git integration", (it) => {
           true,
         );
         expect(
-          result.branches.some((branch) => branch.name === "feature/local-only" && !branch.isRemote),
+          result.branches.some(
+            (branch) => branch.name === "feature/local-only" && !branch.isRemote,
+          ),
         ).toBe(true);
         expect(
           result.branches.some(
@@ -704,29 +706,27 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    it.effect(
-      "does not silently checkout a local branch when a remote ref no longer exists",
-      () =>
-        Effect.gen(function* () {
-          const remote = yield* makeTmpDir();
-          const source = yield* makeTmpDir();
-          yield* git(remote, ["init", "--bare"]);
+    it.effect("does not silently checkout a local branch when a remote ref no longer exists", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const source = yield* makeTmpDir();
+        yield* git(remote, ["init", "--bare"]);
 
-          yield* initRepoWithCommit(source);
-          const defaultBranch = (yield* listGitBranches({ cwd: source })).branches.find(
-            (branch) => branch.current,
-          )!.name;
-          yield* git(source, ["remote", "add", "origin", remote]);
-          yield* git(source, ["push", "-u", "origin", defaultBranch]);
+        yield* initRepoWithCommit(source);
+        const defaultBranch = (yield* listGitBranches({ cwd: source })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+        yield* git(source, ["remote", "add", "origin", remote]);
+        yield* git(source, ["push", "-u", "origin", defaultBranch]);
 
-          yield* createGitBranch({ cwd: source, branch: "feature" });
+        yield* createGitBranch({ cwd: source, branch: "feature" });
 
-          const checkoutResult = yield* Effect.result(
-            checkoutGitBranch({ cwd: source, branch: "origin/feature" }),
-          );
-          expect(checkoutResult._tag).toBe("Failure");
-          expect(yield* git(source, ["branch", "--show-current"])).toBe(defaultBranch);
-        }),
+        const checkoutResult = yield* Effect.result(
+          checkoutGitBranch({ cwd: source, branch: "origin/feature" }),
+        );
+        expect(checkoutResult._tag).toBe("Failure");
+        expect(yield* git(source, ["branch", "--show-current"])).toBe(defaultBranch);
+      }),
     );
 
     it.effect("checks out a remote tracking branch when remote name contains slashes", () =>
@@ -955,13 +955,7 @@ it.layer(TestLayer)("git integration", (it) => {
         });
 
         expect(renamed.branch).toBe("feature/new-name");
-        expect(renameArgs).toEqual([
-          "branch",
-          "-m",
-          "--",
-          "feature/old-name",
-          "feature/new-name",
-        ]);
+        expect(renameArgs).toEqual(["branch", "-m", "--", "feature/old-name", "feature/new-name"]);
       }),
     );
   });

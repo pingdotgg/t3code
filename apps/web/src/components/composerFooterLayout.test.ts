@@ -17,9 +17,7 @@ describe("shouldUseCompactComposerFooter", () => {
 
   it("stays expanded at and above the breakpoint", () => {
     expect(shouldUseCompactComposerFooter(COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX)).toBe(false);
-    expect(shouldUseCompactComposerFooter(COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX + 48)).toBe(
-      false,
-    );
+    expect(shouldUseCompactComposerFooter(COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX + 48)).toBe(false);
   });
 
   it("uses a higher breakpoint for wide action states", () => {

@@ -38,6 +38,7 @@
     "test": "turbo run test",
     "test:desktop-smoke": "turbo run smoke-test --filter=@t3tools/desktop",
     "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
     "build:contracts": "turbo run build --filter=@t3tools/contracts",
     "dist:desktop:artifact": "node scripts/build-desktop-artifact.ts",
     "dist:desktop:dmg": "node scripts/build-desktop-artifact.ts --platform mac --target dmg",

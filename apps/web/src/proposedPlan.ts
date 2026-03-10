@@ -5,8 +5,7 @@ export function proposedPlanTitle(planMarkdown: string): string | null {
 
 export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   const lines = planMarkdown.trimEnd().split(/\r?\n/);
-  const sourceLines =
-    lines[0] && /^\s{0,3}#{1,6}\s+/.test(lines[0]) ? lines.slice(1) : [...lines];
+  const sourceLines = lines[0] && /^\s{0,3}#{1,6}\s+/.test(lines[0]) ? lines.slice(1) : [...lines];
   while (sourceLines[0]?.trim().length === 0) {
     sourceLines.shift();
   }
@@ -75,10 +74,7 @@ export function buildPlanImplementationPrompt(planMarkdown: string): string {
   return `PLEASE IMPLEMENT THIS PLAN:\n${planMarkdown.trim()}`;
 }
 
-export function resolvePlanFollowUpSubmission(input: {
-  draftText: string;
-  planMarkdown: string;
-}): {
+export function resolvePlanFollowUpSubmission(input: { draftText: string; planMarkdown: string }): {
   text: string;
   interactionMode: "default" | "plan";
 } {

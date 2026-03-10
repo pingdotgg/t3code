@@ -92,7 +92,9 @@ const DiffPanelInlineSidebar = (props: {
         composerViewport.clientWidth - viewportPaddingLeft - viewportPaddingRight,
       );
       const formRect = composerForm.getBoundingClientRect();
-      const composerFooter = composerForm.querySelector<HTMLElement>("[data-chat-composer-footer='true']");
+      const composerFooter = composerForm.querySelector<HTMLElement>(
+        "[data-chat-composer-footer='true']",
+      );
       const composerRightActions = composerForm.querySelector<HTMLElement>(
         "[data-chat-composer-actions='right']",
       );
@@ -103,9 +105,7 @@ const DiffPanelInlineSidebar = (props: {
           0
         : 0;
       const minimumComposerWidth =
-        COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX +
-        composerRightActionsWidth +
-        composerFooterGap;
+        COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX + composerRightActionsWidth + composerFooterGap;
       const hasComposerOverflow = composerForm.scrollWidth > composerForm.clientWidth + 0.5;
       const overflowsViewport = formRect.width > viewportContentWidth + 0.5;
       const violatesMinimumComposerWidth = composerForm.clientWidth + 0.5 < minimumComposerWidth;
@@ -156,8 +156,8 @@ function ChatThreadRouteView() {
   });
   const search = Route.useSearch();
   const threadExists = useStore((store) => store.threads.some((thread) => thread.id === threadId));
-  const draftThreadExists = useComposerDraftStore(
-    (store) => Object.hasOwn(store.draftThreadsByThreadId, threadId),
+  const draftThreadExists = useComposerDraftStore((store) =>
+    Object.hasOwn(store.draftThreadsByThreadId, threadId),
   );
   const routeThreadExists = threadExists || draftThreadExists;
   const diffOpen = search.diff === "1";
