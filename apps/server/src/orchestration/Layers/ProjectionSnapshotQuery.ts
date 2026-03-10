@@ -268,6 +268,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           completed_at AS "completedAt"
         FROM projection_turns
         WHERE checkpoint_turn_count IS NOT NULL
+          AND completed_at IS NOT NULL
         ORDER BY thread_id ASC, checkpoint_turn_count ASC
       `,
   });
