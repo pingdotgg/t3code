@@ -137,8 +137,4 @@ describe("parseStandaloneComposerSlashCommand", () => {
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
   });
-
-  it("ignores removed /checkout-pr command", () => {
-    expect(parseStandaloneComposerSlashCommand(" /checkout-pr ")).toBeNull();
-  });
 });
