@@ -57,7 +57,9 @@ import {
   type ComposerSlashCommand,
   type ComposerTrigger,
   type ComposerTriggerKind,
+  collapseExpandedComposerCursor,
   detectComposerTrigger,
+  detectComposerTriggerInPrefix,
   expandCollapsedComposerCursor,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
@@ -215,7 +217,12 @@ import {
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { clamp } from "effect/Number";
-import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import {
+  ComposerPromptEditor,
+  type ComposerPromptEditorChangeMeta,
+  type ComposerPromptEditorHandle,
+  type ComposerPromptEditorSnapshot,
+} from "./ComposerPromptEditor";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
@@ -244,6 +251,33 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   }
 
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+function detectComposerTriggerFromChange(
+  value: string,
+  cursor: number,
+  metadata: ComposerPromptEditorChangeMeta,
+): ComposerTrigger | null {
+  if (metadata.changeKind === "content-edit") {
+    return detectComposerTriggerInPrefix(metadata.prefixText);
+  }
+  if (metadata.cursorAdjacentToMention) {
+    return null;
+  }
+  return detectComposerTrigger(value, expandCollapsedComposerCursor(value, cursor));
+}
+
+function detectComposerTriggerFromSnapshot(snapshot: ComposerPromptEditorSnapshot): ComposerTrigger | null {
+  if (snapshot.changeKind === "content-edit") {
+    return detectComposerTriggerInPrefix(snapshot.prefixText);
+  }
+  if (snapshot.cursorAdjacentToMention) {
+    return null;
+  }
+  return detectComposerTrigger(
+    snapshot.value,
+    expandCollapsedComposerCursor(snapshot.value, snapshot.cursor),
+  );
 }
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
@@ -2836,7 +2870,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const onChangeActivePendingUserInputCustomAnswer = useCallback(
-    (questionId: string, value: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
+    (questionId: string, value: string, nextCursor: number, metadata: ComposerPromptEditorChangeMeta) => {
       if (!activePendingUserInput) {
         return;
       }
@@ -2852,11 +2886,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         },
       }));
       setComposerCursor(nextCursor);
-      setComposerTrigger(
-        cursorAdjacentToMention
-          ? null
-          : detectComposerTrigger(value, expandCollapsedComposerCursor(value, nextCursor)),
-      );
+      setComposerTrigger(detectComposerTriggerFromChange(value, nextCursor, metadata));
     },
     [activePendingUserInput],
   );
@@ -3191,6 +3221,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return false;
       }
       const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
+      const nextExpandedCursor = next.cursor;
+      const nextCollapsedCursor = collapseExpandedComposerCursor(next.text, nextExpandedCursor);
       promptRef.current = next.text;
       const activePendingQuestion = activePendingProgress?.activeQuestion;
       if (activePendingQuestion && activePendingUserInput) {
@@ -3207,33 +3239,38 @@ export default function ChatView({ threadId }: ChatViewProps) {
       } else {
         setPrompt(next.text);
       }
-      setComposerCursor(next.cursor);
-      setComposerTrigger(detectComposerTrigger(next.text, next.cursor));
+      setComposerCursor(nextCollapsedCursor);
+      setComposerTrigger(detectComposerTriggerInPrefix(next.text.slice(0, nextExpandedCursor)));
       window.requestAnimationFrame(() => {
-        composerEditorRef.current?.focusAt(next.cursor);
+        composerEditorRef.current?.focusAt(nextCollapsedCursor);
       });
       return true;
     },
     [activePendingProgress?.activeQuestion, activePendingUserInput, setPrompt],
   );
 
-  const readComposerSnapshot = useCallback((): { value: string; cursor: number } => {
+  const readComposerSnapshot = useCallback((): ComposerPromptEditorSnapshot => {
     const editorSnapshot = composerEditorRef.current?.readSnapshot();
     if (editorSnapshot) {
       return editorSnapshot;
     }
-    return { value: promptRef.current, cursor: composerCursor };
+    return {
+      value: promptRef.current,
+      cursor: composerCursor,
+      prefixText: promptRef.current,
+      changeKind: "selection-move",
+      cursorAdjacentToMention: false,
+    };
   }, [composerCursor]);
 
   const resolveActiveComposerTrigger = useCallback((): {
-    snapshot: { value: string; cursor: number };
+    snapshot: ComposerPromptEditorSnapshot;
     trigger: ComposerTrigger | null;
   } => {
     const snapshot = readComposerSnapshot();
-    const expandedCursor = expandCollapsedComposerCursor(snapshot.value, snapshot.cursor);
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, expandedCursor),
+      trigger: detectComposerTriggerFromSnapshot(snapshot),
     };
   }, [readComposerSnapshot]);
 
@@ -3321,27 +3358,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
       workspaceEntriesQuery.isFetching);
 
   const onPromptChange = useCallback(
-    (nextPrompt: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
+    (nextPrompt: string, nextCursor: number, metadata: ComposerPromptEditorChangeMeta) => {
       if (activePendingProgress?.activeQuestion && activePendingUserInput) {
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
           nextPrompt,
           nextCursor,
-          cursorAdjacentToMention,
+          metadata,
         );
         return;
       }
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
       setComposerCursor(nextCursor);
-      setComposerTrigger(
-        cursorAdjacentToMention
-          ? null
-          : detectComposerTrigger(
-              nextPrompt,
-              expandCollapsedComposerCursor(nextPrompt, nextCursor),
-            ),
-      );
+      setComposerTrigger(detectComposerTriggerFromChange(nextPrompt, nextCursor, metadata));
     },
     [
       activePendingProgress?.activeQuestion,

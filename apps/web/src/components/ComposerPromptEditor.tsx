@@ -354,6 +354,62 @@ function $readSelectionOffsetFromEditorState(fallback: number): number {
   return Math.max(0, Math.min(offset, composerLength));
 }
 
+function readTextPrefixForComposerOffset(
+  node: LexicalNode,
+  remainingRef: { value: number },
+): string {
+  if (remainingRef.value <= 0) {
+    return "";
+  }
+
+  if (node instanceof ComposerMentionNode) {
+    remainingRef.value -= 1;
+    return node.getTextContent();
+  }
+
+  if ($isTextNode(node)) {
+    const size = node.getTextContentSize();
+    const take = Math.min(remainingRef.value, size);
+    remainingRef.value -= take;
+    return node.getTextContent().slice(0, take);
+  }
+
+  if ($isLineBreakNode(node)) {
+    remainingRef.value -= 1;
+    return "\n";
+  }
+
+  if ($isElementNode(node)) {
+    let prefix = "";
+    for (const child of node.getChildren()) {
+      prefix += readTextPrefixForComposerOffset(child, remainingRef);
+      if (remainingRef.value <= 0) {
+        break;
+      }
+    }
+    return prefix;
+  }
+
+  return "";
+}
+
+function $readComposerPrefixTextAtOffset(offset: number): string {
+  const root = $getRoot();
+  const composerLength = $getComposerRootLength();
+  const boundedOffset = Math.max(0, Math.min(offset, composerLength));
+  const remainingRef = { value: boundedOffset };
+  let prefix = "";
+
+  for (const child of root.getChildren()) {
+    prefix += readTextPrefixForComposerOffset(child, remainingRef);
+    if (remainingRef.value <= 0) {
+      break;
+    }
+  }
+
+  return prefix;
+}
+
 function $appendTextWithLineBreaks(parent: ElementNode, text: string): void {
   const lines = text.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
@@ -387,7 +443,28 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
-  readSnapshot: () => { value: string; cursor: number };
+  readSnapshot: () => ComposerPromptEditorSnapshot;
+}
+
+export type ComposerPromptEditorChangeKind = "content-edit" | "selection-move";
+
+export type ComposerPromptEditorChangeMeta =
+  | {
+      changeKind: "content-edit";
+      cursorAdjacentToMention: boolean;
+      prefixText: string;
+    }
+  | {
+      changeKind: "selection-move";
+      cursorAdjacentToMention: boolean;
+    };
+
+export interface ComposerPromptEditorSnapshot {
+  value: string;
+  cursor: number;
+  prefixText: string;
+  changeKind: ComposerPromptEditorChangeKind;
+  cursorAdjacentToMention: boolean;
 }
 
 interface ComposerPromptEditorProps {
@@ -396,7 +473,11 @@ interface ComposerPromptEditorProps {
   disabled: boolean;
   placeholder: string;
   className?: string;
-  onChange: (nextValue: string, nextCursor: number, cursorAdjacentToMention: boolean) => void;
+  onChange: (
+    nextValue: string,
+    nextCursor: number,
+    metadata: ComposerPromptEditorChangeMeta,
+  ) => void;
   onCommandKeyDown?: (
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
@@ -632,7 +713,14 @@ function ComposerPromptEditorInner({
 }: ComposerPromptEditorInnerProps) {
   const [editor] = useLexicalComposerContext();
   const onChangeRef = useRef(onChange);
-  const snapshotRef = useRef({ value, cursor: clampCursor(value, cursor) });
+  const initialCursor = clampCursor(value, cursor);
+  const snapshotRef = useRef<ComposerPromptEditorSnapshot>({
+    value,
+    cursor: initialCursor,
+    prefixText: value.slice(0, initialCursor),
+    changeKind: "selection-move",
+    cursorAdjacentToMention: false,
+  });
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -655,7 +743,16 @@ function ComposerPromptEditorInner({
       });
     }
 
-    snapshotRef.current = { value, cursor: normalizedCursor };
+    snapshotRef.current = {
+      value,
+      cursor: normalizedCursor,
+      prefixText:
+        previousSnapshot.value === value
+          ? previousSnapshot.prefixText
+          : value.slice(0, normalizedCursor),
+      changeKind: previousSnapshot.changeKind,
+      cursorAdjacentToMention: previousSnapshot.cursorAdjacentToMention,
+    };
 
     const rootElement = editor.getRootElement();
     if (!rootElement || document.activeElement !== rootElement) {
@@ -676,16 +773,29 @@ function ComposerPromptEditorInner({
       editor.update(() => {
         $setSelectionAtComposerOffset(boundedCursor);
       });
+      let prefixText = snapshotRef.current.prefixText;
+      editor.getEditorState().read(() => {
+        prefixText = $readComposerPrefixTextAtOffset(boundedCursor);
+      });
+      const cursorAdjacentToMention =
+        isCollapsedCursorAdjacentToMention(snapshotRef.current.value, boundedCursor, "left") ||
+        isCollapsedCursorAdjacentToMention(snapshotRef.current.value, boundedCursor, "right");
       snapshotRef.current = {
         value: snapshotRef.current.value,
         cursor: boundedCursor,
+        prefixText,
+        changeKind: "selection-move",
+        cursorAdjacentToMention,
       };
-      onChangeRef.current(snapshotRef.current.value, boundedCursor, false);
+      onChangeRef.current(snapshotRef.current.value, boundedCursor, {
+        changeKind: "selection-move",
+        cursorAdjacentToMention,
+      });
     },
     [editor],
   );
 
-  const readSnapshot = useCallback((): { value: string; cursor: number } => {
+  const readSnapshot = useCallback((): ComposerPromptEditorSnapshot => {
     let snapshot = snapshotRef.current;
     editor.getEditorState().read(() => {
       const nextValue = $getRoot().getTextContent();
@@ -697,6 +807,9 @@ function ComposerPromptEditorInner({
       snapshot = {
         value: nextValue,
         cursor: nextCursor,
+        prefixText: $readComposerPrefixTextAtOffset(nextCursor),
+        changeKind: snapshotRef.current.changeKind,
+        cursorAdjacentToMention: snapshotRef.current.cursorAdjacentToMention,
       };
     });
     snapshotRef.current = snapshot;
@@ -725,18 +838,35 @@ function ComposerPromptEditorInner({
       const nextValue = $getRoot().getTextContent();
       const fallbackCursor = clampCursor(nextValue, snapshotRef.current.cursor);
       const nextCursor = clampCursor(nextValue, $readSelectionOffsetFromEditorState(fallbackCursor));
+      const nextPrefixText = $readComposerPrefixTextAtOffset(nextCursor);
       const previousSnapshot = snapshotRef.current;
       if (previousSnapshot.value === nextValue && previousSnapshot.cursor === nextCursor) {
         return;
       }
-      snapshotRef.current = {
-        value: nextValue,
-        cursor: nextCursor,
-      };
+      const changeKind: ComposerPromptEditorChangeKind =
+        previousSnapshot.value === nextValue ? "selection-move" : "content-edit";
       const cursorAdjacentToMention =
         isCollapsedCursorAdjacentToMention(nextValue, nextCursor, "left") ||
         isCollapsedCursorAdjacentToMention(nextValue, nextCursor, "right");
-      onChangeRef.current(nextValue, nextCursor, cursorAdjacentToMention);
+      snapshotRef.current = {
+        value: nextValue,
+        cursor: nextCursor,
+        prefixText: nextPrefixText,
+        changeKind,
+        cursorAdjacentToMention,
+      };
+      if (changeKind === "content-edit") {
+        onChangeRef.current(nextValue, nextCursor, {
+          changeKind,
+          cursorAdjacentToMention,
+          prefixText: nextPrefixText,
+        });
+        return;
+      }
+      onChangeRef.current(nextValue, nextCursor, {
+        changeKind,
+        cursorAdjacentToMention,
+      });
     });
   }, []);
 

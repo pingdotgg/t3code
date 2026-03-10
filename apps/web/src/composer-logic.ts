@@ -61,6 +61,38 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
   return expandedCursor;
 }
 
+export function collapseExpandedComposerCursor(text: string, cursorInput: number): number {
+  const expandedCursor = clampCursor(text, cursorInput);
+  const segments = splitPromptIntoComposerSegments(text);
+  if (segments.length === 0) {
+    return expandedCursor;
+  }
+
+  let remaining = expandedCursor;
+  let collapsedCursor = 0;
+
+  for (const segment of segments) {
+    if (segment.type === "mention") {
+      const expandedLength = segment.path.length + 1;
+      if (remaining <= expandedLength) {
+        return collapsedCursor + (remaining === 0 ? 0 : 1);
+      }
+      remaining -= expandedLength;
+      collapsedCursor += 1;
+      continue;
+    }
+
+    const segmentLength = segment.text.length;
+    if (remaining <= segmentLength) {
+      return collapsedCursor + remaining;
+    }
+    remaining -= segmentLength;
+    collapsedCursor += segmentLength;
+  }
+
+  return collapsedCursor;
+}
+
 function collapsedSegmentLength(segment: { type: "text"; text: string } | { type: "mention" }): number {
   return segment.type === "mention" ? 1 : segment.text.length;
 }
@@ -158,6 +190,10 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
     rangeStart: tokenStart,
     rangeEnd: cursor,
   };
+}
+
+export function detectComposerTriggerInPrefix(prefixText: string): ComposerTrigger | null {
+  return detectComposerTrigger(prefixText, prefixText.length);
 }
 
 export function parseStandaloneComposerSlashCommand(text: string): Exclude<
