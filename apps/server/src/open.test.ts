@@ -7,6 +7,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   isCommandAvailable,
   launchDetached,
+  normalizeWindowsExecutablePath,
   resolveAvailableEditors,
   resolveEditorLaunch,
 } from "./open";
@@ -260,6 +261,23 @@ describe("isCommandAvailable", () => {
         } satisfies NodeJS.ProcessEnv;
         assert.equal(isCommandAvailable("code", { platform: "win32", env }), true);
       });
+    });
+  });
+});
+
+describe("normalizeWindowsExecutablePath", () => {
+  it("parses quoted DisplayIcon values with a trailing index", () => {
+    withTempDir((dir) => {
+      const executablePath = path.join(dir, "Antigravity.exe");
+      fs.writeFileSync(executablePath, "MZ", "utf8");
+      const env = {
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      } satisfies NodeJS.ProcessEnv;
+
+      assert.equal(
+        normalizeWindowsExecutablePath(`"${executablePath}",0`, env),
+        executablePath,
+      );
     });
   });
 });

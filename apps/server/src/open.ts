@@ -170,13 +170,13 @@ function expandWindowsEnvironmentVariables(value: string, env: NodeJS.ProcessEnv
   });
 }
 
-function normalizeWindowsExecutablePath(
+export function normalizeWindowsExecutablePath(
   value: string,
   env: NodeJS.ProcessEnv,
 ): string | undefined {
   const windowsPathExtensions = resolveWindowsPathExtensions(env);
   const normalized = expandWindowsEnvironmentVariables(
-    stripWrappingQuotes(value.trim()).replace(/,\d+$/, ""),
+    stripWrappingQuotes(value.trim().replace(/,\d+$/, "")),
     env,
   );
   return isExecutableFile(normalized, "win32", windowsPathExtensions) ? normalized : undefined;
