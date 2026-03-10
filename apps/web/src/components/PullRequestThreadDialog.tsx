@@ -10,22 +10,33 @@ import {
 import { cn } from "~/lib/utils";
 import { parsePullRequestReference } from "~/pullRequestReference";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
 
-interface ComposerPullRequestCommandMenuProps {
+interface PullRequestThreadDialogProps {
+  open: boolean;
   cwd: string | null;
   initialReference: string | null;
-  onCancel: () => void;
+  onOpenChange: (open: boolean) => void;
   onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<void> | void;
 }
 
-export function ComposerPullRequestCommandMenu({
+export function PullRequestThreadDialog({
+  open,
   cwd,
   initialReference,
-  onCancel,
+  onOpenChange,
   onPrepared,
-}: ComposerPullRequestCommandMenuProps) {
+}: PullRequestThreadDialogProps) {
   const queryClient = useQueryClient();
   const referenceInputRef = useRef<HTMLInputElement>(null);
   const [reference, setReference] = useState(initialReference ?? "");
@@ -38,12 +49,14 @@ export function ComposerPullRequestCommandMenu({
   );
 
   useEffect(() => {
+    if (!open) return;
     setReference(initialReference ?? "");
     setReferenceDirty(false);
     setPreparingMode(null);
-  }, [initialReference]);
+  }, [initialReference, open]);
 
   useEffect(() => {
+    if (!open) return;
     const frame = window.requestAnimationFrame(() => {
       referenceInputRef.current?.focus();
       referenceInputRef.current?.select();
@@ -51,14 +64,14 @@ export function ComposerPullRequestCommandMenu({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [open]);
 
   const parsedReference = parsePullRequestReference(reference);
   const parsedDebouncedReference = parsePullRequestReference(debouncedReference);
   const resolvePullRequestQuery = useQuery(
     gitResolvePullRequestQueryOptions({
       cwd,
-      reference: parsedDebouncedReference,
+      reference: open ? parsedDebouncedReference : null,
     }),
   );
   const cachedPullRequest = useMemo(() => {
@@ -83,6 +96,7 @@ export function ComposerPullRequestCommandMenu({
       : null;
   const resolvedPullRequest = liveResolvedPullRequest ?? cachedPullRequest;
   const isResolving =
+    open &&
     parsedReference !== null &&
     resolvedPullRequest === null &&
     (referenceDebouncer.state.isPending ||
@@ -120,11 +134,13 @@ export function ComposerPullRequestCommandMenu({
         branch: result.branch,
         worktreePath: result.worktreePath,
       });
+      onOpenChange(false);
     } finally {
       setPreparingMode(null);
     }
   }, [
     cwd,
+    onOpenChange,
     onPrepared,
     parsedReference,
     preparePullRequestThreadMutation,
@@ -135,10 +151,10 @@ export function ComposerPullRequestCommandMenu({
     !referenceDirty
       ? null
       : reference.trim().length === 0
-      ? "Paste a GitHub pull request URL or enter 123 / #123."
-      : parsedReference === null
-        ? "Use a GitHub pull request URL, 123, or #123."
-        : null;
+        ? "Paste a GitHub pull request URL or enter 123 / #123."
+        : parsedReference === null
+          ? "Use a GitHub pull request URL, 123, or #123."
+          : null;
   const errorMessage =
     validationMessage ??
     (resolvedPullRequest === null && resolvePullRequestQuery.isError
@@ -152,73 +168,79 @@ export function ComposerPullRequestCommandMenu({
             : null));
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs">
-      <div className="space-y-4 p-3">
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="font-medium text-sm">Checkout Pull Request</p>
-              <p className="text-muted-foreground text-xs">
-                Resolve a PR, then choose Local or Worktree for the new draft thread.
-              </p>
-            </div>
-          </div>
-          <Input
-            autoFocus
-            ref={referenceInputRef}
-            placeholder="https://github.com/owner/repo/pull/42 or #42"
-            value={reference}
-            onChange={(event) => {
-              setReferenceDirty(true);
-              setReference(event.target.value);
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter") {
-                return;
-              }
-              event.preventDefault();
-              if (!isResolving && !preparePullRequestThreadMutation.isPending) {
-                void handleConfirm("local");
-              }
-            }}
-          />
-        </div>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!preparePullRequestThreadMutation.isPending) {
+          onOpenChange(nextOpen);
+        }
+      }}
+    >
+      <DialogPopup className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Checkout Pull Request</DialogTitle>
+          <DialogDescription>
+            Resolve a GitHub pull request, then create the draft thread in the main repo or in a
+            dedicated worktree.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel className="space-y-4">
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-foreground">Pull request</span>
+            <Input
+              ref={referenceInputRef}
+              placeholder="https://github.com/owner/repo/pull/42 or #42"
+              value={reference}
+              onChange={(event) => {
+                setReferenceDirty(true);
+                setReference(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") {
+                  return;
+                }
+                event.preventDefault();
+                if (!isResolving && !preparePullRequestThreadMutation.isPending) {
+                  void handleConfirm("local");
+                }
+              }}
+            />
+          </label>
 
-        {resolvedPullRequest ? (
-          <div className="rounded-xl border border-border/70 bg-muted/24 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate font-medium text-sm">{resolvedPullRequest.title}</p>
-                <p className="truncate text-muted-foreground text-xs">
-                  #{resolvedPullRequest.number} · {resolvedPullRequest.headBranch} to{" "}
-                  {resolvedPullRequest.baseBranch}
-                </p>
+          {resolvedPullRequest ? (
+            <div className="rounded-xl border border-border/70 bg-muted/24 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-sm">{resolvedPullRequest.title}</p>
+                  <p className="truncate text-muted-foreground text-xs">
+                    #{resolvedPullRequest.number} · {resolvedPullRequest.headBranch} to{" "}
+                    {resolvedPullRequest.baseBranch}
+                  </p>
+                </div>
+                <span className={cn("shrink-0 text-xs capitalize", statusTone)}>
+                  {resolvedPullRequest.state}
+                </span>
               </div>
-              <span className={cn("shrink-0 text-xs capitalize", statusTone)}>
-                {resolvedPullRequest.state}
-              </span>
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
-        {isResolving ? (
-          <div className="flex items-center gap-2 text-muted-foreground text-xs">
-            <Spinner className="size-3.5" />
-            Resolving pull request...
-          </div>
-        ) : null}
+          {isResolving ? (
+            <div className="flex items-center gap-2 text-muted-foreground text-xs">
+              <Spinner className="size-3.5" />
+              Resolving pull request...
+            </div>
+          ) : null}
 
-        {errorMessage ? <p className="text-destructive text-xs">{errorMessage}</p> : null}
-      </div>
-
-      <div className="flex items-center justify-between gap-2 border-t px-3 py-2">
-        <p className="text-muted-foreground text-xs">
-          {resolvedPullRequest
-            ? "Create the draft thread in the main repo or in a dedicated worktree."
-            : "Resolve the pull request first."}
-        </p>
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          {errorMessage ? <p className="text-destructive text-xs">{errorMessage}</p> : null}
+        </DialogPanel>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={preparePullRequestThreadMutation.isPending}
+          >
             Cancel
           </Button>
           <Button
@@ -252,8 +274,8 @@ export function ComposerPullRequestCommandMenu({
           >
             {preparingMode === "worktree" ? "Preparing worktree..." : "Worktree"}
           </Button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
 }

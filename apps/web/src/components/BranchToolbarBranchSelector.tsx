@@ -291,7 +291,8 @@ export function BranchToolbarBranchSelector({
   const branchListScrollElementRef = useRef<HTMLDivElement | null>(null);
   const branchListVirtualizer = useVirtualizer({
     count: filteredBranchPickerItems.length,
-    estimateSize: () => 28,
+    estimateSize: (index) =>
+      filteredBranchPickerItems[index] === checkoutPullRequestItemValue ? 44 : 28,
     getScrollElement: () => branchListScrollElementRef.current,
     overscan: 12,
     enabled: isBranchMenuOpen && shouldVirtualizeBranchList,
@@ -409,7 +410,7 @@ export function BranchToolbarBranchSelector({
       items={branchPickerItems}
       filteredItems={filteredBranchPickerItems}
       autoHighlight
-      virtualized
+      virtualized={shouldVirtualizeBranchList}
       onItemHighlighted={(_value, eventDetails) => {
         if (!isBranchMenuOpen || eventDetails.index < 0) return;
         branchListVirtualizer.scrollToIndex(eventDetails.index, { align: "auto" });
