@@ -6,11 +6,7 @@ import {
   type WsResponse as WsResponseMessage,
   WsResponse as WsResponseSchema,
 } from "@t3tools/contracts";
-import {
-  decodeUnknownJsonResult,
-  formatSchemaError,
-  parseJsonResult,
-} from "@t3tools/shared/schemaJson";
+import { decodeUnknownJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 import { Result, Schema } from "effect";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
@@ -196,21 +192,9 @@ export class WsTransport {
   }
 
   private handleMessage(raw: unknown) {
-    const jsonResult = parseJsonResult(raw);
-    if (Result.isFailure(jsonResult)) {
-      console.warn("Dropped inbound WebSocket envelope", {
-        phase: "json" as const,
-        message: jsonResult.failure,
-      });
-      return;
-    }
-
-    const result = decodeWsResponse(jsonResult.success);
+    const result = decodeWsResponse(raw);
     if (Result.isFailure(result)) {
-      console.warn("Dropped inbound WebSocket envelope", {
-        phase: "schema" as const,
-        message: formatSchemaError(result.failure),
-      });
+      console.warn("Dropped inbound WebSocket envelope", formatSchemaError(result.failure));
       return;
     }
 
