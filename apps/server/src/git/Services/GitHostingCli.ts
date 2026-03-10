@@ -18,6 +18,16 @@ export interface PullRequestSummary {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
+  readonly state?: "open" | "closed" | "merged";
+  readonly isCrossRepository?: boolean;
+  readonly headRepositoryNameWithOwner?: string | null;
+  readonly headRepositoryOwnerLogin?: string | null;
+}
+
+export interface RepositoryCloneUrls {
+  readonly nameWithOwner: string;
+  readonly url: string;
+  readonly sshUrl: string;
 }
 
 /**
@@ -46,6 +56,22 @@ export interface GitHostingCliShape {
   }) => Effect.Effect<ReadonlyArray<PullRequestSummary>, GitHostingCliError>;
 
   /**
+   * Resolve a pull/merge request by URL, number, or branch-ish identifier.
+   */
+  readonly getPullRequest: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+  }) => Effect.Effect<PullRequestSummary, GitHostingCliError>;
+
+  /**
+   * Resolve clone URLs for a repository.
+   */
+  readonly getRepositoryCloneUrls: (input: {
+    readonly cwd: string;
+    readonly repository: string;
+  }) => Effect.Effect<RepositoryCloneUrls, GitHostingCliError>;
+
+  /**
    * Create a pull/merge request from branch context and body file.
    */
   readonly createPullRequest: (input: {
@@ -62,6 +88,15 @@ export interface GitHostingCliShape {
   readonly getDefaultBranch: (input: {
     readonly cwd: string;
   }) => Effect.Effect<string | null, GitHostingCliError>;
+
+  /**
+   * Checkout a pull/merge request into the current repository worktree.
+   */
+  readonly checkoutPullRequest: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+    readonly force?: boolean;
+  }) => Effect.Effect<void, GitHostingCliError>;
 }
 
 /**
