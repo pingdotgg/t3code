@@ -4399,7 +4399,9 @@ const ProviderHealthBanner = memo(function ProviderHealthBanner({
 }: {
   status: ServerProviderStatus | null;
 }) {
-  if (!status || status.status === "ready") {
+  const [dismissed, setDismissed] = useState(false);
+
+  if (!status || status.status === "ready" || dismissed) {
     return null;
   }
 
@@ -4418,6 +4420,15 @@ const ProviderHealthBanner = memo(function ProviderHealthBanner({
         <AlertDescription className="line-clamp-3" title={status.message ?? defaultMessage}>
           {status.message ?? defaultMessage}
         </AlertDescription>
+        <AlertAction>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => setDismissed(true)}
+          >
+            <XIcon />
+          </Button>
+        </AlertAction>
       </Alert>
     </div>
   );
