@@ -1374,7 +1374,7 @@ export default function Sidebar() {
                 onChange={(e) => setSearchValue(e.target.value)}
                 placeholder="Search projects/threads"
                 aria-label="Search projects and threads"
-                className="pr-6"
+                className={searchValue && "pr-6"}
                 autoComplete="off"
               />
               {searchValue && (
