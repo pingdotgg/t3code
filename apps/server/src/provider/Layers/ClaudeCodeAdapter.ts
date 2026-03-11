@@ -44,6 +44,7 @@ import {
   ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+import { resolveEnabledPlugins } from "@t3tools/shared/claude-plugins";
 import { ClaudeCodeAdapter, type ClaudeCodeAdapterShape } from "../Services/ClaudeCodeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -1588,6 +1589,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           toPermissionMode(providerOptions?.permissionMode) ??
           (input.runtimeMode === "full-access" ? "bypassPermissions" : undefined);
 
+        const resolvedPlugins = resolveEnabledPlugins(input.cwd ? { cwd: input.cwd } : undefined);
+        const sdkPlugins = resolvedPlugins.map((p) => ({ type: "local" as const, path: p.path }));
+
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.model ? { model: input.model } : {}),
@@ -1608,6 +1612,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           canUseTool,
           env: process.env,
           ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
+          ...(sdkPlugins.length > 0 ? { plugins: sdkPlugins } : {}),
         };
 
         const queryRuntime = yield* Effect.try({
