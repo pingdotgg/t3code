@@ -12,9 +12,14 @@ import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeChildProcessSpawner from "@effect/platform-node/NodeChildProcessSpawner";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodeStdio from "@effect/platform-node/NodeStdio";
+import * as NodeTerminal from "@effect/platform-node/NodeTerminal";
 import { Config, Data, Effect, FileSystem, Layer, Logger, Option, Path, Schema } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
+import type { Environment as CliEnvironment } from "effect/unstable/cli/Command";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -771,10 +776,21 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 
-const cliRuntimeLayer = Layer.mergeAll(Logger.layer([Logger.consolePretty()]), NodeServices.layer);
-
-Command.run(buildDesktopArtifactCli, { version: "0.0.0" }).pipe(
-  Effect.scoped,
-  Effect.provide(cliRuntimeLayer),
-  NodeRuntime.runMain,
+const childProcessRuntimeLayer = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeFileSystem.layer),
+  Layer.provideMerge(NodePath.layer),
 );
+
+const cliRuntimeLayer = Layer.mergeAll(
+  childProcessRuntimeLayer,
+  NodeStdio.layer,
+  NodeTerminal.layer,
+  Logger.layer([Logger.consolePretty()]),
+);
+
+const runtimeProgram = Effect.provide(
+  Effect.scoped(Command.run(buildDesktopArtifactCli, { version: "0.0.0" })),
+  cliRuntimeLayer as Layer.Layer<CliEnvironment>,
+);
+
+NodeRuntime.runMain(runtimeProgram);
