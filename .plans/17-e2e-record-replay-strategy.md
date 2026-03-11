@@ -34,10 +34,14 @@ Deterministic browser E2E tests that exercise the full T3 Code stack (server + w
 
 - [x] `CodexAppServerProcessController` interface for DI of process spawning
 - [x] `ServerRuntimeLayerOptions` for swapping Git/GitHub/Terminal layers
-- [x] Modular `webAppReplayHarness/` package with separated transports
+- [x] Reusable `@t3tools/rr-e2e` package extracted (replay core, template engine, fixture loader)
+- [x] App-specific `webAppReplayHarness/` adapter layer (DI wiring, Playwright helpers, fixture builders)
 - [x] Fixture format with `$ref` templating, `whenState`/`setState` sequencing
-- [x] 5 E2E scenarios: bootstrap, happyPath, twoTurns, providerOffline, composerAfterTurn
-- [x] Gated behind `T3CODE_E2E=1` env var
+- [x] 6 fixture definitions across 3 test suites (8 test cases total):
+  - `webAppThreadLifecycle`: bootstrap, happyPath, twoTurns, providerOffline
+  - `webAppCheckpointDiff`: checkpointDiff
+  - `webAppWorktreeFlow`: worktreeFlow
+- [x] Gated behind `T3CODE_E2E=1` env var + Chromium install check
 
 ## Phase 2: Recording mode
 
@@ -60,7 +64,7 @@ Record real IO interactions to auto-generate fixture files.
 ## Phase 3: CI integration
 
 - [ ] Install Chromium in CI via `npx playwright install chromium`
-- [ ] Add a CI job that runs `T3CODE_E2E=1 bun run test apps/server/integration/webApp.replay.e2e.test.ts`
+- [ ] Add a CI job that runs `T3CODE_E2E=1 bun run test apps/server/integration/*.rr-e2e.test.ts`
 - [ ] Cache Playwright browsers between runs
 - [ ] Add CI-specific timeout tuning (longer timeouts for cold starts)
 - [ ] Screenshot capture on failure for debugging
@@ -91,15 +95,44 @@ Record real IO interactions to auto-generate fixture files.
 
 ## Key files
 
+### `packages/rr-e2e/` — Reusable replay core
+
 | File | Role |
 |------|------|
-| `apps/server/integration/webAppReplayHarness/createHarness.ts` | Harness bootstrap, wires all layers |
-| `apps/server/integration/webAppReplayHarness/jsonRpcProcessReplay.ts` | Codex JSON-RPC replay transport |
-| `apps/server/integration/webAppReplayHarness/cliReplay.ts` | Git/GitHub CLI replay transport |
-| `apps/server/integration/webAppReplayHarness/interactionResolver.ts` | Fixture matching engine |
-| `apps/server/integration/webAppReplayHarness/template.ts` | `$ref` resolution and JSON cloning |
-| `apps/server/integration/webAppReplayHarness/types.ts` | Fixture schema types |
-| `apps/server/integration/webApp.replay.e2e.test.fixture.ts` | Fixture definitions |
-| `apps/server/integration/webApp.replay.e2e.test.ts` | Test scenarios |
+| `src/jsonRpcProcessReplay.ts` | Codex JSON-RPC replay transport |
+| `src/cliReplay.ts` | Git/GitHub CLI replay transport |
+| `src/interactionResolver.ts` | Fixture matching engine |
+| `src/template.ts` | `$ref` resolution and JSON cloning |
+| `src/fixtureLoader.ts` | Dynamic fixture module loader |
+| `src/types.ts` | Fixture schema types |
+
+### `apps/server/integration/webAppReplayHarness/` — App-specific adapter
+
+| File | Role |
+|------|------|
+| `createWebAppReplayHarness.ts` | Harness bootstrap, wires all layers |
+| `adapter/codexProcessController.ts` | Wraps rr-e2e for T3's process controller interface |
+| `adapter/replayServices.ts` | Git, GitHub, Terminal, Open service factories |
+| `runtime/replayHarnessLayer.ts` | Effect Layer assembly (all dependencies injected) |
+| `runtime/replayHarnessEnvironment.ts` | Temp directory, state, db path management |
+| `runtime/replayViteServer.ts` | Web dev server bootstrap |
+| `testSupport/replayAppPage.ts` | Playwright Page wrapper with test ID locators |
+| `testSupport/replayFixtureBuilders.ts` | Declarative fixture construction helpers |
+| `testSupport/runReplayScenario.ts` | Main test harness entry point |
+| `testSupport/threadScenarioHelpers.ts` | Common test flows (createReadyThread, etc.) |
+| `types.ts` | ReplayFixture wrapper type |
+
+### Test suites
+
+| File | Role |
+|------|------|
+| `apps/server/integration/webAppThreadLifecycle.rr-e2e.test.ts` | Thread lifecycle scenarios (6 tests) |
+| `apps/server/integration/webAppCheckpointDiff.rr-e2e.test.ts` | Checkpoint diff rendering (1 test) |
+| `apps/server/integration/webAppWorktreeFlow.rr-e2e.test.ts` | Worktree creation flow (1 test) |
+
+### Server DI integration
+
+| File | Role |
+|------|------|
 | `apps/server/src/codexAppServerManager.ts` | Process controller interface |
 | `apps/server/src/serverLayers.ts` | Layer override options |

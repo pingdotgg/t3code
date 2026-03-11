@@ -26,12 +26,16 @@ async function runScenario(fixtureName: string, run: (page: Page) => Promise<voi
   }
 }
 
+const transcript = (page: Page) => page.locator('[data-testid="chat-transcript"]');
+const composer = (page: Page) => page.locator('[data-testid="chat-composer-editor"]');
+const createThreadBtn = (page: Page) =>
+  page.locator('[data-testid="sidebar-create-thread-button"]');
+const providerBanner = (page: Page) =>
+  page.locator('[data-testid="chat-provider-health-banner"]');
+
 async function waitForBootstrap(page: Page): Promise<void> {
-  await page.getByRole("button", { name: /Create new thread in/i }).waitFor({
-    state: "visible",
-    timeout: STEP_TIMEOUT_MS,
-  });
-  await page.getByText("Send a message to start the conversation.").waitFor({
+  await createThreadBtn(page).waitFor({ state: "visible", timeout: STEP_TIMEOUT_MS });
+  await page.locator('[data-testid="chat-empty-state"]').waitFor({
     state: "visible",
     timeout: STEP_TIMEOUT_MS,
   });
@@ -39,17 +43,24 @@ async function waitForBootstrap(page: Page): Promise<void> {
 
 async function createThread(page: Page): Promise<void> {
   const bootstrapPath = new URL(page.url()).pathname;
-  await page.getByRole("button", { name: /Create new thread in/i }).click();
+  await createThreadBtn(page).click();
   await page.waitForURL((url) => new URL(String(url)).pathname !== bootstrapPath, {
     timeout: STEP_TIMEOUT_MS,
   });
 }
 
 async function sendMessage(page: Page, prompt: string): Promise<void> {
-  const composer = page.locator('[contenteditable="true"]').first();
-  await composer.click();
+  await composer(page).click();
   await page.keyboard.insertText(prompt);
-  await page.getByRole("button", { name: "Send message" }).click();
+  await page.locator('[data-testid="chat-send-button"]').click();
+}
+
+function userMessage(page: Page, text: string) {
+  return transcript(page).locator('[data-message-role="user"]', { hasText: text });
+}
+
+function assistantMessage(page: Page, text: string) {
+  return transcript(page).locator('[data-message-role="assistant"]', { hasText: text });
 }
 
 describe("thread rr e2e", () => {
@@ -72,7 +83,7 @@ describe("thread rr e2e", () => {
         const threadPath = new URL(page.url()).pathname;
 
         await sendMessage(page, "Explain how this harness works.");
-        await page.getByText("Harness response for the first message.").waitFor({
+        await assistantMessage(page, "Harness response for the first message.").waitFor({
           state: "visible",
           timeout: STEP_TIMEOUT_MS,
         });
@@ -92,8 +103,11 @@ describe("thread rr e2e", () => {
         await createThread(page);
         await sendMessage(page, prompt);
 
-        await page.getByText(prompt).waitFor({ state: "visible", timeout: STEP_TIMEOUT_MS });
-        await page.getByText("Harness response for the first message.").waitFor({
+        await userMessage(page, prompt).waitFor({
+          state: "visible",
+          timeout: STEP_TIMEOUT_MS,
+        });
+        await assistantMessage(page, "Harness response for the first message.").waitFor({
           state: "visible",
           timeout: STEP_TIMEOUT_MS,
         });
@@ -110,12 +124,13 @@ describe("thread rr e2e", () => {
         await createThread(page);
 
         await sendMessage(page, "First question");
-        await page
-          .getByText("First assistant reply.")
-          .waitFor({ state: "visible", timeout: STEP_TIMEOUT_MS });
+        await assistantMessage(page, "First assistant reply.").waitFor({
+          state: "visible",
+          timeout: STEP_TIMEOUT_MS,
+        });
 
         await sendMessage(page, "Second question");
-        await page.getByText("Second assistant reply.").waitFor({
+        await assistantMessage(page, "Second assistant reply.").waitFor({
           state: "visible",
           timeout: STEP_TIMEOUT_MS,
         });
@@ -129,10 +144,12 @@ describe("thread rr e2e", () => {
     async () => {
       await runScenario("providerOffline", async (page) => {
         await waitForBootstrap(page);
-        await page.getByText("Codex unavailable").waitFor({
+        await providerBanner(page).waitFor({
           state: "visible",
           timeout: STEP_TIMEOUT_MS,
         });
+        const bannerText = await providerBanner(page).textContent();
+        expect(bannerText).toContain("codex provider is unavailable");
       });
     },
     30_000,
@@ -146,15 +163,15 @@ describe("thread rr e2e", () => {
         await createThread(page);
         await sendMessage(page, "Explain how this harness works.");
 
-        await page.getByText("Harness response for the first message.").waitFor({
+        await assistantMessage(page, "Harness response for the first message.").waitFor({
           state: "visible",
           timeout: STEP_TIMEOUT_MS,
         });
 
-        const composer = page.locator('[contenteditable="true"]').first();
-        await composer.click();
+        await composer(page).click();
         await page.keyboard.insertText("Draft after completion");
-        await expect(composer).toContainText("Draft after completion");
+        const text = await composer(page).textContent();
+        expect(text).toContain("Draft after completion");
       });
     },
     30_000,
