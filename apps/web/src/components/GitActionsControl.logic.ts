@@ -130,6 +130,7 @@ export function buildMenuItems(
   isBusy: boolean,
   hasOriginRemote = true,
   platform: GitHostingPlatform = "github",
+  hostingCliAuthenticated: boolean | null = null,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
 
@@ -139,6 +140,7 @@ export function buildMenuItems(
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
   const canPushWithoutUpstream = hasOriginRemote && !gitStatus.hasUpstream;
+  const isCliUnauthenticated = hostingCliAuthenticated === false;
   const canCommit = !isBusy && hasChanges;
   const canPush =
     !isBusy &&
@@ -149,6 +151,7 @@ export function buildMenuItems(
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canCreatePr =
     !isBusy &&
+    !isCliUnauthenticated &&
     hasBranch &&
     !hasChanges &&
     !hasOpenPr &&
@@ -199,8 +202,10 @@ export function resolveQuickAction(
   isDefaultBranch = false,
   hasOriginRemote = true,
   platform: GitHostingPlatform = "github",
+  hostingCliAuthenticated: boolean | null = null,
 ): GitQuickAction {
   const label = prLabel(platform);
+  const isCliUnauthenticated = hostingCliAuthenticated === false;
 
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
@@ -221,6 +226,8 @@ export function resolveQuickAction(
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
   const isDiverged = isAhead && isBehind;
+  // When the CLI is not authenticated, skip PR/MR steps and downgrade to push-only.
+  const skipPr = isCliUnauthenticated;
 
   if (!hasBranch) {
     return {
@@ -235,7 +242,7 @@ export function resolveQuickAction(
     if (!gitStatus.hasUpstream && !hasOriginRemote) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || skipPr) {
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
@@ -269,7 +276,7 @@ export function resolveQuickAction(
         hint: "No local commits to push.",
       };
     }
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || skipPr) {
       return { label: "Push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
@@ -298,7 +305,7 @@ export function resolveQuickAction(
   }
 
   if (isAhead) {
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || skipPr) {
       return { label: "Push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {

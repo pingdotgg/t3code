@@ -116,6 +116,14 @@ export interface GitHostingCliShape {
    * Synchronous — the result is cached after first detection.
    */
   readonly getHostingPlatform: (cwd: string) => GitHostingPlatform;
+
+  /**
+   * Check whether the hosting CLI (gh/glab) is authenticated.
+   * Synchronous with short-lived caching. Returns `true` when authenticated,
+   * `false` when not, or `null` when the status cannot be determined
+   * (e.g. CLI not installed, timed out).
+   */
+  readonly checkAuthStatus: (cwd: string) => boolean | null;
 }
 
 /**

@@ -131,6 +131,7 @@ const GitStatusPr = Schema.Struct({
 export const GitStatusResult = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   hostingPlatform: GitHostingPlatform,
+  hostingCliAuthenticated: Schema.NullOr(Schema.Boolean),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
     files: Schema.Array(

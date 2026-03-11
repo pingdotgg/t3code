@@ -739,6 +739,7 @@ export const makeGitManager = Effect.gen(function* () {
     return {
       branch: details.branch,
       hostingPlatform: gitHostingCli.getHostingPlatform(input.cwd),
+      hostingCliAuthenticated: gitHostingCli.checkAuthStatus(input.cwd),
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
       hasUpstream: details.hasUpstream,

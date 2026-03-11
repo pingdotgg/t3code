@@ -32,6 +32,55 @@ type HostingProvider = "github" | "gitlab";
 
 const providerCache = new Map<string, HostingProvider>();
 
+// ── Auth status cache with TTL ────────────────────────────────────────
+
+const AUTH_STATUS_TTL_MS = 60_000;
+
+interface AuthCacheEntry {
+  value: boolean | null;
+  expiresAt: number;
+}
+
+const authStatusCache = new Map<HostingProvider, AuthCacheEntry>();
+
+/**
+ * Check whether the hosting CLI is authenticated by running
+ * `gh auth status` or `glab auth status`.
+ *
+ * Uses a per-provider in-memory cache with 60s TTL to avoid
+ * running the check on every status poll.
+ */
+function checkHostingAuthStatus(provider: HostingProvider): boolean | null {
+  const now = Date.now();
+  const cached = authStatusCache.get(provider);
+  if (cached && now < cached.expiresAt) {
+    return cached.value;
+  }
+
+  let value: boolean | null = null;
+  try {
+    const cmd = provider === "github" ? "gh" : "glab";
+    const result = spawnSync(cmd, ["auth", "status"], {
+      encoding: "utf-8",
+      timeout: 5_000,
+      // Merge stderr into stdout — both CLIs write status output to stderr.
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    if (result.error) {
+      // CLI not found or timed out.
+      value = null;
+    } else {
+      value = result.status === 0;
+    }
+  } catch {
+    value = null;
+  }
+
+  authStatusCache.set(provider, { value, expiresAt: now + AUTH_STATUS_TTL_MS });
+  return value;
+}
+
 /**
  * Detect the hosting provider from the origin remote URL.
  *
@@ -473,6 +522,8 @@ const makeGitHostingCliDispatcher = Effect.gen(function* () {
     },
 
     getHostingPlatform: (cwd) => detectHostingProvider(cwd),
+
+    checkAuthStatus: (cwd) => checkHostingAuthStatus(detectHostingProvider(cwd)),
   };
 
   return service;

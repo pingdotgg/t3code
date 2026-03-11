@@ -35,6 +35,7 @@ import {
   Exit,
   FileSystem,
   Layer,
+  Option,
   Path,
   Ref,
   Schema,
@@ -919,6 +920,28 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }
   });
 
+  /**
+   * Extract a user-facing error message from an Effect Cause.
+   *
+   * Prefers the `.message` of known tagged errors (which are written to be
+   * human-readable) over `Cause.pretty` (which includes fiber metadata and
+   * nested cause chains that are useful for debugging but not for end-users).
+   */
+  function formatCauseForClient(cause: Cause.Cause<unknown>): string {
+    const failure = Cause.findErrorOption(cause);
+    if (Option.isSome(failure)) {
+      const error = failure.value;
+      if (error instanceof Error) {
+        return error.message;
+      }
+      if (typeof error === "object" && error !== null && "message" in error) {
+        return String((error as { message: unknown }).message);
+      }
+      return String(error);
+    }
+    return Cause.pretty(cause);
+  }
+
   const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {
     const encodeResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
 
@@ -936,7 +959,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (request._tag === "Failure") {
       const errorResponse = yield* encodeResponse({
         id: "unknown",
-        error: { message: `Invalid request format: ${Cause.pretty(request.cause)}` },
+        error: { message: `Invalid request format: ${formatCauseForClient(request.cause)}` },
       });
       ws.send(errorResponse);
       return;
@@ -946,7 +969,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (result._tag === "Failure") {
       const errorResponse = yield* encodeResponse({
         id: request.value.id,
-        error: { message: Cause.pretty(result.cause) },
+        error: { message: formatCauseForClient(result.cause) },
       });
       ws.send(errorResponse);
       return;

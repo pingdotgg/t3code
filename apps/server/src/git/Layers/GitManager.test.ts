@@ -372,6 +372,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   return {
     service: {
       getHostingPlatform: (_cwd: string) => "github" as const,
+      checkAuthStatus: (_cwd: string) => true,
       execute,
       listOpenPullRequests: (input) =>
         execute({

@@ -15,6 +15,7 @@ function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
   return {
     branch: "feature/test",
     hostingPlatform: "github",
+    hostingCliAuthenticated: null,
     hasWorkingTreeChanges: false,
     workingTree: {
       files: [],
@@ -1140,5 +1141,134 @@ describe("GitLab platform: MR terminology", () => {
     assert.equal(copy.title, "Commit, push & create MR from default branch?");
     assert.include(copy.description, "create a MR");
     assert.equal(copy.continueLabel, "Commit, push & create MR");
+  });
+});
+
+describe("Hosting CLI authentication", () => {
+  it("resolveQuickAction downgrades to commit & push when CLI is unauthenticated", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      "github",
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push",
+      label: "Commit & push",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction downgrades push & create PR to push when CLI is unauthenticated", () => {
+    const quick = resolveQuickAction(
+      status({ aheadCount: 1 }),
+      false,
+      false,
+      true,
+      "github",
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push",
+      label: "Push",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction does not downgrade when CLI is authenticated", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      "github",
+      true,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push_pr",
+      label: "Commit, push & PR",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction does not downgrade when auth status is null (unknown)", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      "github",
+      null,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push_pr",
+      label: "Commit, push & PR",
+      disabled: false,
+    });
+  });
+
+  it("buildMenuItems disables Create PR when CLI is unauthenticated", () => {
+    const items = buildMenuItems(
+      status({ aheadCount: 1, hasWorkingTreeChanges: false }),
+      false,
+      true,
+      "github",
+      false,
+    );
+    const prItem = items.find((i) => i.id === "pr");
+    assert.ok(prItem);
+    assert.equal(prItem!.label, "Create PR");
+    assert.isTrue(prItem!.disabled);
+  });
+
+  it("buildMenuItems enables Create PR when CLI is authenticated", () => {
+    const items = buildMenuItems(
+      status({ aheadCount: 1, hasWorkingTreeChanges: false }),
+      false,
+      true,
+      "github",
+      true,
+    );
+    const prItem = items.find((i) => i.id === "pr");
+    assert.ok(prItem);
+    assert.equal(prItem!.label, "Create PR");
+    assert.isFalse(prItem!.disabled);
+  });
+
+  it("buildMenuItems disables Create MR on gitlab when CLI is unauthenticated", () => {
+    const items = buildMenuItems(
+      status({ aheadCount: 1, hasWorkingTreeChanges: false }),
+      false,
+      true,
+      "gitlab",
+      false,
+    );
+    const prItem = items.find((i) => i.id === "pr");
+    assert.ok(prItem);
+    assert.equal(prItem!.label, "Create MR");
+    assert.isTrue(prItem!.disabled);
+  });
+
+  it("resolveQuickAction downgrades MR to push on gitlab when CLI is unauthenticated", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      "gitlab",
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push",
+      label: "Commit & push",
+      disabled: false,
+    });
   });
 });

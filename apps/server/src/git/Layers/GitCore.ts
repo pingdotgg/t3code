@@ -758,6 +758,7 @@ const makeGitCore = Effect.gen(function* () {
       Effect.map((details) => ({
         branch: details.branch,
         hostingPlatform: "github" as const,
+        hostingCliAuthenticated: null,
         hasWorkingTreeChanges: details.hasWorkingTreeChanges,
         workingTree: details.workingTree,
         hasUpstream: details.hasUpstream,

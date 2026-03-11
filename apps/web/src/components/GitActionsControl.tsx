@@ -71,12 +71,14 @@ function getMenuActionDisabledReason({
   isBusy,
   hasOriginRemote,
   platform,
+  hostingCliAuthenticated,
 }: {
   item: GitActionMenuItem;
   gitStatus: GitStatusResult | null;
   isBusy: boolean;
   hasOriginRemote: boolean;
   platform: GitHostingPlatform;
+  hostingCliAuthenticated: boolean | null;
 }): string | null {
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
@@ -88,6 +90,7 @@ function getMenuActionDisabledReason({
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
+  const cliName = platform === "gitlab" ? "glab" : "gh";
 
   if (item.id === "commit") {
     if (!hasChanges) {
@@ -117,6 +120,9 @@ function getMenuActionDisabledReason({
 
   if (hasOpenPr) {
     return `View ${label} is currently unavailable.`;
+  }
+  if (hostingCliAuthenticated === false) {
+    return `Not authenticated with \`${cliName}\`. Run \`${cliName} auth login\` to enable ${label} creation.`;
   }
   if (!hasBranch) {
     return `Detached HEAD: checkout a branch before creating a ${label}.`;
@@ -195,6 +201,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const isRepo = branchList?.isRepo ?? true;
   const hasOriginRemote = branchList?.hasOriginRemote ?? false;
   const hostingPlatform: GitHostingPlatform = gitStatus?.hostingPlatform ?? "github";
+  const hostingCliAuthenticated: boolean | null = gitStatus?.hostingCliAuthenticated ?? null;
   const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
   const isGitStatusOutOfSync =
     !!gitStatus?.branch && !!currentBranch && gitStatus.branch !== currentBranch;
@@ -226,8 +233,14 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const gitActionMenuItems = useMemo(
     () =>
-      buildMenuItems(gitStatusForActions, isGitActionRunning, hasOriginRemote, hostingPlatform),
-    [gitStatusForActions, hasOriginRemote, hostingPlatform, isGitActionRunning],
+      buildMenuItems(
+        gitStatusForActions,
+        isGitActionRunning,
+        hasOriginRemote,
+        hostingPlatform,
+        hostingCliAuthenticated,
+      ),
+    [gitStatusForActions, hasOriginRemote, hostingCliAuthenticated, hostingPlatform, isGitActionRunning],
   );
   const quickAction = useMemo(
     () =>
@@ -237,8 +250,16 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         isDefaultBranch,
         hasOriginRemote,
         hostingPlatform,
+        hostingCliAuthenticated,
       ),
-    [gitStatusForActions, hasOriginRemote, hostingPlatform, isDefaultBranch, isGitActionRunning],
+    [
+      gitStatusForActions,
+      hasOriginRemote,
+      hostingCliAuthenticated,
+      hostingPlatform,
+      isDefaultBranch,
+      isGitActionRunning,
+    ],
   );
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
@@ -703,6 +724,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                   isBusy: isGitActionRunning,
                   hasOriginRemote,
                   platform: hostingPlatform,
+                  hostingCliAuthenticated,
                 });
                 if (item.disabled && disabledReason) {
                   return (
