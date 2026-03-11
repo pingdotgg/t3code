@@ -234,7 +234,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze({
   effort: null,
   codexFastMode: false,
   pendingUserInputsByRequestId: EMPTY_PENDING_USER_INPUTS_BY_REQUEST_ID,
-}) as ComposerThreadDraftState;
+}) satisfies ComposerThreadDraftState;
 
 const REASONING_EFFORT_VALUES = new Set<CodexReasoningEffort>(
   REASONING_EFFORT_OPTIONS_BY_PROVIDER.codex,
