@@ -83,7 +83,11 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
-import { resolveThreadStatusPill, shouldClearThreadSelectionOnMouseDown } from "./Sidebar.logic";
+import {
+  getProjectIdsWithRunningThreads,
+  resolveThreadStatusPill,
+  shouldClearThreadSelectionOnMouseDown,
+} from "./Sidebar.logic";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -324,6 +328,10 @@ export default function Sidebar() {
     }
     return map;
   }, [threads]);
+  const projectIdsWithRunningThreads = useMemo(
+    () => getProjectIdsWithRunningThreads(threads),
+    [threads],
+  );
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
@@ -1422,6 +1430,7 @@ export default function Sidebar() {
                 strategy={verticalListSortingStrategy}
               >
                 {projects.map((project) => {
+                  const projectHasActiveRun = projectIdsWithRunningThreads.has(project.id);
                   const projectThreads = threads
                     .filter((thread) => thread.projectId === project.id)
                     .toSorted((a, b) => {
@@ -1465,7 +1474,13 @@ export default function Sidebar() {
                                 }`}
                               />
                               <ProjectFavicon cwd={project.cwd} />
-                              <span className="flex-1 truncate text-xs font-medium text-foreground/90">
+                              <span
+                                className={`flex-1 truncate text-xs font-medium ${
+                                  projectHasActiveRun
+                                    ? "project-title-shimmer text-foreground"
+                                    : "text-foreground/90"
+                                }`}
+                              >
                                 {project.name}
                               </span>
                             </SidebarMenuButton>
