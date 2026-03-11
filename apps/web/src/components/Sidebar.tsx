@@ -3,10 +3,12 @@ import {
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  MoonIcon,
   PlusIcon,
   RocketIcon,
   SettingsIcon,
   SquarePenIcon,
+  SunIcon,
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -64,6 +66,7 @@ import {
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent } from "./ui/collapsible";
+import { Menu, MenuTrigger, MenuPopup, MenuRadioGroup, MenuRadioItem } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -81,6 +84,7 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useTheme } from "../hooks/useTheme";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import { resolveThreadStatusPill, shouldClearThreadSelectionOnMouseDown } from "./Sidebar.logic";
@@ -276,6 +280,7 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const isOnSettings = useLocation({ select: (loc) => loc.pathname === "/settings" });
   const { settings: appSettings } = useAppSettings();
+  const { theme, setTheme, resolvedTheme } = useTheme();
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
@@ -1259,12 +1264,38 @@ export default function Sidebar() {
     </div>
   );
 
+  const ThemeIcon = resolvedTheme === "dark" ? MoonIcon : SunIcon;
+
+  const themeDropdown = (
+    <Menu>
+      <MenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label="Toggle theme"
+            className="ml-auto inline-flex size-7 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+          />
+        }
+      >
+        <ThemeIcon className="size-4" />
+      </MenuTrigger>
+      <MenuPopup align="end" side="bottom" className="min-w-[120px]">
+        <MenuRadioGroup value={theme} onValueChange={setTheme}>
+          <MenuRadioItem value="system">System</MenuRadioItem>
+          <MenuRadioItem value="light">Light</MenuRadioItem>
+          <MenuRadioItem value="dark">Dark</MenuRadioItem>
+        </MenuRadioGroup>
+      </MenuPopup>
+    </Menu>
+  );
+
   return (
     <>
       {isElectron ? (
         <>
           <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px]">
             {wordmark}
+            {themeDropdown}
             {showDesktopUpdateButton && (
               <Tooltip>
                 <TooltipTrigger
@@ -1288,7 +1319,10 @@ export default function Sidebar() {
         </>
       ) : (
         <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
-          {wordmark}
+          <div className="flex items-center gap-2 w-full">
+            {wordmark}
+            {themeDropdown}
+          </div>
         </SidebarHeader>
       )}
 
