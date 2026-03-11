@@ -129,10 +129,10 @@ Run these checks after each phase:
 
 | Progress | Workstream | Scope | Exit criteria |
 | --- | --- | --- | --- |
-| Not started | Extract GitHub sections | Move auth and issues into separate section components | GitHub specific behavior is isolated from workspace flows |
-| Not started | Isolate GitHub actions | Create a GitHub focused hook or controller for auth verify, login, issue fetch, and repo links | GitHub sections are mostly declarative |
-| Not started | Reduce container breadth | Keep the main file as a composition shell | Main file is materially smaller and easier to scan |
-| Not started | Verify checks | Run formatting, lint, and typecheck | Validation gate passes |
+| Done | Extract GitHub sections | Move auth and issues into separate section components | GitHub specific behavior is isolated from workspace flows |
+| Done | Isolate GitHub actions | Create a GitHub focused hook or controller for auth verify, login, issue fetch, and repo links | GitHub sections are mostly declarative |
+| Done | Reduce container breadth | Keep the main file as a composition shell | Main file is materially smaller and easier to scan |
+| Done | Verify checks | Run formatting, lint, and typecheck | Validation gate passes |
 
 ## Phase 5
 

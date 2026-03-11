@@ -9,11 +9,9 @@ import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CloudUploadIcon,
-  ExternalLinkIcon,
   GitCommitIcon,
   GitMergeIcon,
   GitPullRequestIcon,
-  LogInIcon,
   RefreshCcwIcon,
 } from "lucide-react";
 import { GitHubIcon } from "../Icons";
@@ -66,13 +64,15 @@ import { readNativeApi } from "~/nativeApi";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useStore } from "~/store";
 import { formatWorktreePathForDisplay } from "~/worktreeCleanup";
-import { GitPanelSection } from "./GitPanelSection";
+import { GitHubAuthSection } from "./GitHubAuthSection";
+import { GitHubIssuesSection } from "./GitHubIssuesSection";
 import { GitSyncSection } from "./GitSyncSection";
 import { GitStatusDot } from "./GitStatusDot";
 import { GitWorkspaceSection } from "./GitWorkspaceSection";
 import { GitCommitDialog } from "./GitCommitDialog";
 import { GitDefaultBranchDialog } from "./GitDefaultBranchDialog";
 import { GitPromoteDialog } from "./GitPromoteDialog";
+import { useGitPanelGitHubActions } from "./useGitPanelGitHubActions";
 
 interface GitPanelProps {
   workspaceCwd: string | null;
@@ -103,33 +103,6 @@ function Kbd({ children }: { children: ReactNode }) {
       {children}
     </kbd>
   );
-}
-
-// =============================================================================
-// Format Helpers
-// =============================================================================
-
-function formatGitHubTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  const now = Date.now();
-  const diff = now - date.getTime();
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-  }).format(date);
 }
 
 // =============================================================================
@@ -1062,23 +1035,6 @@ export default function GitPanel({
     });
   }, [activeTargetBranch, runGitActionWithToast]);
 
-  const openExternalUrl = useCallback(
-    async (url: string) => {
-      const api = readNativeApi();
-      if (!api) {
-        toastManager.add({
-          type: "error",
-          title: "Link unavailable",
-          data: threadToastData,
-        });
-        return;
-      }
-
-      await api.shell.openExternal(url);
-    },
-    [threadToastData],
-  );
-
   const runDialogAction = useCallback(
     (commitMessage: string) => {
       if (!isCommitDialogOpen) return;
@@ -1128,52 +1084,23 @@ export default function GitPanel({
     void promise.catch(() => undefined);
   }, [pullMutation, threadToastData]);
 
-  const verifyGitHubAuth = useCallback(async () => {
-    const result = await githubStatusQuery.refetch();
-
-    if (result.error) {
-      toastManager.add({
-        type: "error",
-        title: "Verification failed",
-        description: result.error.message,
-        data: threadToastData,
-      });
-      return;
-    }
-
-    if (!result.data?.installed) {
-      toastManager.add({
-        type: "warning",
-        title: "gh not installed",
-        description: "Install GitHub CLI to enable features",
-        data: threadToastData,
-      });
-      return;
-    }
-
-    if (!result.data.authenticated) {
-      toastManager.add({
-        type: "warning",
-        title: "gh not authenticated",
-        description: "Run auth flow to connect",
-        data: threadToastData,
-      });
-      return;
-    }
-
-    toastManager.add({
-      type: "success",
-      title: "GitHub verified",
-      description: result.data.accountLogin ? `@${result.data.accountLogin}` : undefined,
-      data: threadToastData,
-    });
-  }, [githubStatusQuery, threadToastData]);
-
   const commitItem = gitActionMenuItems.find((item) => item.id === "commit") ?? null;
   const prItem = gitActionMenuItems.find((item) => item.id === "pr") ?? null;
   const githubRepoUrl = githubStatusQuery.data?.repo?.url ?? null;
-  const issuesDisabled =
-    githubIssuesQuery.error?.message.toLowerCase().includes("disabled issues") ?? false;
+  const { issuesDisabled, openExternalUrl, runAuthAction } = useGitPanelGitHubActions({
+    isGitHubAuthenticated,
+    githubRepoUrl,
+    issuesErrorMessage: githubIssuesQuery.error?.message ?? null,
+    login: () => loginMutation.mutate(),
+    refetchStatus: async () => {
+      const result = await githubStatusQuery.refetch();
+      return {
+        data: result.data,
+        error: result.error ?? null,
+      };
+    },
+    threadToastData,
+  });
   const pullEnabled =
     !!gitStatusForActions &&
     gitStatusForActions.branch !== null &&
@@ -1422,128 +1349,41 @@ export default function GitPanel({
             {/* ============================================================ */}
             {/* GITHUB AUTH SECTION */}
             {/* ============================================================ */}
-            <GitPanelSection
-              title="GitHub"
-              actions={
-                githubStatusQuery.data?.accountLogin && (
-                  <Badge variant="outline" size="sm">
-                    @{githubStatusQuery.data.accountLogin}
-                  </Badge>
-                )
-              }
-            >
-              {!githubStatusQuery.data?.installed ? (
-                <p className="text-xs text-muted-foreground">
-                  Install <code className="rounded bg-muted px-1">gh</code> CLI to enable GitHub
-                  features
-                </p>
-              ) : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    disabled={
-                      isGitHubAuthenticated ? githubStatusQuery.isFetching : loginMutation.isPending
-                    }
-                    onClick={() => {
-                      if (isGitHubAuthenticated) {
-                        void verifyGitHubAuth();
-                        return;
-                      }
-                      loginMutation.mutate();
-                    }}
-                  >
-                    <LogInIcon className="size-3.5" />
-                    {isGitHubAuthenticated
-                      ? githubStatusQuery.isFetching
-                        ? "Verifying..."
-                        : "Verify"
-                      : loginMutation.isPending
-                        ? "Authenticating..."
-                        : "Authenticate"}
-                  </Button>
-                  {githubRepoUrl && (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => void openExternalUrl(githubRepoUrl)}
-                    >
-                      <ExternalLinkIcon className="size-3.5" />
-                      Open repo
-                    </Button>
-                  )}
-                  {loginMutation.error && (
-                    <span className="text-xs text-destructive-foreground">
-                      {loginMutation.error.message}
-                    </span>
-                  )}
-                </div>
-              )}
-            </GitPanelSection>
+            <GitHubAuthSection
+              accountLogin={githubStatusQuery.data?.accountLogin ?? null}
+              installed={githubStatusQuery.data?.installed === true}
+              authenticated={isGitHubAuthenticated}
+              isFetching={githubStatusQuery.isFetching}
+              isAuthenticating={loginMutation.isPending}
+              githubRepoUrl={githubRepoUrl}
+              errorMessage={loginMutation.error?.message ?? null}
+              onAuthAction={runAuthAction}
+              onOpenRepo={() => {
+                if (githubRepoUrl) {
+                  void openExternalUrl(githubRepoUrl);
+                }
+              }}
+            />
 
             {/* ============================================================ */}
             {/* ISSUES SECTION */}
             {/* ============================================================ */}
-            {githubStatusQuery.data?.authenticated && githubStatusQuery.data?.repo && (
-              <GitPanelSection
-                title="Issues"
-                collapsible
-                defaultOpen={false}
-                actions={
-                  <div className="flex gap-0.5">
-                    {(["open", "closed", "all"] as const).map((state) => (
-                      <Button
-                        key={state}
-                        variant={issueState === state ? "secondary" : "ghost"}
-                        size="xs"
-                        onClick={() => setIssueState(state)}
-                        className="h-5 px-1.5 text-[10px]"
-                      >
-                        {state.charAt(0).toUpperCase() + state.slice(1)}
-                      </Button>
-                    ))}
-                  </div>
-                }
-              >
-                {githubIssuesQuery.isLoading || githubIssuesQuery.isFetching ? (
-                  <p className="text-xs text-muted-foreground">Loading...</p>
-                ) : issuesDisabled ? (
-                  <p className="text-xs text-muted-foreground">Issues disabled for this repo</p>
-                ) : githubIssuesQuery.error ? (
-                  <p className="text-xs text-destructive-foreground">
-                    {githubIssuesQuery.error.message}
-                  </p>
-                ) : githubIssuesQuery.data && githubIssuesQuery.data.issues.length > 0 ? (
-                  <div className="space-y-1">
-                    {githubIssuesQuery.data.issues.map((issue) => (
-                      <button
-                        type="button"
-                        key={issue.number}
-                        className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/50"
-                        onClick={() => void openExternalUrl(issue.url)}
-                      >
-                        <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                          #{issue.number}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm">{issue.title}</p>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            {issue.author && <span>@{issue.author}</span>}
-                            <span>{formatGitHubTimestamp(issue.updatedAt)}</span>
-                          </div>
-                        </div>
-                        <GitStatusDot
-                          level={issue.state === "open" ? "success" : "neutral"}
-                          className="mt-1.5"
-                        />
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">No issues</p>
-                )}
-              </GitPanelSection>
-            )}
+            <GitHubIssuesSection
+              visible={
+                githubStatusQuery.data?.authenticated === true &&
+                githubStatusQuery.data?.repo !== null
+              }
+              issueState={issueState}
+              onIssueStateChange={setIssueState}
+              isLoading={githubIssuesQuery.isLoading}
+              isFetching={githubIssuesQuery.isFetching}
+              issuesDisabled={issuesDisabled}
+              errorMessage={githubIssuesQuery.error?.message ?? null}
+              issues={githubIssuesQuery.data?.issues ?? []}
+              onOpenIssue={(url) => {
+                void openExternalUrl(url);
+              }}
+            />
           </div>
         </ScrollArea>
       </div>
