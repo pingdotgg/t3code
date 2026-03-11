@@ -150,9 +150,9 @@ const ServerConfigLive = (input: CliInput) =>
         },
       });
 
-      const baseDir = yield* resolveBaseDir(Option.getOrUndefined(input.t3Home) ?? env.t3Home);
-      const stateDir = yield* resolveStateDir(baseDir);
       const devUrl = Option.getOrElse(input.devUrl, () => env.devUrl);
+      const baseDir = yield* resolveBaseDir(Option.getOrUndefined(input.t3Home) ?? env.t3Home);
+      const stateDir = yield* resolveStateDir(baseDir, devUrl);
       const noBrowser = resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
       const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
