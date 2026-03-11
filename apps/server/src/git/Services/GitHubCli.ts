@@ -17,6 +17,16 @@ export interface GitHubPullRequestSummary {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
+  readonly state?: "open" | "closed" | "merged";
+  readonly isCrossRepository?: boolean;
+  readonly headRepositoryNameWithOwner?: string | null;
+  readonly headRepositoryOwnerLogin?: string | null;
+}
+
+export interface GitHubRepositoryCloneUrls {
+  readonly nameWithOwner: string;
+  readonly url: string;
+  readonly sshUrl: string;
 }
 
 export interface GitHubAuthAccount {
@@ -71,9 +81,34 @@ export interface GitHubCliShape {
    */
   readonly listOpenPullRequests: (input: {
     readonly cwd: string;
-    readonly headBranch: string;
+    readonly headSelector: string;
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+
+  /**
+   * Resolve a pull request by URL, number, or branch-ish identifier.
+   */
+  readonly getPullRequest: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+  }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
+
+  /**
+   * Resolve clone URLs for a GitHub repository.
+   */
+  readonly getRepositoryCloneUrls: (input: {
+    readonly cwd: string;
+    readonly repository: string;
+  }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+
+  /**
+   * Checkout a pull request into the current repository worktree.
+   */
+  readonly checkoutPullRequest: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+    readonly force?: boolean;
+  }) => Effect.Effect<void, GitHubCliError>;
 
   /**
    * Create a pull request from branch context and body file.
@@ -81,7 +116,7 @@ export interface GitHubCliShape {
   readonly createPullRequest: (input: {
     readonly cwd: string;
     readonly baseBranch: string;
-    readonly headBranch: string;
+    readonly headSelector: string;
     readonly title: string;
     readonly bodyFile: string;
   }) => Effect.Effect<void, GitHubCliError>;

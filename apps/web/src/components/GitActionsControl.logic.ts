@@ -142,6 +142,7 @@ export function summarizeGitResult(result: GitRunStackedActionResult): {
 export function buildMenuItems(
   gitStatus: GitStatusResult | null,
   isBusy: boolean,
+  hasOriginRemote = true,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
 
@@ -149,15 +150,23 @@ export function buildMenuItems(
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
+  const canPushWithoutUpstream = hasOriginRemote && !gitStatus.hasUpstream;
   const canCommit = !isBusy && hasChanges;
-  const canPush = !isBusy && hasBranch && !hasChanges && !isBehind && gitStatus.aheadCount > 0;
+  const canPush =
+    !isBusy &&
+    hasBranch &&
+    !hasChanges &&
+    !isBehind &&
+    gitStatus.aheadCount > 0 &&
+    (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canCreatePr =
     !isBusy &&
     hasBranch &&
     !hasChanges &&
     !hasOpenPr &&
     gitStatus.aheadCount > 0 &&
-    !isBehind;
+    !isBehind &&
+    (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canOpenPr = !isBusy && hasOpenPr;
 
   return [
@@ -180,7 +189,7 @@ export function buildMenuItems(
     hasOpenPr
       ? {
           id: "pr",
-          label: "Open PR",
+          label: "View PR",
           disabled: !canOpenPr,
           icon: "pr",
           kind: "open_pr",
@@ -200,6 +209,7 @@ export function resolveQuickAction(
   gitStatus: GitStatusResult | null,
   isBusy: boolean,
   isDefaultBranch = false,
+  hasOriginRemote = true,
 ): GitQuickAction {
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
@@ -231,11 +241,14 @@ export function resolveQuickAction(
   }
 
   if (hasChanges) {
+    if (!gitStatus.hasUpstream && !hasOriginRemote) {
+      return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
+    }
     if (hasOpenPr || isDefaultBranch) {
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
-      label: "Commit, push & create PR",
+      label: "Commit, push & PR",
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
@@ -243,9 +256,20 @@ export function resolveQuickAction(
   }
 
   if (!gitStatus.hasUpstream) {
+    if (!hasOriginRemote) {
+      if (hasOpenPr && !isAhead) {
+        return { label: "View PR", disabled: false, kind: "open_pr" };
+      }
+      return {
+        label: "Push",
+        disabled: true,
+        kind: "show_hint",
+        hint: 'Add an "origin" remote before pushing or creating a PR.',
+      };
+    }
     if (!isAhead) {
       if (hasOpenPr) {
-        return { label: "Open PR", disabled: false, kind: "open_pr" };
+        return { label: "View PR", disabled: false, kind: "open_pr" };
       }
       return {
         label: "Push",
@@ -295,7 +319,7 @@ export function resolveQuickAction(
   }
 
   if (hasOpenPr && gitStatus.hasUpstream) {
-    return { label: "Open PR", disabled: false, kind: "open_pr" };
+    return { label: "View PR", disabled: false, kind: "open_pr" };
   }
 
   return {

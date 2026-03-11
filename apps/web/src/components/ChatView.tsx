@@ -211,9 +211,6 @@ import { readNativeApi } from "~/nativeApi";
 import {
   getAppModelOptions,
   resolveAppModelSelection,
-  resolveAppServiceTier,
-  shouldShowFastTierIcon,
-  type AppServiceTier,
   useAppSettings,
 } from "../appSettings";
 import {
@@ -267,6 +264,11 @@ const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
+type AppServiceTier = "default";
+
+function shouldShowFastTierIcon(_model: string, _serviceTierSetting: AppServiceTier): boolean {
+  return false;
+}
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
@@ -807,8 +809,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeThread.messages.length > 0 ||
       activeThread.session !== null),
   );
-  const selectedServiceTierSetting = settings.codexServiceTier;
-  const selectedServiceTier = resolveAppServiceTier(selectedServiceTierSetting);
+  const selectedServiceTierSetting: AppServiceTier = "default";
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
@@ -1675,6 +1676,36 @@ export default function ChatView({ threadId }: ChatViewProps) {
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(scriptId),
       });
+    },
+    [activeProject, persistProjectScripts],
+  );
+  const deleteProjectScript = useCallback(
+    async (scriptId: string) => {
+      if (!activeProject) return;
+      const nextScripts = activeProject.scripts.filter((script) => script.id !== scriptId);
+
+      const deletedName = activeProject.scripts.find((script) => script.id === scriptId)?.name;
+
+      try {
+        await persistProjectScripts({
+          projectId: activeProject.id,
+          projectCwd: activeProject.cwd,
+          previousScripts: activeProject.scripts,
+          nextScripts,
+          keybinding: null,
+          keybindingCommand: commandForProjectScript(scriptId),
+        });
+        toastManager.add({
+          type: "success",
+          title: `Deleted action "${deletedName ?? "Unknown"}"`,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Could not delete action",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      }
     },
     [activeProject, persistProjectScripts],
   );
@@ -2739,7 +2770,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           attachments: turnAttachments,
         },
         model: selectedModel || undefined,
-        serviceTier: selectedServiceTier,
         ...(selectedModelOptionsForDispatch
           ? { modelOptions: selectedModelOptionsForDispatch }
           : {}),
@@ -3523,6 +3553,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
+          onDeleteProjectScript={deleteProjectScript}
           onToggleDiff={onToggleDiff}
           onToggleGitHub={onToggleGitHub}
         />
@@ -4188,6 +4219,7 @@ interface ChatHeaderProps {
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
+  onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleDiff: () => void;
   onToggleGitHub: () => void;
 }
@@ -4208,6 +4240,7 @@ const ChatHeader = memo(function ChatHeader({
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
+  onDeleteProjectScript,
   onToggleDiff,
   onToggleGitHub,
 }: ChatHeaderProps) {
@@ -4241,6 +4274,7 @@ const ChatHeader = memo(function ChatHeader({
             onRunScript={onRunProjectScript}
             onAddScript={onAddProjectScript}
             onUpdateScript={onUpdateProjectScript}
+            onDeleteScript={onDeleteProjectScript}
           />
         )}
         {activeProjectName && (
