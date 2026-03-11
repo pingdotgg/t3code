@@ -6,12 +6,14 @@ import * as Path from "node:path";
 import { promisify } from "node:util";
 
 import type { DesktopScreenshotCapture } from "@t3tools/contracts";
+import { clipboard } from "electron";
 
 const execFile = promisify(ChildProcess.execFile);
 const SCREENSHOT_MIME_TYPE = "image/png";
 const SCREENSHOT_FILE_BASENAME = "capture.png";
 const CANCELLATION_EXIT_CODE = 1;
 const TOOL_FAILURE_SEPARATOR = " | ";
+const OMARCHY_CAPTURE_RESULT_SETTLE_MS = 125;
 const OMARCHY_SCREENSHOT_COMMAND_PATH = Path.join(
   OS.homedir(),
   ".local",
@@ -28,12 +30,25 @@ type SpawnCaptureResult = {
   stdout: string;
 };
 
+type ScreenshotFileStat = {
+  filePath: string;
+  mtimeMs: number;
+  sizeBytes: number;
+};
+
 function nowTimestampSegment(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
 function screenshotFileName(): string {
   return `screenshot-${nowTimestampSegment()}.png`;
+}
+
+function expandUserPath(pathValue: string): string {
+  const homeDirectory = OS.homedir();
+  return pathValue
+    .replace(/^~(?=\/|$)/, homeDirectory)
+    .replace(/\$HOME|\$\{HOME\}/g, homeDirectory);
 }
 
 function normalizeErrorMessage(error: unknown): string {
@@ -97,6 +112,38 @@ function spawnFailure(toolName: string, result: SpawnCaptureResult): string {
   return `${toolName} failed: exit code ${result.code ?? "unknown"}`;
 }
 
+function inferHyprlandInstanceSignature(env: NodeJS.ProcessEnv): string | null {
+  const runtimeDirectory = env.XDG_RUNTIME_DIR;
+  if (!runtimeDirectory) {
+    return null;
+  }
+
+  const hyprRuntimeDirectory = Path.join(runtimeDirectory, "hypr");
+  try {
+    const candidates = FSNative
+      .readdirSync(hyprRuntimeDirectory, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => {
+        const socketPath = Path.join(hyprRuntimeDirectory, entry.name, ".socket.sock");
+        try {
+          const socketStat = FSNative.statSync(socketPath);
+          return {
+            signature: entry.name,
+            mtimeMs: socketStat.mtimeMs,
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter((candidate): candidate is { signature: string; mtimeMs: number } => candidate !== null)
+      .toSorted((left, right) => right.mtimeMs - left.mtimeMs);
+
+    return candidates[0]?.signature ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveCaptureCommandEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   if (process.platform !== "linux") {
@@ -117,6 +164,13 @@ function resolveCaptureCommandEnv(): NodeJS.ProcessEnv {
       }
     } catch {
       // Keep original environment when runtime dir probing fails.
+    }
+  }
+
+  if (!env.HYPRLAND_INSTANCE_SIGNATURE) {
+    const hyprlandInstanceSignature = inferHyprlandInstanceSignature(env);
+    if (hyprlandInstanceSignature) {
+      env.HYPRLAND_INSTANCE_SIGNATURE = hyprlandInstanceSignature;
     }
   }
 
@@ -166,41 +220,6 @@ async function resolveOmarchyScreenshotCommand(): Promise<string | null> {
   return (await commandExists("omarchy-cmd-screenshot")) ? "omarchy-cmd-screenshot" : null;
 }
 
-function runCaptureCommand(
-  command: string,
-  args: ReadonlyArray<string>,
-  env: NodeJS.ProcessEnv,
-): Promise<SpawnCaptureResult> {
-  return new Promise((resolve, reject) => {
-    const child = ChildProcess.spawn(command, [...args], {
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-
-    child.on("error", reject);
-    child.on("close", (code, signal) => {
-      resolve({
-        code,
-        signal,
-        stderr,
-        stdout,
-      });
-    });
-  });
-}
-
 function buildScreenshotCapture(
   imageBytes: Buffer,
   fileName: string,
@@ -213,58 +232,267 @@ function buildScreenshotCapture(
   };
 }
 
-async function readNewestScreenshotFile(directoryPath: string): Promise<string | null> {
-  const entries = await FS.readdir(directoryPath, { withFileTypes: true });
-  const imageFiles = entries
-    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".png"))
-    .map((entry) => Path.join(directoryPath, entry.name));
-
-  if (imageFiles.length === 0) {
-    return null;
+async function resolveOmarchyScreenshotOutputDir(): Promise<string> {
+  const envOutputDirectory = process.env.OMARCHY_SCREENSHOT_DIR?.trim();
+  if (envOutputDirectory) {
+    return Path.resolve(expandUserPath(envOutputDirectory));
   }
 
-  const imageFilesWithStats = await Promise.all(
-    imageFiles.map(async (filePath) => ({
-      filePath,
-      stat: await FS.stat(filePath),
-    })),
-  );
-  imageFilesWithStats.sort((left, right) => right.stat.mtimeMs - left.stat.mtimeMs);
-  return imageFilesWithStats[0]?.filePath ?? null;
+  const envPicturesDirectory = process.env.XDG_PICTURES_DIR?.trim();
+  if (envPicturesDirectory) {
+    return Path.resolve(expandUserPath(envPicturesDirectory));
+  }
+
+  try {
+    const userDirsFilePath = Path.join(OS.homedir(), ".config", "user-dirs.dirs");
+    const userDirsFile = await FS.readFile(userDirsFilePath, "utf8");
+    const picturesDirectoryMatch = userDirsFile.match(
+      /^XDG_PICTURES_DIR=(?:"([^"]+)"|'([^']+)'|([^\n#]+))/m,
+    );
+    const configuredDirectory =
+      picturesDirectoryMatch?.[1] ?? picturesDirectoryMatch?.[2] ?? picturesDirectoryMatch?.[3];
+    if (configuredDirectory) {
+      return Path.resolve(expandUserPath(configuredDirectory.trim()));
+    }
+  } catch {
+    // Fall back to the standard Pictures directory when user-dirs lookup fails.
+  }
+
+  return Path.join(OS.homedir(), "Pictures");
 }
 
-async function captureWithOmarchy(command: string): Promise<DesktopScreenshotCapture | null> {
-  const tempDir = await FS.mkdtemp(Path.join(OS.tmpdir(), "t3code-screenshot-"));
+async function listScreenshotFiles(directoryPath: string): Promise<ReadonlyArray<ScreenshotFileStat>> {
   try {
-    const captureEnv = {
-      ...resolveCaptureCommandEnv(),
-      OMARCHY_SCREENSHOT_DIR: tempDir,
-    };
-    const result = await runCaptureCommand(command, ["region"], captureEnv);
-    if (result.code !== 0) {
-      if (result.code === CANCELLATION_EXIT_CODE && cancellationMessage(result.stderr)) {
-        return null;
-      }
-      throw new Error(spawnFailure("omarchy-cmd-screenshot", result));
-    }
+    const entries = await FS.readdir(directoryPath, { withFileTypes: true });
+    const fileStats = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".png"))
+        .map(async (entry) => {
+          const filePath = Path.join(directoryPath, entry.name);
+          const stat = await FS.stat(filePath);
+          return {
+            filePath,
+            mtimeMs: stat.mtimeMs,
+            sizeBytes: stat.size,
+          } satisfies ScreenshotFileStat;
+        }),
+    );
 
-    const outputFilePath = await readNewestScreenshotFile(tempDir);
-    if (!outputFilePath) {
+    fileStats.sort((left, right) => right.mtimeMs - left.mtimeMs);
+    return fileStats;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function changedScreenshotFile(
+  beforeCapture: ReadonlyArray<ScreenshotFileStat>,
+  afterCapture: ReadonlyArray<ScreenshotFileStat>,
+): string | null {
+  const previousByPath = new Map(
+    beforeCapture.map((fileStat) => [fileStat.filePath, fileStat] as const),
+  );
+  const changedFile = afterCapture.find((fileStat) => {
+    const previousFileStat = previousByPath.get(fileStat.filePath);
+    if (!previousFileStat) {
+      return true;
+    }
+    return (
+      previousFileStat.mtimeMs !== fileStat.mtimeMs ||
+      previousFileStat.sizeBytes !== fileStat.sizeBytes
+    );
+  });
+
+  return changedFile?.filePath ?? null;
+}
+
+function readClipboardPng(): Buffer | null {
+  try {
+    const image = clipboard.readImage();
+    if (image.isEmpty()) {
+      return null;
+    }
+    const pngBytes = image.toPNG();
+    return pngBytes.byteLength > 0 ? pngBytes : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readOmarchyCaptureArtifact(
+  outputDirectory: string,
+  filesBeforeCapture: ReadonlyArray<ScreenshotFileStat>,
+  clipboardBeforeCapture: Buffer | null,
+): Promise<DesktopScreenshotCapture | null> {
+  const filesAfterCapture = await listScreenshotFiles(outputDirectory);
+  const outputFilePath = changedScreenshotFile(filesBeforeCapture, filesAfterCapture);
+  if (outputFilePath) {
+    const imageBytes = await FS.readFile(outputFilePath);
+    if (imageBytes.byteLength === 0) {
       return null;
     }
 
-    const imageBytes = await FS.readFile(outputFilePath);
-    if (imageBytes.byteLength === 0) {
-      throw new Error("Captured Omarchy screenshot file is empty.");
+    return buildScreenshotCapture(imageBytes, Path.basename(outputFilePath) || screenshotFileName());
+  }
+
+  const clipboardAfterCapture = readClipboardPng();
+  if (
+    clipboardAfterCapture &&
+    (clipboardBeforeCapture == null || !clipboardAfterCapture.equals(clipboardBeforeCapture))
+  ) {
+    return buildScreenshotCapture(clipboardAfterCapture, screenshotFileName());
+  }
+
+  return null;
+}
+
+async function captureWithOmarchy(command: string): Promise<DesktopScreenshotCapture | null> {
+  const outputDirectory = await resolveOmarchyScreenshotOutputDir();
+  const filesBeforeCapture = await listScreenshotFiles(outputDirectory);
+  const clipboardBeforeCapture = readClipboardPng();
+
+  return new Promise((resolve, reject) => {
+    const child = ChildProcess.spawn(command, [], {
+      env: resolveCaptureCommandEnv(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let checkingArtifact = false;
+    let closeResult: Pick<SpawnCaptureResult, "code" | "signal"> | null = null;
+    let finalizeTimer: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      directoryWatcher?.close();
+      if (clipboardPollInterval !== null) {
+        clearInterval(clipboardPollInterval);
+      }
+      if (finalizeTimer !== null) {
+        clearTimeout(finalizeTimer);
+      }
+    };
+
+    const settleResolve = (result: DesktopScreenshotCapture | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    const settleReject = (error: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const finalizeFromClose = () => {
+      if (settled || closeResult === null) {
+        return;
+      }
+
+      const result: SpawnCaptureResult = {
+        code: closeResult.code,
+        signal: closeResult.signal,
+        stderr,
+        stdout,
+      };
+      if (result.code !== 0) {
+        if (result.code === CANCELLATION_EXIT_CODE && cancellationMessage(result.stderr)) {
+          settleResolve(null);
+          return;
+        }
+        settleReject(new Error(spawnFailure("omarchy-cmd-screenshot", result)));
+        return;
+      }
+
+      settleResolve(null);
+    };
+
+    const scheduleFinalizeFromClose = () => {
+      if (settled || closeResult === null || finalizeTimer !== null) {
+        return;
+      }
+
+      finalizeTimer = setTimeout(() => {
+        finalizeTimer = null;
+        void checkForArtifact().finally(() => {
+          if (!settled) {
+            finalizeFromClose();
+          }
+        });
+      }, OMARCHY_CAPTURE_RESULT_SETTLE_MS);
+    };
+
+    const checkForArtifact = async () => {
+      if (settled || checkingArtifact) {
+        return;
+      }
+
+      checkingArtifact = true;
+      try {
+        const artifact = await readOmarchyCaptureArtifact(
+          outputDirectory,
+          filesBeforeCapture,
+          clipboardBeforeCapture,
+        );
+        if (artifact) {
+          settleResolve(artifact);
+          return;
+        }
+
+        if (closeResult !== null) {
+          scheduleFinalizeFromClose();
+        }
+      } catch (error) {
+        settleReject(error);
+      } finally {
+        checkingArtifact = false;
+      }
+    };
+
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    child.on("error", settleReject);
+    child.on("close", (code, signal) => {
+      closeResult = { code, signal };
+      void checkForArtifact().finally(() => {
+        if (!settled) {
+          scheduleFinalizeFromClose();
+        }
+      });
+    });
+
+    let directoryWatcher: FSNative.FSWatcher | null = null;
+    try {
+      directoryWatcher = FSNative.watch(outputDirectory, () => {
+        void checkForArtifact();
+      });
+    } catch {
+      directoryWatcher = null;
     }
 
-    return buildScreenshotCapture(
-      imageBytes,
-      Path.basename(outputFilePath) || screenshotFileName(),
-    );
-  } finally {
-    await FS.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-  }
+    const clipboardPollInterval = setInterval(() => {
+      void checkForArtifact();
+    }, 25);
+    void checkForArtifact();
+  });
 }
 
 async function captureWithGrimblast(filePath: string): Promise<"captured" | "cancelled"> {

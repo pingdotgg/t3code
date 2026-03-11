@@ -1,0 +1,10 @@
+{
+  "upstream": {
+    "repo": "pingdotgg/t3code",
+    "branch": "main"
+  },
+  "omarchy": {
+    "repo": "basecamp/omarchy",
+    "trackedVersion": "v3.4.2"
+  }
+}
