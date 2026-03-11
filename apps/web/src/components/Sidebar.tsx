@@ -9,6 +9,7 @@ import {
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
@@ -84,6 +85,8 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import { resolveThreadStatusPill, shouldClearThreadSelectionOnMouseDown } from "./Sidebar.logic";
+import { Project } from "~/types";
+import { Input } from "./ui/input";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -310,6 +313,7 @@ export default function Sidebar() {
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const shouldBrowseForProjectImmediately = isElectron;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
+  const [searchValue, setSearchValue] = useState(""); // state for search/filter
   const pendingApprovalByThreadId = useMemo(() => {
     const map = new Map<ThreadId, boolean>();
     for (const thread of threads) {
@@ -1259,6 +1263,45 @@ export default function Sidebar() {
     </div>
   );
 
+  // Filtering logic for projects and threads
+  const filteredProjects = useMemo(() => {
+    if (!searchValue.trim()) return projects;
+    // Filter projects where the project name matches or any thread matches
+    const normalizedSearch = searchValue.toLowerCase();
+    return projects.filter((project) => {
+      const nameMatch = project.name.toLowerCase().includes(normalizedSearch);
+      // Find threads for this project
+      const projectThreads = threads.filter((thread) => thread.projectId === project.id);
+      const threadMatch = projectThreads.some((thread) =>
+        thread.title.toLowerCase().includes(normalizedSearch),
+      );
+      return nameMatch || threadMatch;
+    });
+  }, [projects, threads, searchValue]);
+
+  // Filtering threads within a project if searching, otherwise normal
+  const getProjectThreads = useCallback(
+    (project: Project) => {
+      const projectThreads = threads
+        .filter((thread) => thread.projectId === project.id)
+        .toSorted((a, b) => {
+          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          if (byDate !== 0) return byDate;
+          return b.id.localeCompare(a.id);
+        });
+
+      if (!searchValue.trim()) {
+        return projectThreads;
+      }
+      // Only threads matching search for this project
+      const normalizedSearch = searchValue.toLowerCase();
+      return projectThreads.filter((thread) =>
+        thread.title.toLowerCase().includes(normalizedSearch),
+      );
+    },
+    [threads, searchValue],
+  );
+
   return (
     <>
       {isElectron ? (
@@ -1317,6 +1360,35 @@ export default function Sidebar() {
           </SidebarGroup>
         ) : null}
         <SidebarGroup className="px-2 py-2">
+          {/* Search Input UI */}
+          <div className="mb-2 px-2 flex items-center gap-1">
+            <label htmlFor="sidebar-search-input" className="sr-only">
+              Search projects and threads
+            </label>
+            <div className="flex items-center w-full relative">
+              <Input
+                id="sidebar-search-input"
+                type="text"
+                value={searchValue}
+                onChange={(e) => setSearchValue(e.target.value)}
+                placeholder="Search projects/threads"
+                aria-label="Search projects and threads"
+                className={searchValue && "pr-6"}
+                autoComplete="off"
+              />
+              {searchValue && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  className="absolute right-1 text-muted-foreground/40 hover:text-muted-foreground cursor-pointer rounded p-0.5"
+                  onClick={() => setSearchValue("")}
+                  tabIndex={0}
+                >
+                  <X />
+                </button>
+              )}
+            </div>
+          </div>
           <div className="mb-1 flex items-center justify-between px-2">
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
               Projects
@@ -1418,20 +1490,14 @@ export default function Sidebar() {
           >
             <SidebarMenu>
               <SortableContext
-                items={projects.map((project) => project.id)}
+                items={filteredProjects.map((project) => project.id)}
                 strategy={verticalListSortingStrategy}
               >
-                {projects.map((project) => {
-                  const projectThreads = threads
-                    .filter((thread) => thread.projectId === project.id)
-                    .toSorted((a, b) => {
-                      const byDate =
-                        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-                      if (byDate !== 0) return byDate;
-                      return b.id.localeCompare(a.id);
-                    });
+                {filteredProjects.map((project) => {
+                  const projectThreads = getProjectThreads(project);
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
-                  const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
+                  const hasHiddenThreads =
+                    projectThreads.length > THREAD_PREVIEW_LIMIT && !searchValue.trim();
                   const visibleThreads =
                     hasHiddenThreads && !isThreadListExpanded
                       ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
@@ -1717,6 +1783,14 @@ export default function Sidebar() {
                                   </SidebarMenuSubButton>
                                 </SidebarMenuSubItem>
                               )}
+                              {/* If search is active and no threads to show in this project, show "No threads found" */}
+                              {searchValue.trim() && visibleThreads.length === 0 && (
+                                <SidebarMenuSubItem className="w-full pl-3">
+                                  <div className="py-1 text-xs text-muted-foreground/50">
+                                    No threads found
+                                  </div>
+                                </SidebarMenuSubItem>
+                              )}
                             </SidebarMenuSub>
                           </CollapsibleContent>
                         </Collapsible>
@@ -1728,9 +1802,9 @@ export default function Sidebar() {
             </SidebarMenu>
           </DndContext>
 
-          {projects.length === 0 && !shouldShowProjectPathEntry && (
+          {filteredProjects.length === 0 && !shouldShowProjectPathEntry && (
             <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-              No projects yet
+              {searchValue.trim() ? "No projects or threads found" : "No projects yet"}
             </div>
           )}
         </SidebarGroup>
