@@ -451,7 +451,7 @@ export default function Sidebar() {
           createdAt,
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
-          envMode: options?.envMode ?? "local",
+          envMode: options?.envMode ?? appSettings.defaultThreadEnvMode,
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
 
@@ -469,6 +469,7 @@ export default function Sidebar() {
       routeThreadId,
       setDraftThreadContext,
       setProjectDraftThreadId,
+      appSettings.defaultThreadEnvMode,
     ],
   );
 

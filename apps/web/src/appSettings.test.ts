@@ -1,11 +1,54 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  getAppSettingsSnapshot,
   getAppModelOptions,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
   resolveAppModelSelection,
 } from "./appSettings";
+
+function createStorage() {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+    removeItem: (key: string) => {
+      values.delete(key);
+    },
+    clear: () => {
+      values.clear();
+    },
+  };
+}
+
+function writeSettings(partial: Record<string, unknown>) {
+  localStorage.setItem(
+    "t3code:app-settings:v1",
+    JSON.stringify({
+      codexBinaryPath: "",
+      codexHomePath: "",
+      confirmThreadDelete: true,
+      enableAssistantStreaming: false,
+      customCodexModels: [],
+      ...partial,
+    }),
+  );
+}
+
+beforeEach(() => {
+  const storage = createStorage();
+  vi.stubGlobal("localStorage", storage);
+  vi.stubGlobal("window", {
+    localStorage: storage,
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {
@@ -70,5 +113,38 @@ describe("getSlashModelOptions", () => {
     const options = getSlashModelOptions("codex", ["openai/gpt-oss-120b"], "oss", "gpt-5.3-codex");
 
     expect(options.map((option) => option.slug)).toEqual(["openai/gpt-oss-120b"]);
+  });
+});
+
+describe("getAppSettingsSnapshot", () => {
+  it("defaults the thread environment mode to local for older persisted settings", () => {
+    localStorage.setItem(
+      "t3code:app-settings:v1",
+      JSON.stringify({
+        codexBinaryPath: "/usr/local/bin/codex",
+        codexHomePath: "",
+        confirmThreadDelete: true,
+        enableAssistantStreaming: false,
+        customCodexModels: [],
+      }),
+    );
+
+    expect(getAppSettingsSnapshot().defaultThreadEnvMode).toBe("local");
+  });
+
+  it("falls back to local when the persisted thread environment mode is invalid", () => {
+    writeSettings({
+      defaultThreadEnvMode: "invalid",
+    });
+
+    expect(getAppSettingsSnapshot().defaultThreadEnvMode).toBe("local");
+  });
+
+  it("reads a persisted worktree default for new threads", () => {
+    writeSettings({
+      defaultThreadEnvMode: "worktree",
+    });
+
+    expect(getAppSettingsSnapshot().defaultThreadEnvMode).toBe("worktree");
   });
 });
