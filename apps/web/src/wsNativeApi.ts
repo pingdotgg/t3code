@@ -90,9 +90,9 @@ export function onServerConfigUpdated(
 export function onRateLimitsUpdated(listener: (payload: RateLimitsPayload) => void): () => void {
   rateLimitsListeners.add(listener);
 
-  const latest =
-    instance?.transport.getLatestPush(WS_CHANNELS.providerRateLimitsUpdated)?.data ?? null;
-  if (latest) {
++  const latest =
++    instance?.transport.getLatestPush(WS_CHANNELS.providerRateLimitsUpdated)?.data ?? null;
++  if (latest && typeof latest === "object") {
     try {
       listener(latest as RateLimitsPayload);
     } catch {
