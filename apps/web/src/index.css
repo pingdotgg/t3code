@@ -212,6 +212,15 @@ input {
   display: none;
 }
 
+.browser-panel-tab-strip {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.browser-panel-tab-strip::-webkit-scrollbar {
+  display: none;
+}
+
 /* Terminal drawer scrollbar parity with chat */
 .thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical {
   width: 6px !important;

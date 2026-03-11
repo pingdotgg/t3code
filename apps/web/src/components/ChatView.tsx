@@ -138,6 +138,7 @@ import {
   FileIcon,
   FolderIcon,
   DiffIcon,
+  GlobeIcon,
   EllipsisIcon,
   FolderClosedIcon,
   ListTodoIcon,
@@ -199,7 +200,7 @@ import {
   projectScriptIdFromCommand,
   setupProjectScript,
 } from "~/projectScripts";
-import { Toggle } from "./ui/toggle";
+import { Toggle, ToggleGroup } from "./ui/toggle-group";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
@@ -213,6 +214,7 @@ import {
   useComposerThreadDraft,
 } from "../composerDraftStore";
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
+import { selectThreadRightPanelState, useRightPanelStateStore } from "../rightPanelStateStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { clamp } from "effect/Number";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
@@ -587,6 +589,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     strict: false,
     select: (params) => parseDiffRouteSearch(params),
   });
+  const rightPanelState = useRightPanelStateStore((state) =>
+    selectThreadRightPanelState(state.rightPanelStateByThreadId, threadId),
+  );
+  const setSelectedPanel = useRightPanelStateStore((state) => state.setSelectedPanel);
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
@@ -759,7 +765,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
@@ -1393,17 +1398,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "diff.toggle"),
     [keybindings],
   );
+  const browserPanelShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "browser.toggle"),
+    [keybindings],
+  );
+  const forcedSelectedSidePanel = rawSearch.diff === "1" || rawSearch.diffTurnId ? "diff" : null;
+  const selectedSidePanel = forcedSelectedSidePanel ?? rightPanelState.selectedPanel;
+  const onSelectSidePanel = useCallback(
+    (panel: "diff" | "browser" | null) => {
+      setSelectedPanel(threadId, panel);
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        replace: true,
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return rest;
+        },
+      });
+    },
+    [navigate, setSelectedPanel, threadId],
+  );
   const onToggleDiff = useCallback(() => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-      replace: true,
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return diffOpen ? rest : { ...rest, diff: "1" };
-      },
-    });
-  }, [diffOpen, navigate, threadId]);
+    onSelectSidePanel(selectedSidePanel === "diff" ? null : "diff");
+  }, [onSelectSidePanel, selectedSidePanel]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -2380,6 +2398,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "browser.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        onSelectSidePanel(selectedSidePanel === "browser" ? null : "browser");
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2401,7 +2426,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     keybindings,
+    onSelectSidePanel,
     onToggleDiff,
+    selectedSidePanel,
     toggleTerminalVisibility,
   ]);
 
@@ -3494,6 +3521,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const expandedImageItem = expandedImage ? expandedImage.images[expandedImage.index] : null;
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
+      setSelectedPanel(threadId, "diff");
       void navigate({
         to: "/$threadId",
         params: { threadId },
@@ -3505,7 +3533,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         },
       });
     },
-    [navigate, threadId],
+    [navigate, setSelectedPanel, threadId],
   );
   const onRevertUserMessage = (messageId: MessageId) => {
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
@@ -3563,15 +3591,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
           keybindings={keybindings}
           availableEditors={availableEditors}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
+          browserToggleShortcutLabel={browserPanelShortcutLabel}
           gitCwd={gitCwd}
-          diffOpen={diffOpen}
+          selectedSidePanel={selectedSidePanel}
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
-          onToggleDiff={onToggleDiff}
+          onSelectSidePanel={onSelectSidePanel}
         />
       </header>
 
@@ -4264,13 +4293,14 @@ interface ChatHeaderProps {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   diffToggleShortcutLabel: string | null;
+  browserToggleShortcutLabel: string | null;
   gitCwd: string | null;
-  diffOpen: boolean;
+  selectedSidePanel: "diff" | "browser" | null;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
-  onToggleDiff: () => void;
+  onSelectSidePanel: (panel: "diff" | "browser" | null) => void;
 }
 
 const ChatHeader = memo(function ChatHeader({
@@ -4284,13 +4314,14 @@ const ChatHeader = memo(function ChatHeader({
   keybindings,
   availableEditors,
   diffToggleShortcutLabel,
+  browserToggleShortcutLabel,
   gitCwd,
-  diffOpen,
+  selectedSidePanel,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
-  onToggleDiff,
+  onSelectSidePanel,
 }: ChatHeaderProps) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -4333,30 +4364,53 @@ const ChatHeader = memo(function ChatHeader({
           />
         )}
         {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0"
-                pressed={diffOpen}
-                onPressedChange={onToggleDiff}
-                aria-label="Toggle diff panel"
-                variant="outline"
-                size="xs"
-                disabled={!isGitRepo}
-              >
-                <DiffIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!isGitRepo
-              ? "Diff panel is unavailable because this project is not a git repository."
-              : diffToggleShortcutLabel
-                ? `Toggle diff panel (${diffToggleShortcutLabel})`
-                : "Toggle diff panel"}
-          </TooltipPopup>
-        </Tooltip>
+        <ToggleGroup className="shrink-0" variant="outline" size="xs">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  value="diff"
+                  pressed={selectedSidePanel === "diff"}
+                  onPressedChange={(pressed) => {
+                    onSelectSidePanel(pressed ? "diff" : null);
+                  }}
+                  aria-label="Toggle diff panel"
+                  disabled={!isGitRepo}
+                >
+                  <DiffIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {!isGitRepo
+                ? "Diff panel is unavailable because this project is not a git repository."
+                : diffToggleShortcutLabel
+                  ? `Toggle diff panel (${diffToggleShortcutLabel})`
+                  : "Toggle diff panel"}
+            </TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  value="browser"
+                  pressed={selectedSidePanel === "browser"}
+                  onPressedChange={(pressed) => {
+                    onSelectSidePanel(pressed ? "browser" : null);
+                  }}
+                  aria-label="Toggle in-app browser"
+                >
+                  <GlobeIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {browserToggleShortcutLabel
+                ? `Toggle in-app browser (${browserToggleShortcutLabel})`
+                : "Toggle in-app browser"}
+            </TooltipPopup>
+          </Tooltip>
+        </ToggleGroup>
       </div>
     </div>
   );
