@@ -40,7 +40,6 @@ import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch"
 import {
   type ComposerTrigger,
   detectComposerTrigger,
-  expandCollapsedComposerCursor,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "../composer-logic";
@@ -2551,7 +2550,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const onChangeActivePendingUserInputCustomAnswer = useCallback(
-    (questionId: string, value: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
+    (
+      questionId: string,
+      value: string,
+      nextCursor: number,
+      expandedCursor: number,
+      cursorAdjacentToMention: boolean,
+    ) => {
       if (!activePendingUserInput) {
         return;
       }
@@ -2568,9 +2573,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }));
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention
-          ? null
-          : detectComposerTrigger(value, expandCollapsedComposerCursor(value, nextCursor)),
+        cursorAdjacentToMention ? null : detectComposerTrigger(value, expandedCursor),
       );
     },
     [activePendingUserInput],
@@ -2935,12 +2938,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const readComposerSnapshot = useCallback((): {
     value: string;
     cursor: number;
+    expandedCursor: number;
   } => {
     const editorSnapshot = composerEditorRef.current?.readSnapshot();
     if (editorSnapshot) {
       return editorSnapshot;
     }
-    return { value: promptRef.current, cursor: composerCursor };
+    return { value: promptRef.current, cursor: composerCursor, expandedCursor: composerCursor };
   }, [composerCursor]);
 
   const resolveActiveComposerTrigger = useCallback((): {
@@ -2948,10 +2952,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     trigger: ComposerTrigger | null;
   } => {
     const snapshot = readComposerSnapshot();
-    const expandedCursor = expandCollapsedComposerCursor(snapshot.value, snapshot.cursor);
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, expandedCursor),
+      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
     };
   }, [readComposerSnapshot]);
 
@@ -3039,12 +3042,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       workspaceEntriesQuery.isFetching);
 
   const onPromptChange = useCallback(
-    (nextPrompt: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
+    (
+      nextPrompt: string,
+      nextCursor: number,
+      expandedCursor: number,
+      cursorAdjacentToMention: boolean,
+    ) => {
       if (activePendingProgress?.activeQuestion && activePendingUserInput) {
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
           nextPrompt,
           nextCursor,
+          expandedCursor,
           cursorAdjacentToMention,
         );
         return;
@@ -3053,12 +3062,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setPrompt(nextPrompt);
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention
-          ? null
-          : detectComposerTrigger(
-              nextPrompt,
-              expandCollapsedComposerCursor(nextPrompt, nextCursor),
-            ),
+        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
       );
     },
     [

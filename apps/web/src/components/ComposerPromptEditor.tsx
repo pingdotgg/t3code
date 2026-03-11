@@ -192,6 +192,21 @@ function getComposerNodeTextLength(node: LexicalNode): number {
   return 0;
 }
 
+function getComposerNodeExpandedTextLength(node: LexicalNode): number {
+  if ($isTextNode(node)) {
+    return node.getTextContentSize();
+  }
+  if ($isLineBreakNode(node)) {
+    return 1;
+  }
+  if ($isElementNode(node)) {
+    return node
+      .getChildren()
+      .reduce((total, child) => total + getComposerNodeExpandedTextLength(child), 0);
+  }
+  return 0;
+}
+
 function getAbsoluteOffsetForPoint(node: LexicalNode, pointOffset: number): number {
   let offset = 0;
   let current: LexicalNode | null = node;
@@ -229,6 +244,50 @@ function getAbsoluteOffsetForPoint(node: LexicalNode, pointOffset: number): numb
       const child = children[i];
       if (!child) continue;
       offset += getComposerNodeTextLength(child);
+    }
+    return offset;
+  }
+
+  return offset;
+}
+
+function getExpandedAbsoluteOffsetForPoint(node: LexicalNode, pointOffset: number): number {
+  let offset = 0;
+  let current: LexicalNode | null = node;
+
+  while (current) {
+    const nextParent = current.getParent() as LexicalNode | null;
+    if (!nextParent || !$isElementNode(nextParent)) {
+      break;
+    }
+    const siblings = nextParent.getChildren();
+    const index = current.getIndexWithinParent();
+    for (let i = 0; i < index; i += 1) {
+      const sibling = siblings[i];
+      if (!sibling) continue;
+      offset += getComposerNodeExpandedTextLength(sibling);
+    }
+    current = nextParent;
+  }
+
+  if ($isTextNode(node)) {
+    if (node instanceof ComposerMentionNode) {
+      return offset + (pointOffset > 0 ? node.getTextContentSize() : 0);
+    }
+    return offset + Math.min(pointOffset, node.getTextContentSize());
+  }
+
+  if ($isLineBreakNode(node)) {
+    return offset + Math.min(pointOffset, 1);
+  }
+
+  if ($isElementNode(node)) {
+    const children = node.getChildren();
+    const clampedOffset = Math.max(0, Math.min(pointOffset, children.length));
+    for (let i = 0; i < clampedOffset; i += 1) {
+      const child = children[i];
+      if (!child) continue;
+      offset += getComposerNodeExpandedTextLength(child);
     }
     return offset;
   }
@@ -350,6 +409,17 @@ function $readSelectionOffsetFromEditorState(fallback: number): number {
   return Math.max(0, Math.min(offset, composerLength));
 }
 
+function $readExpandedSelectionOffsetFromEditorState(fallback: number): number {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
+    return fallback;
+  }
+  const anchorNode = selection.anchor.getNode();
+  const offset = getExpandedAbsoluteOffsetForPoint(anchorNode, selection.anchor.offset);
+  const expandedLength = $getRoot().getTextContent().length;
+  return Math.max(0, Math.min(offset, expandedLength));
+}
+
 function $appendTextWithLineBreaks(parent: ElementNode, text: string): void {
   const lines = text.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
@@ -383,7 +453,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
-  readSnapshot: () => { value: string; cursor: number };
+  readSnapshot: () => { value: string; cursor: number; expandedCursor: number };
 }
 
 interface ComposerPromptEditorProps {
@@ -392,7 +462,12 @@ interface ComposerPromptEditorProps {
   disabled: boolean;
   placeholder: string;
   className?: string;
-  onChange: (nextValue: string, nextCursor: number, cursorAdjacentToMention: boolean) => void;
+  onChange: (
+    nextValue: string,
+    nextCursor: number,
+    expandedCursor: number,
+    cursorAdjacentToMention: boolean,
+  ) => void;
   onCommandKeyDown?: (
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
@@ -678,17 +753,27 @@ function ComposerPromptEditorInner({
       editor.update(() => {
         $setSelectionAtComposerOffset(boundedCursor);
       });
+      const nextExpandedCursor = editor
+        .getEditorState()
+        .read(() => $readExpandedSelectionOffsetFromEditorState(boundedCursor));
       snapshotRef.current = {
         value: snapshotRef.current.value,
         cursor: boundedCursor,
       };
-      onChangeRef.current(snapshotRef.current.value, boundedCursor, false);
+      onChangeRef.current(snapshotRef.current.value, boundedCursor, nextExpandedCursor, false);
     },
     [editor],
   );
 
-  const readSnapshot = useCallback((): { value: string; cursor: number } => {
-    let snapshot = snapshotRef.current;
+  const readSnapshot = useCallback((): {
+    value: string;
+    cursor: number;
+    expandedCursor: number;
+  } => {
+    let snapshot: { value: string; cursor: number; expandedCursor: number } = {
+      ...snapshotRef.current,
+      expandedCursor: snapshotRef.current.cursor,
+    };
     editor.getEditorState().read(() => {
       const nextValue = $getRoot().getTextContent();
       const fallbackCursor = clampCursor(nextValue, snapshotRef.current.cursor);
@@ -696,12 +781,17 @@ function ComposerPromptEditorInner({
         nextValue,
         $readSelectionOffsetFromEditorState(fallbackCursor),
       );
+      const nextExpandedCursor = clampCursor(
+        nextValue,
+        $readExpandedSelectionOffsetFromEditorState(fallbackCursor),
+      );
       snapshot = {
         value: nextValue,
         cursor: nextCursor,
+        expandedCursor: nextExpandedCursor,
       };
     });
-    snapshotRef.current = snapshot;
+    snapshotRef.current = { value: snapshot.value, cursor: snapshot.cursor };
     return snapshot;
   }, [editor]);
 
@@ -728,6 +818,10 @@ function ComposerPromptEditorInner({
         nextValue,
         $readSelectionOffsetFromEditorState(fallbackCursor),
       );
+      const nextExpandedCursor = clampCursor(
+        nextValue,
+        $readExpandedSelectionOffsetFromEditorState(fallbackCursor),
+      );
       const previousSnapshot = snapshotRef.current;
       if (previousSnapshot.value === nextValue && previousSnapshot.cursor === nextCursor) {
         return;
@@ -742,7 +836,7 @@ function ComposerPromptEditorInner({
       const cursorAdjacentToMention =
         isCollapsedCursorAdjacentToMention(nextValue, nextCursor, "left") ||
         isCollapsedCursorAdjacentToMention(nextValue, nextCursor, "right");
-      onChangeRef.current(nextValue, nextCursor, cursorAdjacentToMention);
+      onChangeRef.current(nextValue, nextCursor, nextExpandedCursor, cursorAdjacentToMention);
     });
   }, []);
 

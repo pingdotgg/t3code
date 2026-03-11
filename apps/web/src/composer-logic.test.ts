@@ -56,6 +56,34 @@ describe("detectComposerTrigger", () => {
       rangeEnd: text.length,
     });
   });
+
+  it("detects @path trigger in the middle of existing text", () => {
+    // User typed @ between "inspect " and "in this sentence"
+    const text = "Please inspect @in this sentence";
+    const cursorAfterAt = "Please inspect @".length;
+
+    const trigger = detectComposerTrigger(text, cursorAfterAt);
+    expect(trigger).toEqual({
+      kind: "path",
+      query: "",
+      rangeStart: "Please inspect ".length,
+      rangeEnd: cursorAfterAt,
+    });
+  });
+
+  it("detects @path trigger with query typed mid-text", () => {
+    // User typed @sr between "inspect " and "in this sentence"
+    const text = "Please inspect @srin this sentence";
+    const cursorAfterQuery = "Please inspect @sr".length;
+
+    const trigger = detectComposerTrigger(text, cursorAfterQuery);
+    expect(trigger).toEqual({
+      kind: "path",
+      query: "sr",
+      rangeStart: "Please inspect ".length,
+      rangeEnd: cursorAfterQuery,
+    });
+  });
 });
 
 describe("replaceTextRange", () => {
@@ -89,6 +117,20 @@ describe("expandCollapsedComposerCursor", () => {
     const expandedCursor = expandCollapsedComposerCursor(text, collapsedCursorAfterMention);
 
     expect(detectComposerTrigger(text, expandedCursor)).toBeNull();
+  });
+
+  it("detectComposerTrigger works with true cursor even when expandCollapsedComposerCursor is wrong", () => {
+    // expandCollapsedComposerCursor uses MENTION_TOKEN_REGEX which can false-match
+    // plain text like "@in" as a mention. The fix bypasses it by computing the expanded
+    // cursor directly from the Lexical editor's node tree.
+    const text = "Please inspect @in this sentence";
+    const cursorAfterAt = "Please inspect @".length;
+
+    // With the true cursor position, trigger detection works correctly
+    const trigger = detectComposerTrigger(text, cursorAfterAt);
+    expect(trigger).not.toBeNull();
+    expect(trigger?.kind).toBe("path");
+    expect(trigger?.query).toBe("");
   });
 });
 
