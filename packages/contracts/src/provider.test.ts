@@ -7,7 +7,8 @@ function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Sch
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
 }
 
-const decodeProviderSessionStartInput = (input: unknown) => decodeSync(ProviderSessionStartInput, input);
+const decodeProviderSessionStartInput = (input: unknown) =>
+  decodeSync(ProviderSessionStartInput, input);
 const decodeProviderSendTurnInput = (input: unknown) => decodeSync(ProviderSendTurnInput, input);
 
 describe("ProviderSessionStartInput", () => {

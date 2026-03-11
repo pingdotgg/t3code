@@ -246,7 +246,10 @@ function summarizeTranscript(entries) {
     const message = entry.message;
     if (!message || typeof message !== "object") continue;
 
-    if (typeof message.method === "string" && !Object.prototype.hasOwnProperty.call(message, "id")) {
+    if (
+      typeof message.method === "string" &&
+      !Object.prototype.hasOwnProperty.call(message, "id")
+    ) {
       summary.counts.notificationsByMethod[message.method] =
         (summary.counts.notificationsByMethod[message.method] ?? 0) + 1;
       if (message.method === "session/update") {
@@ -411,7 +414,9 @@ async function run() {
 
     const sessionId = sessionResult?.sessionId;
     if (typeof sessionId !== "string" || sessionId.length === 0) {
-      throw new Error(`Missing sessionId from session/new response: ${JSON.stringify(sessionResult)}`);
+      throw new Error(
+        `Missing sessionId from session/new response: ${JSON.stringify(sessionResult)}`,
+      );
     }
 
     const scenarios = [

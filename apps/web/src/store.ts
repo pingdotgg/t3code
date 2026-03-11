@@ -470,11 +470,7 @@ interface AppStore extends AppState {
   setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
   reorderProjects: (draggedProjectId: Project["id"], targetProjectId: Project["id"]) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
-  setThreadBranch: (
-    threadId: ThreadId,
-    branch: string | null,
-    worktreePath: string | null,
-  ) => void;
+  setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({

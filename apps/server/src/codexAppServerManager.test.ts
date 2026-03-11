@@ -673,8 +673,8 @@ describe("respondToUserInput", () => {
       asThreadId("thread_1"),
       ApprovalRequestId.makeUnsafe("req-user-input-1"),
       {
-      scope: "All request methods",
-      compat: "Keep current envelope",
+        scope: "All request methods",
+        compat: "Keep current envelope",
       },
     );
 

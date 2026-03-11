@@ -140,7 +140,9 @@ import {
   DiffIcon,
   EllipsisIcon,
   FolderClosedIcon,
+  FolderXIcon,
   ListTodoIcon,
+  LoaderIcon,
   LockIcon,
   LockOpenIcon,
   TerminalIcon,
@@ -203,7 +205,7 @@ import {
 import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
-import { readNativeApi } from "~/nativeApi";
+import { ensureNativeApi, readNativeApi } from "~/nativeApi";
 import { getAppModelOptions, resolveAppModelSelection, useAppSettings } from "../appSettings";
 import {
   type ComposerImageAttachment,
@@ -1387,6 +1389,42 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeProjectCwd, activeThreadWorktreePath]);
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = branchesQuery.data?.isRepo ?? true;
+  // Probe worktree existence: a lightweight git query that fails fast when the path is gone.
+  const worktreeProbeQuery = useQuery({
+    queryKey: ["worktree-probe", activeThreadWorktreePath],
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!activeThreadWorktreePath) throw new Error("No worktree path");
+      // Use listBranches as a lightweight existence check — it fails if the cwd is gone.
+      await api.git.listBranches({ cwd: activeThreadWorktreePath });
+      return { exists: true } as const;
+    },
+    enabled: !!activeThreadWorktreePath,
+    retry: false,
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: "always",
+  });
+  const isWorktreeMissing =
+    !!activeThreadWorktreePath &&
+    (worktreeProbeQuery.isError || branchesQuery.isError);
+  const handleRecreateWorktreeFromChat = useCallback(() => {
+    if (!activeProject || !activeThread?.branch || !activeThreadWorktreePath) return;
+    createWorktreeMutation.mutate(
+      {
+        cwd: activeProject.cwd,
+        branch: activeThread.branch,
+        newBranch: activeThread.branch,
+        path: activeThreadWorktreePath,
+      },
+      {
+        onSuccess: () => {
+          void worktreeProbeQuery.refetch();
+          void branchesQuery.refetch();
+        },
+      },
+    );
+  }, [activeProject, activeThread?.branch, activeThreadWorktreePath, branchesQuery, createWorktreeMutation, worktreeProbeQuery]);
   const splitTerminalShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "terminal.split"),
     [keybindings],
@@ -2562,7 +2600,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current || isWorktreeMissing) return;
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -3590,9 +3628,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
       <ThreadErrorBanner
-        error={activeThread.error}
+        error={activeThread.error ?? (activeThread.session?.status === "error" ? activeThread.session.lastError ?? null : null)}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
+      {isWorktreeMissing && (
+        <div className="flex items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
+          <FolderXIcon className="size-4 shrink-0 text-amber-500" />
+          <p className="min-w-0 flex-1 text-xs text-amber-200/90">
+            The worktree for this thread no longer exists. Recreate it to continue working.
+          </p>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={createWorktreeMutation.isPending || !activeThread.branch}
+            onClick={handleRecreateWorktreeFromChat}
+          >
+            {createWorktreeMutation.isPending ? (
+              <>
+                <LoaderIcon className="size-3 animate-spin" />
+                Recreating...
+              </>
+            ) : (
+              "Recreate Worktree"
+            )}
+          </Button>
+        </div>
+      )}
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
@@ -4014,7 +4075,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               type="submit"
                               size="sm"
                               className="h-9 rounded-full px-4 sm:h-8"
-                              disabled={isSendBusy || isConnecting}
+                              disabled={isSendBusy || isConnecting || isWorktreeMissing}
                             >
                               {isConnecting || isSendBusy ? "Sending..." : "Refine"}
                             </Button>
@@ -4024,7 +4085,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 type="submit"
                                 size="sm"
                                 className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-                                disabled={isSendBusy || isConnecting}
+                                disabled={isSendBusy || isConnecting || isWorktreeMissing}
                               >
                                 {isConnecting || isSendBusy ? "Sending..." : "Implement"}
                               </Button>
@@ -4036,7 +4097,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                       variant="default"
                                       className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                                       aria-label="Implementation actions"
-                                      disabled={isSendBusy || isConnecting}
+                                      disabled={isSendBusy || isConnecting || isWorktreeMissing}
                                     />
                                   }
                                 >
@@ -4044,7 +4105,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 </MenuTrigger>
                                 <MenuPopup align="end" side="top">
                                   <MenuItem
-                                    disabled={isSendBusy || isConnecting}
+                                    disabled={isSendBusy || isConnecting || isWorktreeMissing}
                                     onClick={() => void onImplementPlanInNewThread()}
                                   >
                                     Implement in new thread
@@ -4060,6 +4121,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             disabled={
                               isSendBusy ||
                               isConnecting ||
+                              isWorktreeMissing ||
                               (!prompt.trim() && composerImages.length === 0)
                             }
                             aria-label={

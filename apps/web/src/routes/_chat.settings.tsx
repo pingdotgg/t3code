@@ -353,7 +353,9 @@ function SettingsRouteView() {
                 <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                   <p>
                     Binary source:{" "}
-                    <span className="font-medium text-foreground">{claudeBinaryPath || "PATH"}</span>
+                    <span className="font-medium text-foreground">
+                      {claudeBinaryPath || "PATH"}
+                    </span>
                   </p>
                   <Button
                     size="xs"

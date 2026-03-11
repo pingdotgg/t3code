@@ -126,7 +126,7 @@ export default function ReviewPrDialog({ projectId, projectCwd, onClose }: Revie
       const worktreeResult = await createWorktreeMutation.mutateAsync({
         cwd: projectCwd,
         branch: `origin/${prDetails.headRefName}`,
-        newBranch: `review/pr-${prDetails.number}`,
+        newBranch: `review/pr-${prDetails.number}-${Date.now().toString(36)}`,
       });
 
       const threadId = newThreadId();
@@ -211,12 +211,7 @@ export default function ReviewPrDialog({ projectId, projectCwd, onClose }: Revie
                 disabled={isBusy}
                 autoFocus
               />
-              <Button
-                type="submit"
-                variant="outline"
-                size="sm"
-                disabled={!canFetch || isBusy}
-              >
+              <Button type="submit" variant="outline" size="sm" disabled={!canFetch || isBusy}>
                 {fetchPrMutation.isPending ? (
                   <LoaderIcon className="size-3.5 animate-spin" />
                 ) : (
@@ -273,10 +268,7 @@ export default function ReviewPrDialog({ projectId, projectCwd, onClose }: Revie
       </DialogPanel>
 
       <DialogFooter variant="bare">
-        <Button
-          onClick={handleStartReview}
-          disabled={!prDetails || isBusy}
-        >
+        <Button onClick={handleStartReview} disabled={!prDetails || isBusy}>
           {isCreating ? (
             <>
               <LoaderIcon className="size-3.5 animate-spin" />

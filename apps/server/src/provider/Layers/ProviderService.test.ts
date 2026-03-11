@@ -224,7 +224,7 @@ function makeProviderServiceLayer() {
         ? Effect.succeed(codex.adapter)
         : provider === "claudeCode"
           ? Effect.succeed(claude.adapter)
-        : Effect.fail(new ProviderUnsupportedError({ provider })),
+          : Effect.fail(new ProviderUnsupportedError({ provider })),
     listProviders: () => Effect.succeed(["codex", "claudeCode"]),
   };
 
@@ -662,7 +662,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
           assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
         }
       }
-
 
       yield* provider.stopAll();
       const stoppedRuntime = yield* runtimeRepository.getByThreadId({

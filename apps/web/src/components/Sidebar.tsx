@@ -10,6 +10,7 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import { ClaudeAI, CursorIcon, OpenAI } from "./Icons";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   DndContext,
@@ -89,6 +90,12 @@ import { resolveThreadStatusPill, shouldClearThreadSelectionOnMouseDown } from "
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
+
+const PROVIDER_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  codex: OpenAI,
+  claudeCode: ClaudeAI,
+  cursor: CursorIcon,
+};
 
 async function copyTextToClipboard(text: string): Promise<void> {
   if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
@@ -763,17 +770,20 @@ export default function Sidebar() {
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "rename", label: "Rename thread" },
-          { id: "mark-unread", label: "Mark unread" },
-          { id: "copy-thread-id", label: "Copy Thread ID" },
-          { id: "delete", label: "Delete", destructive: true },
-        ],
-        position,
-      );
       const thread = threads.find((t) => t.id === threadId);
       if (!thread) return;
+
+      const hasWorktree = !!thread.worktreePath;
+      const menuItems = [
+        { id: "rename", label: "Rename thread" },
+        { id: "mark-unread", label: "Mark unread" },
+        { id: "copy-thread-id", label: "Copy Thread ID" },
+        ...(hasWorktree
+          ? [{ id: "delete-worktree", label: "Delete Worktree", destructive: true }]
+          : []),
+        { id: "delete", label: "Delete", destructive: true },
+      ];
+      const clicked = await api.contextMenu.show(menuItems, position);
 
       if (clicked === "rename") {
         setRenamingThreadId(threadId);
@@ -803,6 +813,34 @@ export default function Sidebar() {
         }
         return;
       }
+      if (clicked === "delete-worktree") {
+        const threadProject = projects.find((p) => p.id === thread.projectId);
+        if (!thread.worktreePath || !threadProject) return;
+        const displayPath = formatWorktreePathForDisplay(thread.worktreePath);
+        const confirmed = await api.dialogs.confirm(
+          [`Delete worktree "${displayPath}"?`, "This removes the worktree directory from disk."].join("\n"),
+        );
+        if (!confirmed) return;
+        try {
+          await removeWorktreeMutation.mutateAsync({
+            cwd: threadProject.cwd,
+            path: thread.worktreePath,
+            force: true,
+          });
+          toastManager.add({
+            type: "success",
+            title: "Worktree deleted",
+            description: displayPath,
+          });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to delete worktree",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+        return;
+      }
       if (clicked !== "delete") return;
       if (appSettings.confirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
@@ -817,7 +855,7 @@ export default function Sidebar() {
       }
       await deleteThread(threadId);
     },
-    [appSettings.confirmThreadDelete, deleteThread, markThreadUnread, threads],
+    [appSettings.confirmThreadDelete, deleteThread, markThreadUnread, projects, removeWorktreeMutation, threads],
   );
 
   const handleMultiSelectContextMenu = useCallback(
@@ -928,7 +966,11 @@ export default function Sidebar() {
         if (!project) return;
         try {
           await copyTextToClipboard(project.cwd);
-          toastManager.add({ type: "success", title: "Workspace path copied", description: project.cwd });
+          toastManager.add({
+            type: "success",
+            title: "Workspace path copied",
+            description: project.cwd,
+          });
         } catch {
           toastManager.add({ type: "error", title: "Failed to copy workspace path" });
         }
@@ -1700,6 +1742,14 @@ export default function Sidebar() {
                                             />
                                           </span>
                                         )}
+                                        {(() => {
+                                          const ProviderIcon = thread.session?.provider
+                                            ? PROVIDER_ICON_MAP[thread.session.provider]
+                                            : undefined;
+                                          return ProviderIcon ? (
+                                            <ProviderIcon className="size-2.5 shrink-0 text-muted-foreground/50" />
+                                          ) : null;
+                                        })()}
                                         <span
                                           className={`text-[10px] ${
                                             isHighlighted

@@ -1,4 +1,10 @@
-import { DEFAULT_MODEL_BY_PROVIDER, ProjectId, ThreadId, TurnId, type OrchestrationReadModel } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  ProjectId,
+  ThreadId,
+  TurnId,
+  type OrchestrationReadModel,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
