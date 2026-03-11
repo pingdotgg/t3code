@@ -13,16 +13,12 @@ export function buildExpandedImagePreview(
   selectedImageId: string,
 ): ExpandedImagePreview | null {
   const previewableImages = images.flatMap((image) =>
-    image.previewUrl
-      ? [{ id: image.id, src: image.previewUrl, name: image.name }]
-      : [],
+    image.previewUrl ? [{ id: image.id, src: image.previewUrl, name: image.name }] : [],
   );
   if (previewableImages.length === 0) {
     return null;
   }
-  const selectedIndex = previewableImages.findIndex(
-    (image) => image.id === selectedImageId,
-  );
+  const selectedIndex = previewableImages.findIndex((image) => image.id === selectedImageId);
   if (selectedIndex < 0) {
     return null;
   }

@@ -56,16 +56,12 @@ export const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
       </MenuTrigger>
       <MenuPopup align="start">
         <MenuGroup>
-          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-            Reasoning
-          </div>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Reasoning</div>
           <MenuRadioGroup
             value={props.effort}
             onValueChange={(value) => {
               if (!value) return;
-              const nextEffort = props.options.find(
-                (option) => option === value,
-              );
+              const nextEffort = props.options.find((option) => option === value);
               if (!nextEffort) return;
               props.onEffortChange(nextEffort);
             }}
@@ -80,9 +76,7 @@ export const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
         </MenuGroup>
         <MenuDivider />
         <MenuGroup>
-          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-            Fast Mode
-          </div>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Fast Mode</div>
           <MenuRadioGroup
             value={props.fastModeEnabled ? "on" : "off"}
             onValueChange={(value) => {

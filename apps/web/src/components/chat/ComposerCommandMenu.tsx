@@ -1,13 +1,6 @@
-import {
-  type ProjectEntry,
-  type ModelSlug,
-  type ProviderKind,
-} from "@t3tools/contracts";
+import { type ProjectEntry, type ModelSlug, type ProviderKind } from "@t3tools/contracts";
 import { memo } from "react";
-import {
-  type ComposerSlashCommand,
-  type ComposerTriggerKind,
-} from "../../composer-logic";
+import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { BotIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
@@ -121,9 +114,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       <span className="flex min-w-0 items-center gap-1.5 truncate">
         <span className="truncate">{props.item.label}</span>
       </span>
-      <span className="truncate text-muted-foreground/70 text-xs">
-        {props.item.description}
-      </span>
+      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
     </CommandItem>
   );
 });

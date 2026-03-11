@@ -1,23 +1,10 @@
-import {
-  EDITORS,
-  type EditorId,
-  type ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
+import { EDITORS, type EditorId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import {
-  isOpenFavoriteEditorShortcut,
-  shortcutLabelForCommand,
-} from "../../keybindings";
+import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
-import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuShortcut,
-  MenuTrigger,
-} from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
 import { CursorIcon, Icon, VisualStudioCode, Zed } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
@@ -35,14 +22,10 @@ export const OpenInPicker = memo(function OpenInPicker({
 }) {
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
-    return EDITORS.some((e) => e.id === stored)
-      ? (stored as EditorId)
-      : EDITORS[0].id;
+    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
   });
 
-  const allOptions = useMemo<
-    Array<{ label: string; Icon: Icon; value: EditorId }>
-  >(
+  const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: EditorId }>>(
     () => [
       {
         label: "Cursor",
@@ -72,16 +55,14 @@ export const OpenInPicker = memo(function OpenInPicker({
     [],
   );
   const options = useMemo(
-    () =>
-      allOptions.filter((option) => availableEditors.includes(option.value)),
+    () => allOptions.filter((option) => availableEditors.includes(option.value)),
     [allOptions, availableEditors],
   );
 
   const effectiveEditor = options.some((option) => option.value === lastEditor)
     ? lastEditor
     : (options[0]?.value ?? null);
-  const primaryOption =
-    options.find(({ value }) => value === effectiveEditor) ?? null;
+  const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
@@ -123,30 +104,18 @@ export const OpenInPicker = memo(function OpenInPicker({
         disabled={!effectiveEditor || !openInCwd}
         onClick={() => openInEditor(effectiveEditor)}
       >
-        {primaryOption?.Icon && (
-          <primaryOption.Icon aria-hidden="true" className="size-3.5" />
-        )}
+        {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
         <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
           Open
         </span>
       </Button>
       <GroupSeparator className="hidden @sm/header-actions:block" />
       <Menu>
-        <MenuTrigger
-          render={
-            <Button
-              aria-label="Copy options"
-              size="icon-xs"
-              variant="outline"
-            />
-          }
-        >
+        <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
-          {options.length === 0 && (
-            <MenuItem disabled>No installed editors found</MenuItem>
-          )}
+          {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
           {options.map(({ label, Icon, value }) => (
             <MenuItem key={value} onClick={() => openInEditor(value)}>
               <Icon aria-hidden="true" className="text-muted-foreground" />

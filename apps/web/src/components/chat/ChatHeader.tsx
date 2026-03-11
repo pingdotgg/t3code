@@ -9,9 +9,7 @@ import GitActionsControl from "../GitActionsControl";
 import { DiffIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import ProjectScriptsControl, {
-  type NewProjectScriptInput,
-} from "../ProjectScriptsControl";
+import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
@@ -31,10 +29,7 @@ interface ChatHeaderProps {
   diffOpen: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
-  onUpdateProjectScript: (
-    scriptId: string,
-    input: NewProjectScriptInput,
-  ) => Promise<void>;
+  onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleDiff: () => void;
 }
@@ -74,10 +69,7 @@ export const ChatHeader = memo(function ChatHeader({
           </Badge>
         )}
         {activeProjectName && !isGitRepo && (
-          <Badge
-            variant="outline"
-            className="shrink-0 text-[10px] text-amber-700"
-          >
+          <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
             No Git
           </Badge>
         )}
@@ -101,9 +93,7 @@ export const ChatHeader = memo(function ChatHeader({
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && (
-          <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />
-        )}
+        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
         <Tooltip>
           <TooltipTrigger
             render={

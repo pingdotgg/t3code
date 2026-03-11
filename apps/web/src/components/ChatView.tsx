@@ -28,31 +28,15 @@ import {
   normalizeModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import {
-  gitBranchesQueryOptions,
-  gitCreateWorktreeMutationOptions,
-} from "~/lib/gitReactQuery";
+import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
-import {
-  serverConfigQueryOptions,
-  serverQueryKeys,
-} from "~/lib/serverReactQuery";
+import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { isElectron } from "../env";
-import {
-  parseDiffRouteSearch,
-  stripDiffSearchParams,
-} from "../diffRouteSearch";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   type ComposerTrigger,
   detectComposerTrigger,
@@ -100,10 +84,7 @@ import { basenameOfPath } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
-import {
-  resolveShortcutCommand,
-  shortcutLabelForCommand,
-} from "../keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
@@ -144,29 +125,14 @@ import {
   useComposerThreadDraft,
 } from "../composerDraftStore";
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
-import {
-  selectThreadTerminalState,
-  useTerminalStateStore,
-} from "../terminalStateStore";
-import {
-  ComposerPromptEditor,
-  type ComposerPromptEditorHandle,
-} from "./ComposerPromptEditor";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
-import {
-  buildExpandedImagePreview,
-  ExpandedImagePreview,
-} from "./chat/ExpandedImagePreview";
-import {
-  AVAILABLE_PROVIDER_OPTIONS,
-  ProviderModelPicker,
-} from "./chat/ProviderModelPicker";
-import {
-  ComposerCommandItem,
-  ComposerCommandMenu,
-} from "./chat/ComposerCommandMenu";
+import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
+import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
+import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalActions";
 import { CodexTraitsPicker } from "./chat/CodexTraitsPicker";
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
@@ -199,10 +165,7 @@ const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
-const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<
-  string,
-  PendingUserInputDraftAnswer
-> = {};
+const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
@@ -226,62 +189,36 @@ export default function ChatView({ threadId }: ChatViewProps) {
   });
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
-  const createWorktreeMutation = useMutation(
-    gitCreateWorktreeMutationOptions({ queryClient }),
-  );
+  const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
   const composerDraft = useComposerThreadDraft(threadId);
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
-  const setComposerDraftPrompt = useComposerDraftStore(
-    (store) => store.setPrompt,
-  );
-  const setComposerDraftProvider = useComposerDraftStore(
-    (store) => store.setProvider,
-  );
-  const setComposerDraftModel = useComposerDraftStore(
-    (store) => store.setModel,
-  );
-  const setComposerDraftRuntimeMode = useComposerDraftStore(
-    (store) => store.setRuntimeMode,
-  );
+  const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftProvider = useComposerDraftStore((store) => store.setProvider);
+  const setComposerDraftModel = useComposerDraftStore((store) => store.setModel);
+  const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
-  const setComposerDraftEffort = useComposerDraftStore(
-    (store) => store.setEffort,
-  );
-  const setComposerDraftCodexFastMode = useComposerDraftStore(
-    (store) => store.setCodexFastMode,
-  );
-  const addComposerDraftImage = useComposerDraftStore(
-    (store) => store.addImage,
-  );
-  const addComposerDraftImages = useComposerDraftStore(
-    (store) => store.addImages,
-  );
-  const removeComposerDraftImage = useComposerDraftStore(
-    (store) => store.removeImage,
-  );
+  const setComposerDraftEffort = useComposerDraftStore((store) => store.setEffort);
+  const setComposerDraftCodexFastMode = useComposerDraftStore((store) => store.setCodexFastMode);
+  const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
+  const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
+  const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
   );
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
   );
-  const clearComposerDraftContent = useComposerDraftStore(
-    (store) => store.clearComposerContent,
-  );
-  const setDraftThreadContext = useComposerDraftStore(
-    (store) => store.setDraftThreadContext,
-  );
+  const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
-  const setProjectDraftThreadId = useComposerDraftStore(
-    (store) => store.setProjectDraftThreadId,
-  );
+  const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
@@ -290,11 +227,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const promptRef = useRef(prompt);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  const [expandedImage, setExpandedImage] =
-    useState<ExpandedImagePreview | null>(null);
-  const [optimisticUserMessages, setOptimisticUserMessages] = useState<
-    ChatMessage[]
-  >([]);
+  const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
@@ -304,22 +238,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
-  const [respondingRequestIds, setRespondingRequestIds] = useState<
+  const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
+  const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
   >([]);
-  const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] =
-    useState<ApprovalRequestId[]>([]);
-  const [
-    pendingUserInputAnswersByRequestId,
-    setPendingUserInputAnswersByRequestId,
-  ] = useState<Record<string, Record<string, PendingUserInputDraftAnswer>>>({});
-  const [
-    pendingUserInputQuestionIndexByRequestId,
-    setPendingUserInputQuestionIndexByRequestId,
-  ] = useState<Record<string, number>>({});
-  const [expandedWorkGroups, setExpandedWorkGroups] = useState<
-    Record<string, boolean>
+  const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
+    Record<string, Record<string, PendingUserInputDraftAnswer>>
   >({});
+  const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
+    useState<Record<string, number>>({});
+  const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
@@ -329,27 +257,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const planSidebarOpenOnNextThreadRef = useRef(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
-  const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<
-    string | null
-  >(null);
+  const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
-  const [
-    attachmentPreviewHandoffByMessageId,
-    setAttachmentPreviewHandoffByMessageId,
-  ] = useState<Record<string, string[]>>({});
+  const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
+    Record<string, string[]>
+  >({});
   const [composerCursor, setComposerCursor] = useState(() => prompt.length);
-  const [composerTrigger, setComposerTrigger] =
-    useState<ComposerTrigger | null>(() =>
-      detectComposerTrigger(prompt, prompt.length),
-    );
-  const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] =
-    useState<Record<string, string>>(() =>
-      readLastInvokedScriptByProjectFromStorage(),
-    );
+  const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(() =>
+    detectComposerTrigger(prompt, prompt.length),
+  );
+  const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useState<
+    Record<string, string>
+  >(() => readLastInvokedScriptByProjectFromStorage());
   const messagesScrollRef = useRef<HTMLDivElement>(null);
-  const [messagesScrollElement, setMessagesScrollElement] =
-    useState<HTMLDivElement | null>(null);
+  const [messagesScrollElement, setMessagesScrollElement] = useState<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const lastKnownScrollTopRef = useRef(0);
   const isPointerScrollActiveRef = useRef(false);
@@ -369,35 +291,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const composerMenuOpenRef = useRef(false);
   const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
   const activeComposerMenuItemRef = useRef<ComposerCommandItem | null>(null);
-  const attachmentPreviewHandoffByMessageIdRef = useRef<
-    Record<string, string[]>
-  >({});
-  const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<
-    Record<string, number>
-  >({});
+  const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
+  const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
-  const setMessagesScrollContainerRef = useCallback(
-    (element: HTMLDivElement | null) => {
-      messagesScrollRef.current = element;
-      setMessagesScrollElement(element);
-    },
-    [],
-  );
+  const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
+    messagesScrollRef.current = element;
+    setMessagesScrollElement(element);
+  }, []);
 
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadId, threadId),
   );
   const storeSetTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
-  const storeSetTerminalHeight = useTerminalStateStore(
-    (s) => s.setTerminalHeight,
-  );
+  const storeSetTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
   const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
-  const storeSetActiveTerminal = useTerminalStateStore(
-    (s) => s.setActiveTerminal,
-  );
+  const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
 
   const setPrompt = useCallback(
@@ -426,12 +337,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const serverThread = threads.find((t) => t.id === threadId);
-  const fallbackDraftProject = projects.find(
-    (project) => project.id === draftThread?.projectId,
-  );
-  const localDraftError = serverThread
-    ? null
-    : (localDraftErrorsByThreadId[threadId] ?? null);
+  const fallbackDraftProject = projects.find((project) => project.id === draftThread?.projectId);
+  const localDraftError = serverThread ? null : (localDraftErrorsByThreadId[threadId] ?? null);
   const localDraftThread = useMemo(
     () =>
       draftThread
@@ -446,23 +353,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const activeThread = serverThread ?? localDraftThread;
   const runtimeMode =
-    composerDraft.runtimeMode ??
-    activeThread?.runtimeMode ??
-    DEFAULT_RUNTIME_MODE;
+    composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
-    composerDraft.interactionMode ??
-    activeThread?.interactionMode ??
-    DEFAULT_INTERACTION_MODE;
+    composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
-  const latestTurnSettled = isLatestTurnSettled(
-    activeLatestTurn,
-    activeThread?.session ?? null,
-  );
+  const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
 
   const openPullRequestDialog = useCallback(
@@ -484,24 +384,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, []);
 
   const openOrReuseProjectDraftThread = useCallback(
-    async (input: {
-      branch: string;
-      worktreePath: string | null;
-      envMode: DraftThreadEnvMode;
-    }) => {
+    async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
       if (!activeProject) {
-        throw new Error(
-          "No active project is available for this pull request.",
-        );
+        throw new Error("No active project is available for this pull request.");
       }
       const storedDraftThread = getDraftThreadByProjectId(activeProject.id);
       if (storedDraftThread) {
         setDraftThreadContext(storedDraftThread.threadId, input);
-        setProjectDraftThreadId(
-          activeProject.id,
-          storedDraftThread.threadId,
-          input,
-        );
+        setProjectDraftThreadId(activeProject.id, storedDraftThread.threadId, input);
         if (storedDraftThread.threadId !== threadId) {
           await navigate({
             to: "/$threadId",
@@ -512,10 +402,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
 
       const activeDraftThread = getDraftThread(threadId);
-      if (
-        !isServerThread &&
-        activeDraftThread?.projectId === activeProject.id
-      ) {
+      if (!isServerThread && activeDraftThread?.projectId === activeProject.id) {
         setDraftThreadContext(threadId, input);
         setProjectDraftThreadId(activeProject.id, threadId, input);
         return;
@@ -564,11 +451,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!activeLatestTurn?.completedAt) return;
     const turnCompletedAt = Date.parse(activeLatestTurn.completedAt);
     if (Number.isNaN(turnCompletedAt)) return;
-    const lastVisitedAt = activeThread.lastVisitedAt
-      ? Date.parse(activeThread.lastVisitedAt)
-      : NaN;
-    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= turnCompletedAt)
-      return;
+    const lastVisitedAt = activeThread.lastVisitedAt ? Date.parse(activeThread.lastVisitedAt) : NaN;
+    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= turnCompletedAt) return;
 
     markThreadVisited(activeThread.id);
   }, [
@@ -583,20 +467,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedProviderByThreadId = composerDraft.provider;
   const hasThreadStarted = Boolean(
     activeThread &&
-      (activeThread.latestTurn !== null ||
-        activeThread.messages.length > 0 ||
-        activeThread.session !== null),
+    (activeThread.latestTurn !== null ||
+      activeThread.messages.length > 0 ||
+      activeThread.session !== null),
   );
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
-  const selectedProvider: ProviderKind =
-    lockedProvider ?? selectedProviderByThreadId ?? "codex";
+  const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
   const baseThreadModel = resolveModelSlugForProvider(
     selectedProvider,
-    activeThread?.model ??
-      activeProject?.model ??
-      getDefaultModel(selectedProvider),
+    activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider),
   );
   const customModelsForSelectedProvider = settings.customCodexModels;
   const selectedModel = useMemo(() => {
@@ -609,16 +490,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       customModelsForSelectedProvider,
       draftModel,
     ) as ModelSlug;
-  }, [
-    baseThreadModel,
-    composerDraft.model,
-    customModelsForSelectedProvider,
-    selectedProvider,
-  ]);
+  }, [baseThreadModel, composerDraft.model, customModelsForSelectedProvider, selectedProvider]);
   const reasoningOptions = getReasoningEffortOptions(selectedProvider);
   const supportsReasoningEffort = reasoningOptions.length > 0;
-  const selectedEffort =
-    composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
+  const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
   const selectedCodexFastModeEnabled =
     selectedProvider === "codex" ? composerDraft.codexFastMode : false;
   const selectedModelOptionsForDispatch = useMemo(() => {
@@ -626,29 +501,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return undefined;
     }
     const codexOptions = {
-      ...(supportsReasoningEffort && selectedEffort
-        ? { reasoningEffort: selectedEffort }
-        : {}),
+      ...(supportsReasoningEffort && selectedEffort ? { reasoningEffort: selectedEffort } : {}),
       ...(selectedCodexFastModeEnabled ? { fastMode: true } : {}),
     };
-    return Object.keys(codexOptions).length > 0
-      ? { codex: codexOptions }
-      : undefined;
-  }, [
-    selectedCodexFastModeEnabled,
-    selectedEffort,
-    selectedProvider,
-    supportsReasoningEffort,
-  ]);
+    return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
+  }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
   const providerOptionsForDispatch = useMemo(() => {
     if (!settings.codexBinaryPath && !settings.codexHomePath) {
       return undefined;
     }
     return {
       codex: {
-        ...(settings.codexBinaryPath
-          ? { binaryPath: settings.codexBinaryPath }
-          : {}),
+        ...(settings.codexBinaryPath ? { binaryPath: settings.codexBinaryPath } : {}),
         ...(settings.codexHomePath ? { homePath: settings.codexHomePath } : {}),
       },
     };
@@ -660,12 +524,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     const currentOptions = modelOptionsByProvider[selectedProvider];
-    return currentOptions.some(
-      (option) => option.slug === selectedModelForPicker,
-    )
+    return currentOptions.some((option) => option.slug === selectedModelForPicker)
       ? selectedModelForPicker
-      : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ??
-          selectedModelForPicker);
+      : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
   }, [modelOptionsByProvider, selectedModelForPicker, selectedProvider]);
   const searchableModelOptions = useMemo(
     () =>
@@ -687,8 +548,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
-  const isWorking =
-    phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -697,11 +557,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
-    () =>
-      deriveWorkLogEntries(
-        threadActivities,
-        activeLatestTurn?.turnId ?? undefined,
-      ),
+    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
   const latestTurnHasToolActivity = useMemo(
@@ -720,16 +576,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activePendingDraftAnswers = useMemo(
     () =>
       activePendingUserInput
-        ? (pendingUserInputAnswersByRequestId[
-            activePendingUserInput.requestId
-          ] ?? EMPTY_PENDING_USER_INPUT_ANSWERS)
+        ? (pendingUserInputAnswersByRequestId[activePendingUserInput.requestId] ??
+          EMPTY_PENDING_USER_INPUT_ANSWERS)
         : EMPTY_PENDING_USER_INPUT_ANSWERS,
     [activePendingUserInput, pendingUserInputAnswersByRequestId],
   );
   const activePendingQuestionIndex = activePendingUserInput
-    ? (pendingUserInputQuestionIndexByRequestId[
-        activePendingUserInput.requestId
-      ] ?? 0)
+    ? (pendingUserInputQuestionIndexByRequestId[activePendingUserInput.requestId] ?? 0)
     : 0;
   const activePendingProgress = useMemo(
     () =>
@@ -740,19 +593,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
             activePendingQuestionIndex,
           )
         : null,
-    [
-      activePendingDraftAnswers,
-      activePendingQuestionIndex,
-      activePendingUserInput,
-    ],
+    [activePendingDraftAnswers, activePendingQuestionIndex, activePendingUserInput],
   );
   const activePendingResolvedAnswers = useMemo(
     () =>
       activePendingUserInput
-        ? buildPendingUserInputAnswers(
-            activePendingUserInput.questions,
-            activePendingDraftAnswers,
-          )
+        ? buildPendingUserInputAnswers(activePendingUserInput.questions, activePendingDraftAnswers)
         : null,
     [activePendingDraftAnswers, activePendingUserInput],
   );
@@ -767,17 +613,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeThread?.proposedPlans ?? [],
       activeLatestTurn?.turnId ?? null,
     );
-  }, [
-    activeLatestTurn?.turnId,
-    activeThread?.proposedPlans,
-    latestTurnSettled,
-  ]);
+  }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, latestTurnSettled]);
   const activePlan = useMemo(
-    () =>
-      deriveActivePlanState(
-        threadActivities,
-        activeLatestTurn?.turnId ?? undefined,
-      ),
+    () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
   const showPlanFollowUpPrompt =
@@ -791,8 +629,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
-  const composerFooterHasWideActions =
-    showPlanFollowUpPrompt || activePendingProgress !== null;
+  const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   useEffect(() => {
     if (!activePendingProgress) {
       return;
@@ -811,19 +648,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setComposerHighlightedItemId(null);
   }, [activePendingProgress, activePendingUserInput?.requestId]);
   useEffect(() => {
-    attachmentPreviewHandoffByMessageIdRef.current =
-      attachmentPreviewHandoffByMessageId;
+    attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
   const clearAttachmentPreviewHandoffs = useCallback(() => {
-    for (const timeoutId of Object.values(
-      attachmentPreviewHandoffTimeoutByMessageIdRef.current,
-    )) {
+    for (const timeoutId of Object.values(attachmentPreviewHandoffTimeoutByMessageIdRef.current)) {
       window.clearTimeout(timeoutId);
     }
     attachmentPreviewHandoffTimeoutByMessageIdRef.current = {};
-    for (const previewUrls of Object.values(
-      attachmentPreviewHandoffByMessageIdRef.current,
-    )) {
+    for (const previewUrls of Object.values(attachmentPreviewHandoffByMessageIdRef.current)) {
       for (const previewUrl of previewUrls) {
         revokeBlobPreviewUrl(previewUrl);
       }
@@ -839,54 +671,45 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     };
   }, [clearAttachmentPreviewHandoffs]);
-  const handoffAttachmentPreviews = useCallback(
-    (messageId: MessageId, previewUrls: string[]) => {
-      if (previewUrls.length === 0) return;
+  const handoffAttachmentPreviews = useCallback((messageId: MessageId, previewUrls: string[]) => {
+    if (previewUrls.length === 0) return;
 
-      const previousPreviewUrls =
-        attachmentPreviewHandoffByMessageIdRef.current[messageId] ?? [];
-      for (const previewUrl of previousPreviewUrls) {
-        if (!previewUrls.includes(previewUrl)) {
+    const previousPreviewUrls = attachmentPreviewHandoffByMessageIdRef.current[messageId] ?? [];
+    for (const previewUrl of previousPreviewUrls) {
+      if (!previewUrls.includes(previewUrl)) {
+        revokeBlobPreviewUrl(previewUrl);
+      }
+    }
+    setAttachmentPreviewHandoffByMessageId((existing) => {
+      const next = {
+        ...existing,
+        [messageId]: previewUrls,
+      };
+      attachmentPreviewHandoffByMessageIdRef.current = next;
+      return next;
+    });
+
+    const existingTimeout = attachmentPreviewHandoffTimeoutByMessageIdRef.current[messageId];
+    if (typeof existingTimeout === "number") {
+      window.clearTimeout(existingTimeout);
+    }
+    attachmentPreviewHandoffTimeoutByMessageIdRef.current[messageId] = window.setTimeout(() => {
+      const currentPreviewUrls = attachmentPreviewHandoffByMessageIdRef.current[messageId];
+      if (currentPreviewUrls) {
+        for (const previewUrl of currentPreviewUrls) {
           revokeBlobPreviewUrl(previewUrl);
         }
       }
       setAttachmentPreviewHandoffByMessageId((existing) => {
-        const next = {
-          ...existing,
-          [messageId]: previewUrls,
-        };
+        if (!(messageId in existing)) return existing;
+        const next = { ...existing };
+        delete next[messageId];
         attachmentPreviewHandoffByMessageIdRef.current = next;
         return next;
       });
-
-      const existingTimeout =
-        attachmentPreviewHandoffTimeoutByMessageIdRef.current[messageId];
-      if (typeof existingTimeout === "number") {
-        window.clearTimeout(existingTimeout);
-      }
-      attachmentPreviewHandoffTimeoutByMessageIdRef.current[messageId] =
-        window.setTimeout(() => {
-          const currentPreviewUrls =
-            attachmentPreviewHandoffByMessageIdRef.current[messageId];
-          if (currentPreviewUrls) {
-            for (const previewUrl of currentPreviewUrls) {
-              revokeBlobPreviewUrl(previewUrl);
-            }
-          }
-          setAttachmentPreviewHandoffByMessageId((existing) => {
-            if (!(messageId in existing)) return existing;
-            const next = { ...existing };
-            delete next[messageId];
-            attachmentPreviewHandoffByMessageIdRef.current = next;
-            return next;
-          });
-          delete attachmentPreviewHandoffTimeoutByMessageIdRef.current[
-            messageId
-          ];
-        }, ATTACHMENT_PREVIEW_HANDOFF_TTL_MS);
-    },
-    [],
-  );
+      delete attachmentPreviewHandoffTimeoutByMessageIdRef.current[messageId];
+    }, ATTACHMENT_PREVIEW_HANDOFF_TTL_MS);
+  }, []);
   const serverMessages = activeThread?.messages;
   const timelineMessages = useMemo(() => {
     const messages = serverMessages ?? [];
@@ -905,8 +728,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             ) {
               return message;
             }
-            const handoffPreviewUrls =
-              attachmentPreviewHandoffByMessageId[message.id];
+            const handoffPreviewUrls = attachmentPreviewHandoffByMessageId[message.id];
             if (!handoffPreviewUrls || handoffPreviewUrls.length === 0) {
               return message;
             }
@@ -919,10 +741,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               }
               const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
               imageIndex += 1;
-              if (
-                !handoffPreviewUrl ||
-                attachment.previewUrl === handoffPreviewUrl
-              ) {
+              if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
                 return attachment;
               }
               changed = true;
@@ -938,28 +757,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (optimisticUserMessages.length === 0) {
       return serverMessagesWithPreviewHandoff;
     }
-    const serverIds = new Set(
-      serverMessagesWithPreviewHandoff.map((message) => message.id),
-    );
-    const pendingMessages = optimisticUserMessages.filter(
-      (message) => !serverIds.has(message.id),
-    );
+    const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
+    const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
     if (pendingMessages.length === 0) {
       return serverMessagesWithPreviewHandoff;
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [
-    serverMessages,
-    attachmentPreviewHandoffByMessageId,
-    optimisticUserMessages,
-  ]);
+  }, [serverMessages, attachmentPreviewHandoffByMessageId, optimisticUserMessages]);
   const timelineEntries = useMemo(
     () =>
-      deriveTimelineEntries(
-        timelineMessages,
-        activeThread?.proposedPlans ?? [],
-        workLogEntries,
-      ),
+      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -980,11 +787,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         continue;
       }
 
-      for (
-        let nextIndex = index + 1;
-        nextIndex < timelineEntries.length;
-        nextIndex += 1
-      ) {
+      for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
         const nextEntry = timelineEntries[nextIndex];
         if (!nextEntry || nextEntry.kind !== "message") {
           continue;
@@ -992,15 +795,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         if (nextEntry.message.role === "user") {
           break;
         }
-        const summary = turnDiffSummaryByAssistantMessageId.get(
-          nextEntry.message.id,
-        );
+        const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
         if (!summary) {
           continue;
         }
         const turnCount =
-          summary.checkpointTurnCount ??
-          inferredCheckpointTurnCountByTurnId[summary.turnId];
+          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
         if (typeof turnCount !== "number") {
           break;
         }
@@ -1010,11 +810,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     return byUserMessageId;
-  }, [
-    inferredCheckpointTurnCountByTurnId,
-    timelineEntries,
-    turnDiffSummaryByAssistantMessageId,
-  ]);
+  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
 
   const completionSummary = useMemo(() => {
     if (!latestTurnSettled) return null;
@@ -1022,10 +818,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!activeLatestTurn.completedAt) return null;
     if (!latestTurnHasToolActivity) return null;
 
-    const elapsed = formatElapsed(
-      activeLatestTurn.startedAt,
-      activeLatestTurn.completedAt,
-    );
+    const elapsed = formatElapsed(activeLatestTurn.startedAt, activeLatestTurn.completedAt);
     return elapsed ? `Worked for ${elapsed}` : null;
   }, [
     activeLatestTurn?.completedAt,
@@ -1066,16 +859,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
   const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
   const composerTriggerKind = composerTrigger?.kind ?? null;
-  const pathTriggerQuery =
-    composerTrigger?.kind === "path" ? composerTrigger.query : "";
+  const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
   const [debouncedPathQuery, composerPathQueryDebouncer] = useDebouncedValue(
     pathTriggerQuery,
     { wait: COMPOSER_PATH_QUERY_DEBOUNCE_MS },
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
-  const effectivePathQuery =
-    pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
+  const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const workspaceEntriesQuery = useQuery(
@@ -1086,8 +877,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       limit: 80,
     }),
   );
-  const workspaceEntries =
-    workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -1124,16 +914,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
-      ] satisfies ReadonlyArray<
-        Extract<ComposerCommandItem, { type: "slash-command" }>
-      >;
+      ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
         return [...slashCommandItems];
       }
       return slashCommandItems.filter(
-        (item) =>
-          item.command.includes(query) || item.label.slice(1).includes(query),
+        (item) => item.command.includes(query) || item.label.slice(1).includes(query),
       );
     }
 
@@ -1142,9 +929,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         const query = composerTrigger.query.trim().toLowerCase();
         if (!query) return true;
         return (
-          searchSlug.includes(query) ||
-          searchName.includes(query) ||
-          searchProvider.includes(query)
+          searchSlug.includes(query) || searchName.includes(query) || searchProvider.includes(query)
         );
       })
       .map(({ provider, providerLabel, slug, name }) => ({
@@ -1172,15 +957,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [nonPersistedComposerImageIds],
   );
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
-  const availableEditors =
-    serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
-  const providerStatuses =
-    serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
+  const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
+  const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
   const activeProvider = activeThread?.session?.provider ?? "codex";
   const activeProviderStatus = useMemo(
-    () =>
-      providerStatuses.find((status) => status.provider === activeProvider) ??
-      null,
+    () => providerStatuses.find((status) => status.provider === activeProvider) ?? null,
     [activeProvider, providerStatuses],
   );
   const activeProjectCwd = activeProject?.cwd ?? null;
@@ -1226,12 +1007,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const envLocked = Boolean(
     activeThread &&
-      (activeThread.messages.length > 0 ||
-        (activeThread.session !== null &&
-          activeThread.session.status !== "closed")),
+    (activeThread.messages.length > 0 ||
+      (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
-  const hasReachedTerminalLimit =
-    terminalState.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT;
+  const hasReachedTerminalLimit = terminalState.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT;
   const setThreadError = useCallback(
     (targetThreadId: ThreadId | null, error: string | null) => {
       if (!targetThreadId) return;
@@ -1354,13 +1133,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         terminalState.activeTerminalId ||
         terminalState.terminalIds[0] ||
         DEFAULT_THREAD_TERMINAL_ID;
-      const isBaseTerminalBusy =
-        terminalState.runningTerminalIds.includes(baseTerminalId);
-      const wantsNewTerminal =
-        Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
+      const isBaseTerminalBusy = terminalState.runningTerminalIds.includes(baseTerminalId);
+      const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
       const shouldCreateNewTerminal =
-        wantsNewTerminal &&
-        terminalState.terminalIds.length < MAX_THREAD_TERMINAL_COUNT;
+        wantsNewTerminal && terminalState.terminalIds.length < MAX_THREAD_TERMINAL_COUNT;
       const targetTerminalId = shouldCreateNewTerminal
         ? `terminal-${randomUUID()}`
         : baseTerminalId;
@@ -1377,26 +1153,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
         project: {
           cwd: activeProject.cwd,
         },
-        worktreePath:
-          options?.worktreePath ?? activeThread.worktreePath ?? null,
+        worktreePath: options?.worktreePath ?? activeThread.worktreePath ?? null,
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
-      const openTerminalInput: Parameters<typeof api.terminal.open>[0] =
-        shouldCreateNewTerminal
-          ? {
-              threadId: activeThreadId,
-              terminalId: targetTerminalId,
-              cwd: targetCwd,
-              env: runtimeEnv,
-              cols: SCRIPT_TERMINAL_COLS,
-              rows: SCRIPT_TERMINAL_ROWS,
-            }
-          : {
-              threadId: activeThreadId,
-              terminalId: targetTerminalId,
-              cwd: targetCwd,
-              env: runtimeEnv,
-            };
+      const openTerminalInput: Parameters<typeof api.terminal.open>[0] = shouldCreateNewTerminal
+        ? {
+            threadId: activeThreadId,
+            terminalId: targetTerminalId,
+            cwd: targetCwd,
+            env: runtimeEnv,
+            cols: SCRIPT_TERMINAL_COLS,
+            rows: SCRIPT_TERMINAL_ROWS,
+          }
+        : {
+            threadId: activeThreadId,
+            terminalId: targetTerminalId,
+            cwd: targetCwd,
+            env: runtimeEnv,
+          };
 
       try {
         await api.terminal.open(openTerminalInput);
@@ -1408,9 +1182,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       } catch (error) {
         setThreadError(
           activeThreadId,
-          error instanceof Error
-            ? error.message
-            : `Failed to run script "${script.name}".`,
+          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
         );
       }
     },
@@ -1477,9 +1249,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const nextScripts = input.runOnWorktreeCreate
         ? [
             ...activeProject.scripts.map((script) =>
-              script.runOnWorktreeCreate
-                ? { ...script, runOnWorktreeCreate: false }
-                : script,
+              script.runOnWorktreeCreate ? { ...script, runOnWorktreeCreate: false } : script,
             ),
             nextScript,
           ]
@@ -1499,9 +1269,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const updateProjectScript = useCallback(
     async (scriptId: string, input: NewProjectScriptInput) => {
       if (!activeProject) return;
-      const existingScript = activeProject.scripts.find(
-        (script) => script.id === scriptId,
-      );
+      const existingScript = activeProject.scripts.find((script) => script.id === scriptId);
       if (!existingScript) {
         throw new Error("Script not found.");
       }
@@ -1535,13 +1303,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const deleteProjectScript = useCallback(
     async (scriptId: string) => {
       if (!activeProject) return;
-      const nextScripts = activeProject.scripts.filter(
-        (script) => script.id !== scriptId,
-      );
+      const nextScripts = activeProject.scripts.filter((script) => script.id !== scriptId);
 
-      const deletedName = activeProject.scripts.find(
-        (s) => s.id === scriptId,
-      )?.name;
+      const deletedName = activeProject.scripts.find((s) => s.id === scriptId)?.name;
 
       try {
         await persistProjectScripts({
@@ -1560,10 +1324,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         toastManager.add({
           type: "error",
           title: "Could not delete action",
-          description:
-            error instanceof Error
-              ? error.message
-              : "An unexpected error occurred.",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
         });
       }
     },
@@ -1608,9 +1369,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ],
   );
   const toggleInteractionMode = useCallback(() => {
-    handleInteractionModeChange(
-      interactionMode === "plan" ? "default" : "plan",
-    );
+    handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
   const toggleRuntimeMode = useCallback(() => {
     void handleRuntimeModeChange(
@@ -1620,8 +1379,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
-        const turnKey =
-          activePlan?.turnId ?? activeProposedPlan?.turnId ?? null;
+        const turnKey = activePlan?.turnId ?? activeProposedPlan?.turnId ?? null;
         if (turnKey) {
           planSidebarDismissedForTurnRef.current = turnKey;
         }
@@ -1697,16 +1455,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   // Auto-scroll on new messages
   const messageCount = timelineMessages.length;
-  const scrollMessagesToBottom = useCallback(
-    (behavior: ScrollBehavior = "auto") => {
-      const scrollContainer = messagesScrollRef.current;
-      if (!scrollContainer) return;
-      scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior });
-      lastKnownScrollTopRef.current = scrollContainer.scrollTop;
-      shouldAutoScrollRef.current = true;
-    },
-    [],
-  );
+  const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const scrollContainer = messagesScrollRef.current;
+    if (!scrollContainer) return;
+    scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior });
+    lastKnownScrollTopRef.current = scrollContainer.scrollTop;
+    shouldAutoScrollRef.current = true;
+  }, []);
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
     if (pendingFrame === null) return;
@@ -1743,27 +1498,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
       };
 
       cancelPendingInteractionAnchorAdjustment();
-      pendingInteractionAnchorFrameRef.current = window.requestAnimationFrame(
-        () => {
-          pendingInteractionAnchorFrameRef.current = null;
-          const anchor = pendingInteractionAnchorRef.current;
-          pendingInteractionAnchorRef.current = null;
-          const activeScrollContainer = messagesScrollRef.current;
-          if (!anchor || !activeScrollContainer) return;
-          if (
-            !anchor.element.isConnected ||
-            !activeScrollContainer.contains(anchor.element)
-          )
-            return;
+      pendingInteractionAnchorFrameRef.current = window.requestAnimationFrame(() => {
+        pendingInteractionAnchorFrameRef.current = null;
+        const anchor = pendingInteractionAnchorRef.current;
+        pendingInteractionAnchorRef.current = null;
+        const activeScrollContainer = messagesScrollRef.current;
+        if (!anchor || !activeScrollContainer) return;
+        if (!anchor.element.isConnected || !activeScrollContainer.contains(anchor.element)) return;
 
-          const nextTop = anchor.element.getBoundingClientRect().top;
-          const delta = nextTop - anchor.top;
-          if (Math.abs(delta) < 0.5) return;
+        const nextTop = anchor.element.getBoundingClientRect().top;
+        const delta = nextTop - anchor.top;
+        if (Math.abs(delta) < 0.5) return;
 
-          activeScrollContainer.scrollTop += delta;
-          lastKnownScrollTopRef.current = activeScrollContainer.scrollTop;
-        },
-      );
+        activeScrollContainer.scrollTop += delta;
+        lastKnownScrollTopRef.current = activeScrollContainer.scrollTop;
+      });
     },
     [cancelPendingInteractionAnchorAdjustment],
   );
@@ -1771,11 +1520,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     cancelPendingStickToBottom();
     scrollMessagesToBottom();
     scheduleStickToBottom();
-  }, [
-    cancelPendingStickToBottom,
-    scheduleStickToBottom,
-    scrollMessagesToBottom,
-  ]);
+  }, [cancelPendingStickToBottom, scheduleStickToBottom, scrollMessagesToBottom]);
   const onMessagesScroll = useCallback(() => {
     const scrollContainer = messagesScrollRef.current;
     if (!scrollContainer) return;
@@ -1785,19 +1530,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!shouldAutoScrollRef.current && isNearBottom) {
       shouldAutoScrollRef.current = true;
       pendingUserScrollUpIntentRef.current = false;
-    } else if (
-      shouldAutoScrollRef.current &&
-      pendingUserScrollUpIntentRef.current
-    ) {
+    } else if (shouldAutoScrollRef.current && pendingUserScrollUpIntentRef.current) {
       const scrolledUp = currentScrollTop < lastKnownScrollTopRef.current - 1;
       if (scrolledUp) {
         shouldAutoScrollRef.current = false;
       }
       pendingUserScrollUpIntentRef.current = false;
-    } else if (
-      shouldAutoScrollRef.current &&
-      isPointerScrollActiveRef.current
-    ) {
+    } else if (shouldAutoScrollRef.current && isPointerScrollActiveRef.current) {
       const scrolledUp = currentScrollTop < lastKnownScrollTopRef.current - 1;
       if (scrolledUp) {
         shouldAutoScrollRef.current = false;
@@ -1812,58 +1551,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     lastKnownScrollTopRef.current = currentScrollTop;
   }, []);
-  const onMessagesWheel = useCallback(
-    (event: React.WheelEvent<HTMLDivElement>) => {
-      if (event.deltaY < 0) {
-        pendingUserScrollUpIntentRef.current = true;
-      }
-    },
-    [],
-  );
-  const onMessagesPointerDown = useCallback(
-    (_event: React.PointerEvent<HTMLDivElement>) => {
-      isPointerScrollActiveRef.current = true;
-    },
-    [],
-  );
-  const onMessagesPointerUp = useCallback(
-    (_event: React.PointerEvent<HTMLDivElement>) => {
-      isPointerScrollActiveRef.current = false;
-    },
-    [],
-  );
-  const onMessagesPointerCancel = useCallback(
-    (_event: React.PointerEvent<HTMLDivElement>) => {
-      isPointerScrollActiveRef.current = false;
-    },
-    [],
-  );
-  const onMessagesTouchStart = useCallback(
-    (event: React.TouchEvent<HTMLDivElement>) => {
-      const touch = event.touches[0];
-      if (!touch) return;
-      lastTouchClientYRef.current = touch.clientY;
-    },
-    [],
-  );
-  const onMessagesTouchMove = useCallback(
-    (event: React.TouchEvent<HTMLDivElement>) => {
-      const touch = event.touches[0];
-      if (!touch) return;
-      const previousTouchY = lastTouchClientYRef.current;
-      if (previousTouchY !== null && touch.clientY > previousTouchY + 1) {
-        pendingUserScrollUpIntentRef.current = true;
-      }
-      lastTouchClientYRef.current = touch.clientY;
-    },
-    [],
-  );
-  const onMessagesTouchEnd = useCallback(
-    (_event: React.TouchEvent<HTMLDivElement>) => {
-      lastTouchClientYRef.current = null;
-    },
-    [],
-  );
+  const onMessagesWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY < 0) {
+      pendingUserScrollUpIntentRef.current = true;
+    }
+  }, []);
+  const onMessagesPointerDown = useCallback((_event: React.PointerEvent<HTMLDivElement>) => {
+    isPointerScrollActiveRef.current = true;
+  }, []);
+  const onMessagesPointerUp = useCallback((_event: React.PointerEvent<HTMLDivElement>) => {
+    isPointerScrollActiveRef.current = false;
+  }, []);
+  const onMessagesPointerCancel = useCallback((_event: React.PointerEvent<HTMLDivElement>) => {
+    isPointerScrollActiveRef.current = false;
+  }, []);
+  const onMessagesTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    lastTouchClientYRef.current = touch.clientY;
+  }, []);
+  const onMessagesTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    const previousTouchY = lastTouchClientYRef.current;
+    if (previousTouchY !== null && touch.clientY > previousTouchY + 1) {
+      pendingUserScrollUpIntentRef.current = true;
+    }
+    lastTouchClientYRef.current = touch.clientY;
+  }, []);
+  const onMessagesTouchEnd = useCallback((_event: React.TouchEvent<HTMLDivElement>) => {
+    lastTouchClientYRef.current = null;
+  }, []);
   useEffect(() => {
     return () => {
       cancelPendingStickToBottom();
@@ -1901,22 +1619,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const [entry] = entries;
       if (!entry) return;
 
-      const nextCompact = shouldUseCompactComposerFooter(
-        measureComposerFormWidth(),
-        {
-          hasWideActions: composerFooterHasWideActions,
-        },
-      );
-      setIsComposerFooterCompact((previous) =>
-        previous === nextCompact ? previous : nextCompact,
-      );
+      const nextCompact = shouldUseCompactComposerFooter(measureComposerFormWidth(), {
+        hasWideActions: composerFooterHasWideActions,
+      });
+      setIsComposerFooterCompact((previous) => (previous === nextCompact ? previous : nextCompact));
 
       const nextHeight = entry.contentRect.height;
       const previousHeight = composerFormHeightRef.current;
       composerFormHeightRef.current = nextHeight;
 
-      if (previousHeight > 0 && Math.abs(nextHeight - previousHeight) < 0.5)
-        return;
+      if (previousHeight > 0 && Math.abs(nextHeight - previousHeight) < 0.5) return;
       if (!shouldAutoScrollRef.current) return;
       scheduleStickToBottom();
     });
@@ -1983,12 +1695,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (activeThread.messages.length === 0) {
       return;
     }
-    const serverIds = new Set(
-      activeThread.messages.map((message) => message.id),
-    );
-    const removedMessages = optimisticUserMessages.filter((message) =>
-      serverIds.has(message.id),
-    );
+    const serverIds = new Set(activeThread.messages.map((message) => message.id));
+    const removedMessages = optimisticUserMessages.filter((message) => serverIds.has(message.id));
     if (removedMessages.length === 0) {
       return;
     }
@@ -2008,18 +1716,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [
-    activeThread?.id,
-    activeThread?.messages,
-    handoffAttachmentPreviews,
-    optimisticUserMessages,
-  ]);
+  }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
 
   useEffect(() => {
     promptRef.current = prompt;
-    setComposerCursor((existing) =>
-      Math.min(Math.max(0, existing), prompt.length),
-    );
+    setComposerCursor((existing) => Math.min(Math.max(0, existing), prompt.length));
   }, [prompt]);
 
   useEffect(() => {
@@ -2033,9 +1734,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setSendStartedAt(null);
     setComposerHighlightedItemId(null);
     setComposerCursor(promptRef.current.length);
-    setComposerTrigger(
-      detectComposerTrigger(promptRef.current, promptRef.current.length),
-    );
+    setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
@@ -2049,20 +1748,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
       const getPersistedAttachmentsForThread = () =>
-        useComposerDraftStore.getState().draftsByThreadId[threadId]
-          ?.persistedAttachments ?? [];
+        useComposerDraftStore.getState().draftsByThreadId[threadId]?.persistedAttachments ?? [];
       try {
         const currentPersistedAttachments = getPersistedAttachmentsForThread();
         const existingPersistedById = new Map(
-          currentPersistedAttachments.map((attachment) => [
-            attachment.id,
-            attachment,
-          ]),
+          currentPersistedAttachments.map((attachment) => [attachment.id, attachment]),
         );
-        const stagedAttachmentById = new Map<
-          string,
-          PersistedComposerImageAttachment
-        >();
+        const stagedAttachmentById = new Map<string, PersistedComposerImageAttachment>();
         await Promise.all(
           composerImages.map(async (image) => {
             try {
@@ -2089,16 +1781,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         // Stage attachments in persisted draft state first so persist middleware can write them.
         syncComposerDraftPersistedAttachments(threadId, serialized);
       } catch {
-        const currentImageIds = new Set(
-          composerImages.map((image) => image.id),
-        );
+        const currentImageIds = new Set(composerImages.map((image) => image.id));
         const fallbackPersistedAttachments = getPersistedAttachmentsForThread();
         const fallbackPersistedIds = fallbackPersistedAttachments
           .map((attachment) => attachment.id)
           .filter((id) => currentImageIds.has(id));
         const fallbackPersistedIdSet = new Set(fallbackPersistedIds);
-        const fallbackAttachments = fallbackPersistedAttachments.filter(
-          (attachment) => fallbackPersistedIdSet.has(attachment.id),
+        const fallbackAttachments = fallbackPersistedAttachments.filter((attachment) =>
+          fallbackPersistedIdSet.has(attachment.id),
         );
         if (cancelled) {
           return;
@@ -2125,8 +1815,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return existing;
       }
       const nextIndex =
-        (existing.index + direction + existing.images.length) %
-        existing.images.length;
+        (existing.index + direction + existing.images.length) % existing.images.length;
       if (nextIndex === existing.index) {
         return existing;
       }
@@ -2182,13 +1871,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
   }, [phase]);
 
-  const beginSendPhase = useCallback(
-    (nextPhase: Exclude<SendPhase, "idle">) => {
-      setSendStartedAt((current) => current ?? new Date().toISOString());
-      setSendPhase(nextPhase);
-    },
-    [],
-  );
+  const beginSendPhase = useCallback((nextPhase: Exclude<SendPhase, "idle">) => {
+    setSendStartedAt((current) => current ?? new Date().toISOString());
+    setSendPhase(nextPhase);
+  }, []);
 
   const resetSendPhase = useCallback(() => {
     setSendPhase("idle");
@@ -2242,8 +1928,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const isTerminalFocused = (): boolean => {
       const activeElement = document.activeElement;
       if (!(activeElement instanceof HTMLElement)) return false;
-      if (activeElement.classList.contains("xterm-helper-textarea"))
-        return true;
+      if (activeElement.classList.contains("xterm-helper-textarea")) return true;
       return activeElement.closest(".thread-terminal-drawer .xterm") !== null;
     };
 
@@ -2303,9 +1988,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
-      const script = activeProject.scripts.find(
-        (entry) => entry.id === scriptId,
-      );
+      const script = activeProject.scripts.find((entry) => entry.id === scriptId);
       if (!script) return;
       event.preventDefault();
       event.stopPropagation();
@@ -2410,10 +2093,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     event.preventDefault();
     const nextTarget = event.relatedTarget;
-    if (
-      nextTarget instanceof Node &&
-      event.currentTarget.contains(nextTarget)
-    ) {
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
       return;
     }
     dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
@@ -2440,10 +2120,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!api || !activeThread || isRevertingCheckpoint) return;
 
       if (phase === "running" || isSendBusy || isConnecting) {
-        setThreadError(
-          activeThread.id,
-          "Interrupt the current turn before reverting checkpoints.",
-        );
+        setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
         return;
       }
       const confirmed = await api.dialogs.confirm(
@@ -2475,27 +2152,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       setIsRevertingCheckpoint(false);
     },
-    [
-      activeThread,
-      isConnecting,
-      isRevertingCheckpoint,
-      isSendBusy,
-      phase,
-      setThreadError,
-    ],
+    [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
-    if (
-      !api ||
-      !activeThread ||
-      isSendBusy ||
-      isConnecting ||
-      sendInFlightRef.current
-    )
-      return;
+    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -2518,9 +2181,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     const standaloneSlashCommand =
-      composerImages.length === 0
-        ? parseStandaloneComposerSlashCommand(trimmed)
-        : null;
+      composerImages.length === 0 ? parseStandaloneComposerSlashCommand(trimmed) : null;
     if (standaloneSlashCommand) {
       await handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
@@ -2533,8 +2194,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!trimmed && composerImages.length === 0) return;
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
-    const isFirstMessage =
-      !isServerThread || activeThread.messages.length === 0;
+    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
         ? activeThread.branch
@@ -2553,9 +2213,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
-    beginSendPhase(
-      baseBranchForWorktree ? "preparing-worktree" : "sending-turn",
-    );
+    beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
 
     const composerImagesSnapshot = [...composerImages];
     const messageIdForSend = newMessageId();
@@ -2583,9 +2241,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         id: messageIdForSend,
         role: "user",
         text: trimmed,
-        ...(optimisticAttachments.length > 0
-          ? { attachments: optimisticAttachments }
-          : {}),
+        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
         createdAt: messageCreatedAt,
         streaming: false,
       },
@@ -2627,11 +2283,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           });
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
-          setStoreThreadBranch(
-            threadIdForSend,
-            result.worktree.branch,
-            result.worktree.path,
-          );
+          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
         }
       }
 
@@ -2652,9 +2304,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       const title = truncateTitle(titleSeed);
       let threadCreateModel: ModelSlug =
-        selectedModel ||
-        (activeProject.model as ModelSlug) ||
-        DEFAULT_MODEL_BY_PROVIDER.codex;
+        selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
 
       if (isLocalDraftThread) {
         await api.orchestration.dispatchCommand({
@@ -2735,13 +2385,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ...(selectedModelOptionsForDispatch
           ? { modelOptions: selectedModelOptionsForDispatch }
           : {}),
-        ...(providerOptionsForDispatch
-          ? { providerOptions: providerOptionsForDispatch }
-          : {}),
+        ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
         provider: selectedProvider,
-        assistantDeliveryMode: settings.enableAssistantStreaming
-          ? "streaming"
-          : "buffered",
+        assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
         interactionMode,
         createdAt: messageCreatedAt,
@@ -2763,23 +2409,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
         composerImagesRef.current.length === 0
       ) {
         setOptimisticUserMessages((existing) => {
-          const removed = existing.filter(
-            (message) => message.id === messageIdForSend,
-          );
+          const removed = existing.filter((message) => message.id === messageIdForSend);
           for (const message of removed) {
             revokeUserMessagePreviewUrls(message);
           }
-          const next = existing.filter(
-            (message) => message.id !== messageIdForSend,
-          );
+          const next = existing.filter((message) => message.id !== messageIdForSend);
           return next.length === existing.length ? existing : next;
         });
         promptRef.current = trimmed;
         setPrompt(trimmed);
         setComposerCursor(trimmed.length);
-        addComposerImagesToDraft(
-          composerImagesSnapshot.map(cloneComposerImageForRetry),
-        );
+        addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
         setComposerTrigger(detectComposerTrigger(trimmed, trimmed.length));
       }
       setThreadError(
@@ -2805,10 +2445,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   };
 
   const onRespondToApproval = useCallback(
-    async (
-      requestId: ApprovalRequestId,
-      decision: ProviderApprovalDecision,
-    ) => {
+    async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
       const api = readNativeApi();
       if (!api || !activeThreadId) return;
 
@@ -2827,14 +2464,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         .catch((err: unknown) => {
           setStoreThreadError(
             activeThreadId,
-            err instanceof Error
-              ? err.message
-              : "Failed to submit approval decision.",
+            err instanceof Error ? err.message : "Failed to submit approval decision.",
           );
         });
-      setRespondingRequestIds((existing) =>
-        existing.filter((id) => id !== requestId),
-      );
+      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
     [activeThreadId, setStoreThreadError],
   );
@@ -2862,9 +2495,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             err instanceof Error ? err.message : "Failed to submit user input.",
           );
         });
-      setRespondingUserInputRequestIds((existing) =>
-        existing.filter((id) => id !== requestId),
-      );
+      setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
     [activeThreadId, setStoreThreadError],
   );
@@ -2905,12 +2536,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const onChangeActivePendingUserInputCustomAnswer = useCallback(
-    (
-      questionId: string,
-      value: string,
-      nextCursor: number,
-      cursorAdjacentToMention: boolean,
-    ) => {
+    (questionId: string, value: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
       if (!activePendingUserInput) {
         return;
       }
@@ -2929,10 +2555,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerTrigger(
         cursorAdjacentToMention
           ? null
-          : detectComposerTrigger(
-              value,
-              expandCollapsedComposerCursor(value, nextCursor),
-            ),
+          : detectComposerTrigger(value, expandCollapsedComposerCursor(value, nextCursor)),
       );
     },
     [activePendingUserInput],
@@ -2944,16 +2567,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     if (activePendingProgress.isLastQuestion) {
       if (activePendingResolvedAnswers) {
-        void onRespondToUserInput(
-          activePendingUserInput.requestId,
-          activePendingResolvedAnswers,
-        );
+        void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
       }
       return;
     }
-    setActivePendingUserInputQuestionIndex(
-      activePendingProgress.questionIndex + 1,
-    );
+    setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
   }, [
     activePendingProgress,
     activePendingResolvedAnswers,
@@ -2966,9 +2584,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!activePendingProgress) {
       return;
     }
-    setActivePendingUserInputQuestionIndex(
-      Math.max(activePendingProgress.questionIndex - 1, 0),
-    );
+    setActivePendingUserInputQuestionIndex(Math.max(activePendingProgress.questionIndex - 1, 0));
   }, [activePendingProgress, setActivePendingUserInputQuestionIndex]);
 
   const onSubmitPlanFollowUp = useCallback(
@@ -3044,12 +2660,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
-          ...(providerOptionsForDispatch
-            ? { providerOptions: providerOptionsForDispatch }
-            : {}),
-          assistantDeliveryMode: settings.enableAssistantStreaming
-            ? "streaming"
-            : "buffered",
+          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: nextInteractionMode,
           createdAt: messageCreatedAt,
@@ -3113,9 +2725,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const nextThreadId = newThreadId();
     const planMarkdown = activeProposedPlan.planMarkdown;
     const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
-    const nextThreadTitle = truncateTitle(
-      buildPlanImplementationThreadTitle(planMarkdown),
-    );
+    const nextThreadTitle = truncateTitle(buildPlanImplementationThreadTitle(planMarkdown));
     const nextThreadModel: ModelSlug =
       selectedModel ||
       (activeThread.model as ModelSlug) ||
@@ -3159,12 +2769,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
-          ...(providerOptionsForDispatch
-            ? { providerOptions: providerOptionsForDispatch }
-            : {}),
-          assistantDeliveryMode: settings.enableAssistantStreaming
-            ? "streaming"
-            : "buffered",
+          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: "default",
           createdAt,
@@ -3198,9 +2804,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           type: "error",
           title: "Could not start implementation thread",
           description:
-            err instanceof Error
-              ? err.message
-              : "An error occurred while creating the new thread.",
+            err instanceof Error ? err.message : "An error occurred while creating the new thread.",
         });
       })
       .then(finish, finish);
@@ -3267,12 +2871,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       scheduleComposerFocus();
     },
-    [
-      isLocalDraftThread,
-      scheduleComposerFocus,
-      setDraftThreadContext,
-      threadId,
-    ],
+    [isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext, threadId],
   );
 
   const applyPromptReplacement = useCallback(
@@ -3284,22 +2883,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ): boolean => {
       const currentText = promptRef.current;
       const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
-      const safeEnd = Math.max(
-        safeStart,
-        Math.min(currentText.length, rangeEnd),
-      );
+      const safeEnd = Math.max(safeStart, Math.min(currentText.length, rangeEnd));
       if (
         options?.expectedText !== undefined &&
         currentText.slice(safeStart, safeEnd) !== options.expectedText
       ) {
         return false;
       }
-      const next = replaceTextRange(
-        promptRef.current,
-        rangeStart,
-        rangeEnd,
-        replacement,
-      );
+      const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
       promptRef.current = next.text;
       const activePendingQuestion = activePendingProgress?.activeQuestion;
       if (activePendingQuestion && activePendingUserInput) {
@@ -3308,9 +2899,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           [activePendingUserInput.requestId]: {
             ...existing[activePendingUserInput.requestId],
             [activePendingQuestion.id]: setPendingUserInputCustomAnswer(
-              existing[activePendingUserInput.requestId]?.[
-                activePendingQuestion.id
-              ],
+              existing[activePendingUserInput.requestId]?.[activePendingQuestion.id],
               next.text,
             ),
           },
@@ -3344,10 +2933,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     trigger: ComposerTrigger | null;
   } => {
     const snapshot = readComposerSnapshot();
-    const expandedCursor = expandCollapsedComposerCursor(
-      snapshot.value,
-      snapshot.cursor,
-    );
+    const expandedCursor = expandCollapsedComposerCursor(snapshot.value, snapshot.cursor);
     return {
       snapshot,
       trigger: detectComposerTrigger(snapshot.value, expandedCursor),
@@ -3363,10 +2949,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
-      const expectedToken = snapshot.value.slice(
-        trigger.rangeStart,
-        trigger.rangeEnd,
-      );
+      const expectedToken = snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd);
       if (item.type === "path") {
         const applied = applyPromptReplacement(
           trigger.rangeStart,
@@ -3381,44 +2964,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       if (item.type === "slash-command") {
         if (item.command === "model") {
-          const applied = applyPromptReplacement(
-            trigger.rangeStart,
-            trigger.rangeEnd,
-            "/model ",
-            {
-              expectedText: expectedToken,
-            },
-          );
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/model ", {
+            expectedText: expectedToken,
+          });
           if (applied) {
             setComposerHighlightedItemId(null);
           }
           return;
         }
-        void handleInteractionModeChange(
-          item.command === "plan" ? "plan" : "default",
-        );
-        const applied = applyPromptReplacement(
-          trigger.rangeStart,
-          trigger.rangeEnd,
-          "",
-          {
-            expectedText: expectedToken,
-          },
-        );
+        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: expectedToken,
+        });
         if (applied) {
           setComposerHighlightedItemId(null);
         }
         return;
       }
       onProviderModelSelect(item.provider, item.model);
-      const applied = applyPromptReplacement(
-        trigger.rangeStart,
-        trigger.rangeEnd,
-        "",
-        {
-          expectedText: expectedToken,
-        },
-      );
+      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+        expectedText: expectedToken,
+      });
       if (applied) {
         setComposerHighlightedItemId(null);
       }
@@ -3445,8 +3011,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         highlightedIndex >= 0 ? highlightedIndex : key === "ArrowDown" ? -1 : 0;
       const offset = key === "ArrowDown" ? 1 : -1;
       const nextIndex =
-        (normalizedIndex + offset + composerMenuItems.length) %
-        composerMenuItems.length;
+        (normalizedIndex + offset + composerMenuItems.length) % composerMenuItems.length;
       const nextItem = composerMenuItems[nextIndex];
       setComposerHighlightedItemId(nextItem?.id ?? null);
     },
@@ -3454,17 +3019,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const isComposerMenuLoading =
     composerTriggerKind === "path" &&
-    ((pathTriggerQuery.length > 0 &&
-      composerPathQueryDebouncer.state.isPending) ||
+    ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
       workspaceEntriesQuery.isLoading ||
       workspaceEntriesQuery.isFetching);
 
   const onPromptChange = useCallback(
-    (
-      nextPrompt: string,
-      nextCursor: number,
-      cursorAdjacentToMention: boolean,
-    ) => {
+    (nextPrompt: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
       if (activePendingProgress?.activeQuestion && activePendingUserInput) {
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
@@ -3517,8 +3077,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return true;
       }
       if (key === "Tab" || key === "Enter") {
-        const selectedItem =
-          activeComposerMenuItemRef.current ?? currentItems[0];
+        const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
         if (selectedItem) {
           onSelectComposerItem(selectedItem);
           return true;
@@ -3541,9 +3100,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
-  const expandedImageItem = expandedImage
-    ? expandedImage.images[expandedImage.index]
-    : null;
+  const expandedImageItem = expandedImage ? expandedImage.images[expandedImage.index] : null;
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
       void navigate({
@@ -3575,24 +3132,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
           <header className="border-b border-border px-3 py-2 md:hidden">
             <div className="flex items-center gap-2">
               <SidebarTrigger className="size-7 shrink-0" />
-              <span className="text-sm font-medium text-foreground">
-                Threads
-              </span>
+              <span className="text-sm font-medium text-foreground">Threads</span>
             </div>
           </header>
         )}
         {isElectron && (
           <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
-            <span className="text-xs text-muted-foreground/50">
-              No active thread
-            </span>
+            <span className="text-xs text-muted-foreground/50">No active thread</span>
           </div>
         )}
         <div className="flex flex-1 items-center justify-center">
           <div className="text-center">
-            <p className="text-sm">
-              Select a thread or create a new one to get started.
-            </p>
+            <p className="text-sm">Select a thread or create a new one to get started.</p>
           </div>
         </div>
       </div>
@@ -3605,9 +3156,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       <header
         className={cn(
           "border-b border-border px-3 sm:px-5",
-          isElectron
-            ? "drag-region flex h-[52px] items-center"
-            : "py-2 sm:py-3",
+          isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
         )}
       >
         <ChatHeader
@@ -3618,9 +3167,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
           preferredScriptId={
-            activeProject
-              ? (lastInvokedScriptByProjectId[activeProject.id] ?? null)
-              : null
+            activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
           }
           keybindings={keybindings}
           availableEditors={availableEditors}
@@ -3672,9 +3219,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               timelineEntries={timelineEntries}
               completionDividerBeforeEntryId={completionDividerBeforeEntryId}
               completionSummary={completionSummary}
-              turnDiffSummaryByAssistantMessageId={
-                turnDiffSummaryByAssistantMessageId
-              }
+              turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
               nowIso={nowIso}
               expandedWorkGroups={expandedWorkGroups}
               onToggleWorkGroup={onToggleWorkGroup}
@@ -3690,12 +3235,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           </div>
 
           {/* Input bar */}
-          <div
-            className={cn(
-              "px-3 pt-1.5 sm:px-5 sm:pt-2",
-              isGitRepo ? "pb-1" : "pb-3 sm:pb-4",
-            )}
-          >
+          <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
             <form
               ref={composerFormRef}
               onSubmit={onSend}
@@ -3704,9 +3244,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             >
               <div
                 className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring/45 ${
-                  isDragOverComposer
-                    ? "border-primary/70 bg-accent/30"
-                    : "border-border"
+                  isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"
                 }`}
                 onDragEnter={onComposerDragEnter}
                 onDragOver={onComposerDragOver}
@@ -3735,10 +3273,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                     <ComposerPlanFollowUpBanner
                       key={activeProposedPlan.id}
-                      planTitle={
-                        proposedPlanTitle(activeProposedPlan.planMarkdown) ??
-                        null
-                      }
+                      planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
                     />
                   </div>
                 ) : null}
@@ -3815,8 +3350,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   side="top"
                                   className="max-w-64 whitespace-normal leading-tight"
                                 >
-                                  Draft attachment could not be saved locally
-                                  and may be lost on navigation.
+                                  Draft attachment could not be saved locally and may be lost on
+                                  navigation.
                                 </TooltipPopup>
                               </Tooltip>
                             )}
@@ -3867,9 +3402,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
                     <ComposerPendingApprovalActions
                       requestId={activePendingApproval.requestId}
-                      isResponding={respondingRequestIds.includes(
-                        activePendingApproval.requestId,
-                      )}
+                      isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
                       onRespondToApproval={onRespondToApproval}
                     />
                   </div>
@@ -3903,17 +3436,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
                       {isComposerFooterCompact ? (
                         <CompactComposerControlsMenu
-                          activePlan={Boolean(
-                            activePlan || activeProposedPlan || planSidebarOpen,
-                          )}
+                          activePlan={Boolean(activePlan || activeProposedPlan || planSidebarOpen)}
                           interactionMode={interactionMode}
                           planSidebarOpen={planSidebarOpen}
                           runtimeMode={runtimeMode}
                           selectedEffort={selectedEffort}
                           selectedProvider={selectedProvider}
-                          selectedCodexFastModeEnabled={
-                            selectedCodexFastModeEnabled
-                          }
+                          selectedCodexFastModeEnabled={selectedCodexFastModeEnabled}
                           reasoningOptions={reasoningOptions}
                           onEffortSelect={onEffortSelect}
                           onCodexFastModeChange={onCodexFastModeChange}
@@ -3923,8 +3452,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         />
                       ) : (
                         <>
-                          {selectedProvider === "codex" &&
-                          selectedEffort != null ? (
+                          {selectedProvider === "codex" && selectedEffort != null ? (
                             <>
                               <Separator
                                 orientation="vertical"
@@ -3975,9 +3503,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             type="button"
                             onClick={() =>
                               void handleRuntimeModeChange(
-                                runtimeMode === "full-access"
-                                  ? "approval-required"
-                                  : "full-access",
+                                runtimeMode === "full-access" ? "approval-required" : "full-access",
                               )
                             }
                             title={
@@ -3986,21 +3512,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 : "Approval required — click for full access"
                             }
                           >
-                            {runtimeMode === "full-access" ? (
-                              <LockOpenIcon />
-                            ) : (
-                              <LockIcon />
-                            )}
+                            {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
                             <span className="sr-only sm:not-sr-only">
-                              {runtimeMode === "full-access"
-                                ? "Full access"
-                                : "Supervised"}
+                              {runtimeMode === "full-access" ? "Full access" : "Supervised"}
                             </span>
                           </Button>
 
-                          {activePlan ||
-                          activeProposedPlan ||
-                          planSidebarOpen ? (
+                          {activePlan || activeProposedPlan || planSidebarOpen ? (
                             <>
                               <Separator
                                 orientation="vertical"
@@ -4017,16 +3535,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 size="sm"
                                 type="button"
                                 onClick={togglePlanSidebar}
-                                title={
-                                  planSidebarOpen
-                                    ? "Hide plan sidebar"
-                                    : "Show plan sidebar"
-                                }
+                                title={planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
                               >
                                 <ListTodoIcon />
-                                <span className="sr-only sm:not-sr-only">
-                                  Plan
-                                </span>
+                                <span className="sr-only sm:not-sr-only">Plan</span>
                               </Button>
                             </>
                           ) : null}
@@ -4101,9 +3613,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               className="h-9 rounded-full px-4 sm:h-8"
                               disabled={isSendBusy || isConnecting}
                             >
-                              {isConnecting || isSendBusy
-                                ? "Sending..."
-                                : "Refine"}
+                              {isConnecting || isSendBusy ? "Sending..." : "Refine"}
                             </Button>
                           ) : (
                             <div className="flex items-center">
@@ -4113,9 +3623,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
                                 disabled={isSendBusy || isConnecting}
                               >
-                                {isConnecting || isSendBusy
-                                  ? "Sending..."
-                                  : "Implement"}
+                                {isConnecting || isSendBusy ? "Sending..." : "Implement"}
                               </Button>
                               <Menu>
                                 <MenuTrigger
@@ -4134,9 +3642,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 <MenuPopup align="end" side="top">
                                   <MenuItem
                                     disabled={isSendBusy || isConnecting}
-                                    onClick={() =>
-                                      void onImplementPlanInNewThread()
-                                    }
+                                    onClick={() => void onImplementPlanInNewThread()}
                                   >
                                     Implement in new thread
                                   </MenuItem>
@@ -4247,8 +3753,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             onClose={() => {
               setPlanSidebarOpen(false);
               // Track that the user explicitly dismissed for this turn so auto-open won't fight them.
-              const turnKey =
-                activePlan?.turnId ?? activeProposedPlan?.turnId ?? null;
+              const turnKey = activePlan?.turnId ?? activeProposedPlan?.turnId ?? null;
               if (turnKey) {
                 planSidebarDismissedForTurnRef.current = turnKey;
               }

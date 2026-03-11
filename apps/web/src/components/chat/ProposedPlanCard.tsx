@@ -63,9 +63,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       });
       return;
     }
-    setSavePath((existing) =>
-      existing.length > 0 ? existing : downloadFilename,
-    );
+    setSavePath((existing) => (existing.length > 0 ? existing : downloadFilename));
     setIsSaveDialogOpen(true);
   };
 
@@ -102,10 +100,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         toastManager.add({
           type: "error",
           title: "Could not save plan",
-          description:
-            error instanceof Error
-              ? error.message
-              : "An error occurred while saving.",
+          description: error instanceof Error ? error.message : "An error occurred while saving.",
         });
       })
       .then(
@@ -123,52 +118,28 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Badge variant="secondary">Plan</Badge>
-          <p className="truncate text-sm font-medium text-foreground">
-            {title}
-          </p>
+          <p className="truncate text-sm font-medium text-foreground">{title}</p>
         </div>
         <Menu>
           <MenuTrigger
-            render={
-              <Button
-                aria-label="Plan actions"
-                size="icon-xs"
-                variant="outline"
-              />
-            }
+            render={<Button aria-label="Plan actions" size="icon-xs" variant="outline" />}
           >
             <EllipsisIcon aria-hidden="true" className="size-4" />
           </MenuTrigger>
           <MenuPopup align="end">
             <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
-            <MenuItem
-              onClick={openSaveDialog}
-              disabled={!workspaceRoot || isSavingToWorkspace}
-            >
+            <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
               Save to workspace
             </MenuItem>
           </MenuPopup>
         </Menu>
       </div>
       <div className="mt-4">
-        <div
-          className={cn(
-            "relative",
-            canCollapse && !expanded && "max-h-104 overflow-hidden",
-          )}
-        >
+        <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
           {canCollapse && !expanded ? (
-            <ChatMarkdown
-              text={collapsedPreview ?? ""}
-              cwd={cwd}
-              isStreaming={false}
-            />
+            <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
           ) : (
-            <ChatMarkdown
-              text={displayedPlanMarkdown}
-              cwd={cwd}
-              isStreaming={false}
-            />
+            <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
           )}
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
@@ -200,15 +171,12 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           <DialogHeader>
             <DialogTitle>Save plan to workspace</DialogTitle>
             <DialogDescription>
-              Enter a path relative to{" "}
-              <code>{workspaceRoot ?? "the workspace"}</code>.
+              Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-3">
             <label htmlFor={savePathInputId} className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">
-                Workspace path
-              </span>
+              <span className="text-xs font-medium text-foreground">Workspace path</span>
               <Input
                 id={savePathInputId}
                 value={savePath}

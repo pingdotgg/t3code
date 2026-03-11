@@ -1,10 +1,7 @@
 import { type TurnId } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
-import {
-  buildTurnDiffTree,
-  type TurnDiffTreeNode,
-} from "../../lib/turnDiffTree";
+import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
 import { ChevronRightIcon, FolderIcon, FolderClosedIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
@@ -17,13 +14,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
-  const {
-    files,
-    allDirectoriesExpanded,
-    onOpenTurnDiff,
-    resolvedTheme,
-    turnId,
-  } = props;
+  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -37,27 +28,19 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       ),
     [allDirectoriesExpanded, directoryPathsKey],
   );
-  const [expandedDirectories, setExpandedDirectories] = useState<
-    Record<string, boolean>
-  >(() =>
-    buildDirectoryExpansionState(
-      directoryPathsKey ? directoryPathsKey.split("\u0000") : [],
-      true,
-    ),
+  const [expandedDirectories, setExpandedDirectories] = useState<Record<string, boolean>>(() =>
+    buildDirectoryExpansionState(directoryPathsKey ? directoryPathsKey.split("\u0000") : [], true),
   );
   useEffect(() => {
     setExpandedDirectories(allDirectoryExpansionState);
   }, [allDirectoryExpansionState]);
 
-  const toggleDirectory = useCallback(
-    (pathValue: string, fallbackExpanded: boolean) => {
-      setExpandedDirectories((current) => ({
-        ...current,
-        [pathValue]: !(current[pathValue] ?? fallbackExpanded),
-      }));
-    },
-    [],
-  );
+  const toggleDirectory = useCallback((pathValue: string, fallbackExpanded: boolean) => {
+    setExpandedDirectories((current) => ({
+      ...current,
+      [pathValue]: !(current[pathValue] ?? fallbackExpanded),
+    }));
+  }, []);
 
   const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
     const leftPadding = 8 + depth * 14;
@@ -88,18 +71,13 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             </span>
             {hasNonZeroStat(node.stat) && (
               <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
-                <DiffStatLabel
-                  additions={node.stat.additions}
-                  deletions={node.stat.deletions}
-                />
+                <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
               </span>
             )}
           </button>
           {isExpanded && (
             <div className="space-y-0.5">
-              {node.children.map((childNode) =>
-                renderTreeNode(childNode, depth + 1),
-              )}
+              {node.children.map((childNode) => renderTreeNode(childNode, depth + 1))}
             </div>
           )}
         </div>
@@ -126,26 +104,17 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         </span>
         {node.stat && (
           <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
-            <DiffStatLabel
-              additions={node.stat.additions}
-              deletions={node.stat.deletions}
-            />
+            <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
         )}
       </button>
     );
   };
 
-  return (
-    <div className="space-y-0.5">
-      {treeNodes.map((node) => renderTreeNode(node, 0))}
-    </div>
-  );
+  return <div className="space-y-0.5">{treeNodes.map((node) => renderTreeNode(node, 0))}</div>;
 });
 
-function collectDirectoryPaths(
-  nodes: ReadonlyArray<TurnDiffTreeNode>,
-): string[] {
+function collectDirectoryPaths(nodes: ReadonlyArray<TurnDiffTreeNode>): string[] {
   const paths: string[] = [];
   for (const node of nodes) {
     if (node.kind !== "directory") continue;
