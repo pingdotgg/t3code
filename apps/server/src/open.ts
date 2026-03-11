@@ -6,7 +6,7 @@
  *
  * @module Open
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
@@ -37,6 +37,8 @@ interface CommandAvailabilityOptions {
   readonly env?: NodeJS.ProcessEnv;
 }
 
+type MacApplicationAvailabilityChecker = (appName: string) => boolean;
+
 const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 
 function shouldUseGotoFlag(editorId: EditorId, target: string): boolean {
@@ -53,6 +55,17 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
       return "explorer";
     default:
       return "xdg-open";
+  }
+}
+
+function macApplicationNameForEditor(editorId: EditorId): string | null {
+  switch (editorId) {
+    case "terminal":
+      return "Terminal";
+    case "iterm2":
+      return "iTerm";
+    default:
+      return null;
   }
 }
 
@@ -161,13 +174,31 @@ export function isCommandAvailable(
   return false;
 }
 
+function isMacApplicationAvailable(appName: string): boolean {
+  const result = spawnSync(
+    "osascript",
+    ["-e", `id of application "${appName}"`],
+    { stdio: "pipe" },
+  );
+  return result.status === 0;
+}
+
 export function resolveAvailableEditors(
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
+  macApplicationAvailable: MacApplicationAvailabilityChecker = isMacApplicationAvailable,
 ): ReadonlyArray<EditorId> {
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
+    const macApplicationName = macApplicationNameForEditor(editor.id);
+    if (macApplicationName) {
+      if (platform === "darwin" && macApplicationAvailable(macApplicationName)) {
+        available.push(editor.id);
+      }
+      continue;
+    }
+
     const command = editor.command ?? fileManagerCommandForPlatform(platform);
     if (isCommandAvailable(command, { platform, env })) {
       available.push(editor.id);
@@ -216,6 +247,14 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
     return shouldUseGotoFlag(editorDef.id, input.cwd)
       ? { command: editorDef.command, args: ["--goto", input.cwd] }
       : { command: editorDef.command, args: [input.cwd] };
+  }
+
+  const macApplicationName = macApplicationNameForEditor(editorDef.id);
+  if (macApplicationName) {
+    if (platform !== "darwin") {
+      return yield* new OpenError({ message: `Unsupported editor on ${platform}: ${input.editor}` });
+    }
+    return { command: "open", args: ["-a", macApplicationName, input.cwd] };
   }
 
   if (editorDef.id !== "file-manager") {
