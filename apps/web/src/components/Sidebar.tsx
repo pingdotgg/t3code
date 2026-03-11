@@ -9,7 +9,6 @@ import {
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
-  SearchIcon,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
