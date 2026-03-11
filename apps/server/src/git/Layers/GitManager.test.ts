@@ -307,9 +307,10 @@ function runStackedAction(
   manager: GitManagerShape,
   input: {
     cwd: string;
-    action: "commit" | "commit_push" | "commit_push_pr";
+    action: "commit" | "commit_push" | "commit_push_pr" | "promote";
     commitMessage?: string;
     featureBranch?: boolean;
+    targetBranch?: string;
   },
 ) {
   return manager.runStackedAction(input);
@@ -554,6 +555,47 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           Effect.map((result) => result.stdout.trim()),
         ),
       ).toContain("- details from user");
+    }),
+  );
+
+  it.effect("promote uses generated commit flow before merge", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/promote-flow"]);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\npromote-flow\n");
+      let generatedCount = 0;
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: () =>
+            Effect.sync(() => {
+              generatedCount += 1;
+              return {
+                subject: "refactor(git): align promote commit flow",
+                body: "",
+              };
+            }),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "promote",
+        targetBranch: "main",
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(result.commit.subject).toBe("refactor(git): align promote commit flow");
+      expect(result.promote.status).toBe("promoted");
+      expect(generatedCount).toBe(1);
+      expect(
+        yield* runGit(repoDir, ["log", "main", "--format=%s"]).pipe(
+          Effect.map((gitResult) => gitResult.stdout),
+        ),
+      ).toContain("refactor(git): align promote commit flow");
     }),
   );
 

@@ -112,6 +112,13 @@ interface CommitAndBranchSuggestion {
   commitMessage: string;
 }
 
+interface PreparedCommitExecution {
+  branchStep: { status: "created" | "skipped_not_requested"; name?: string };
+  currentBranch: string | null;
+  commitMessage?: string;
+  preResolvedCommitSuggestion?: CommitAndBranchSuggestion;
+}
+
 function formatCommitMessage(subject: string, body: string): string {
   const trimmedBody = body.trim();
   if (trimmedBody.length === 0) {
@@ -344,6 +351,28 @@ export const makeGitManager = Effect.gen(function* () {
       };
     });
 
+  const runCommitPushStep = (input: {
+    cwd: string;
+    branch: string | null;
+    commitMessage?: string;
+    preResolvedCommitSuggestion?: CommitAndBranchSuggestion;
+    wantsPush: boolean;
+  }) =>
+    Effect.gen(function* () {
+      const commit = yield* runCommitStep(
+        input.cwd,
+        input.branch,
+        input.commitMessage,
+        input.preResolvedCommitSuggestion,
+      );
+
+      const push = input.wantsPush
+        ? yield* gitCore.pushCurrentBranch(input.cwd, input.branch)
+        : { status: "skipped_not_requested" as const };
+
+      return { commit, push };
+    });
+
   const runPrStep = (cwd: string, fallbackBranch: string | null) =>
     Effect.gen(function* () {
       const details = yield* gitCore.statusDetails(cwd);
@@ -475,6 +504,32 @@ export const makeGitManager = Effect.gen(function* () {
       };
     });
 
+  const prepareCommitExecution = (
+    cwd: string,
+    initialBranch: string | null,
+    input: {
+      featureBranch?: boolean;
+      commitMessage?: string;
+    },
+  ) =>
+    Effect.gen(function* () {
+      if (!input.featureBranch) {
+        return {
+          branchStep: { status: "skipped_not_requested" as const },
+          currentBranch: initialBranch,
+          ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+        };
+      }
+
+      const result = yield* runFeatureBranchStep(cwd, initialBranch, input.commitMessage);
+      return {
+        branchStep: result.branchStep,
+        currentBranch: result.branchStep.name,
+        commitMessage: result.resolvedCommitMessage,
+        preResolvedCommitSuggestion: result.resolvedCommitSuggestion,
+      };
+    });
+
   const runPromoteStep = (
     cwd: string,
     sourceBranch: string,
@@ -482,11 +537,12 @@ export const makeGitManager = Effect.gen(function* () {
     commitMessage?: string,
   ) =>
     Effect.gen(function* () {
-      // Step 1: Commit pending changes on feature branch (if any)
-      const commit = yield* runCommitStep(cwd, sourceBranch, commitMessage);
-
-      // Step 2: Push feature branch to origin (backup, in case conflicts arise)
-      yield* gitCore.pushCurrentBranch(cwd, sourceBranch);
+      const sourceCommitAndPush = yield* runCommitPushStep({
+        cwd,
+        branch: sourceBranch,
+        ...(commitMessage ? { commitMessage } : {}),
+        wantsPush: true,
+      });
 
       // Step 3: Checkout target branch
       yield* Effect.scoped(gitCore.checkoutBranch({ cwd, branch: targetBranch }));
@@ -504,8 +560,8 @@ export const makeGitManager = Effect.gen(function* () {
       if (mergeResult.status === "conflicted") {
         // Leave in conflict state for user to resolve
         return {
-          commit,
-          push: { status: "pushed" as const, branch: sourceBranch },
+          commit: sourceCommitAndPush.commit,
+          push: sourceCommitAndPush.push,
           promote: {
             status: "conflicts" as const,
             sourceBranch,
@@ -517,7 +573,7 @@ export const makeGitManager = Effect.gen(function* () {
       }
 
       // Step 6: Push target to origin
-      yield* gitCore.pushCurrentBranch(cwd, targetBranch);
+      const targetPush = yield* gitCore.pushCurrentBranch(cwd, targetBranch);
 
       // Step 7: Delete feature branch (local + remote)
       const deleteResult = yield* gitCore.deleteBranch({
@@ -527,8 +583,8 @@ export const makeGitManager = Effect.gen(function* () {
       });
 
       return {
-        commit,
-        push: { status: "pushed" as const, branch: targetBranch },
+        commit: sourceCommitAndPush.commit,
+        push: targetPush,
         promote: {
           status: "promoted" as const,
           sourceBranch,
@@ -580,45 +636,38 @@ export const makeGitManager = Effect.gen(function* () {
         };
       }
 
-      let branchStep: { status: "created" | "skipped_not_requested"; name?: string };
-      let commitMessageForStep = input.commitMessage;
-      let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
-
-      if (input.featureBranch) {
-        const result = yield* runFeatureBranchStep(
-          input.cwd,
-          initialStatus.branch,
-          input.commitMessage,
-        );
-        branchStep = result.branchStep;
-        commitMessageForStep = result.resolvedCommitMessage;
-        preResolvedCommitSuggestion = result.resolvedCommitSuggestion;
-      } else {
-        branchStep = { status: "skipped_not_requested" as const };
-      }
-
-      const currentBranch = branchStep.name ?? initialStatus.branch;
-
-      const commit = yield* runCommitStep(
+      const preparedCommitExecution: PreparedCommitExecution = yield* prepareCommitExecution(
         input.cwd,
-        currentBranch,
-        commitMessageForStep,
-        preResolvedCommitSuggestion,
+        initialStatus.branch,
+        {
+        ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
+        ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+        },
       );
 
-      const push = wantsPush
-        ? yield* gitCore.pushCurrentBranch(input.cwd, currentBranch)
-        : { status: "skipped_not_requested" as const };
+      const commitAndPush = yield* runCommitPushStep({
+        cwd: input.cwd,
+        branch: preparedCommitExecution.currentBranch,
+        ...(preparedCommitExecution.commitMessage
+          ? { commitMessage: preparedCommitExecution.commitMessage }
+          : {}),
+        ...(preparedCommitExecution.preResolvedCommitSuggestion
+          ? {
+              preResolvedCommitSuggestion: preparedCommitExecution.preResolvedCommitSuggestion,
+            }
+          : {}),
+        wantsPush,
+      });
 
       const pr = wantsPr
-        ? yield* runPrStep(input.cwd, currentBranch)
+        ? yield* runPrStep(input.cwd, preparedCommitExecution.currentBranch)
         : { status: "skipped_not_requested" as const };
 
       return {
         action: input.action,
-        branch: branchStep,
-        commit,
-        push,
+        branch: preparedCommitExecution.branchStep,
+        commit: commitAndPush.commit,
+        push: commitAndPush.push,
         pr,
         promote: { status: "skipped_not_requested" as const },
       };

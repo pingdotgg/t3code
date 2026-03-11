@@ -1,10 +1,16 @@
+import type { NativeApi } from "@t3tools/contracts";
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   gitMutationKeys,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
 } from "./gitReactQuery";
+import * as nativeApi from "../nativeApi";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("gitMutationKeys", () => {
   it("scopes stacked action keys by cwd", () => {
@@ -24,6 +30,24 @@ describe("git mutation options", () => {
   it("attaches cwd-scoped mutation key for runStackedAction", () => {
     const options = gitRunStackedActionMutationOptions({ cwd: "/repo/a", queryClient });
     expect(options.mutationKey).toEqual(gitMutationKeys.runStackedAction("/repo/a"));
+  });
+
+  it("forwards promote target branch to the native API", async () => {
+    const runStackedAction = vi.fn().mockResolvedValue({});
+    vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
+      git: {
+        runStackedAction,
+      },
+    } as unknown as NativeApi);
+
+    const options = gitRunStackedActionMutationOptions({ cwd: "/repo/a", queryClient });
+    await options.mutationFn?.({ action: "promote", targetBranch: "main" }, {} as never);
+
+    expect(runStackedAction).toHaveBeenCalledWith({
+      cwd: "/repo/a",
+      action: "promote",
+      targetBranch: "main",
+    });
   });
 
   it("attaches cwd-scoped mutation key for pull", () => {
