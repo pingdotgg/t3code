@@ -132,7 +132,8 @@ export function resolveDefaultMergeSourceBranch(input: {
   activeTargetBranch: string | null;
   currentMergeSourceBranch: string;
 }): string {
-  const { branchNames, activeWorkspaceBranch, activeTargetBranch, currentMergeSourceBranch } = input;
+  const { branchNames, activeWorkspaceBranch, activeTargetBranch, currentMergeSourceBranch } =
+    input;
   if (branchNames.length === 0 || !activeWorkspaceBranch) {
     return "";
   }
@@ -192,7 +193,9 @@ export function buildPrimaryWorkspaceResolutionPrompt(input: {
   conflictedFiles: ReadonlyArray<string>;
   changedFiles: ReadonlyArray<string>;
 }): string {
-  const workspaceLine = input.workspacePath ? `Primary checkout path: ${input.workspacePath}` : null;
+  const workspaceLine = input.workspacePath
+    ? `Primary checkout path: ${input.workspacePath}`
+    : null;
   const takeoverLine = input.takeoverBranch
     ? `Branch to activate after close: ${input.takeoverBranch}`
     : null;

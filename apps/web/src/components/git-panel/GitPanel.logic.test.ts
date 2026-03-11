@@ -8,9 +8,9 @@ import {
   resolveDefaultMergeSourceBranch,
   resolveCommitToBranchDisabledReason,
   resolveDedicatedWorkspaceActionState,
-} from "./GitHubPanel.logic";
+} from "./GitPanel.logic";
 
-describe("GitHubPanel.logic", () => {
+describe("GitPanel.logic", () => {
   describe("deriveWorkspaceStatusInfo", () => {
     it("prioritizes conflicts over merge and dirty states", () => {
       expect(

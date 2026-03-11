@@ -58,7 +58,11 @@ import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
-import { parseDiffRouteSearch, stripDiffSearchParams, stripGitHubSearchParams } from "../diffRouteSearch";
+import {
+  parseDiffRouteSearch,
+  stripDiffSearchParams,
+  stripGitHubSearchParams,
+} from "../diffRouteSearch";
 import {
   type ComposerSlashCommand,
   type ComposerTrigger,
@@ -123,7 +127,7 @@ import {
 } from "../lib/turnDiffTree";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
-import GitHubPanel from "./GitHubPanel";
+import GitPanel from "./git-panel/GitPanel";
 import {
   isOpenFavoriteEditorShortcut,
   resolveShortcutCommand,
@@ -208,11 +212,7 @@ import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
-import {
-  getAppModelOptions,
-  resolveAppModelSelection,
-  useAppSettings,
-} from "../appSettings";
+import { getAppModelOptions, resolveAppModelSelection, useAppSettings } from "../appSettings";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -1184,7 +1184,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     latestTurnSettled,
     timelineEntries,
   ]);
-  const projectGitContextQuery = useQuery(gitRepositoryContextQueryOptions(activeProject?.cwd ?? null));
+  const projectGitContextQuery = useQuery(
+    gitRepositoryContextQueryOptions(activeProject?.cwd ?? null),
+  );
   const gitPanelContext = useMemo(
     () =>
       resolveGitPanelContext({
@@ -1392,8 +1394,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
   const hasReachedTerminalLimit = terminalState.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT;
-  const canCaptureDesktopScreenshot =
-    typeof window.desktopBridge?.captureScreenshot === "function";
+  const canCaptureDesktopScreenshot = typeof window.desktopBridge?.captureScreenshot === "function";
   const setThreadError = useCallback(
     (targetThreadId: ThreadId | null, error: string | null) => {
       if (!targetThreadId) return;
@@ -3668,70 +3669,72 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </div>
               )}
 
-              {!isComposerApprovalState && pendingUserInputs.length === 0 && composerImages.length > 0 && (
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {composerImages.map((image) => (
-                    <div
-                      key={image.id}
-                      className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                    >
-                      {image.previewUrl ? (
-                        <button
-                          type="button"
-                          className="h-full w-full cursor-zoom-in"
-                          aria-label={`Preview ${image.name}`}
-                          onClick={() => {
-                            const preview = buildExpandedImagePreview(composerImages, image.id);
-                            if (!preview) return;
-                            setExpandedImage(preview);
-                          }}
-                        >
-                          <img
-                            src={image.previewUrl}
-                            alt={image.name}
-                            className="h-full w-full object-cover"
-                          />
-                        </button>
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
-                          {image.name}
-                        </div>
-                      )}
-                      {nonPersistedComposerImageIdSet.has(image.id) && (
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <span
-                                role="img"
-                                aria-label="Draft attachment may not persist"
-                                className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
-                              >
-                                <CircleAlertIcon className="size-3" />
-                              </span>
-                            }
-                          />
-                          <TooltipPopup
-                            side="top"
-                            className="max-w-64 whitespace-normal leading-tight"
-                          >
-                            Draft attachment could not be saved locally and may be lost on
-                            navigation.
-                          </TooltipPopup>
-                        </Tooltip>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                        onClick={() => removeComposerImage(image.id)}
-                        aria-label={`Remove ${image.name}`}
+              {!isComposerApprovalState &&
+                pendingUserInputs.length === 0 &&
+                composerImages.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {composerImages.map((image) => (
+                      <div
+                        key={image.id}
+                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
                       >
-                        <XIcon />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                        {image.previewUrl ? (
+                          <button
+                            type="button"
+                            className="h-full w-full cursor-zoom-in"
+                            aria-label={`Preview ${image.name}`}
+                            onClick={() => {
+                              const preview = buildExpandedImagePreview(composerImages, image.id);
+                              if (!preview) return;
+                              setExpandedImage(preview);
+                            }}
+                          >
+                            <img
+                              src={image.previewUrl}
+                              alt={image.name}
+                              className="h-full w-full object-cover"
+                            />
+                          </button>
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                            {image.name}
+                          </div>
+                        )}
+                        {nonPersistedComposerImageIdSet.has(image.id) && (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span
+                                  role="img"
+                                  aria-label="Draft attachment may not persist"
+                                  className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                                >
+                                  <CircleAlertIcon className="size-3" />
+                                </span>
+                              }
+                            />
+                            <TooltipPopup
+                              side="top"
+                              className="max-w-64 whitespace-normal leading-tight"
+                            >
+                              Draft attachment could not be saved locally and may be lost on
+                              navigation.
+                            </TooltipPopup>
+                          </Tooltip>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                          onClick={() => removeComposerImage(image.id)}
+                          aria-label={`Remove ${image.name}`}
+                        >
+                          <XIcon />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               {!isComposerApprovalState ? (
                 <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1.5 sm:right-4 sm:top-3.5">
                   <Tooltip>
@@ -3743,9 +3746,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           className="pointer-events-auto rounded-full border-border/60 bg-background/80 text-muted-foreground/75 shadow-xs/5 backdrop-blur-sm hover:bg-background hover:text-foreground"
                           onClick={() =>
                             void handleRuntimeModeChange(
-                              runtimeMode === "full-access"
-                                ? "approval-required"
-                                : "full-access",
+                              runtimeMode === "full-access" ? "approval-required" : "full-access",
                             )
                           }
                           aria-label={
@@ -3804,12 +3805,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   isComposerApprovalState
                     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
                     : activePendingProgress
-                    ? "Type your own answer, or leave this blank to use the selected option"
-                    : showPlanFollowUpPrompt && activeProposedPlan
-                      ? "Add feedback to refine the plan, or leave this blank to implement it"
-                      : phase === "disconnected"
-                        ? "Ask for follow-up changes or attach images"
-                        : "Ask anything, @tag files/folders, or use /model"
+                      ? "Type your own answer, or leave this blank to use the selected option"
+                      : showPlanFollowUpPrompt && activeProposedPlan
+                        ? "Add feedback to refine the plan, or leave this blank to implement it"
+                        : phase === "disconnected"
+                          ? "Ask for follow-up changes or attach images"
+                          : "Ask anything, @tag files/folders, or use /model"
                 }
                 disabled={isConnecting || isComposerApprovalState}
                 className={cn(
@@ -4161,7 +4162,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             keepMounted
             className="w-[min(88vw,680px)] max-w-[680px] p-0"
           >
-            <GitHubPanel
+            <GitPanel
               key={gitPanelContext.contextKey}
               workspaceCwd={gitPanelContext.workspaceCwd}
               repoCwd={gitPanelContext.repoCwd}
@@ -4189,7 +4190,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         collapsible="offcanvas"
         className="border-l border-border bg-card text-foreground"
       >
-        <GitHubPanel
+        <GitPanel
           key={gitPanelContext.contextKey}
           workspaceCwd={gitPanelContext.workspaceCwd}
           repoCwd={gitPanelContext.repoCwd}
@@ -4285,11 +4286,7 @@ const ChatHeader = memo(function ChatHeader({
           />
         )}
         {activeProjectName && (
-          <GitActionsControl
-            gitCwd={gitActionsCwd}
-            open={githubOpen}
-            onToggle={onToggleGitHub}
-          />
+          <GitActionsControl gitCwd={gitActionsCwd} open={githubOpen} onToggle={onToggleGitHub} />
         )}
         <Tooltip>
           <TooltipTrigger
@@ -5657,7 +5654,8 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {!props.hideProviderIcon ? (
             <ProviderIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
           ) : null}
-          {props.provider === "codex" && shouldShowFastTierIcon(props.model, props.serviceTierSetting) ? (
+          {props.provider === "codex" &&
+          shouldShowFastTierIcon(props.model, props.serviceTierSetting) ? (
             <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
           ) : null}
           <span className="truncate">{triggerLabel}</span>

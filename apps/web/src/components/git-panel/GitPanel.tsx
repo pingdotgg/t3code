@@ -1,14 +1,15 @@
-import type { GitMergeBranchesResult, GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
+import type {
+  GitMergeBranchesResult,
+  GitStackedAction,
+  GitStatusResult,
+  ThreadId,
+} from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowRightIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   CloudUploadIcon,
-  CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
   FolderGit2Icon,
@@ -18,9 +19,8 @@ import {
   GitPullRequestIcon,
   LogInIcon,
   RefreshCcwIcon,
-  UploadIcon,
 } from "lucide-react";
-import { GitHubIcon } from "./Icons";
+import { GitHubIcon } from "../Icons";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
@@ -29,7 +29,7 @@ import {
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
   summarizeGitResult,
-} from "./GitActionsControl.logic";
+} from "../GitActionsControl.logic";
 import {
   buildPrimaryWorkspaceResolutionPrompt,
   buildResolveConflictPrompt,
@@ -38,12 +38,11 @@ import {
   resolveDefaultMergeSourceBranch,
   resolveCommitToBranchDisabledReason,
   resolveDedicatedWorkspaceActionState,
-  type WorkspaceStatusLevel as StatusLevel,
-} from "./GitHubPanel.logic";
+} from "./GitPanel.logic";
 import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
-} from "./BranchToolbar.logic";
+} from "../BranchToolbar.logic";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -55,7 +54,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "~/components/ui/dialog";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
@@ -85,8 +83,11 @@ import { readNativeApi } from "~/nativeApi";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useStore } from "~/store";
 import { formatWorktreePathForDisplay } from "~/worktreeCleanup";
+import { GitPanelSection } from "./GitPanelSection";
+import { GitStatusDot } from "./GitStatusDot";
+import { GitWorkspaceCard } from "./GitWorkspaceCard";
 
-interface GitActionsControlProps {
+interface GitPanelProps {
   workspaceCwd: string | null;
   repoCwd: string | null;
   repoRoot: string | null;
@@ -106,40 +107,6 @@ interface PendingDefaultBranchAction {
 type GitActionToastId = ReturnType<typeof toastManager.add>;
 
 // =============================================================================
-// Status Indicator Component
-// =============================================================================
-
-interface StatusDotProps {
-  level: StatusLevel;
-  pulse?: boolean;
-  className?: string;
-}
-
-function StatusDot({ level, pulse, className }: StatusDotProps) {
-  const colors: Record<StatusLevel, string> = {
-    success: "bg-emerald-500",
-    warning: "bg-amber-500",
-    error: "bg-red-500",
-    neutral: "bg-neutral-400 dark:bg-neutral-500",
-    info: "bg-blue-500",
-  };
-
-  return (
-    <span className={cn("relative flex size-2", className)}>
-      {pulse && (
-        <span
-          className={cn(
-            "absolute inline-flex size-full animate-ping rounded-full opacity-75",
-            colors[level]
-          )}
-        />
-      )}
-      <span className={cn("relative inline-flex size-2 rounded-full", colors[level])} />
-    </span>
-  );
-}
-
-// =============================================================================
 // Keyboard Shortcut Hint
 // =============================================================================
 
@@ -150,204 +117,6 @@ function Kbd({ children }: { children: ReactNode }) {
     </kbd>
   );
 }
-
-// =============================================================================
-// Copyable Path Component
-// =============================================================================
-
-function CopyablePath({ path, className }: { path: string; className?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(path);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }, [path]);
-
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      className={cn(
-        "group flex items-center gap-1.5 rounded px-1.5 py-0.5 -mx-1.5 text-left transition-colors hover:bg-accent/50",
-        className
-      )}
-      title="Click to copy path"
-    >
-      <span className="truncate font-mono text-xs text-muted-foreground">{path}</span>
-      {copied ? (
-        <CheckIcon className="size-3 shrink-0 text-success-foreground" />
-      ) : (
-        <CopyIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-      )}
-    </button>
-  );
-}
-
-// =============================================================================
-// Section Components
-// =============================================================================
-
-interface SectionProps {
-  title: string;
-  children: ReactNode;
-  actions?: ReactNode;
-  defaultOpen?: boolean;
-  collapsible?: boolean;
-}
-
-function Section({ title, children, actions, defaultOpen = true, collapsible = false }: SectionProps) {
-  const [open, setOpen] = useState(defaultOpen);
-
-  if (!collapsible) {
-    return (
-      <section className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
-            {title}
-          </h3>
-          {actions}
-        </div>
-        {children}
-      </section>
-    );
-  }
-
-  return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <section className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <CollapsibleTrigger className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground transition-colors hover:text-foreground">
-            {open ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}
-            {title}
-          </CollapsibleTrigger>
-          {actions}
-        </div>
-        <CollapsibleContent>{children}</CollapsibleContent>
-      </section>
-    </Collapsible>
-  );
-}
-
-// =============================================================================
-// Workspace Card Component
-// =============================================================================
-
-interface WorkspaceCardProps {
-  isPrimary: boolean;
-  name: string;
-  branch: string;
-  targetBranch: string | null;
-  path: string | null;
-  statusLevel: StatusLevel;
-  statusLabel: string;
-  aheadCount: number;
-  behindCount: number;
-  hasOpenPr: boolean;
-  isDefaultBranch: boolean;
-  onOpen: () => void;
-}
-
-function WorkspaceCard({
-  isPrimary,
-  name,
-  branch,
-  targetBranch,
-  path,
-  statusLevel,
-  statusLabel,
-  aheadCount,
-  behindCount,
-  hasOpenPr,
-  isDefaultBranch,
-  onOpen,
-}: WorkspaceCardProps) {
-  return (
-    <div
-      className={cn(
-        "rounded-lg border p-3 transition-colors",
-        isPrimary
-          ? "border-border bg-card"
-          : "border-primary/20 bg-primary/[0.02] dark:bg-primary/[0.04]"
-      )}
-    >
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <FolderGit2Icon
-            className={cn("size-4 shrink-0", isPrimary ? "text-muted-foreground" : "text-primary")}
-          />
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-sm font-medium">{name}</span>
-              {!isPrimary && (
-                <Badge variant="secondary" size="sm">
-                  Dedicated
-                </Badge>
-              )}
-            </div>
-          </div>
-        </div>
-        <Button variant="ghost" size="icon-xs" onClick={onOpen} title="Open in editor">
-          <ExternalLinkIcon className="size-3.5" />
-        </Button>
-      </div>
-
-      {/* Branch flow: current → target */}
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-        <div className="flex items-center gap-1 text-muted-foreground">
-          <GitBranchIcon className="size-3" />
-          <span className="font-mono">{branch}</span>
-        </div>
-        {targetBranch && !isDefaultBranch && (
-          <>
-            <ArrowRightIcon className="size-3 text-muted-foreground/50" />
-            <span className="font-mono text-muted-foreground">{targetBranch}</span>
-          </>
-        )}
-        {isDefaultBranch && (
-          <Badge variant="warning" size="sm">
-            default
-          </Badge>
-        )}
-      </div>
-
-      {/* Status row */}
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-        <div className="flex items-center gap-1.5">
-          <StatusDot level={statusLevel} pulse={statusLevel === "error"} />
-          <span className="text-muted-foreground">{statusLabel}</span>
-        </div>
-        {aheadCount > 0 && (
-          <span className="flex items-center gap-1 text-success-foreground">
-            <UploadIcon className="size-3" />
-            {aheadCount}
-          </span>
-        )}
-        {behindCount > 0 && (
-          <span className="flex items-center gap-1 text-warning-foreground">
-            <DownloadIcon className="size-3" />
-            {behindCount}
-          </span>
-        )}
-        {hasOpenPr && (
-          <Badge variant="info" size="sm">
-            <GitPullRequestIcon className="size-3" />
-            PR
-          </Badge>
-        )}
-      </div>
-
-      {/* Path */}
-      {path && (
-        <div className="mt-2 border-t border-border/50 pt-2">
-          <CopyablePath path={path} />
-        </div>
-      )}
-    </div>
-  );
-}
-
 
 // =============================================================================
 // Format Helpers
@@ -376,7 +145,6 @@ function formatGitHubTimestamp(value: string): string {
   }).format(date);
 }
 
-
 // =============================================================================
 // Main Component
 // =============================================================================
@@ -385,13 +153,13 @@ const COMMIT_DIALOG_TITLE = "Commit changes";
 const COMMIT_DIALOG_DESCRIPTION =
   "Review and confirm your commit. Leave the message blank to auto-generate one.";
 
-export default function GitHubPanel({
+export default function GitPanel({
   workspaceCwd,
   repoCwd,
   repoRoot,
   scopeKind: _scopeKind,
   activeThreadId,
-}: GitActionsControlProps) {
+}: GitPanelProps) {
   const navigate = useNavigate();
   const threads = useStore((store) => store.threads);
   const setThreadBranchAction = useStore((store) => store.setThreadBranch);
@@ -402,14 +170,17 @@ export default function GitHubPanel({
   const activeDraftThread = useComposerDraftStore((store) =>
     activeThreadId ? store.getDraftThread(activeThreadId) : null,
   );
-  const getDraftThreadByProjectId = useComposerDraftStore((store) => store.getDraftThreadByProjectId);
+  const getDraftThreadByProjectId = useComposerDraftStore(
+    (store) => store.getDraftThreadByProjectId,
+  );
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const setPrompt = useComposerDraftStore((store) => store.setPrompt);
   const activeProjectId = activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const hasServerThread = activeServerThread !== null;
   const activeThreadBranch = activeServerThread?.branch ?? activeDraftThread?.branch ?? null;
-  const activeWorktreePath = activeServerThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null;
+  const activeWorktreePath =
+    activeServerThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null;
   const effectiveEnvMode = resolveEffectiveEnvMode({
     activeWorktreePath,
     hasServerThread,
@@ -500,7 +271,8 @@ export default function GitHubPanel({
   const isRunStackedActionRunning =
     useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(workspaceCwd) }) > 0;
   const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(workspaceCwd) }) > 0;
-  const isMergeRunning = useIsMutating({ mutationKey: gitMutationKeys.mergeBranches(workspaceCwd) }) > 0;
+  const isMergeRunning =
+    useIsMutating({ mutationKey: gitMutationKeys.mergeBranches(workspaceCwd) }) > 0;
   const isAbortMergeRunning =
     useIsMutating({ mutationKey: gitMutationKeys.abortMerge(workspaceCwd) }) > 0;
   const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
@@ -537,7 +309,11 @@ export default function GitHubPanel({
         mergeInProgress: activeWorkspaceMerge.inProgress,
         hasChanges: gitStatusForActions?.hasWorkingTreeChanges ?? false,
       }),
-    [activeWorkspaceHasConflicts, activeWorkspaceMerge.inProgress, gitStatusForActions?.hasWorkingTreeChanges]
+    [
+      activeWorkspaceHasConflicts,
+      activeWorkspaceMerge.inProgress,
+      gitStatusForActions?.hasWorkingTreeChanges,
+    ],
   );
 
   const gitActionMenuItems = useMemo(
@@ -604,7 +380,11 @@ export default function GitHubPanel({
         return;
       }
 
-      if (!activeServerThread && activeThreadId && activeDraftThread?.projectId === activeProjectId) {
+      if (
+        !activeServerThread &&
+        activeThreadId &&
+        activeDraftThread?.projectId === activeProjectId
+      ) {
         setDraftThreadContext(activeThreadId, {
           branch,
           worktreePath,
@@ -665,13 +445,7 @@ export default function GitHubPanel({
         data: threadToastData,
       });
     }
-  }, [
-    activeWorkspaceBranch,
-    createWorktreeMutation,
-    focusDraftThread,
-    repoCwd,
-    threadToastData,
-  ]);
+  }, [activeWorkspaceBranch, createWorktreeMutation, focusDraftThread, repoCwd, threadToastData]);
 
   const focusPrimaryWorkspaceDraft = useCallback(async () => {
     if (!activeProjectId) {
@@ -825,7 +599,10 @@ export default function GitHubPanel({
         }
 
         await invalidateGitQueries(queryClient);
-        await persistThreadWorkspaceContext(activeThreadBranch ?? activeWorkspaceBranch ?? null, null);
+        await persistThreadWorkspaceContext(
+          activeThreadBranch ?? activeWorkspaceBranch ?? null,
+          null,
+        );
         toastManager.add({
           type: branchActivatedInPrimary || !activeThreadBranch ? "success" : "warning",
           title: discardChanges ? "Workspace discarded" : "Workspace closed",
@@ -862,38 +639,39 @@ export default function GitHubPanel({
     ],
   );
 
-  const runMergeFromBranch = useCallback(async (sourceBranch: string) => {
-    if (!activeWorkspaceBranch || !sourceBranch) {
-      return;
-    }
+  const runMergeFromBranch = useCallback(
+    async (sourceBranch: string) => {
+      if (!activeWorkspaceBranch || !sourceBranch) {
+        return;
+      }
 
-    try {
-      const result = await mergeBranchesMutation.mutateAsync({
-        sourceBranch,
-        targetBranch: activeWorkspaceBranch,
-      });
-      setLastMergeResult(result);
-      toastManager.add({
-        type: result.status === "merged" ? "success" : "warning",
-        title:
-          result.status === "merged"
-            ? `Merged ${result.sourceBranch}`
-            : `Conflicts in merge`,
-        description:
-          result.status === "merged"
-            ? `Into ${result.targetBranch}`
-            : `${result.conflictedFiles.length} file${result.conflictedFiles.length === 1 ? "" : "s"}`,
-        data: threadToastData,
-      });
-    } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Merge failed",
-        description: error instanceof Error ? error.message : "An error occurred.",
-        data: threadToastData,
-      });
-    }
-  }, [activeWorkspaceBranch, mergeBranchesMutation, threadToastData]);
+      try {
+        const result = await mergeBranchesMutation.mutateAsync({
+          sourceBranch,
+          targetBranch: activeWorkspaceBranch,
+        });
+        setLastMergeResult(result);
+        toastManager.add({
+          type: result.status === "merged" ? "success" : "warning",
+          title:
+            result.status === "merged" ? `Merged ${result.sourceBranch}` : `Conflicts in merge`,
+          description:
+            result.status === "merged"
+              ? `Into ${result.targetBranch}`
+              : `${result.conflictedFiles.length} file${result.conflictedFiles.length === 1 ? "" : "s"}`,
+          data: threadToastData,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Merge failed",
+          description: error instanceof Error ? error.message : "An error occurred.",
+          data: threadToastData,
+        });
+      }
+    },
+    [activeWorkspaceBranch, mergeBranchesMutation, threadToastData],
+  );
 
   const runLocalMerge = useCallback(async () => {
     if (!mergeSourceBranch) {
@@ -1046,7 +824,8 @@ export default function GitHubPanel({
     }) => {
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.branch ?? null;
-      const actionIsDefaultBranch = isDefaultBranchOverride ?? (featureBranch ? false : isDefaultBranch);
+      const actionIsDefaultBranch =
+        isDefaultBranchOverride ?? (featureBranch ? false : isDefaultBranch);
       const includesCommit =
         !forcePushOnlyProgress && (action === "commit" || !!actionStatus?.hasWorkingTreeChanges);
       if (
@@ -1124,7 +903,8 @@ export default function GitHubPanel({
         stopProgressUpdates();
         const resultToast = summarizeGitResult(result);
 
-        const existingOpenPrUrl = actionStatus?.pr?.state === "open" ? actionStatus.pr.url : undefined;
+        const existingOpenPrUrl =
+          actionStatus?.pr?.state === "open" ? actionStatus.pr.url : undefined;
         const prUrl = result.pr.url ?? existingOpenPrUrl;
         const shouldOfferPushCta = action === "commit" && result.commit.status === "created";
         const shouldOfferOpenPrCta =
@@ -1217,7 +997,8 @@ export default function GitHubPanel({
 
   const continuePendingDefaultBranchAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, forcePushOnlyProgress, onConfirmed } = pendingDefaultBranchAction;
+    const { action, commitMessage, forcePushOnlyProgress, onConfirmed } =
+      pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
@@ -1246,7 +1027,8 @@ export default function GitHubPanel({
 
   const checkoutFeatureBranchAndContinuePendingAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, forcePushOnlyProgress, onConfirmed } = pendingDefaultBranchAction;
+    const { action, commitMessage, forcePushOnlyProgress, onConfirmed } =
+      pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     checkoutNewBranchAndRunAction({
       action,
@@ -1516,7 +1298,7 @@ export default function GitHubPanel({
           <div className="flex items-center gap-1">
             {githubStatusQuery.data?.authenticated ? (
               <Badge variant="success" size="sm">
-                <StatusDot level="success" className="mr-0.5" />
+                <GitStatusDot level="success" className="mr-0.5" />
                 gh
               </Badge>
             ) : githubStatusQuery.data?.installed ? (
@@ -1540,7 +1322,7 @@ export default function GitHubPanel({
               <RefreshCcwIcon
                 className={cn(
                   "size-3.5",
-                  (githubStatusQuery.isFetching || githubIssuesQuery.isFetching) && "animate-spin"
+                  (githubStatusQuery.isFetching || githubIssuesQuery.isFetching) && "animate-spin",
                 )}
               />
             </Button>
@@ -1661,8 +1443,8 @@ export default function GitHubPanel({
             {/* WORKSPACE SECTION */}
             {/* ============================================================ */}
             {isRepo && (
-              <Section title="Workspace">
-                <WorkspaceCard
+              <GitPanelSection title="Workspace">
+                <GitWorkspaceCard
                   isPrimary={isPrimaryWorkspace}
                   name={
                     isPrimaryWorkspace || !workspaceCwd
@@ -1712,7 +1494,9 @@ export default function GitHubPanel({
                       className="w-full justify-center"
                     >
                       <GitCommitIcon className="size-4" />
-                      {buildCommitToBranchLabel(activeThreadBranch ?? activeWorkspaceBranch ?? null)}
+                      {buildCommitToBranchLabel(
+                        activeThreadBranch ?? activeWorkspaceBranch ?? null,
+                      )}
                     </Button>
                     {commitToBranchDisabledReason && (
                       <p className="text-center text-xs text-muted-foreground">
@@ -1794,14 +1578,14 @@ export default function GitHubPanel({
                     )}
                   </div>
                 )}
-              </Section>
+              </GitPanelSection>
             )}
 
             {/* ============================================================ */}
             {/* SYNC SECTION - Pull changes INTO this workspace */}
             {/* ============================================================ */}
             {isRepo && localBranches.length > 1 && (
-              <Section title="Sync" collapsible defaultOpen={mergeExpanded}>
+              <GitPanelSection title="Sync" collapsible defaultOpen={mergeExpanded}>
                 <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">
                     Pull a branch <span className="font-medium">into</span> this workspace
@@ -1816,9 +1600,7 @@ export default function GitHubPanel({
                         onChange={(e) => setMergeSourceBranch(e.target.value)}
                         disabled={localBranches.length < 2}
                       >
-                        {mergeSourceBranch.length === 0 && (
-                          <option value="">No candidates</option>
-                        )}
+                        {mergeSourceBranch.length === 0 && <option value="">No candidates</option>}
                         {localBranches
                           .filter((branch) => branch.name !== activeWorkspaceBranch)
                           .map((branch) => (
@@ -1893,7 +1675,7 @@ export default function GitHubPanel({
                         "rounded-md border p-2 text-xs",
                         lastMergeResult.status === "merged"
                           ? "border-success/30 bg-success/[0.04] text-success-foreground"
-                          : "border-destructive/30 bg-destructive/[0.04] text-destructive-foreground"
+                          : "border-destructive/30 bg-destructive/[0.04] text-destructive-foreground",
                       )}
                     >
                       {lastMergeResult.status === "merged"
@@ -1902,13 +1684,13 @@ export default function GitHubPanel({
                     </div>
                   )}
                 </div>
-              </Section>
+              </GitPanelSection>
             )}
 
             {/* ============================================================ */}
             {/* GITHUB AUTH SECTION */}
             {/* ============================================================ */}
-            <Section
+            <GitPanelSection
               title="GitHub"
               actions={
                 githubStatusQuery.data?.accountLogin && (
@@ -1920,7 +1702,8 @@ export default function GitHubPanel({
             >
               {!githubStatusQuery.data?.installed ? (
                 <p className="text-xs text-muted-foreground">
-                  Install <code className="rounded bg-muted px-1">gh</code> CLI to enable GitHub features
+                  Install <code className="rounded bg-muted px-1">gh</code> CLI to enable GitHub
+                  features
                 </p>
               ) : (
                 <div className="flex flex-wrap items-center gap-2">
@@ -1964,13 +1747,13 @@ export default function GitHubPanel({
                   )}
                 </div>
               )}
-            </Section>
+            </GitPanelSection>
 
             {/* ============================================================ */}
             {/* ISSUES SECTION */}
             {/* ============================================================ */}
             {githubStatusQuery.data?.authenticated && githubStatusQuery.data?.repo && (
-              <Section
+              <GitPanelSection
                 title="Issues"
                 collapsible
                 defaultOpen={false}
@@ -2017,7 +1800,7 @@ export default function GitHubPanel({
                             <span>{formatGitHubTimestamp(issue.updatedAt)}</span>
                           </div>
                         </div>
-                        <StatusDot
+                        <GitStatusDot
                           level={issue.state === "open" ? "success" : "neutral"}
                           className="mt-1.5"
                         />
@@ -2027,7 +1810,7 @@ export default function GitHubPanel({
                 ) : (
                   <p className="text-xs text-muted-foreground">No issues</p>
                 )}
-              </Section>
+              </GitPanelSection>
             )}
           </div>
         </ScrollArea>

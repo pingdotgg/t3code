@@ -102,10 +102,10 @@ Run these checks after each phase:
 
 | Progress | Workstream | Scope | Exit criteria |
 | --- | --- | --- | --- |
-| Not started | Rename and reframe | Rename `GitHubPanel` to `GitPanel` and rename stale panel types | Naming and imports reflect actual feature scope |
-| Not started | Create feature folder | Add a `git-panel` folder for sections, dialogs, hooks, and primitives | Local feature structure exists with no behavior change |
-| Not started | Extract primitives | Move `StatusDot`, `CopyablePath`, `Section`, and `WorkspaceCard` into local files | Main container loses leaf view code |
-| Not started | Verify checks | Run formatting, lint, and typecheck | Validation gate passes |
+| Done | Rename and reframe | Rename `GitHubPanel` to `GitPanel` and rename stale panel types | Naming and imports reflect actual feature scope |
+| Done | Create feature folder | Add a `git-panel` folder for sections, dialogs, hooks, and primitives | Local feature structure exists with no behavior change |
+| Done | Extract primitives | Move `StatusDot`, `CopyablePath`, `Section`, and `WorkspaceCard` into local files | Main container loses leaf view code |
+| Done | Verify checks | Run formatting, lint, and typecheck | Validation gate passes |
 
 ## Phase 2
 
