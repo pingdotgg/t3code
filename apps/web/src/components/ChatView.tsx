@@ -4167,7 +4167,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
               workspaceCwd={gitPanelContext.workspaceCwd}
               repoCwd={gitPanelContext.repoCwd}
               repoRoot={gitPanelContext.repoRoot}
-              scopeKind={gitPanelContext.scopeKind}
               activeThreadId={activeThread.id}
             />
           </SheetPopup>
@@ -4195,7 +4194,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           workspaceCwd={gitPanelContext.workspaceCwd}
           repoCwd={gitPanelContext.repoCwd}
           repoRoot={gitPanelContext.repoRoot}
-          scopeKind={gitPanelContext.scopeKind}
           activeThreadId={activeThread.id}
         />
         <SidebarRail />

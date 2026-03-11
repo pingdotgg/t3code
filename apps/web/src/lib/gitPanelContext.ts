@@ -13,7 +13,6 @@ export interface GitPanelContext {
   repoCwd: string | null;
   workspaceCwd: string | null;
   workspaceKind: "primary" | "dedicated" | "none";
-  scopeKind: "project" | "thread";
   contextKey: string;
 }
 
@@ -29,7 +28,6 @@ export function resolveGitPanelContext(input: GitPanelContextInput): GitPanelCon
     : workspaceCwd
       ? "primary"
       : "none";
-  const scopeKind = input.activeThreadId ? "thread" : "project";
   const contextKey = [
     toKeyPart(input.activeProjectId),
     toKeyPart(input.activeThreadId),
@@ -44,7 +42,6 @@ export function resolveGitPanelContext(input: GitPanelContextInput): GitPanelCon
     repoCwd,
     workspaceCwd,
     workspaceKind,
-    scopeKind,
     contextKey,
   };
 }

@@ -19,7 +19,6 @@ describe("resolveGitPanelContext", () => {
       repoCwd: "/repo",
       workspaceCwd: "/repo",
       workspaceKind: "primary",
-      scopeKind: "thread",
       contextKey: "project-1::thread-1::/repo::/repo",
     });
   });
@@ -40,7 +39,6 @@ describe("resolveGitPanelContext", () => {
       repoCwd: "/repo",
       workspaceCwd: "/repo/.worktrees/thread-1",
       workspaceKind: "dedicated",
-      scopeKind: "thread",
       contextKey: "project-1::thread-1::/repo::/repo/.worktrees/thread-1",
     });
   });
@@ -61,7 +59,6 @@ describe("resolveGitPanelContext", () => {
       repoCwd: "/repo-b",
       workspaceCwd: "/repo-b",
       workspaceKind: "primary",
-      scopeKind: "project",
       contextKey: "project-2::none::none::/repo-b",
     });
   });

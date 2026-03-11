@@ -138,10 +138,10 @@ Run these checks after each phase:
 
 | Progress | Workstream | Scope | Exit criteria |
 | --- | --- | --- | --- |
-| Not started | Extract workflow hooks | Move thread routing, worktree lifecycle, merge flows, and stacked action orchestration into hooks | Container owns composition and hooks own workflows |
-| Not started | Resolve reset boundary | Remove redundant reset logic where remount already defines lifecycle | Each state slice has one reset owner |
-| Not started | Decide `scopeKind` fate | Remove unused prop or make it drive visible behavior | Public prop surface is truthful |
-| Not started | Verify checks | Run formatting, lint, and typecheck | Validation gate passes |
+| Done | Extract workflow hooks | Move thread routing, worktree lifecycle, merge flows, and stacked action orchestration into hooks | Container owns composition and hooks own workflows |
+| Done | Resolve reset boundary | Remove redundant reset logic where remount already defines lifecycle | Each state slice has one reset owner |
+| Done | Decide `scopeKind` fate | Remove unused prop or make it drive visible behavior | Public prop surface is truthful |
+| Done | Verify checks | Run formatting, lint, and typecheck | Validation gate passes |
 
 ## Phase 6
 
