@@ -572,9 +572,21 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
 
 interface ChatViewProps {
   threadId: ThreadId;
+  routeActive?: boolean;
+  showHeader?: boolean;
+  showTerminalDrawer?: boolean;
+  showPlanSidebar?: boolean;
+  enableGlobalShortcuts?: boolean;
 }
 
-export default function ChatView({ threadId }: ChatViewProps) {
+export default function ChatView({
+  threadId,
+  routeActive = true,
+  showHeader = true,
+  showTerminalDrawer = true,
+  showPlanSidebar = true,
+  enableGlobalShortcuts = true,
+}: ChatViewProps) {
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
   const worktrees = useStore((store) => store.worktrees);
@@ -916,6 +928,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   useEffect(() => {
+    if (!routeActive) return;
     if (!activeThread?.id) return;
     if (!latestTurnSettled) return;
     if (!activeLatestTurn?.completedAt) return;
@@ -931,6 +944,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeLatestTurn?.completedAt,
     latestTurnSettled,
     markThreadVisited,
+    routeActive,
   ]);
 
   const sessionProvider = activeThread?.session?.provider ?? null;
@@ -2172,6 +2186,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThread?.id]);
 
   useEffect(() => {
+    if (!routeActive || !showTerminalDrawer) return;
     if (!activeThread?.id || terminalState.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
@@ -2179,7 +2194,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalState.terminalOpen]);
+  }, [
+    activeThread?.id,
+    focusComposer,
+    routeActive,
+    showTerminalDrawer,
+    terminalState.terminalOpen,
+  ]);
 
   useEffect(() => {
     composerImagesRef.current = composerImages;
@@ -2435,6 +2456,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [syncComposerFocusState]);
 
   useEffect(() => {
+    if (!enableGlobalShortcuts) {
+      return;
+    }
+
     const isTerminalFocused = (): boolean => {
       const activeElement = document.activeElement;
       if (!(activeElement instanceof HTMLElement)) return false;
@@ -2511,6 +2536,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThreadId,
     closeTerminal,
     createNewTerminal,
+    enableGlobalShortcuts,
     setTerminalOpen,
     runProjectScript,
     splitTerminal,
@@ -3697,7 +3723,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   // Empty state: no active thread
   if (!activeThread) {
     return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
         {!isElectron && (
           <header className="border-b border-border px-3 py-2 md:hidden">
             <div className="flex items-center gap-2">
@@ -3721,38 +3747,39 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
-      {/* Top bar */}
-      <header
-        className={cn(
-          "border-b border-border px-3 sm:px-5",
-          isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
-        )}
-      >
-        <ChatHeader
-          activeThreadId={activeThread.id}
-          activeThreadTitle={activeThread.title}
-          activeProjectName={activeProject?.name}
-          isGitRepo={isGitRepo}
-          openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
-          activeProjectScripts={activeProject?.scripts}
-          preferredScriptId={
-            activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-          }
-          keybindings={keybindings}
-          availableEditors={availableEditors}
-          diffToggleShortcutLabel={diffPanelShortcutLabel}
-          gitCwd={gitCwd}
-          diffOpen={diffOpen}
-          onRunProjectScript={(script) => {
-            void runProjectScript(script);
-          }}
-          onAddProjectScript={saveProjectScript}
-          onUpdateProjectScript={updateProjectScript}
-          onDeleteProjectScript={deleteProjectScript}
-          onToggleDiff={onToggleDiff}
-        />
-      </header>
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+      {showHeader ? (
+        <header
+          className={cn(
+            "border-b border-border px-3 sm:px-5",
+            isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
+          )}
+        >
+          <ChatHeader
+            activeThreadId={activeThread.id}
+            activeThreadTitle={activeThread.title}
+            activeProjectName={activeProject?.name}
+            isGitRepo={isGitRepo}
+            openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
+            activeProjectScripts={activeProject?.scripts}
+            preferredScriptId={
+              activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+            }
+            keybindings={keybindings}
+            availableEditors={availableEditors}
+            diffToggleShortcutLabel={diffPanelShortcutLabel}
+            gitCwd={gitCwd}
+            diffOpen={diffOpen}
+            onRunProjectScript={(script) => {
+              void runProjectScript(script);
+            }}
+            onAddProjectScript={saveProjectScript}
+            onUpdateProjectScript={updateProjectScript}
+            onDeleteProjectScript={deleteProjectScript}
+            onToggleDiff={onToggleDiff}
+          />
+        </header>
+      ) : null}
 
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
@@ -4116,7 +4143,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             </span>
                           </Button>
 
-                          {activePlan || activeProposedPlan || planSidebarOpen ? (
+                          {showPlanSidebar &&
+                          (activePlan || activeProposedPlan || planSidebarOpen) ? (
                             <>
                               <Separator
                                 orientation="vertical"
@@ -4342,7 +4370,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         {/* end chat column */}
 
         {/* Plan sidebar */}
-        {planSidebarOpen ? (
+        {showPlanSidebar && planSidebarOpen ? (
           <PlanSidebar
             activePlan={activePlan}
             activeProposedPlan={activeProposedPlan}
@@ -4362,7 +4390,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* end horizontal flex container */}
 
       {(() => {
-        if (!terminalState.terminalOpen || !activeProject) {
+        if (!showTerminalDrawer || !terminalState.terminalOpen || !activeProject) {
           return null;
         }
         return (
@@ -5823,7 +5851,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
       className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden"
     >
       {virtualizedRowCount > 0 && (
-        <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+        <div className="relative shrink-0" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
           {virtualRows.map((virtualRow: VirtualItem) => {
             const row = rows[virtualRow.index];
             if (!row) return null;
@@ -5844,7 +5872,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
       )}
 
       {nonVirtualizedRows.map((row) => (
-        <div key={`non-virtual-row:${row.id}`}>{renderRowContent(row)}</div>
+        <div key={`non-virtual-row:${row.id}`} className="shrink-0">
+          {renderRowContent(row)}
+        </div>
       ))}
     </div>
   );

@@ -13,6 +13,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
 } from "@repo/contracts";
+import type { DockviewApi } from "dockview";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -26,6 +27,7 @@ import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
+const SECOND_THREAD_ID = "thread-browser-test-2" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_ID = "project-1" as ProjectId;
 const WORKTREE_ID = "worktree-1" as WorktreeId;
@@ -89,6 +91,12 @@ interface MountedChatView {
   measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
   setViewport: (viewport: ViewportSpec) => Promise<void>;
   router: ReturnType<typeof getRouter>;
+}
+
+declare global {
+  interface Window {
+    __T3CODE_DOCKVIEW_API__?: DockviewApi;
+  }
 }
 
 function isoAt(offsetSeconds: number): string {
@@ -307,6 +315,25 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   return {
     ...snapshot,
     threads: [],
+  };
+}
+
+function createSnapshotWithSecondThread(): OrchestrationReadModel {
+  const snapshot = addThreadToSnapshot(
+    createSnapshotForTargetUser({
+      targetMessageId: "msg-user-second-thread-target" as MessageId,
+      targetText: "second thread",
+    }),
+    SECOND_THREAD_ID,
+  );
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === SECOND_THREAD_ID
+        ? Object.assign({}, thread, { title: "Second thread" })
+        : thread,
+    ),
   };
 }
 
@@ -531,6 +558,21 @@ async function waitForComposerShell(): Promise<HTMLElement> {
     () => document.querySelector<HTMLElement>('[data-chat-composer-shell="true"]'),
     "Unable to find composer shell.",
   );
+}
+
+async function waitForDockviewApi(): Promise<DockviewApi> {
+  let api: DockviewApi | undefined;
+  await vi.waitFor(
+    () => {
+      api = window.__T3CODE_DOCKVIEW_API__;
+      expect(api, "Unable to find Dockview API.").toBeTruthy();
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  if (!api) {
+    throw new Error("Unable to find Dockview API.");
+  }
+  return api;
 }
 
 async function waitForInteractionModeButton(
@@ -1074,6 +1116,121 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
+    }
+  });
+
+  it("keeps same-worktree threads open as dock tabs while routing between them", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondThread(),
+    });
+
+    try {
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: SECOND_THREAD_ID },
+      });
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${SECOND_THREAD_ID}`,
+        "Route should update to the second thread.",
+      );
+
+      const api = await waitForDockviewApi();
+      await vi.waitFor(
+        () => {
+          expect(api.panels.map((panel) => panel.id).toSorted()).toEqual(
+            [THREAD_ID, SECOND_THREAD_ID].toSorted(),
+          );
+          expect(api.activePanel?.id).toBe(SECOND_THREAD_ID);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("syncs the route when the active dock tab changes", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondThread(),
+    });
+
+    try {
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: SECOND_THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${SECOND_THREAD_ID}`,
+        "Route should update to the second thread.",
+      );
+
+      const api = await waitForDockviewApi();
+      api.getPanel(THREAD_ID)?.api.setActive();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${THREAD_ID}`,
+        "Route should follow the newly active dock tab.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores a split dock layout from local storage after remount", async () => {
+    const snapshot = createSnapshotWithSecondThread();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: SECOND_THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${SECOND_THREAD_ID}`,
+        "Route should update to the second thread.",
+      );
+
+      const api = await waitForDockviewApi();
+      const splitGroup = api.addGroup({ direction: "right" });
+      api.getPanel(SECOND_THREAD_ID)?.api.moveTo({ group: splitGroup });
+
+      await vi.waitFor(
+        () => {
+          expect(api.groups.length).toBe(2);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+
+    const remounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      const api = await waitForDockviewApi();
+      await vi.waitFor(
+        () => {
+          expect(api.groups.length).toBe(2);
+          expect(api.getPanel(THREAD_ID)).toBeTruthy();
+          expect(api.getPanel(SECOND_THREAD_ID)).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await remounted.cleanup();
     }
   });
 

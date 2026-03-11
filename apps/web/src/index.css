@@ -404,3 +404,76 @@ label:has(> select#reasoning-effort) select {
   overflow: clip;
   background: color-mix(in srgb, var(--card) 92%, var(--background));
 }
+
+.worktree-thread-dock {
+  --dv-border-radius: 0px;
+  --dv-tabs-and-actions-container-height: 38px;
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-group-view-background-color: var(--background);
+  --dv-tabs-and-actions-container-background-color: color-mix(
+    in srgb,
+    var(--card) 92%,
+    var(--background)
+  );
+  --dv-activegroup-visiblepanel-tab-background-color: var(--background);
+  --dv-activegroup-hiddenpanel-tab-background-color: color-mix(
+    in srgb,
+    var(--card) 88%,
+    var(--background)
+  );
+  --dv-inactivegroup-visiblepanel-tab-background-color: color-mix(
+    in srgb,
+    var(--card) 94%,
+    var(--background)
+  );
+  --dv-inactivegroup-hiddenpanel-tab-background-color: color-mix(
+    in srgb,
+    var(--card) 86%,
+    var(--background)
+  );
+  --dv-activegroup-visiblepanel-tab-color: var(--foreground);
+  --dv-activegroup-hiddenpanel-tab-color: color-mix(
+    in srgb,
+    var(--muted-foreground) 88%,
+    var(--foreground)
+  );
+  --dv-inactivegroup-visiblepanel-tab-color: color-mix(
+    in srgb,
+    var(--muted-foreground) 82%,
+    var(--foreground)
+  );
+  --dv-inactivegroup-hiddenpanel-tab-color: color-mix(
+    in srgb,
+    var(--muted-foreground) 90%,
+    transparent
+  );
+  --dv-tab-divider-color: var(--border);
+  --dv-separator-border: var(--border);
+  --dv-paneview-header-border-color: var(--border);
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: color-mix(in srgb, var(--primary) 28%, transparent);
+  --dv-icon-hover-background-color: color-mix(in srgb, var(--accent) 92%, transparent);
+  --dv-drag-over-background-color: color-mix(in srgb, var(--primary) 18%, transparent);
+  --dv-drag-over-border-color: color-mix(in srgb, var(--primary) 52%, transparent);
+  --dv-scrollbar-background-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.worktree-thread-dock .dockview-react {
+  height: 100%;
+}
+
+.worktree-thread-dock .dv-content-container,
+.worktree-thread-dock .dv-react-part {
+  min-height: 0;
+  min-width: 0;
+}
+
+.worktree-thread-dock .dv-react-part {
+  display: flex;
+}
+
+.worktree-thread-dock .dv-react-part > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}

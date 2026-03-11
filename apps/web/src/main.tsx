@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
+import "dockview/dist/styles/dockview.css";
 import "@xterm/xterm/css/xterm.css";
 import "./index.css";
 
