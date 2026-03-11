@@ -1,4 +1,4 @@
-import type { GitBranch } from "@t3tools/contracts";
+import type { GitBranch, OrchestrationThreadActivity } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDownIcon } from "lucide-react";
@@ -20,6 +20,8 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "../lib/gitReactQuery";
+import { deriveLatestContextWindowStatus, type ContextWindowStatus } from "../lib/contextWindow";
+import { cn } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { parsePullRequestReference } from "../pullRequestReference";
 import {
@@ -48,6 +50,7 @@ interface BranchToolbarBranchSelectorProps {
   branchCwd: string | null;
   effectiveEnvMode: EnvMode;
   envLocked: boolean;
+  threadActivities: ReadonlyArray<OrchestrationThreadActivity>;
   onSetThreadBranch: (branch: string | null, worktreePath: string | null) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
@@ -79,6 +82,7 @@ export function BranchToolbarBranchSelector({
   branchCwd,
   effectiveEnvMode,
   envLocked,
+  threadActivities,
   onSetThreadBranch,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
@@ -146,6 +150,10 @@ export function BranchToolbarBranchSelector({
   );
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const shouldVirtualizeBranchList = filteredBranchPickerItems.length > 40;
+  const contextWindowStatus = useMemo(
+    () => deriveLatestContextWindowStatus(threadActivities),
+    [threadActivities],
+  );
 
   const runBranchAction = (action: () => Promise<void>) => {
     startBranchActionTransition(async () => {
@@ -400,66 +408,137 @@ export function BranchToolbarBranchSelector({
   }
 
   return (
-    <Combobox
-      items={branchPickerItems}
-      filteredItems={filteredBranchPickerItems}
-      autoHighlight
-      virtualized={shouldVirtualizeBranchList}
-      onItemHighlighted={(_value, eventDetails) => {
-        if (!isBranchMenuOpen || eventDetails.index < 0) return;
-        branchListVirtualizer.scrollToIndex(eventDetails.index, { align: "auto" });
-      }}
-      onOpenChange={handleOpenChange}
-      open={isBranchMenuOpen}
-      value={resolvedActiveBranch}
-    >
-      <ComboboxTrigger
-        render={<Button variant="ghost" size="xs" />}
-        className="text-muted-foreground/70 hover:text-foreground/80"
-        disabled={(branchesQuery.isLoading && branches.length === 0) || isBranchActionPending}
+    <div className="flex items-center gap-1.5">
+      <Combobox
+        items={branchPickerItems}
+        filteredItems={filteredBranchPickerItems}
+        autoHighlight
+        virtualized={shouldVirtualizeBranchList}
+        onItemHighlighted={(_value, eventDetails) => {
+          if (!isBranchMenuOpen || eventDetails.index < 0) return;
+          branchListVirtualizer.scrollToIndex(eventDetails.index, { align: "auto" });
+        }}
+        onOpenChange={handleOpenChange}
+        open={isBranchMenuOpen}
+        value={resolvedActiveBranch}
       >
-        <span className="max-w-[240px] truncate">{triggerLabel}</span>
-        <ChevronDownIcon />
-      </ComboboxTrigger>
-      <ComboboxPopup align="end" side="top" className="w-80">
-        <div className="border-b p-1">
-          <ComboboxInput
-            className="[&_input]:font-sans rounded-md"
-            inputClassName="ring-0"
-            placeholder="Search branches..."
-            showTrigger={false}
-            size="sm"
-            value={branchQuery}
-            onChange={(event) => setBranchQuery(event.target.value)}
-          />
-        </div>
-        <ComboboxEmpty>No branches found.</ComboboxEmpty>
+        <ComboboxTrigger
+          render={<Button variant="ghost" size="xs" />}
+          className="text-muted-foreground/70 hover:text-foreground/80"
+          disabled={(branchesQuery.isLoading && branches.length === 0) || isBranchActionPending}
+        >
+          <span className="max-w-[240px] truncate">{triggerLabel}</span>
+          <ChevronDownIcon />
+        </ComboboxTrigger>
+        <ComboboxPopup align="end" side="top" className="w-80">
+          <div className="border-b p-1">
+            <ComboboxInput
+              className="[&_input]:font-sans rounded-md"
+              inputClassName="ring-0"
+              placeholder="Search branches..."
+              showTrigger={false}
+              size="sm"
+              value={branchQuery}
+              onChange={(event) => setBranchQuery(event.target.value)}
+            />
+          </div>
+          <ComboboxEmpty>No branches found.</ComboboxEmpty>
 
-        <ComboboxList ref={setBranchListRef} className="max-h-56">
-          {shouldVirtualizeBranchList ? (
-            <div
-              className="relative"
-              style={{
-                height: `${branchListVirtualizer.getTotalSize()}px`,
-              }}
-            >
-              {virtualBranchRows.map((virtualRow) => {
-                const itemValue = filteredBranchPickerItems[virtualRow.index];
-                if (!itemValue) return null;
-                return renderPickerItem(itemValue, virtualRow.index, {
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${virtualRow.start}px)`,
-                });
-              })}
-            </div>
-          ) : (
-            filteredBranchPickerItems.map((itemValue, index) => renderPickerItem(itemValue, index))
-          )}
-        </ComboboxList>
-      </ComboboxPopup>
-    </Combobox>
+          <ComboboxList ref={setBranchListRef} className="max-h-56">
+            {shouldVirtualizeBranchList ? (
+              <div
+                className="relative"
+                style={{
+                  height: `${branchListVirtualizer.getTotalSize()}px`,
+                }}
+              >
+                {virtualBranchRows.map((virtualRow) => {
+                  const itemValue = filteredBranchPickerItems[virtualRow.index];
+                  if (!itemValue) return null;
+                  return renderPickerItem(itemValue, virtualRow.index, {
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualRow.start}px)`,
+                  });
+                })}
+              </div>
+            ) : (
+              filteredBranchPickerItems.map((itemValue, index) =>
+                renderPickerItem(itemValue, index),
+              )
+            )}
+          </ComboboxList>
+        </ComboboxPopup>
+      </Combobox>
+      {contextWindowStatus ? <ContextWindowRing status={contextWindowStatus} /> : null}
+    </div>
+  );
+}
+
+const tokenCountFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+function ContextWindowRing({ status }: { status: ContextWindowStatus }) {
+  const size = 24;
+  const strokeWidth = 2;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference * (1 - status.remainingRatio);
+  const remainingPercent = Math.round(status.remainingRatio * 100);
+  const label = `${remainingPercent}% context left`;
+  const detail = `${tokenCountFormatter.format(status.remainingTokens)} of ${tokenCountFormatter.format(status.totalTokens)} tokens left`;
+  const toneClassName =
+    status.remainingRatio <= 0.15
+      ? "text-destructive"
+      : status.remainingRatio <= 0.35
+        ? "text-warning"
+        : "text-success";
+
+  return (
+    <div
+      className="relative flex size-7 shrink-0 items-center justify-center"
+      aria-label={`${label}. ${detail}.`}
+      title={`${label} • ${detail}`}
+    >
+      <svg
+        className={cn("size-6 -rotate-90", toneClassName)}
+        viewBox={`0 0 ${size} ${size}`}
+        aria-hidden="true"
+      >
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeOpacity="0.16"
+          strokeWidth={strokeWidth}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeDasharray={circumference}
+          strokeDashoffset={dashOffset}
+          strokeLinecap="round"
+          strokeWidth={strokeWidth}
+        />
+      </svg>
+      <span
+        className={cn(
+          "pointer-events-none absolute font-medium tabular-nums text-[7px] text-muted-foreground",
+          remainingPercent === 100 ? "tracking-[-0.04em]" : "",
+        )}
+      >
+        {remainingPercent}
+      </span>
+      <span className="sr-only">{`${label}. ${detail}.`}</span>
+    </div>
   );
 }

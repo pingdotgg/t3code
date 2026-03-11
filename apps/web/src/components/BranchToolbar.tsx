@@ -129,6 +129,7 @@ export default function BranchToolbar({
         branchCwd={branchCwd}
         effectiveEnvMode={effectiveEnvMode}
         envLocked={envLocked}
+        threadActivities={serverThread?.activities ?? []}
         onSetThreadBranch={setThreadBranch}
         {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
         {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
