@@ -544,9 +544,72 @@ function SidebarRail({
     const storedWidth = Number(window.localStorage.getItem(resolvedResizable.storageKey));
     if (!Number.isFinite(storedWidth)) return;
     const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
+
+    if (resolvedResizable.shouldAcceptWidth) {
+      const sidebarRoot = rail.closest<HTMLElement>("[data-slot='sidebar']");
+      if (sidebarRoot) {
+        const accepted = resolvedResizable.shouldAcceptWidth({
+          currentWidth: clampedWidth,
+          nextWidth: clampedWidth,
+          rail,
+          side: sidebarInstance?.side ?? "left",
+          sidebarRoot,
+          wrapper,
+        });
+        if (!accepted) return;
+      }
+    }
+
     wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
     resolvedResizable.onResize?.(clampedWidth);
-  }, [resolvedResizable]);
+  }, [resolvedResizable, sidebarInstance?.side]);
+
+  React.useEffect(() => {
+    if (!resolvedResizable?.shouldAcceptWidth || !open) return;
+    const rail = railRef.current;
+    if (!rail) return;
+
+    let rafId: number | null = null;
+    const onResize = () => {
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        const currentRail = railRef.current;
+        if (!currentRail || !resolvedResizable.shouldAcceptWidth) return;
+        const wrapper = currentRail.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
+        const sidebarRoot = currentRail.closest<HTMLElement>("[data-slot='sidebar']");
+        if (!wrapper || !sidebarRoot) return;
+
+        const container = sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-container']");
+        const currentWidth = container?.getBoundingClientRect().width;
+        if (typeof currentWidth !== "number" || currentWidth <= 0) return;
+
+        const accepted = resolvedResizable.shouldAcceptWidth({
+          currentWidth,
+          nextWidth: currentWidth,
+          rail: currentRail,
+          side: sidebarInstance?.side ?? "left",
+          sidebarRoot,
+          wrapper,
+        });
+        if (!accepted) {
+          // Remove the stored override so it falls back to the CSS default
+          wrapper.style.removeProperty("--sidebar-width");
+          if (resolvedResizable.storageKey) {
+            window.localStorage.removeItem(resolvedResizable.storageKey);
+          }
+        }
+      });
+    };
+
+    // Validate immediately when the sidebar opens (e.g. stored width may no longer fit)
+    onResize();
+    window.addEventListener("resize", onResize, { passive: true });
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+    };
+  }, [open, resolvedResizable, sidebarInstance?.side]);
 
   React.useEffect(() => {
     return () => {
