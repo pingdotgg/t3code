@@ -66,7 +66,9 @@ const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
-  return match?.[1] ?? "text";
+  const raw = match?.[1] ?? "text";
+  // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
+  return raw === "gitignore" ? "ini" : raw;
 }
 
 function nodeToPlainText(node: ReactNode): string {

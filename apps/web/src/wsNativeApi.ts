@@ -1,16 +1,13 @@
 import {
-  OrchestrationEvent,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   type ContextMenuItem,
   type NativeApi,
   ServerConfigUpdatedPayload,
-  TerminalEvent,
   WS_CHANNELS,
   WS_METHODS,
-  WsWelcomePayload,
+  type WsWelcomePayload,
 } from "@t3tools/contracts";
-import { Cause, Schema } from "effect";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
 import { WsTransport } from "./wsTransport";
@@ -18,24 +15,6 @@ import { WsTransport } from "./wsTransport";
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
-let lastWelcome: WsWelcomePayload | null = null;
-let lastServerConfigUpdated: ServerConfigUpdatedPayload | null = null;
-
-const decodeAndWarnOnFailure = <T>(
-  schema: Schema.Schema<T> & { readonly DecodingServices: never },
-  raw: unknown,
-): T | null => {
-  const decoded = Schema.decodeUnknownExit(schema)(raw);
-  if (decoded._tag === "Failure") {
-    console.warn("Dropped inbound WebSocket push payload", {
-      reason: "decode-failed",
-      raw,
-      issue: Cause.pretty(decoded.cause),
-    });
-    return null;
-  }
-  return decoded.value;
-};
 
 /**
  * Subscribe to the server welcome message. If a welcome was already received
@@ -45,10 +24,10 @@ const decodeAndWarnOnFailure = <T>(
 export function onServerWelcome(listener: (payload: WsWelcomePayload) => void): () => void {
   welcomeListeners.add(listener);
 
-  // Replay cached welcome for late subscribers
-  if (lastWelcome) {
+  const latestWelcome = instance?.transport.getLatestPush(WS_CHANNELS.serverWelcome)?.data ?? null;
+  if (latestWelcome) {
     try {
-      listener(lastWelcome);
+      listener(latestWelcome);
     } catch {
       // Swallow listener errors
     }
@@ -68,9 +47,11 @@ export function onServerConfigUpdated(
 ): () => void {
   serverConfigUpdatedListeners.add(listener);
 
-  if (lastServerConfigUpdated) {
+  const latestConfig =
+    instance?.transport.getLatestPush(WS_CHANNELS.serverConfigUpdated)?.data ?? null;
+  if (latestConfig) {
     try {
-      listener(lastServerConfigUpdated);
+      listener(latestConfig);
     } catch {
       // Swallow listener errors
     }
@@ -86,12 +67,8 @@ export function createWsNativeApi(): NativeApi {
 
   const transport = new WsTransport();
 
-  // Listen for server welcome and forward to registered listeners.
-  // Also cache it so late subscribers (React effects) get it immediately.
-  transport.subscribe(WS_CHANNELS.serverWelcome, (data) => {
-    const payload = decodeAndWarnOnFailure(WsWelcomePayload, data);
-    if (!payload) return;
-    lastWelcome = payload;
+  transport.subscribe(WS_CHANNELS.serverWelcome, (message) => {
+    const payload = message.data;
     for (const listener of welcomeListeners) {
       try {
         listener(payload);
@@ -100,10 +77,8 @@ export function createWsNativeApi(): NativeApi {
       }
     }
   });
-  transport.subscribe(WS_CHANNELS.serverConfigUpdated, (data) => {
-    const payload = decodeAndWarnOnFailure(ServerConfigUpdatedPayload, data);
-    if (!payload) return;
-    lastServerConfigUpdated = payload;
+  transport.subscribe(WS_CHANNELS.serverConfigUpdated, (message) => {
+    const payload = message.data;
     for (const listener of serverConfigUpdatedListeners) {
       try {
         listener(payload);
@@ -134,10 +109,7 @@ export function createWsNativeApi(): NativeApi {
       restart: (input) => transport.request(WS_METHODS.terminalRestart, input),
       close: (input) => transport.request(WS_METHODS.terminalClose, input),
       onEvent: (callback) =>
-        transport.subscribe(WS_CHANNELS.terminalEvent, (data) => {
-          const payload = decodeAndWarnOnFailure(TerminalEvent, data);
-          if (payload) callback(payload);
-        }),
+        transport.subscribe(WS_CHANNELS.terminalEvent, (message) => callback(message.data)),
     },
     projects: {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
@@ -170,6 +142,9 @@ export function createWsNativeApi(): NativeApi {
       createBranch: (input) => transport.request(WS_METHODS.gitCreateBranch, input),
       checkout: (input) => transport.request(WS_METHODS.gitCheckout, input),
       init: (input) => transport.request(WS_METHODS.gitInit, input),
+      resolvePullRequest: (input) => transport.request(WS_METHODS.gitResolvePullRequest, input),
+      preparePullRequestThread: (input) =>
+        transport.request(WS_METHODS.gitPreparePullRequestThread, input),
     },
     contextMenu: {
       show: async <T extends string>(
@@ -196,10 +171,9 @@ export function createWsNativeApi(): NativeApi {
       replayEvents: (fromSequenceExclusive) =>
         transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
       onDomainEvent: (callback) =>
-        transport.subscribe(ORCHESTRATION_WS_CHANNELS.domainEvent, (data) => {
-          const payload = decodeAndWarnOnFailure(OrchestrationEvent, data);
-          if (payload) callback(payload);
-        }),
+        transport.subscribe(ORCHESTRATION_WS_CHANNELS.domainEvent, (message) =>
+          callback(message.data),
+        ),
     },
   };
 

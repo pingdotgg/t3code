@@ -141,9 +141,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
     const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
       Effect.succeed(event).pipe(
         Effect.tap((canonicalEvent) =>
-          canonicalEventLogger
-            ? canonicalEventLogger.write(canonicalEvent, null)
-            : Effect.void,
+          canonicalEventLogger ? canonicalEventLogger.write(canonicalEvent, null) : Effect.void,
         ),
         Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
         Effect.asVoid,
@@ -193,7 +191,9 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         const hasActiveSession = yield* adapter.hasSession(input.binding.threadId);
         if (hasActiveSession) {
           const activeSessions = yield* adapter.listSessions();
-          const existing = activeSessions.find((session) => session.threadId === input.binding.threadId);
+          const existing = activeSessions.find(
+            (session) => session.threadId === input.binding.threadId,
+          );
           if (existing) {
             yield* upsertSessionBinding(existing, input.binding.threadId);
             yield* analytics.record("provider.session.recovered", {
@@ -292,7 +292,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         }
 
         yield* upsertSessionBinding(session, threadId, {
-          ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
+          providerOptions: input.providerOptions,
         });
         yield* analytics.record("provider.session.started", {
           provider: session.provider,
@@ -425,23 +425,23 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
     const listSessions: ProviderServiceShape["listSessions"] = () =>
       Effect.gen(function* () {
-        const sessionsByProvider = yield* Effect.forEach(adapters, (adapter) => adapter.listSessions());
+        const sessionsByProvider = yield* Effect.forEach(adapters, (adapter) =>
+          adapter.listSessions(),
+        );
         const activeSessions = sessionsByProvider.flatMap((sessions) => sessions);
-        const persistedBindings = yield* directory
-          .listThreadIds()
-          .pipe(
-            Effect.flatMap((threadIds) =>
-              Effect.forEach(
-                threadIds,
-                (threadId) =>
-                  directory.getBinding(threadId).pipe(
-                    Effect.orElseSucceed(() => Option.none<ProviderRuntimeBinding>()),
-                  ),
-                { concurrency: "unbounded" },
-              ),
+        const persistedBindings = yield* directory.listThreadIds().pipe(
+          Effect.flatMap((threadIds) =>
+            Effect.forEach(
+              threadIds,
+              (threadId) =>
+                directory
+                  .getBinding(threadId)
+                  .pipe(Effect.orElseSucceed(() => Option.none<ProviderRuntimeBinding>())),
+              { concurrency: "unbounded" },
             ),
-            Effect.orElseSucceed(() => [] as Array<Option.Option<ProviderRuntimeBinding>>),
-          );
+          ),
+          Effect.orElseSucceed(() => [] as Array<Option.Option<ProviderRuntimeBinding>>),
+        );
         const bindingsByThreadId = new Map<ThreadId, ProviderRuntimeBinding>();
         for (const bindingOption of persistedBindings) {
           const binding = Option.getOrUndefined(bindingOption);
@@ -537,7 +537,12 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       listSessions,
       getCapabilities,
       rollbackConversation,
-      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+      // Each access creates a fresh PubSub subscription so that multiple
+      // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
+      // independently receive all runtime events.
+      get streamEvents(): ProviderServiceShape["streamEvents"] {
+        return Stream.fromPubSub(runtimeEventPubSub);
+      },
     } satisfies ProviderServiceShape;
   });
 
