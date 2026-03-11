@@ -2678,6 +2678,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
           setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
+        } else if (isLocalDraftThread) {
+          // Draft threads render from the draft store until the server snapshot arrives.
+          // Sync the worktree context before opening the terminal so the drawer does not
+          // reopen the PTY against the old project root.
+          setDraftThreadContext(threadIdForSend, {
+            branch: result.worktree.branch,
+            worktreePath: result.worktree.path,
+            envMode: "worktree",
+          });
         }
       }
 

@@ -39,10 +39,13 @@ interface WsRequestEnvelope {
   };
 }
 
+type RpcResolver = (request: WsRequestEnvelope["body"]) => unknown | undefined;
+
 interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
   welcome: WsWelcomePayload;
+  rpcResolver: RpcResolver | undefined;
 }
 
 let fixture: TestFixture;
@@ -244,6 +247,7 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
       bootstrapProjectId: PROJECT_ID,
       bootstrapThreadId: THREAD_ID,
     },
+    rpcResolver: undefined,
   };
 }
 
@@ -353,7 +357,13 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
   };
 }
 
-function resolveWsRpc(tag: string): unknown {
+function resolveWsRpc(request: WsRequestEnvelope["body"]): unknown {
+  const customResponse = fixture.rpcResolver?.(request);
+  if (customResponse !== undefined) {
+    return customResponse;
+  }
+
+  const tag = request._tag;
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
   }
@@ -395,6 +405,11 @@ function resolveWsRpc(tag: string): unknown {
       truncated: false,
     };
   }
+  if (tag === WS_METHODS.terminalOpen || tag === WS_METHODS.terminalRestart) {
+    return {
+      history: "",
+    };
+  }
   return {};
 }
 
@@ -423,7 +438,7 @@ const worker = setupWorker(
       client.send(
         JSON.stringify({
           id: request.id,
-          result: resolveWsRpc(method),
+          result: resolveWsRpc(request.body),
         }),
       );
     });
@@ -1043,6 +1058,128 @@ describe("ChatView timeline estimator parity (full app)", () => {
         .element(page.getByText("Send a message to start the conversation."))
         .toBeInTheDocument();
       await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps worktree setup terminal opens pinned to the new worktree during draft promotion", async () => {
+    const worktreePath = "/repo/.t3/worktrees/feature-bootstrap";
+    const setupCommand = "pnpm install";
+
+    useComposerDraftStore.setState({
+      draftsByThreadId: {
+        [THREAD_ID]: {
+          prompt: "bootstrap the worktree",
+          images: [],
+          nonPersistedImageIds: [],
+          persistedAttachments: [],
+          provider: null,
+          model: null,
+          runtimeMode: null,
+          interactionMode: null,
+          effort: null,
+          codexFastMode: false,
+        },
+      },
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.snapshot = {
+          ...nextFixture.snapshot,
+          projects: nextFixture.snapshot.projects.map((project) =>
+            project.id === PROJECT_ID
+              ? {
+                  ...project,
+                  scripts: [
+                    {
+                      id: "setup",
+                      name: "Setup",
+                      command: setupCommand,
+                      icon: "configure",
+                      runOnWorktreeCreate: true,
+                    },
+                  ],
+                }
+              : project,
+          ),
+        };
+        nextFixture.rpcResolver = (request) => {
+          if (request._tag === WS_METHODS.gitCreateWorktree) {
+            return {
+              worktree: {
+                branch: "feature-bootstrap",
+                path: worktreePath,
+              },
+            };
+          }
+          return undefined;
+        };
+      },
+    });
+
+    try {
+      const sendButton = page.getByRole("button", { name: "Send message" });
+      await expect.element(sendButton).toBeEnabled();
+      await sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const terminalOpenRequests = wsRequests.filter(
+            (request) => request._tag === WS_METHODS.terminalOpen,
+          );
+          expect(terminalOpenRequests.length).toBeGreaterThanOrEqual(2);
+          expect(terminalOpenRequests[0]).toMatchObject({
+            _tag: WS_METHODS.terminalOpen,
+            threadId: THREAD_ID,
+            cwd: worktreePath,
+            env: {
+              T3CODE_PROJECT_ROOT: "/repo/project",
+              T3CODE_WORKTREE_PATH: worktreePath,
+            },
+          });
+          expect(terminalOpenRequests[1]).toMatchObject({
+            _tag: WS_METHODS.terminalOpen,
+            threadId: THREAD_ID,
+            cwd: worktreePath,
+            env: {
+              T3CODE_PROJECT_ROOT: "/repo/project",
+              T3CODE_WORKTREE_PATH: worktreePath,
+            },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await vi.waitFor(
+        () => {
+          const terminalWriteRequest = wsRequests.find(
+            (request) =>
+              request._tag === WS_METHODS.terminalWrite &&
+              request.threadId === THREAD_ID &&
+              request.data === `${setupCommand}\r`,
+          );
+          expect(terminalWriteRequest).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
