@@ -1,12 +1,14 @@
 "use client";
 
 import { Toast } from "@base-ui/react/toast";
-import { useEffect, type CSSProperties } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { useParams } from "@tanstack/react-router";
 import { ThreadId } from "@t3tools/contracts";
 import {
+  CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
+  CopyIcon,
   InfoIcon,
   LoaderCircleIcon,
   TriangleAlertIcon,
@@ -142,6 +144,36 @@ function ThreadToastVisibleAutoDismiss({
   return null;
 }
 
+function CopyErrorButton({ title, description }: { title?: string; description?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    const text = [title, description].filter(Boolean).join("\n");
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [title, description]);
+
+  return (
+    <button
+      className="group/copy flex shrink-0 cursor-pointer items-center justify-center rounded p-0.5 transition-colors hover:bg-muted"
+      onClick={handleCopy}
+      title="Copy error to clipboard"
+      type="button"
+    >
+      {copied ? (
+        <CheckIcon className="size-4 text-success" />
+      ) : (
+        <>
+          <CircleAlertIcon className="size-4 text-destructive group-hover/copy:hidden" />
+          <CopyIcon className="hidden size-4 text-muted-foreground group-hover/copy:block" />
+        </>
+      )}
+    </button>
+  );
+}
+
 function ToastProvider({ children, position = "top-right", ...props }: ToastProviderProps) {
   return (
     <Toast.Provider toastManager={toastManager} {...props}>
@@ -273,14 +305,25 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                     "not-data-expanded:pointer-events-none not-data-expanded:opacity-0",
                 )}
               >
-                <div className="flex min-w-0 flex-1 gap-2">
-                  {Icon && (
-                    <div
-                      className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
-                      data-slot="toast-icon"
-                    >
-                      <Icon className="in-data-[type=loading]:animate-spin in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
+                <div className="flex min-w-0 flex-1 items-start gap-2">
+                  {toast.type === "error" ? (
+                    <div className="mt-0.5 shrink-0" data-slot="toast-icon">
+                      <CopyErrorButton
+                        {...(typeof toast.title === "string" ? { title: toast.title } : {})}
+                        {...(typeof toast.description === "string"
+                          ? { description: toast.description }
+                          : {})}
+                      />
                     </div>
+                  ) : (
+                    Icon && (
+                      <div
+                        className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
+                        data-slot="toast-icon"
+                      >
+                        <Icon className="in-data-[type=loading]:animate-spin in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
+                      </div>
+                    )
                   )}
 
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
