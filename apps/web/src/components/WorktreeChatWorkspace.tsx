@@ -6,7 +6,7 @@ import {
   type ThreadId,
   type WorktreeId,
 } from "@repo/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   DockviewReact,
   type DockviewApi,
@@ -17,7 +17,7 @@ import {
 } from "dockview";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, Clock3Icon, PlusIcon } from "lucide-react";
 
 import ChatView from "./ChatView";
 import GitActionsControl from "./GitActionsControl";
@@ -25,15 +25,22 @@ import OpenInPicker from "./OpenInPicker";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { KbdTooltip } from "./ui/kbd-tooltip";
+import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { SidebarTrigger } from "./ui/sidebar";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { gitBranchesQueryOptions } from "../lib/gitReactQuery";
+import { formatRelativeTime } from "../lib/relativeTime";
 import { decodeProjectScriptKeybindingRule } from "../lib/projectScriptKeybindings";
+import { ensureWorktreeDraftThread } from "../lib/worktreeDraftThread";
+import { worktreeDisplaySubtitle, worktreeDisplayTitle } from "../lib/worktrees";
 import { cn, newCommandId, randomUUID } from "../lib/utils";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
+import { getNewThreadShortcutHint } from "../newThreadShortcut";
 import {
   commandForProjectScript,
   nextProjectScriptId,
@@ -47,6 +54,7 @@ import {
   MAX_THREAD_TERMINAL_COUNT,
   type ProjectScript,
 } from "../types";
+import type { Worktree } from "../types";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import {
   type WorktreeDockPanelParams,
@@ -79,6 +87,19 @@ interface WorkspaceThreadEntry {
 interface WorktreeChatWorkspaceProps {
   threadId: ThreadId;
   worktreeId: WorktreeId;
+}
+
+type DockviewHeaderActionsProps = Parameters<
+  NonNullable<ComponentProps<typeof DockviewReact>["rightHeaderActionsComponent"]>
+>[0];
+
+interface DockThreadHeaderActionsExtraProps {
+  worktree: Worktree | null;
+  projectName: string | null;
+  worktreeSubtitle: string | null;
+  unopenedThreads: readonly WorkspaceThreadEntry[];
+  onCreateThread: (referencePanelId: ThreadId | null) => void;
+  onOpenThread: (threadId: ThreadId, referencePanelId: ThreadId | null) => void;
 }
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
@@ -125,6 +146,91 @@ function buildThreadPanelParams(entry: WorkspaceThreadEntry): WorktreeDockPanelP
   };
 }
 
+function DockThreadHeaderActions({
+  activePanel,
+  panels,
+  worktree,
+  projectName,
+  worktreeSubtitle,
+  unopenedThreads,
+  onCreateThread,
+  onOpenThread,
+}: DockviewHeaderActionsProps & DockThreadHeaderActionsExtraProps) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const referencePanelId = (activePanel?.id ?? panels[0]?.id ?? null) as ThreadId | null;
+  const worktreeTitle = worktree ? worktreeDisplayTitle(worktree) : "Threads";
+  const newThreadShortcut = getNewThreadShortcutHint();
+
+  return (
+    <div className="dockview-thread-actions flex items-center gap-0.5 pr-1">
+      <KbdTooltip label="New thread" shortcut={newThreadShortcut} side="bottom">
+        <Button
+          aria-label={`Create a new thread in ${worktreeTitle}`}
+          className="dockview-thread-action"
+          disabled={!worktree}
+          size="icon-xs"
+          variant="ghost"
+          onClick={() => onCreateThread(referencePanelId)}
+        >
+          <PlusIcon className="size-3.5" />
+        </Button>
+      </KbdTooltip>
+
+      <Popover onOpenChange={setPickerOpen} open={pickerOpen}>
+        <PopoverTrigger
+          render={
+            <Button
+              aria-label={`Open a closed thread from ${worktreeTitle}`}
+              className="dockview-thread-action"
+              disabled={!worktree}
+              size="icon-xs"
+              variant="ghost"
+            />
+          }
+        >
+          <Clock3Icon className="size-3.5" />
+        </PopoverTrigger>
+        <PopoverPopup align="end" className="w-[22rem] p-0" side="bottom" sideOffset={6}>
+          <div className="border-b px-2.5 py-1.5">
+            <div className="truncate text-xs font-medium text-foreground">{worktreeTitle}</div>
+            <div className="truncate text-[10px] text-muted-foreground">
+              {worktreeSubtitle ?? projectName ?? "Worktree threads"}
+            </div>
+          </div>
+
+          {unopenedThreads.length > 0 ? (
+            <ul className="max-h-80 space-y-0.5 overflow-y-auto p-1.5">
+              {unopenedThreads.map((entry) => (
+                <li key={entry.threadId}>
+                  <button
+                    className="flex h-6.5 w-full items-center justify-between gap-2.5 rounded-md px-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    type="button"
+                    onClick={() => {
+                      onOpenThread(entry.threadId, referencePanelId);
+                      setPickerOpen(false);
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {entry.isServerThread ? entry.title : "New thread"}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                      {formatRelativeTime(entry.createdAt)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="px-2.5 py-5 text-center text-xs text-muted-foreground">
+              All threads in this worktree are already open.
+            </div>
+          )}
+        </PopoverPopup>
+      </Popover>
+    </div>
+  );
+}
+
 export default function WorktreeChatWorkspace({
   threadId,
   worktreeId,
@@ -134,9 +240,16 @@ export default function WorktreeChatWorkspace({
   const { resolvedTheme } = useTheme();
 
   const projects = useStore((store) => store.projects);
+  const worktrees = useStore((store) => store.worktrees);
   const threads = useStore((store) => store.threads);
   const setStoreThreadError = useStore((store) => store.setError);
   const draftThreadsByThreadId = useComposerDraftStore((store) => store.draftThreadsByThreadId);
+  const getDraftThreadByWorktreeId = useComposerDraftStore(
+    (store) => store.getDraftThreadByWorktreeId,
+  );
+  const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
+  const setWorktreeDraftThreadId = useComposerDraftStore((store) => store.setWorktreeDraftThreadId);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const layout = useWorktreeChatLayoutStore(
     (store) => store.layoutsByWorktreeId[worktreeId] ?? null,
   );
@@ -144,6 +257,7 @@ export default function WorktreeChatWorkspace({
   const [dockviewApi, setDockviewApi] = useState<DockviewApi | null>(null);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const restoredRef = useRef(false);
+  const pendingPanelReferenceIdRef = useRef<ThreadId | null>(null);
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useState<
     Record<string, string>
   >(() => readLastInvokedScriptByProjectFromStorage());
@@ -189,9 +303,19 @@ export default function WorktreeChatWorkspace({
     [workspaceThreadsById],
   );
   const activeThread = workspaceThreadsById.get(threadId) ?? null;
-  const activeProject = projects.find((project) => project.id === activeThread?.projectId);
+  const activeWorktree = worktrees.find((worktree) => worktree.id === worktreeId) ?? null;
+  const activeProject =
+    projects.find(
+      (project) => project.id === (activeThread?.projectId ?? activeWorktree?.projectId),
+    ) ?? null;
   const activeThreadId = activeThread?.threadId ?? null;
-  const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
+  const gitCwd =
+    activeThread?.worktreePath ??
+    (activeWorktree && !activeWorktree.isRoot ? activeWorktree.workspacePath : null) ??
+    activeProject?.cwd ??
+    null;
+  const worktreeSubtitle =
+    activeWorktree && activeProject ? worktreeDisplaySubtitle(activeWorktree, activeProject) : null;
 
   const keybindingsQuery = useQuery(serverConfigQueryOptions());
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
@@ -484,29 +608,140 @@ export default function WorktreeChatWorkspace({
   }, [lastInvokedScriptByProjectId]);
 
   const addThreadPanel = useCallback(
-    (api: DockviewApi, targetThreadId: ThreadId) => {
+    (api: DockviewApi, targetThreadId: ThreadId, referencePanelId?: ThreadId | null) => {
       const entry = workspaceThreadsById.get(targetThreadId);
       if (!entry) {
         return null;
       }
 
-      return api.addPanel<WorktreeDockPanelParams>({
+      const resolvedReferencePanelId =
+        referencePanelId ?? pendingPanelReferenceIdRef.current ?? null;
+      const referencePanel =
+        (resolvedReferencePanelId ? api.getPanel(resolvedReferencePanelId) : null) ??
+        api.activePanel;
+
+      const panel = api.addPanel<WorktreeDockPanelParams>({
         id: targetThreadId,
         component: DOCKVIEW_THREAD_COMPONENT,
         title: entry.title,
         params: buildThreadPanelParams(entry),
         renderer: "always",
-        ...(api.activePanel
+        ...(referencePanel
           ? {
               position: {
-                referencePanel: api.activePanel.id,
+                referencePanel: referencePanel.id,
                 direction: "within",
               } as const,
             }
           : {}),
       });
+      pendingPanelReferenceIdRef.current = null;
+      return panel;
     },
     [workspaceThreadsById],
+  );
+
+  const openThreadInGroup = useCallback(
+    (targetThreadId: ThreadId, referencePanelId: ThreadId | null) => {
+      if (!dockviewApi) return;
+      const existingPanel = dockviewApi.getPanel(targetThreadId);
+      if (existingPanel) {
+        pendingPanelReferenceIdRef.current = null;
+        existingPanel.api.setActive();
+        return;
+      }
+
+      const addedPanel = addThreadPanel(dockviewApi, targetThreadId, referencePanelId);
+      if (addedPanel) {
+        addedPanel.api.setActive();
+      }
+    },
+    [addThreadPanel, dockviewApi],
+  );
+
+  const handleCreateThread = useCallback(
+    (referencePanelId: ThreadId | null) => {
+      if (!activeProject || !activeWorktree) {
+        return;
+      }
+
+      const nextThreadId = ensureWorktreeDraftThread({
+        projectId: activeProject.id,
+        worktreeId,
+        routeThreadId: threadId,
+        branch: activeWorktree.branch,
+        worktreePath: activeWorktree.isRoot ? null : activeWorktree.workspacePath,
+        envMode: activeWorktree.isRoot ? "local" : "worktree",
+        getDraftThreadByWorktreeId,
+        getDraftThread,
+        setWorktreeDraftThreadId,
+        setDraftThreadContext,
+      });
+
+      const existingPanel = dockviewApi?.getPanel(nextThreadId);
+      if (existingPanel) {
+        pendingPanelReferenceIdRef.current = null;
+        existingPanel.api.setActive();
+      } else if (workspaceThreadsById.has(nextThreadId)) {
+        openThreadInGroup(nextThreadId, referencePanelId);
+      } else {
+        pendingPanelReferenceIdRef.current = referencePanelId;
+      }
+
+      if (threadId !== nextThreadId) {
+        void navigate({
+          to: "/$threadId",
+          params: { threadId: nextThreadId },
+        });
+      }
+    },
+    [
+      activeProject,
+      activeWorktree,
+      dockviewApi,
+      getDraftThread,
+      getDraftThreadByWorktreeId,
+      navigate,
+      openThreadInGroup,
+      setDraftThreadContext,
+      setWorktreeDraftThreadId,
+      threadId,
+      workspaceThreadsById,
+      worktreeId,
+    ],
+  );
+
+  const unopenedThreads = useMemo(() => {
+    const openThreadIds = new Set((dockviewApi?.panels ?? []).map((panel) => panel.id as ThreadId));
+    return [...workspaceThreadsById.values()]
+      .filter((entry) => !openThreadIds.has(entry.threadId))
+      .toSorted(
+        (left, right) =>
+          Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+          right.threadId.localeCompare(left.threadId),
+      );
+  }, [dockviewApi?.panels, workspaceThreadsById]);
+
+  const rightHeaderActionsComponent = useCallback(
+    (props: DockviewHeaderActionsProps) => (
+      <DockThreadHeaderActions
+        {...props}
+        projectName={activeProject?.name ?? null}
+        worktree={activeWorktree}
+        worktreeSubtitle={worktreeSubtitle}
+        unopenedThreads={unopenedThreads}
+        onCreateThread={handleCreateThread}
+        onOpenThread={openThreadInGroup}
+      />
+    ),
+    [
+      activeProject?.name,
+      activeWorktree,
+      handleCreateThread,
+      openThreadInGroup,
+      unopenedThreads,
+      worktreeSubtitle,
+    ],
   );
 
   const dockComponents = useMemo(
@@ -546,6 +781,7 @@ export default function WorktreeChatWorkspace({
 
     const existing = dockviewApi.getPanel(threadId);
     if (existing) {
+      pendingPanelReferenceIdRef.current = null;
       existing.api.setActive();
       return;
     }
@@ -777,6 +1013,7 @@ export default function WorktreeChatWorkspace({
           components={dockComponents}
           defaultRenderer="always"
           disableFloatingGroups
+          rightHeaderActionsComponent={rightHeaderActionsComponent}
           theme={resolvedTheme === "dark" ? themeDark : themeLight}
           onReady={(event: DockviewReadyEvent) => {
             setDockviewApi(event.api);

@@ -585,6 +585,12 @@ function configureApplicationMenu(): void {
     {
       label: "View",
       submenu: [
+        {
+          label: "Focus Prompt",
+          accelerator: "CmdOrCtrl+L",
+          click: () => dispatchMenuAction("focus-composer"),
+        },
+        { type: "separator" },
         { role: "reload" },
         { role: "forceReload" },
         { role: "toggleDevTools" },

@@ -477,3 +477,11 @@ label:has(> select#reasoning-effort) select {
   min-height: 0;
   min-width: 0;
 }
+
+.worktree-thread-dock .dockview-thread-action {
+  color: color-mix(in srgb, var(--muted-foreground) 88%, var(--foreground));
+}
+
+.worktree-thread-dock .dockview-thread-action:hover {
+  color: var(--foreground);
+}

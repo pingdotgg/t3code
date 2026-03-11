@@ -54,6 +54,7 @@ import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuer
 import { createManagedWorktreeSeed, findRootWorktree, getRootWorktreeId } from "~/lib/worktrees";
 
 import { isElectron } from "../env";
+import { COMPOSER_FOCUS_REQUEST_EVENT } from "../composerFocus";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   type ComposerSlashCommand,
@@ -1465,10 +1466,6 @@ export default function ChatView({
     () => shortcutLabelForCommand(keybindings, "terminal.split"),
     [keybindings],
   );
-  const reasoningShortcut = useMemo<ReadonlyArray<string> | undefined>(
-    () => (isElectron ? [isMacPlatform(navigator.platform) ? "\u2318" : "Ctrl", "T"] : undefined),
-    [],
-  );
   const newTerminalShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "terminal.new"),
     [keybindings],
@@ -1527,31 +1524,6 @@ export default function ChatView({
       focusComposer();
     });
   }, [focusComposer]);
-  const toggleReasoningEffort = useCallback((): boolean => {
-    if (selectedProvider !== "codex" || reasoningOptions.length === 0) {
-      return false;
-    }
-
-    const currentIndex = reasoningOptions.findIndex((option) => option === selectedEffort);
-    const nextEffort =
-      currentIndex < 0
-        ? reasoningOptions[0]
-        : reasoningOptions[(currentIndex + 1) % reasoningOptions.length];
-    if (!nextEffort) {
-      return false;
-    }
-
-    setComposerDraftEffort(threadId, nextEffort);
-    scheduleComposerFocus();
-    return true;
-  }, [
-    reasoningOptions,
-    scheduleComposerFocus,
-    selectedEffort,
-    selectedProvider,
-    setComposerDraftEffort,
-    threadId,
-  ]);
   const setTerminalOpen = useCallback(
     (open: boolean) => {
       if (!activeThreadId) return;
@@ -2546,44 +2518,17 @@ export default function ChatView({
   ]);
 
   useEffect(() => {
-    if (!isElectron) {
+    if (!routeActive) {
       return;
     }
 
-    const handler = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) return;
-      if (event.shiftKey || event.altKey) return;
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key.toLowerCase() !== "t") return;
-      if (!toggleReasoningEffort()) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-    };
-
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [toggleReasoningEffort]);
-
-  useEffect(() => {
-    if (!isElectron) {
-      return;
-    }
-
-    const handler = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) return;
-      if (event.shiftKey || event.altKey) return;
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key.toLowerCase() !== "l") return;
-
-      event.preventDefault();
-      event.stopPropagation();
+    const handler = () => {
       focusComposer();
     };
 
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [focusComposer]);
+    window.addEventListener(COMPOSER_FOCUS_REQUEST_EVENT, handler);
+    return () => window.removeEventListener(COMPOSER_FOCUS_REQUEST_EVENT, handler);
+  }, [focusComposer, routeActive]);
 
   const addComposerImages = (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
@@ -3718,7 +3663,7 @@ export default function ChatView({
     }
     void onRevertToTurnCount(targetTurnCount);
   };
-  const showComposerFocusHint = isElectron && !isComposerFocused;
+  const showComposerFocusHint = isElectron && routeActive && !isComposerFocused;
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -3843,7 +3788,7 @@ export default function ChatView({
                 data-chat-composer-shell="true"
                 className={cn(
                   "group relative rounded-[20px] border bg-card transition-colors duration-200",
-                  interactionMode === "plan"
+                  interactionMode === "plan" && isComposerFocused
                     ? "border-dashed border-primary focus-within:border-primary"
                     : "border-border focus-within:border-ring/45",
                   isDragOverComposer && "bg-accent/30",
@@ -4077,7 +4022,6 @@ export default function ChatView({
                                 effort={selectedEffort}
                                 fastModeEnabled={selectedCodexFastModeEnabled}
                                 options={reasoningOptions}
-                                shortcut={reasoningShortcut}
                                 onEffortChange={onEffortSelect}
                                 onFastModeChange={onCodexFastModeChange}
                               />

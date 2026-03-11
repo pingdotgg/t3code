@@ -1,7 +1,9 @@
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { isComposerFocusShortcut, requestComposerFocus } from "../composerFocus";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
+import { isElectron } from "../env";
 import ThreadSidebar from "../components/Sidebar";
 import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
 
@@ -15,14 +17,35 @@ function ChatRouteLayout() {
     }
 
     const unsubscribe = onMenuAction((action) => {
-      if (action !== "open-settings") return;
-      void navigate({ to: "/settings" });
+      if (action === "open-settings") {
+        void navigate({ to: "/settings" });
+        return;
+      }
+      if (action === "focus-composer") {
+        requestComposerFocus();
+      }
     });
 
     return () => {
       unsubscribe?.();
     };
   }, [navigate]);
+
+  useEffect(() => {
+    if (!isElectron) {
+      return;
+    }
+
+    const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!isComposerFocusShortcut(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      requestComposerFocus();
+    };
+
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => window.removeEventListener("keydown", onWindowKeyDown);
+  }, []);
 
   return (
     <SidebarProvider defaultOpen>

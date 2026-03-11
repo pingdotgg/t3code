@@ -22,6 +22,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { requestComposerFocus } from "../composerFocus";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
@@ -553,6 +554,16 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
+async function waitForVisibleComposerEditor(): Promise<HTMLElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[contenteditable="true"]')).find(
+        (element) => element.getClientRects().length > 0,
+      ) ?? null,
+    "Unable to find visible composer editor.",
+  );
+}
+
 async function waitForComposerShell(): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[data-chat-composer-shell="true"]'),
@@ -1044,6 +1055,28 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
+      composerEditor.blur();
+
+      await vi.waitFor(
+        async () => {
+          const composerShell = await waitForComposerShell();
+          expect(composerShell.className).not.toContain("border-dashed");
+          expect(composerShell.className).not.toContain("border-primary");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      composerEditor.focus();
+
+      await vi.waitFor(
+        async () => {
+          const composerShell = await waitForComposerShell();
+          expect(composerShell.className).toContain("border-dashed");
+          expect(composerShell.className).toContain("border-primary");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
       composerEditor.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "Tab",
@@ -1176,6 +1209,55 @@ describe("ChatView timeline estimator parity (full app)", () => {
         mounted.router,
         (path) => path === `/${THREAD_ID}`,
         "Route should follow the newly active dock tab.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("focuses the route-active dock composer for global focus requests", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondThread(),
+    });
+
+    try {
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: SECOND_THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${SECOND_THREAD_ID}`,
+        "Route should update to the second thread.",
+      );
+
+      const api = await waitForDockviewApi();
+      await vi.waitFor(
+        () => {
+          expect(api.activePanel?.id).toBe(SECOND_THREAD_ID);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const visibleComposer = await waitForVisibleComposerEditor();
+      const currentActiveElement = document.activeElement;
+      if (currentActiveElement instanceof HTMLElement) {
+        currentActiveElement.blur();
+      }
+      document.body.tabIndex = -1;
+      document.body.focus();
+      await waitForLayout();
+
+      expect(document.activeElement).not.toBe(visibleComposer);
+
+      requestComposerFocus();
+
+      await vi.waitFor(
+        () => {
+          expect(document.activeElement).toBe(visibleComposer);
+        },
+        { timeout: 8_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();

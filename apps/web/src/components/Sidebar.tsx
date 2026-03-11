@@ -27,7 +27,6 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
@@ -41,15 +40,10 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
-import {
-  isMacPlatform,
-  newCommandId,
-  newProjectId,
-  newThreadId,
-  newWorktreeId,
-} from "../lib/utils";
+import { isMacPlatform, newCommandId, newProjectId, newWorktreeId } from "../lib/utils";
+import { getNewThreadShortcutHint, isNewThreadShortcut } from "../newThreadShortcut";
 import { useStore } from "../store";
-import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
+import { isChatNewLocalShortcut, isChatNewShortcut } from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import {
   gitCreateWorktreeMutationOptions,
@@ -59,6 +53,8 @@ import {
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
+import { formatRelativeTime } from "../lib/relativeTime";
+import { ensureWorktreeDraftThread } from "../lib/worktreeDraftThread";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
@@ -75,6 +71,7 @@ import {
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent } from "./ui/collapsible";
+import { KbdTooltip } from "./ui/kbd-tooltip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -110,16 +107,6 @@ async function copyTextToClipboard(text: string): Promise<void> {
     throw new Error("Clipboard API unavailable.");
   }
   await navigator.clipboard.writeText(text);
-}
-
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
 }
 
 interface TerminalStatusIndicator {
@@ -459,57 +446,26 @@ export default function Sidebar() {
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
     }): Promise<void> => {
-      const storedDraftThread = getDraftThreadByWorktreeId(input.worktreeId);
       setProjectExpanded(input.projectId, true);
       expandWorktree(input.worktreeId);
-      if (storedDraftThread) {
-        setDraftThreadContext(storedDraftThread.threadId, {
-          branch: input.branch ?? null,
-          worktreePath: input.worktreePath ?? null,
-          envMode: input.envMode ?? (input.worktreePath ? "worktree" : "local"),
-          worktreeId: input.worktreeId,
-          projectId: input.projectId,
-        });
-        setWorktreeDraftThreadId(input.worktreeId, storedDraftThread.threadId, {
-          projectId: input.projectId,
-          branch: input.branch ?? null,
-          worktreePath: input.worktreePath ?? null,
-          envMode: input.envMode ?? (input.worktreePath ? "worktree" : "local"),
-        });
-        if (routeThreadId !== storedDraftThread.threadId) {
-          await navigate({
-            to: "/$threadId",
-            params: { threadId: storedDraftThread.threadId },
-          });
-        }
-        return;
-      }
-
-      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
-      if (activeDraftThread && routeThreadId && activeDraftThread.worktreeId === input.worktreeId) {
-        setDraftThreadContext(routeThreadId, {
-          branch: input.branch ?? null,
-          worktreePath: input.worktreePath ?? null,
-          envMode: input.envMode ?? (input.worktreePath ? "worktree" : "local"),
-          worktreeId: input.worktreeId,
-          projectId: input.projectId,
-        });
-        return;
-      }
-
-      const threadId = newThreadId();
-      setWorktreeDraftThreadId(input.worktreeId, threadId, {
+      const nextThreadId = ensureWorktreeDraftThread({
         projectId: input.projectId,
-        createdAt: new Date().toISOString(),
-        branch: input.branch ?? null,
-        worktreePath: input.worktreePath ?? null,
-        envMode: input.envMode ?? (input.worktreePath ? "worktree" : "local"),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
+        worktreeId: input.worktreeId,
+        routeThreadId,
+        branch: input.branch,
+        worktreePath: input.worktreePath,
+        envMode: input.envMode,
+        getDraftThreadByWorktreeId,
+        getDraftThread,
+        setDraftThreadContext,
+        setWorktreeDraftThreadId,
       });
-      await navigate({
-        to: "/$threadId",
-        params: { threadId },
-      });
+      if (routeThreadId !== nextThreadId) {
+        await navigate({
+          to: "/$threadId",
+          params: { threadId: nextThreadId },
+        });
+      }
     },
     [
       getDraftThread,
@@ -1279,6 +1235,18 @@ export default function Sidebar() {
       const nextEnvMode: DraftThreadEnvMode =
         activeDraftThread?.envMode ??
         (activeWorktree?.isRoot === true || nextWorktreePath === null ? "local" : "worktree");
+      if (isNewThreadShortcut(event)) {
+        if (!activeProjectId || !activeWorktreeId) return;
+        event.preventDefault();
+        void handleNewThread({
+          projectId: activeProjectId,
+          worktreeId: activeWorktreeId,
+          branch: nextBranch,
+          worktreePath: nextWorktreePath,
+          envMode: nextEnvMode,
+        });
+        return;
+      }
       if (isChatNewLocalShortcut(event, keybindings)) {
         if (!activeProjectId || !activeWorktreeId) return;
         event.preventDefault();
@@ -1389,11 +1357,9 @@ export default function Sidebar() {
         : shouldHighlightDesktopUpdateError(desktopUpdateState)
           ? "text-rose-500 animate-pulse"
           : "text-amber-500 animate-pulse";
-  const newThreadShortcutLabel = useMemo(
-    () =>
-      shortcutLabelForCommand(keybindings, "chat.newLocal") ??
-      shortcutLabelForCommand(keybindings, "chat.new"),
-    [keybindings],
+  const newThreadShortcut = useMemo<ReadonlyArray<string> | undefined>(
+    () => getNewThreadShortcutHint(),
+    [],
   );
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
@@ -1871,40 +1837,31 @@ export default function Sidebar() {
                                             ) : null}
                                           </div>
                                         </SidebarMenuSubButton>
-                                        <Tooltip>
-                                          <TooltipTrigger
+                                        <KbdTooltip label="New thread" shortcut={newThreadShortcut}>
+                                          <SidebarMenuAction
                                             render={
-                                              <SidebarMenuAction
-                                                render={
-                                                  <button
-                                                    type="button"
-                                                    aria-label={`Create new thread in ${worktreeTitle}`}
-                                                  />
-                                                }
-                                                showOnHover
-                                                className="top-1 right-1 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
-                                                onClick={(event) => {
-                                                  event.preventDefault();
-                                                  event.stopPropagation();
-                                                  void handleNewThread({
-                                                    projectId: project.id,
-                                                    worktreeId: worktree.id,
-                                                    branch: worktree.branch,
-                                                    worktreePath,
-                                                    envMode: worktreeEnvMode,
-                                                  });
-                                                }}
-                                              >
-                                                <SquarePenIcon className="size-3.5" />
-                                              </SidebarMenuAction>
+                                              <button
+                                                type="button"
+                                                aria-label={`Create new thread in ${worktreeTitle}`}
+                                              />
                                             }
-                                          />
-                                          <TooltipPopup side="top">
-                                            {newThreadShortcutLabel
-                                              ? `New thread (${newThreadShortcutLabel})`
-                                              : "New thread"}
-                                          </TooltipPopup>
-                                        </Tooltip>
+                                            showOnHover
+                                            className="top-1 right-1 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                                            onClick={(event) => {
+                                              event.preventDefault();
+                                              event.stopPropagation();
+                                              void handleNewThread({
+                                                projectId: project.id,
+                                                worktreeId: worktree.id,
+                                                branch: worktree.branch,
+                                                worktreePath,
+                                                envMode: worktreeEnvMode,
+                                              });
+                                            }}
+                                          >
+                                            <SquarePenIcon className="size-3.5" />
+                                          </SidebarMenuAction>
+                                        </KbdTooltip>
                                       </div>
 
                                       <CollapsibleContent keepMounted>
