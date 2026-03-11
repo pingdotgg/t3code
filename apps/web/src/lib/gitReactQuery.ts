@@ -11,6 +11,7 @@ export const gitQueryKeys = {
   all: ["git"] as const,
   status: (cwd: string | null) => ["git", "status", cwd] as const,
   branches: (cwd: string | null) => ["git", "branches", cwd] as const,
+  diffBranch: (cwd: string | null, base: string | null) => ["git", "diffBranch", cwd, base] as const,
 };
 
 export const gitMutationKeys = {
@@ -55,6 +56,20 @@ export function gitBranchesQueryOptions(cwd: string | null) {
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
+  });
+}
+
+export function gitDiffBranchQueryOptions(input: { cwd: string | null; base: string | null }) {
+  return queryOptions({
+    queryKey: gitQueryKeys.diffBranch(input.cwd, input.base),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!input.cwd || !input.base) throw new Error("Git diff is unavailable.");
+      return api.git.diffBranch({ cwd: input.cwd, base: input.base });
+    },
+    enabled: input.cwd !== null && input.base !== null,
+    staleTime: 10_000,
+    refetchOnWindowFocus: "always",
   });
 }
 

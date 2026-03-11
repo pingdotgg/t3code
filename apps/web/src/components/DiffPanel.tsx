@@ -1,9 +1,18 @@
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  Columns2Icon,
+  FolderXIcon,
+  GitBranchIcon,
+  LoaderIcon,
+  Rows3Icon,
+} from "lucide-react";
 import {
   type WheelEvent as ReactWheelEvent,
   useCallback,
@@ -12,7 +21,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { gitBranchesQueryOptions } from "~/lib/gitReactQuery";
+import {
+  gitBranchesQueryOptions,
+  gitCreateWorktreeMutationOptions,
+  gitDiffBranchQueryOptions,
+} from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
@@ -24,6 +37,7 @@ import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
+import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
@@ -176,6 +190,31 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
   const gitBranchesQuery = useQuery(gitBranchesQueryOptions(activeCwd ?? null));
   const isGitRepo = gitBranchesQuery.data?.isRepo ?? true;
+  const defaultBranchName = useMemo(() => {
+    const branches = gitBranchesQuery.data?.branches;
+    if (!branches) return null;
+    return branches.find((b) => b.isDefault)?.name ?? null;
+  }, [gitBranchesQuery.data?.branches]);
+  const [showBranchDiff, setShowBranchDiff] = useState(false);
+  const branchDiffQuery = useQuery(
+    gitDiffBranchQueryOptions({
+      cwd: activeCwd ?? null,
+      base: showBranchDiff ? defaultBranchName : null,
+    }),
+  );
+  const branchDiffPatch = useMemo(
+    () => (showBranchDiff ? getRenderablePatch(branchDiffQuery.data?.diff, `branch-diff:${resolvedTheme}`) : null),
+    [showBranchDiff, branchDiffQuery.data?.diff, resolvedTheme],
+  );
+  const branchDiffFiles = useMemo(() => {
+    if (!branchDiffPatch || branchDiffPatch.kind !== "files") return [];
+    return branchDiffPatch.files.toSorted((left, right) =>
+      resolveFileDiffPath(left).localeCompare(resolveFileDiffPath(right), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }),
+    );
+  }, [branchDiffPatch]);
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -267,6 +306,32 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       : activeCheckpointDiffQuery.error
         ? "Failed to load checkpoint diff."
         : null;
+
+  const worktreePath = activeThread?.worktreePath ?? null;
+  const isWorktreeMissing =
+    !!worktreePath &&
+    !!checkpointDiffError &&
+    (checkpointDiffError.includes("ENOENT") ||
+      checkpointDiffError.includes("NotFound") ||
+      checkpointDiffError.includes("no such file"));
+  const queryClient = useQueryClient();
+  const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
+  const handleRecreateWorktree = useCallback(() => {
+    if (!activeProject || !activeThread?.branch) return;
+    createWorktreeMutation.mutate(
+      {
+        cwd: activeProject.cwd,
+        branch: activeThread.branch,
+        newBranch: activeThread.branch,
+        path: worktreePath,
+      },
+      {
+        onSuccess: () => {
+          void activeCheckpointDiffQuery.refetch();
+        },
+      },
+    );
+  }, [activeProject, activeThread?.branch, createWorktreeMutation, worktreePath, activeCheckpointDiffQuery]);
 
   const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
   const hasResolvedPatch = typeof selectedPatch === "string";
@@ -490,6 +555,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           ))}
         </div>
       </div>
+      {defaultBranchName && (
+        <Button
+          variant={showBranchDiff ? "default" : "outline"}
+          size="xs"
+          className="shrink-0 gap-1 [-webkit-app-region:no-drag]"
+          onClick={() => setShowBranchDiff((prev) => !prev)}
+          title={`Show full diff to ${defaultBranchName}`}
+        >
+          <GitBranchIcon className="size-3" />
+          <span className="text-[10px]">Diff to {defaultBranchName}</span>
+        </Button>
+      )}
       <ToggleGroup
         className="shrink-0 [-webkit-app-region:no-drag]"
         variant="outline"
@@ -540,6 +617,129 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       ) : !isGitRepo ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
+        </div>
+      ) : isWorktreeMissing ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+          <FolderXIcon className="size-8 text-muted-foreground/40" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-foreground/80">Worktree not found</p>
+            <p className="text-xs text-muted-foreground/70">
+              The worktree for this thread was deleted. Recreate it to view diffs again.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={createWorktreeMutation.isPending || !activeThread?.branch}
+            onClick={handleRecreateWorktree}
+          >
+            {createWorktreeMutation.isPending ? (
+              <>
+                <LoaderIcon className="size-3.5 animate-spin" />
+                Recreating...
+              </>
+            ) : (
+              "Recreate Worktree"
+            )}
+          </Button>
+          {createWorktreeMutation.isError && (
+            <p className="text-[11px] text-destructive">
+              {createWorktreeMutation.error instanceof Error
+                ? createWorktreeMutation.error.message
+                : "Failed to recreate worktree."}
+            </p>
+          )}
+        </div>
+      ) : showBranchDiff ? (
+        <div
+          ref={patchViewportRef}
+          className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
+        >
+          {branchDiffQuery.isLoading ? (
+            <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
+              <p>Loading branch diff...</p>
+            </div>
+          ) : branchDiffQuery.isError ? (
+            <div className="px-3 pt-2">
+              <p className="text-[11px] text-red-500/80">
+                {branchDiffQuery.error instanceof Error
+                  ? branchDiffQuery.error.message
+                  : "Failed to load branch diff."}
+              </p>
+            </div>
+          ) : !branchDiffPatch ? (
+            <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
+              <p>No changes compared to {defaultBranchName}.</p>
+            </div>
+          ) : branchDiffPatch.kind === "files" ? (
+            <Virtualizer
+              className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
+              config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
+            >
+              {branchDiffFiles.map((fileDiff) => {
+                const filePath = resolveFileDiffPath(fileDiff);
+                const fileKey = buildFileDiffRenderKey(fileDiff);
+                const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                const isCollapsed = collapsedFiles.has(themedFileKey);
+                return (
+                  <div
+                    key={themedFileKey}
+                    data-diff-file-path={filePath}
+                    className="diff-render-file mb-2 rounded-md first:mt-2 last:mb-0"
+                  >
+                    <button
+                      type="button"
+                      className="flex w-full cursor-pointer items-center gap-1.5 border-b border-border/60 bg-[color-mix(in_srgb,var(--card)_94%,var(--foreground))] px-3 py-1.5 text-left text-[12px] font-medium text-foreground/90 transition-colors hover:bg-[color-mix(in_srgb,var(--card)_88%,var(--foreground))] hover:text-foreground"
+                      onClick={() => toggleFileCollapsed(themedFileKey)}
+                      title={filePath}
+                    >
+                      <ChevronDownIcon
+                        className={cn(
+                          "size-3.5 shrink-0 text-muted-foreground/60 transition-transform",
+                          isCollapsed && "-rotate-90",
+                        )}
+                      />
+                      <span className="min-w-0 truncate font-mono">{filePath}</span>
+                    </button>
+                    {!isCollapsed && (
+                      <div
+                        onClickCapture={(event) => {
+                          const nativeEvent = event.nativeEvent as MouseEvent;
+                          const composedPath = nativeEvent.composedPath?.() ?? [];
+                          const clickedHeader = composedPath.some((node) => {
+                            if (!(node instanceof Element)) return false;
+                            return node.hasAttribute("data-title");
+                          });
+                          if (!clickedHeader) return;
+                          openDiffFileInEditor(filePath);
+                        }}
+                      >
+                        <FileDiff
+                          fileDiff={fileDiff}
+                          options={{
+                            diffStyle: diffRenderMode === "split" ? "split" : "unified",
+                            lineDiffType: "none",
+                            theme: resolveDiffThemeName(resolvedTheme),
+                            themeType: resolvedTheme as DiffThemeType,
+                            unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </Virtualizer>
+          ) : (
+            <div className="h-full overflow-auto p-2">
+              <div className="space-y-2">
+                <p className="text-[11px] text-muted-foreground/75">{branchDiffPatch.reason}</p>
+                <pre className="max-h-[72vh] overflow-auto rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90">
+                  {branchDiffPatch.text}
+                </pre>
+              </div>
+            </div>
+          )}
         </div>
       ) : orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">

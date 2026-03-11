@@ -1177,8 +1177,13 @@ const makeGitCore = Effect.gen(function* () {
       const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
       const worktreePath =
         input.path ?? path.join(homeDir, ".t3", "worktrees", repoName, sanitizedBranch);
+      const shouldReuseExistingBranch = input.newBranch
+        ? yield* branchExists(input.cwd, input.newBranch)
+        : false;
       const args = input.newBranch
-        ? ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch]
+        ? shouldReuseExistingBranch
+          ? ["worktree", "add", worktreePath, input.newBranch]
+          : ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch]
         : ["worktree", "add", worktreePath, input.branch];
 
       // If the base branch is a remote ref (e.g. "origin/feature"), fetch it first
@@ -1404,6 +1409,12 @@ const makeGitCore = Effect.gen(function* () {
       ),
     );
 
+  const diffBranch: GitCoreShape["diffBranch"] = (input) =>
+    runGitStdout("GitCore.diffBranch", input.cwd, [
+      "diff",
+      `${input.base}...HEAD`,
+    ], true).pipe(Effect.map((stdout) => ({ diff: stdout })));
+
   return {
     status,
     statusDetails,
@@ -1425,6 +1436,7 @@ const makeGitCore = Effect.gen(function* () {
     checkoutBranch,
     initRepo,
     listLocalBranchNames,
+    diffBranch,
   } satisfies GitCoreShape;
 });
 

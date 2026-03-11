@@ -13,6 +13,8 @@ import type {
   GitCreateBranchInput,
   GitCreateWorktreeInput,
   GitCreateWorktreeResult,
+  GitDiffBranchInput,
+  GitDiffBranchResult,
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
@@ -214,6 +216,13 @@ export interface GitCoreShape {
    * List local branch names (short format).
    */
   readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
+
+  /**
+   * Compute a diff between a base branch and HEAD.
+   */
+  readonly diffBranch: (
+    input: GitDiffBranchInput,
+  ) => Effect.Effect<GitDiffBranchResult, GitCommandError>;
 }
 
 /**

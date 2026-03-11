@@ -6,6 +6,8 @@ import type {
   GitPullRequestRefInput,
   GitCreateWorktreeInput,
   GitCreateWorktreeResult,
+  GitDiffBranchInput,
+  GitDiffBranchResult,
   GitFetchPrDetailsInput,
   GitFetchPrDetailsResult,
   GitInitInput,
@@ -152,6 +154,8 @@ export interface NativeApi {
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
     runStackedAction: (input: GitRunStackedActionInput) => Promise<GitRunStackedActionResult>;
+    // Diff API
+    diffBranch: (input: GitDiffBranchInput) => Promise<GitDiffBranchResult>;
     // GitHub PR API
     fetchPrDetails: (input: GitFetchPrDetailsInput) => Promise<GitFetchPrDetailsResult>;
   };
