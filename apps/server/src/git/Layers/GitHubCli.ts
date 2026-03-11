@@ -241,6 +241,18 @@ const makeGitHubCli = Effect.sync(() => {
         ),
         Effect.map(normalizeRepositoryCloneUrls),
       ),
+    createRepository: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "repo",
+          "create",
+          "--source=.",
+          `--${input.visibility}`,
+          "--remote",
+          input.remote ?? "origin",
+        ],
+      }).pipe(Effect.asVoid),
     createPullRequest: (input) =>
       execute({
         cwd: input.cwd,

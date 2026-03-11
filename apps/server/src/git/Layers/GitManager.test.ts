@@ -408,6 +408,18 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             input.bodyFile,
           ],
         }).pipe(Effect.asVoid),
+      createRepository: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "repo",
+            "create",
+            "--source=.",
+            `--${input.visibility}`,
+            "--remote",
+            input.remote ?? "origin",
+          ],
+        }).pipe(Effect.asVoid),
       getDefaultBranch: (input) =>
         execute({
           cwd: input.cwd,

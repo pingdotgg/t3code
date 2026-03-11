@@ -106,6 +106,32 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 
+  it.effect("creates a repository from the current directory", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: "https://github.com/octocat/codething-mvp\n",
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.createRepository({
+          cwd: "/repo",
+          visibility: "private",
+        });
+      });
+
+      expect(mockedRunProcess).toHaveBeenCalledWith(
+        "gh",
+        ["repo", "create", "--source=.", "--private", "--remote", "origin"],
+        expect.objectContaining({ cwd: "/repo" }),
+      );
+    }),
+  );
+
   it.effect("surfaces a friendly error when the pull request is not found", () =>
     Effect.gen(function* () {
       mockedRunProcess.mockRejectedValueOnce(
