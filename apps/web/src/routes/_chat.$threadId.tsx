@@ -5,6 +5,7 @@ import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 import ChatView from "../components/ChatView";
 import { useComposerDraftStore } from "../composerDraftStore";
 import {
+  clearDiffSearchParams,
   type DiffRouteSearch,
   parseDiffRouteSearch,
   stripDiffSearchParams,
@@ -133,10 +134,17 @@ const DiffPanelInlineSidebar = (props: {
       className="w-auto min-h-0 flex-none bg-transparent"
       style={{ "--sidebar-width": DIFF_INLINE_DEFAULT_WIDTH } as React.CSSProperties}
     >
+      {diffOpen ? (
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 z-[15] bg-transparent"
+          onClick={onCloseDiff}
+        />
+      ) : null}
       <Sidebar
         side="right"
         collapsible="offcanvas"
-        className="border-l border-border bg-card text-foreground"
+        className="z-20 border-l border-border bg-card text-foreground"
         resizable={{
           minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: shouldAcceptInlineSidebarWidth,
@@ -171,7 +179,7 @@ function ChatThreadRouteView() {
       to: "/$threadId",
       params: { threadId },
       search: (previous) => {
-        return stripDiffSearchParams(previous);
+        return clearDiffSearchParams(previous);
       },
     });
   }, [navigate, threadId]);

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { parseDiffRouteSearch } from "./diffRouteSearch";
+import {
+  clearDiffSearchParams,
+  parseDiffRouteSearch,
+  stripDiffSearchParams,
+} from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
   it("parses valid diff search values", () => {
@@ -70,5 +74,42 @@ describe("parseDiffRouteSearch", () => {
     expect(parsed).toEqual({
       diff: "1",
     });
+  });
+});
+
+describe("stripDiffSearchParams", () => {
+  it("removes diff search keys", () => {
+    const stripped = stripDiffSearchParams({
+      diff: "1",
+      diffFilePath: "src/app.ts",
+      diffTurnId: "turn-1",
+      project: "demo",
+    });
+
+    expect(stripped).toEqual({ project: "demo" });
+    expect("diff" in stripped).toBe(false);
+    expect("diffTurnId" in stripped).toBe(false);
+    expect("diffFilePath" in stripped).toBe(false);
+  });
+});
+
+describe("clearDiffSearchParams", () => {
+  it("keeps explicit undefined tombstones for diff keys", () => {
+    const cleared = clearDiffSearchParams({
+      diff: "1",
+      diffFilePath: "src/app.ts",
+      diffTurnId: "turn-1",
+      project: "demo",
+    });
+
+    expect(cleared).toEqual({
+      diff: undefined,
+      diffFilePath: undefined,
+      diffTurnId: undefined,
+      project: "demo",
+    });
+    expect("diff" in cleared).toBe(true);
+    expect("diffTurnId" in cleared).toBe(true);
+    expect("diffFilePath" in cleared).toBe(true);
   });
 });
