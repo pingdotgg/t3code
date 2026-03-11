@@ -17,6 +17,8 @@ import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQue
 import { readNativeApi } from "../nativeApi";
 import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
+import { useBrowserStateStore } from "../browserStateStore";
+import { useRightPanelStateStore } from "../rightPanelStateStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { preferredTerminalEditor } from "../terminal-links";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
@@ -133,6 +135,12 @@ function errorDetails(error: unknown): string {
 function EventRouter() {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setProjectExpanded = useStore((store) => store.setProjectExpanded);
+  const removeOrphanedBrowserStates = useBrowserStateStore(
+    (store) => store.removeOrphanedBrowserStates,
+  );
+  const removeOrphanedRightPanelStates = useRightPanelStateStore(
+    (store) => store.removeOrphanedRightPanelStates,
+  );
   const removeOrphanedTerminalStates = useTerminalStateStore(
     (store) => store.removeOrphanedTerminalStates,
   );
@@ -166,6 +174,8 @@ function EventRouter() {
         snapshotThreads: snapshot.threads,
         draftThreadIds,
       });
+      removeOrphanedBrowserStates(activeThreadIds);
+      removeOrphanedRightPanelStates(activeThreadIds);
       removeOrphanedTerminalStates(activeThreadIds);
       if (pending) {
         pending = false;
@@ -309,6 +319,8 @@ function EventRouter() {
   }, [
     navigate,
     queryClient,
+    removeOrphanedBrowserStates,
+    removeOrphanedRightPanelStates,
     removeOrphanedTerminalStates,
     setProjectExpanded,
     syncServerReadModel,

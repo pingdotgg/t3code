@@ -6,11 +6,11 @@ import {
 } from "@t3tools/contracts";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
-import { DiffIcon } from "lucide-react";
+import { DiffIcon, GlobeIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
-import { Toggle } from "../ui/toggle";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 
@@ -25,13 +25,14 @@ interface ChatHeaderProps {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   diffToggleShortcutLabel: string | null;
+  browserToggleShortcutLabel: string | null;
   gitCwd: string | null;
-  diffOpen: boolean;
+  selectedSidePanel: "diff" | "browser" | null;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
-  onToggleDiff: () => void;
+  onSelectSidePanel: (panel: "diff" | "browser" | null) => void;
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -45,13 +46,14 @@ export const ChatHeader = memo(function ChatHeader({
   keybindings,
   availableEditors,
   diffToggleShortcutLabel,
+  browserToggleShortcutLabel,
   gitCwd,
-  diffOpen,
+  selectedSidePanel,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
-  onToggleDiff,
+  onSelectSidePanel,
 }: ChatHeaderProps) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -94,30 +96,53 @@ export const ChatHeader = memo(function ChatHeader({
           />
         )}
         {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0"
-                pressed={diffOpen}
-                onPressedChange={onToggleDiff}
-                aria-label="Toggle diff panel"
-                variant="outline"
-                size="xs"
-                disabled={!isGitRepo}
-              >
-                <DiffIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!isGitRepo
-              ? "Diff panel is unavailable because this project is not a git repository."
-              : diffToggleShortcutLabel
-                ? `Toggle diff panel (${diffToggleShortcutLabel})`
-                : "Toggle diff panel"}
-          </TooltipPopup>
-        </Tooltip>
+        <ToggleGroup className="shrink-0" variant="outline" size="xs">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  value="diff"
+                  pressed={selectedSidePanel === "diff"}
+                  onPressedChange={(pressed) => {
+                    onSelectSidePanel(pressed ? "diff" : null);
+                  }}
+                  aria-label="Toggle diff panel"
+                  disabled={!isGitRepo}
+                >
+                  <DiffIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {!isGitRepo
+                ? "Diff panel is unavailable because this project is not a git repository."
+                : diffToggleShortcutLabel
+                  ? `Toggle diff panel (${diffToggleShortcutLabel})`
+                  : "Toggle diff panel"}
+            </TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  value="browser"
+                  pressed={selectedSidePanel === "browser"}
+                  onPressedChange={(pressed) => {
+                    onSelectSidePanel(pressed ? "browser" : null);
+                  }}
+                  aria-label="Toggle in-app browser"
+                >
+                  <GlobeIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {browserToggleShortcutLabel
+                ? `Toggle in-app browser (${browserToggleShortcutLabel})`
+                : "Toggle in-app browser"}
+            </TooltipPopup>
+          </Tooltip>
+        </ToggleGroup>
       </div>
     </div>
   );

@@ -125,6 +125,7 @@ import {
   useComposerThreadDraft,
 } from "../composerDraftStore";
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
+import { selectThreadRightPanelState, useRightPanelStateStore } from "../rightPanelStateStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -187,6 +188,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     strict: false,
     select: (params) => parseDiffRouteSearch(params),
   });
+  const rightPanelState = useRightPanelStateStore((state) =>
+    selectThreadRightPanelState(state.rightPanelStateByThreadId, threadId),
+  );
+  const setSelectedPanel = useRightPanelStateStore((state) => state.setSelectedPanel);
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
@@ -359,7 +364,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
@@ -993,17 +997,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "diff.toggle"),
     [keybindings],
   );
+  const browserPanelShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "browser.toggle"),
+    [keybindings],
+  );
+  const forcedSelectedSidePanel = rawSearch.diff === "1" || rawSearch.diffTurnId ? "diff" : null;
+  const selectedSidePanel = forcedSelectedSidePanel ?? rightPanelState.selectedPanel;
+  const onSelectSidePanel = useCallback(
+    (panel: "diff" | "browser" | null) => {
+      setSelectedPanel(threadId, panel);
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        replace: true,
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return rest;
+        },
+      });
+    },
+    [navigate, setSelectedPanel, threadId],
+  );
   const onToggleDiff = useCallback(() => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-      replace: true,
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return diffOpen ? rest : { ...rest, diff: "1" };
-      },
-    });
-  }, [diffOpen, navigate, threadId]);
+    onSelectSidePanel(selectedSidePanel === "diff" ? null : "diff");
+  }, [onSelectSidePanel, selectedSidePanel]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -1986,6 +2003,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "browser.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        onSelectSidePanel(selectedSidePanel === "browser" ? null : "browser");
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2007,7 +2031,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     keybindings,
+    onSelectSidePanel,
     onToggleDiff,
+    selectedSidePanel,
     toggleTerminalVisibility,
   ]);
 
@@ -3103,6 +3129,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const expandedImageItem = expandedImage ? expandedImage.images[expandedImage.index] : null;
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
+      setSelectedPanel(threadId, "diff");
       void navigate({
         to: "/$threadId",
         params: { threadId },
@@ -3114,7 +3141,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         },
       });
     },
-    [navigate, threadId],
+    [navigate, setSelectedPanel, threadId],
   );
   const onRevertUserMessage = (messageId: MessageId) => {
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
@@ -3172,15 +3199,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
           keybindings={keybindings}
           availableEditors={availableEditors}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
+          browserToggleShortcutLabel={browserPanelShortcutLabel}
           gitCwd={gitCwd}
-          diffOpen={diffOpen}
+          selectedSidePanel={selectedSidePanel}
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
-          onToggleDiff={onToggleDiff}
+          onSelectSidePanel={onSelectSidePanel}
         />
       </header>
 
