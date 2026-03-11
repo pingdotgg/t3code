@@ -132,6 +132,33 @@ export function createWsNativeApi(): NativeApi {
         window.open(url, "_blank", "noopener,noreferrer");
       },
     },
+    browser: {
+      ensureTab: async (input) => {
+        await window.desktopBridge?.browserEnsureTab(input);
+      },
+      navigate: async (input) => {
+        await window.desktopBridge?.browserNavigate(input);
+      },
+      goBack: async (input) => {
+        await window.desktopBridge?.browserGoBack(input);
+      },
+      goForward: async (input) => {
+        await window.desktopBridge?.browserGoForward(input);
+      },
+      reload: async (input) => {
+        await window.desktopBridge?.browserReload(input);
+      },
+      closeTab: async (input) => {
+        await window.desktopBridge?.browserCloseTab(input);
+      },
+      syncHost: async (input) => {
+        await window.desktopBridge?.browserSyncHost(input);
+      },
+      clearThread: async (input) => {
+        await window.desktopBridge?.browserClearThread(input);
+      },
+      onEvent: (callback) => window.desktopBridge?.onBrowserEvent(callback) ?? (() => undefined),
+    },
     git: {
       pull: (input) => transport.request(WS_METHODS.gitPull, input),
       status: (input) => transport.request(WS_METHODS.gitStatus, input),

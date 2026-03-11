@@ -1,8 +1,10 @@
 "use client";
 
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
+import { useEffect } from "react";
 
 import { cn } from "~/lib/utils";
+import { useBlockingOverlayStore } from "~/blockingOverlayStore";
 
 const AlertDialogCreateHandle = AlertDialogPrimitive.createHandle;
 
@@ -47,6 +49,20 @@ function AlertDialogPopup({
 }: AlertDialogPrimitive.Popup.Props & {
   bottomStickOnMobile?: boolean;
 }) {
+  const incrementBlockingOverlayCount = useBlockingOverlayStore(
+    (store) => store.incrementBlockingOverlayCount,
+  );
+  const decrementBlockingOverlayCount = useBlockingOverlayStore(
+    (store) => store.decrementBlockingOverlayCount,
+  );
+
+  useEffect(() => {
+    incrementBlockingOverlayCount();
+    return () => {
+      decrementBlockingOverlayCount();
+    };
+  }, [decrementBlockingOverlayCount, incrementBlockingOverlayCount]);
+
   return (
     <AlertDialogPortal>
       <AlertDialogBackdrop />
