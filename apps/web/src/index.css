@@ -485,3 +485,14 @@ label:has(> select#reasoning-effort) select {
 .worktree-thread-dock .dockview-thread-action:hover {
   color: var(--foreground);
 }
+
+.worktree-thread-dock .dv-tabs-container {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.worktree-thread-dock .dv-tabs-container::-webkit-scrollbar {
+  display: none;
+}

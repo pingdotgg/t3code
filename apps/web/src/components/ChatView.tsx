@@ -75,7 +75,6 @@ import {
   findLatestProposedPlan,
   type PendingApproval,
   type PendingUserInput,
-  type ProviderPickerKind,
   PROVIDER_OPTIONS,
   deriveWorkLogEntries,
   hasToolActivityForTurn,
@@ -170,16 +169,8 @@ import {
   MenuShortcut,
   MenuTrigger,
 } from "./ui/menu";
-import {
-  ClaudeAI,
-  CursorIcon,
-  Gemini,
-  Icon,
-  OpenAI,
-  OpenCodeIcon,
-  VisualStudioCode,
-  Zed,
-} from "./Icons";
+import { CursorIcon, Gemini, Icon, OpenCodeIcon, VisualStudioCode, Zed } from "./Icons";
+import { PROVIDER_ICON_BY_PROVIDER_PICKER } from "./providerIcons";
 import { cn, isMacPlatform, isWindowsPlatform, randomUUID } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Kbd, KbdGroup } from "./ui/kbd";
@@ -5847,12 +5838,6 @@ function getCustomModelOptionsByProvider(settings: {
   };
 }
 
-const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
-  codex: OpenAI,
-  claudeCode: ClaudeAI,
-  cursor: CursorIcon,
-};
-
 function resolveModelForProviderPicker(
   provider: ProviderKind,
   value: string,
@@ -5899,7 +5884,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedProviderOptions = props.modelOptionsByProvider[props.provider];
   const selectedModelLabel =
     selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.provider];
+  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER_PICKER[props.provider];
 
   return (
     <Menu
@@ -5940,7 +5925,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       </KbdTooltip>
       <MenuPopup align="start">
         {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
-          const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
+          const OptionIcon = PROVIDER_ICON_BY_PROVIDER_PICKER[option.value];
           const isDisabledByProviderLock =
             props.lockedProvider !== null && props.lockedProvider !== option.value;
           return (
@@ -5987,7 +5972,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         })}
         {UNAVAILABLE_PROVIDER_OPTIONS.length > 0 && <MenuDivider />}
         {UNAVAILABLE_PROVIDER_OPTIONS.map((option) => {
-          const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
+          const OptionIcon = PROVIDER_ICON_BY_PROVIDER_PICKER[option.value];
           return (
             <MenuItem key={option.value} disabled>
               <OptionIcon

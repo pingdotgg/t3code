@@ -2,6 +2,7 @@ import {
   type EditorId,
   type KeybindingCommand,
   type ProjectId,
+  type ProviderKind,
   type ResolvedKeybindingsConfig,
   type ThreadId,
   type WorktreeId,
@@ -10,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps 
 import {
   DockviewReact,
   type DockviewApi,
+  type IDockviewPanelHeaderProps,
   type DockviewReadyEvent,
   themeDark,
   themeLight,
@@ -17,12 +19,13 @@ import {
 } from "dockview";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, Clock3Icon, PlusIcon } from "lucide-react";
+import { ChevronRightIcon, Clock3Icon, PlusIcon, XIcon } from "lucide-react";
 
 import ChatView from "./ChatView";
 import GitActionsControl from "./GitActionsControl";
 import OpenInPicker from "./OpenInPicker";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { PROVIDER_ICON_BY_PROVIDER } from "./providerIcons";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -134,6 +137,70 @@ function DockThreadPanel({
         showPlanSidebar={false}
         enableGlobalShortcuts={false}
       />
+    </div>
+  );
+}
+
+function useDockPanelTitle(api: IDockviewPanelHeaderProps<WorktreeDockPanelParams>["api"]): string {
+  const [title, setTitle] = useState(api.title ?? "");
+
+  useEffect(() => {
+    setTitle(api.title ?? "");
+    const disposable = api.onDidTitleChange((event) => {
+      setTitle(event.title);
+    });
+    return () => {
+      disposable.dispose();
+    };
+  }, [api]);
+
+  return title;
+}
+
+function DockThreadTab(props: IDockviewPanelHeaderProps<WorktreeDockPanelParams>) {
+  const title = useDockPanelTitle(props.api);
+  const serverThread = useStore(
+    useCallback(
+      (store) => store.threads.find((thread) => thread.id === props.params.threadId) ?? null,
+      [props.params.threadId],
+    ),
+  );
+  const draftProvider = useComposerDraftStore(
+    useCallback(
+      (store) => store.draftsByThreadId[props.params.threadId]?.provider ?? null,
+      [props.params.threadId],
+    ),
+  );
+
+  const provider: ProviderKind = serverThread?.session?.provider ?? draftProvider ?? "codex";
+  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[provider];
+
+  return (
+    <div className="dv-default-tab">
+      <div className="dv-default-tab-content">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <ProviderIcon aria-hidden="true" className="size-3 shrink-0 opacity-75" />
+          <span className="truncate">{title}</span>
+        </span>
+      </div>
+      {props.tabLocation === "header" ? (
+        <button
+          aria-label={`Close ${title || "thread"}`}
+          className="dv-default-tab-action appearance-none border-0 bg-transparent text-inherit"
+          type="button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            props.api.close();
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <XIcon aria-hidden="true" className="size-3" />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1012,8 +1079,10 @@ export default function WorktreeChatWorkspace({
           className="h-full w-full"
           components={dockComponents}
           defaultRenderer="always"
+          defaultTabComponent={DockThreadTab}
           disableFloatingGroups
           rightHeaderActionsComponent={rightHeaderActionsComponent}
+          scrollbars="native"
           theme={resolvedTheme === "dark" ? themeDark : themeLight}
           onReady={(event: DockviewReadyEvent) => {
             setDockviewApi(event.api);
