@@ -1,4 +1,4 @@
-import { type ResolvedKeybindingsConfig, ThreadId } from "@t3tools/contracts";
+import { type BrowserBounds, type ResolvedKeybindingsConfig, ThreadId } from "@t3tools/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
@@ -8,7 +8,9 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useState,
 } from "react";
 
 import ChatView from "../components/ChatView";
@@ -46,6 +48,32 @@ const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
 const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
+
+function getViewportBounds(element: HTMLDivElement): BrowserBounds {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: rect.left,
+    y: rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function hasVisibleBlockingDialog(): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  return (
+    document.querySelector(
+      [
+        '[data-slot="dialog-backdrop"]:not([data-closed]):not([hidden])',
+        '[data-slot="dialog-popup"]:not([data-closed]):not([hidden])',
+        '[data-slot="alert-dialog-backdrop"]:not([data-closed]):not([hidden])',
+        '[data-slot="alert-dialog-popup"]:not([data-closed]):not([hidden])',
+      ].join(", "),
+    ) !== null
+  );
+}
 
 function resolveSelectedSidePanel(search: DiffRouteSearch): RightPanelKind | null {
   if (search.diff === "1" || search.diffTurnId) {
@@ -211,6 +239,7 @@ function ChatThreadRouteView() {
     selectThreadBrowserState(state.browserStateByThreadId, threadId),
   );
   const updateThreadBrowserState = useBrowserStateStore((state) => state.updateThreadBrowserState);
+  const [browserViewportElement, setBrowserViewportElement] = useState<HTMLDivElement | null>(null);
   const activeBrowserTab = useMemo(
     () => browserThreadState.tabs.find((tab) => tab.id === browserThreadState.activeTabId) ?? null,
     [browserThreadState.activeTabId, browserThreadState.tabs],
@@ -241,6 +270,123 @@ function ChatThreadRouteView() {
       state.inputValue === nextInputValue ? state : { ...state, inputValue: nextInputValue },
     );
   }, [activeBrowserTab?.id, activeBrowserTab?.url, threadId, updateThreadBrowserState]);
+
+  useEffect(() => {
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+    for (const tab of browserThreadState.tabs) {
+      void api.browser.ensureTab({ threadId, tabId: tab.id, url: tab.url }).catch(() => undefined);
+    }
+  }, [browserThreadState.tabs, threadId]);
+
+  const syncBrowserHost = useCallback(() => {
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+    const visible = selectedPanel === "browser" && !hasVisibleBlockingDialog();
+    const bounds =
+      visible && browserViewportElement ? getViewportBounds(browserViewportElement) : null;
+    void api.browser
+      .syncHost({
+        threadId,
+        tabId: visible ? (activeBrowserTab?.id ?? null) : null,
+        visible,
+        bounds,
+      })
+      .catch(() => undefined);
+  }, [activeBrowserTab?.id, browserViewportElement, selectedPanel, threadId]);
+
+  useLayoutEffect(() => {
+    syncBrowserHost();
+  }, [syncBrowserHost]);
+
+  useEffect(() => {
+    if (!browserViewportElement) {
+      return;
+    }
+    const sync = () => {
+      syncBrowserHost();
+    };
+    const observer = new ResizeObserver(sync);
+    observer.observe(browserViewportElement);
+    window.addEventListener("resize", sync);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", sync);
+    };
+  }, [browserViewportElement, syncBrowserHost]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const observer = new MutationObserver(() => {
+      syncBrowserHost();
+    });
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["data-closed", "hidden"],
+    });
+    return () => {
+      observer.disconnect();
+    };
+  }, [syncBrowserHost]);
+
+  useEffect(() => {
+    if (selectedPanel !== "browser" || !browserViewportElement) {
+      return;
+    }
+
+    let frameId = 0;
+    let frameCount = 0;
+    let previousBoundsKey: string | null = null;
+    let stableFrameCount = 0;
+
+    const tick = () => {
+      const { x, y, width, height } = getViewportBounds(browserViewportElement);
+      const nextBoundsKey = `${x}:${y}:${width}:${height}`;
+      if (nextBoundsKey === previousBoundsKey) {
+        stableFrameCount += 1;
+      } else {
+        stableFrameCount = 0;
+        previousBoundsKey = nextBoundsKey;
+      }
+
+      syncBrowserHost();
+      frameCount += 1;
+      if (frameCount >= 30 || stableFrameCount >= 4) {
+        return;
+      }
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [browserViewportElement, selectedPanel, syncBrowserHost]);
+
+  useEffect(() => {
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+    return () => {
+      void api.browser
+        .syncHost({
+          threadId,
+          tabId: null,
+          visible: false,
+          bounds: null,
+        })
+        .catch(() => undefined);
+    };
+  }, [threadId]);
 
   useEffect(() => {
     if (!threadsHydrated) {
@@ -296,14 +442,43 @@ function ChatThreadRouteView() {
   }, [threadId, updateThreadBrowserState]);
   const activateTab = useCallback(
     (tabId: string) => {
+      const nextTab = browserThreadState.tabs.find((tab) => tab.id === tabId) ?? null;
+      const nextInputValue = normalizeBrowserDisplayUrl(nextTab?.url);
       updateThreadBrowserState(threadId, (state) =>
-        state.activeTabId === tabId ? state : { ...state, activeTabId: tabId },
+        state.activeTabId === tabId && state.inputValue === nextInputValue
+          ? state
+          : {
+              ...state,
+              activeTabId: tabId,
+              inputValue: nextInputValue,
+            },
       );
+
+      const api = readNativeApi();
+      if (!api || selectedPanel !== "browser") {
+        return;
+      }
+      const bounds = browserViewportElement ? getViewportBounds(browserViewportElement) : null;
+      void api.browser
+        .syncHost({
+          threadId,
+          tabId,
+          visible: !hasVisibleBlockingDialog(),
+          bounds,
+        })
+        .catch(() => undefined);
     },
-    [threadId, updateThreadBrowserState],
+    [
+      browserThreadState.tabs,
+      browserViewportElement,
+      selectedPanel,
+      threadId,
+      updateThreadBrowserState,
+    ],
   );
   const closeTab = useCallback(
     (tabId: string) => {
+      const api = readNativeApi();
       updateThreadBrowserState(threadId, (state) => {
         const closedIndex = state.tabs.findIndex((tab) => tab.id === tabId);
         if (closedIndex < 0) {
@@ -316,11 +491,14 @@ function ChatThreadRouteView() {
             : state.activeTabId;
         return { ...state, activeTabId, tabs };
       });
+      void api?.browser.closeTab({ threadId, tabId }).catch(() => undefined);
     },
     [threadId, updateThreadBrowserState],
   );
   const submitBrowserInput = useCallback(() => {
     const parsedUrl = parseSubmittedBrowserUrl(browserThreadState.inputValue);
+    const currentActiveTabId = browserThreadState.activeTabId;
+    const api = readNativeApi();
     updateThreadBrowserState(threadId, (state) => {
       if (!parsedUrl.ok) {
         if (!state.activeTabId) {
@@ -378,7 +556,21 @@ function ChatThreadRouteView() {
         ),
       };
     });
-  }, [browserThreadState.inputValue, threadId, updateThreadBrowserState]);
+    if (parsedUrl.ok && currentActiveTabId) {
+      void api?.browser
+        .navigate({
+          threadId,
+          tabId: currentActiveTabId,
+          url: parsedUrl.url,
+        })
+        .catch(() => undefined);
+    }
+  }, [
+    browserThreadState.activeTabId,
+    browserThreadState.inputValue,
+    threadId,
+    updateThreadBrowserState,
+  ]);
   const openActiveTabExternally = useCallback(() => {
     const url = activeBrowserTab?.url;
     const api = readNativeApi();
@@ -395,6 +587,9 @@ function ChatThreadRouteView() {
     () => shortcutLabelForCommand(keybindings, "browser.closeTab"),
     [keybindings],
   );
+  const browserViewportRef = useCallback((element: HTMLDivElement | null) => {
+    setBrowserViewportElement((current) => (current === element ? current : element));
+  }, []);
 
   useEffect(() => {
     const isTerminalFocused = (): boolean => {
@@ -465,10 +660,31 @@ function ChatThreadRouteView() {
         onActivateTab={activateTab}
         onCloseTab={closeTab}
         onSubmit={submitBrowserInput}
-        onBack={() => undefined}
-        onForward={() => undefined}
-        onReload={() => undefined}
+        onBack={() => {
+          if (!activeBrowserTab) {
+            return;
+          }
+          const api = readNativeApi();
+          void api?.browser.goBack({ threadId, tabId: activeBrowserTab.id }).catch(() => undefined);
+        }}
+        onForward={() => {
+          if (!activeBrowserTab) {
+            return;
+          }
+          const api = readNativeApi();
+          void api?.browser
+            .goForward({ threadId, tabId: activeBrowserTab.id })
+            .catch(() => undefined);
+        }}
+        onReload={() => {
+          if (!activeBrowserTab) {
+            return;
+          }
+          const api = readNativeApi();
+          void api?.browser.reload({ threadId, tabId: activeBrowserTab.id }).catch(() => undefined);
+        }}
         onOpenExternal={openActiveTabExternally}
+        viewportRef={browserViewportRef}
       />
     ) : (
       <Suspense fallback={<RightPanelLoadingFallback inline label="Loading diff viewer..." />}>
@@ -519,10 +735,35 @@ function ChatThreadRouteView() {
             onActivateTab={activateTab}
             onCloseTab={closeTab}
             onSubmit={submitBrowserInput}
-            onBack={() => undefined}
-            onForward={() => undefined}
-            onReload={() => undefined}
+            onBack={() => {
+              if (!activeBrowserTab) {
+                return;
+              }
+              const api = readNativeApi();
+              void api?.browser
+                .goBack({ threadId, tabId: activeBrowserTab.id })
+                .catch(() => undefined);
+            }}
+            onForward={() => {
+              if (!activeBrowserTab) {
+                return;
+              }
+              const api = readNativeApi();
+              void api?.browser
+                .goForward({ threadId, tabId: activeBrowserTab.id })
+                .catch(() => undefined);
+            }}
+            onReload={() => {
+              if (!activeBrowserTab) {
+                return;
+              }
+              const api = readNativeApi();
+              void api?.browser
+                .reload({ threadId, tabId: activeBrowserTab.id })
+                .catch(() => undefined);
+            }}
             onOpenExternal={openActiveTabExternally}
+            viewportRef={browserViewportRef}
           />
         ) : (
           <Suspense

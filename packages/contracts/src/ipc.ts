@@ -46,6 +46,7 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
+import type { ThreadId } from "./baseSchemas";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -94,6 +95,60 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export interface BrowserBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BrowserTabRuntimeState {
+  url: string;
+  title: string | null;
+  faviconUrl: string | null;
+  isLoading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  lastError: string | null;
+}
+
+export interface BrowserEnsureTabInput {
+  threadId: ThreadId;
+  tabId: string;
+  url?: string;
+}
+
+export interface BrowserNavigateInput {
+  threadId: ThreadId;
+  tabId: string;
+  url: string;
+}
+
+export interface BrowserTabTargetInput {
+  threadId: ThreadId;
+  tabId: string;
+}
+
+export interface BrowserSyncHostInput {
+  threadId: ThreadId;
+  tabId: string | null;
+  visible: boolean;
+  bounds: BrowserBounds | null;
+}
+
+export interface BrowserClearThreadInput {
+  threadId: ThreadId;
+}
+
+export interface BrowserTabStateEvent {
+  type: "tab-state";
+  threadId: ThreadId;
+  tabId: string;
+  state: BrowserTabRuntimeState;
+}
+
+export type BrowserEvent = BrowserTabStateEvent;
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
@@ -104,6 +159,15 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  browserEnsureTab: (input: BrowserEnsureTabInput) => Promise<void>;
+  browserNavigate: (input: BrowserNavigateInput) => Promise<void>;
+  browserGoBack: (input: BrowserTabTargetInput) => Promise<void>;
+  browserGoForward: (input: BrowserTabTargetInput) => Promise<void>;
+  browserReload: (input: BrowserTabTargetInput) => Promise<void>;
+  browserCloseTab: (input: BrowserTabTargetInput) => Promise<void>;
+  browserSyncHost: (input: BrowserSyncHostInput) => Promise<void>;
+  browserClearThread: (input: BrowserClearThreadInput) => Promise<void>;
+  onBrowserEvent: (listener: (event: BrowserEvent) => void) => () => void;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
@@ -132,6 +196,17 @@ export interface NativeApi {
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
+  };
+  browser: {
+    ensureTab: (input: BrowserEnsureTabInput) => Promise<void>;
+    navigate: (input: BrowserNavigateInput) => Promise<void>;
+    goBack: (input: BrowserTabTargetInput) => Promise<void>;
+    goForward: (input: BrowserTabTargetInput) => Promise<void>;
+    reload: (input: BrowserTabTargetInput) => Promise<void>;
+    closeTab: (input: BrowserTabTargetInput) => Promise<void>;
+    syncHost: (input: BrowserSyncHostInput) => Promise<void>;
+    clearThread: (input: BrowserClearThreadInput) => Promise<void>;
+    onEvent: (callback: (event: BrowserEvent) => void) => () => void;
   };
   git: {
     // Existing branch/worktree API

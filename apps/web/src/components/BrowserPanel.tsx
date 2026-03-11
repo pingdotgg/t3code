@@ -237,6 +237,7 @@ export default function BrowserPanel({
               {state.tabs.map((tab, index) => {
                 const previousTab = index > 0 ? (state.tabs[index - 1] ?? null) : null;
                 const isActive = tab.id === state.activeTabId;
+                const tabLabel = getBrowserTabLabel(tab);
                 const showDivider =
                   previousTab !== null &&
                   previousTab.id !== state.activeTabId &&
@@ -247,7 +248,7 @@ export default function BrowserPanel({
                     {index > 0 ? <BrowserTabDivider visible={showDivider} /> : null}
                     <div
                       className={cn(
-                        "group relative -mb-px translate-y-px flex h-10 min-w-32 max-w-48 shrink-0 items-center rounded-t-xl border pl-3 pr-2 transition-colors",
+                        "group/browser-tab relative -mb-px translate-y-px flex h-10 min-w-32 max-w-48 shrink-0 items-center rounded-t-xl border pl-3 pr-2 transition-colors",
                         isActive
                           ? "z-10 border-border border-b-background bg-card text-foreground"
                           : "z-0 border-transparent bg-transparent text-muted-foreground hover:text-foreground",
@@ -260,14 +261,12 @@ export default function BrowserPanel({
                         onClick={() => {
                           onActivateTab(tab.id);
                         }}
-                        title={getBrowserTabLabel(tab)}
+                        title={tabLabel}
                       >
                         <span className="flex size-4 shrink-0 items-center justify-center">
                           <BrowserTabIcon tab={tab} />
                         </span>
-                        <span className="truncate text-[12px] font-medium">
-                          {getBrowserTabLabel(tab)}
-                        </span>
+                        <span className="truncate text-[12px] font-medium">{tabLabel}</span>
                       </button>
                       <Tooltip>
                         <TooltipTrigger
@@ -276,7 +275,7 @@ export default function BrowserPanel({
                               type="button"
                               variant="ghost"
                               size="xs"
-                              className="ml-1 size-6 shrink-0 rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-[active=true]:opacity-100"
+                              className="ml-1 size-6 shrink-0 rounded-md opacity-0 transition-opacity group-hover/browser-tab:opacity-100 focus-visible:opacity-100 data-[active=true]:opacity-100"
                               aria-label={closeTooltip}
                               data-active={isActive}
                               onClick={(event) => {

@@ -135,6 +135,7 @@ function errorDetails(error: unknown): string {
 function EventRouter() {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setProjectExpanded = useStore((store) => store.setProjectExpanded);
+  const updateThreadBrowserState = useBrowserStateStore((store) => store.updateThreadBrowserState);
   const removeOrphanedBrowserStates = useBrowserStateStore(
     (store) => store.removeOrphanedBrowserStates,
   );
@@ -174,6 +175,12 @@ function EventRouter() {
         snapshotThreads: snapshot.threads,
         draftThreadIds,
       });
+      const orphanedBrowserThreadIds = Object.keys(
+        useBrowserStateStore.getState().browserStateByThreadId,
+      ).filter((id) => !activeThreadIds.has(id as ThreadId)) as ThreadId[];
+      for (const orphanedThreadId of orphanedBrowserThreadIds) {
+        void api.browser.clearThread({ threadId: orphanedThreadId }).catch(() => undefined);
+      }
       removeOrphanedBrowserStates(activeThreadIds);
       removeOrphanedRightPanelStates(activeThreadIds);
       removeOrphanedTerminalStates(activeThreadIds);
@@ -238,6 +245,39 @@ function EventRouter() {
           event.terminalId,
           hasRunningSubprocess,
         );
+    });
+    const unsubBrowserEvent = api.browser.onEvent((event) => {
+      if (event.type !== "tab-state") {
+        return;
+      }
+      updateThreadBrowserState(event.threadId, (state) => {
+        const tabIndex = state.tabs.findIndex((tab) => tab.id === event.tabId);
+        if (tabIndex < 0) {
+          return state;
+        }
+        const existingTab = state.tabs[tabIndex];
+        if (!existingTab) {
+          return state;
+        }
+        if (
+          existingTab.url === event.state.url &&
+          (existingTab.title ?? null) === event.state.title &&
+          (existingTab.faviconUrl ?? null) === event.state.faviconUrl &&
+          existingTab.isLoading === event.state.isLoading &&
+          existingTab.canGoBack === event.state.canGoBack &&
+          existingTab.canGoForward === event.state.canGoForward &&
+          (existingTab.lastError ?? null) === event.state.lastError
+        ) {
+          return state;
+        }
+        const nextTab = {
+          ...existingTab,
+          ...event.state,
+        };
+        const nextTabs = [...state.tabs];
+        nextTabs[tabIndex] = nextTab;
+        return { ...state, tabs: nextTabs };
+      });
     });
     const unsubWelcome = onServerWelcome((payload) => {
       void (async () => {
@@ -313,6 +353,7 @@ function EventRouter() {
       domainEventFlushThrottler.cancel();
       unsubDomainEvent();
       unsubTerminalEvent();
+      unsubBrowserEvent();
       unsubWelcome();
       unsubServerConfigUpdated();
     };
@@ -324,6 +365,7 @@ function EventRouter() {
     removeOrphanedTerminalStates,
     setProjectExpanded,
     syncServerReadModel,
+    updateThreadBrowserState,
   ]);
 
   return null;
