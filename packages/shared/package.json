@@ -27,6 +27,14 @@
     "./claude-plugins": {
       "types": "./src/claude-plugins.ts",
       "import": "./src/claude-plugins.ts"
+    },
+    "./DrainableWorker": {
+      "types": "./src/DrainableWorker.ts",
+      "import": "./src/DrainableWorker.ts"
+    },
+    "./schemaJson": {
+      "types": "./src/schemaJson.ts",
+      "import": "./src/schemaJson.ts"
     }
   },
   "scripts": {

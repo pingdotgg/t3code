@@ -25,6 +25,7 @@ import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
+const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
@@ -85,6 +86,7 @@ interface MountedChatView {
   cleanup: () => Promise<void>;
   measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
   setViewport: (viewport: ViewportSpec) => Promise<void>;
+  router: ReturnType<typeof getRouter>;
 }
 
 function isoAt(offsetSeconds: number): string {
@@ -245,6 +247,46 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   };
 }
 
+function addThreadToSnapshot(
+  snapshot: OrchestrationReadModel,
+  threadId: ThreadId,
+): OrchestrationReadModel {
+  return {
+    ...snapshot,
+    snapshotSequence: snapshot.snapshotSequence + 1,
+    threads: [
+      ...snapshot.threads,
+      {
+        id: threadId,
+        projectId: PROJECT_ID,
+        title: "New thread",
+        model: "gpt-5",
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        branch: "main",
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+        messages: [],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW_ISO,
+        },
+      },
+    ],
+  };
+}
+
 function createDraftOnlySnapshot(): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-draft-target" as MessageId,
@@ -253,6 +295,61 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   return {
     ...snapshot,
     threads: [],
+  };
+}
+
+function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-plan-target" as MessageId,
+    targetText: "plan thread",
+  });
+  const planMarkdown = [
+    "# Ship plan mode follow-up",
+    "",
+    "- Step 1: capture the thread-open trace",
+    "- Step 2: identify the main-thread bottleneck",
+    "- Step 3: keep collapsed cards cheap",
+    "- Step 4: render the full markdown only on demand",
+    "- Step 5: preserve export and save actions",
+    "- Step 6: add regression coverage",
+    "- Step 7: verify route transitions stay responsive",
+    "- Step 8: confirm no server-side work changed",
+    "- Step 9: confirm short plans still render normally",
+    "- Step 10: confirm long plans stay collapsed by default",
+    "- Step 11: confirm preview text is still useful",
+    "- Step 12: confirm plan follow-up flow still works",
+    "- Step 13: confirm timeline virtualization still behaves",
+    "- Step 14: confirm theme styling still looks correct",
+    "- Step 15: confirm save dialog behavior is unchanged",
+    "- Step 16: confirm download behavior is unchanged",
+    "- Step 17: confirm code fences do not parse until expand",
+    "- Step 18: confirm preview truncation ends cleanly",
+    "- Step 19: confirm markdown links still open in editor after expand",
+    "- Step 20: confirm deep hidden detail only appears after expand",
+    "",
+    "```ts",
+    "export const hiddenPlanImplementationDetail = 'deep hidden detail only after expand';",
+    "```",
+  ].join("\n");
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? Object.assign({}, thread, {
+            proposedPlans: [
+              {
+                id: "plan-browser-test",
+                turnId: null,
+                planMarkdown,
+                createdAt: isoAt(1_000),
+                updatedAt: isoAt(1_001),
+              },
+            ],
+            updatedAt: isoAt(1_001),
+          })
+        : thread,
+    ),
   };
 }
 
@@ -266,6 +363,7 @@ function resolveWsRpc(tag: string): unknown {
   if (tag === WS_METHODS.gitListBranches) {
     return {
       isRepo: true,
+      hasOriginRemote: true,
       branches: [
         {
           name: "main",
@@ -305,6 +403,7 @@ const worker = setupWorker(
     client.send(
       JSON.stringify({
         type: "push",
+        sequence: 1,
         channel: WS_CHANNELS.serverWelcome,
         data: fixture.welcome,
       }),
@@ -359,9 +458,9 @@ async function setViewport(viewport: ViewportSpec): Promise<void> {
 async function waitForProductionStyles(): Promise<void> {
   await vi.waitFor(
     () => {
-      expect(getComputedStyle(document.documentElement).getPropertyValue("--background").trim()).not.toBe(
-        "",
-      );
+      expect(
+        getComputedStyle(document.documentElement).getPropertyValue("--background").trim(),
+      ).not.toBe("");
       expect(getComputedStyle(document.body).marginTop).toBe("0px");
     },
     {
@@ -392,6 +491,22 @@ async function waitForElement<T extends Element>(
   return element;
 }
 
+async function waitForURL(
+  router: ReturnType<typeof getRouter>,
+  predicate: (pathname: string) => boolean,
+  errorMessage: string,
+): Promise<string> {
+  let pathname = "";
+  await vi.waitFor(
+    () => {
+      pathname = router.state.location.pathname;
+      expect(predicate(pathname), errorMessage).toBe(true);
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  return pathname;
+}
+
 async function waitForComposerEditor(): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
@@ -399,7 +514,9 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
-async function waitForInteractionModeButton(expectedLabel: "Chat" | "Plan"): Promise<HTMLButtonElement> {
+async function waitForInteractionModeButton(
+  expectedLabel: "Chat" | "Plan",
+): Promise<HTMLButtonElement> {
   return waitForElement(
     () =>
       Array.from(document.querySelectorAll("button")).find(
@@ -535,6 +652,7 @@ async function mountChatView(options: {
       await setViewport(viewport);
       await waitForProductionStyles();
     },
+    router,
   };
 }
 
@@ -642,7 +760,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const measurements: Array<UserRowMeasurement & { viewport: ViewportSpec; estimatedHeightPx: number }> = [];
+      const measurements: Array<
+        UserRowMeasurement & { viewport: ViewportSpec; estimatedHeightPx: number }
+      > = [];
 
       for (const viewport of TEXT_VIEWPORT_MATRIX) {
         await mounted.setViewport(viewport);
@@ -659,7 +779,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
         measurements.push({ ...measurement, viewport, estimatedHeightPx });
       }
 
-      expect(new Set(measurements.map((measurement) => Math.round(measurement.timelineWidthMeasuredPx))).size).toBeGreaterThanOrEqual(3);
+      expect(
+        new Set(measurements.map((measurement) => Math.round(measurement.timelineWidthMeasuredPx)))
+          .size,
+      ).toBeGreaterThanOrEqual(3);
 
       const byMeasuredWidth = measurements.toSorted(
         (left, right) => left.timelineWidthMeasuredPx - right.timelineWidthMeasuredPx,
@@ -701,7 +824,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       { timelineWidthPx: mobileMeasurement.timelineWidthMeasuredPx },
     );
 
-    const measuredDeltaPx = mobileMeasurement.measuredRowHeightPx - desktopMeasurement.measuredRowHeightPx;
+    const measuredDeltaPx =
+      mobileMeasurement.measuredRowHeightPx - desktopMeasurement.measuredRowHeightPx;
     const estimatedDeltaPx = estimatedMobilePx - estimatedDesktopPx;
     expect(measuredDeltaPx).toBeGreaterThan(0);
     expect(estimatedDeltaPx).toBeGreaterThan(0);
@@ -789,7 +913,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === WS_METHODS.shellOpenInEditor);
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenInEditor,
+          );
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.shellOpenInEditor,
             cwd: "/repo/project",
@@ -860,6 +986,97 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         async () => {
           expect((await waitForInteractionModeButton("Chat")).title).toContain("enter plan mode");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the new thread selected after clicking the new-thread button", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-new-thread-test" as MessageId,
+        targetText: "new thread selection test",
+      }),
+    });
+
+    try {
+      // Wait for the sidebar to render with the project.
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      // The route should change to a new draft thread ID.
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      // The composer editor should be present for the new draft thread.
+      await waitForComposerEditor();
+
+      // Simulate the snapshot sync arriving from the server after the draft
+      // thread has been promoted to a server thread (thread.create + turn.start
+      // succeeded). The snapshot now includes the new thread, and the sync
+      // should clear the draft without disrupting the route.
+      const { syncServerReadModel } = useStore.getState();
+      syncServerReadModel(addThreadToSnapshot(fixture.snapshot, newThreadId));
+
+      // Clear the draft now that the server thread exists (mirrors EventRouter behavior).
+      useComposerDraftStore.getState().clearDraftThread(newThreadId);
+
+      // The route should still be on the new thread — not redirected away.
+      await waitForURL(
+        mounted.router,
+        (path) => path === newThreadPath,
+        "New thread should remain selected after snapshot sync clears the draft.",
+      );
+
+      // The empty thread view and composer should still be visible.
+      await expect
+        .element(page.getByText("Send a message to start the conversation."))
+        .toBeInTheDocument();
+      await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps long proposed plans lightweight until the user expands them", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithLongProposedPlan(),
+    });
+
+    try {
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Expand plan",
+          ) as HTMLButtonElement | null,
+        "Unable to find Expand plan button.",
+      );
+
+      expect(document.body.textContent).not.toContain("deep hidden detail only after expand");
+
+      const expandButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Expand plan",
+          ) as HTMLButtonElement | null,
+        "Unable to find Expand plan button.",
+      );
+      expandButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("deep hidden detail only after expand");
         },
         { timeout: 8_000, interval: 16 },
       );

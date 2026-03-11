@@ -1,10 +1,14 @@
 import { ThreadId } from "@t3tools/contracts";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
 import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 
 import ChatView from "../components/ChatView";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  type DiffRouteSearch,
+  parseDiffRouteSearch,
+  stripDiffSearchParams,
+} from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
@@ -15,6 +19,7 @@ const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
 const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
+const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
 
 const DiffPanelSheet = (props: {
   children: ReactNode;
@@ -91,8 +96,23 @@ const DiffPanelInlineSidebar = (props: {
         composerViewport.clientWidth - viewportPaddingLeft - viewportPaddingRight,
       );
       const formRect = composerForm.getBoundingClientRect();
+      const composerFooter = composerForm.querySelector<HTMLElement>(
+        "[data-chat-composer-footer='true']",
+      );
+      const composerRightActions = composerForm.querySelector<HTMLElement>(
+        "[data-chat-composer-actions='right']",
+      );
+      const composerRightActionsWidth = composerRightActions?.getBoundingClientRect().width ?? 0;
+      const composerFooterGap = composerFooter
+        ? Number.parseFloat(window.getComputedStyle(composerFooter).columnGap) ||
+          Number.parseFloat(window.getComputedStyle(composerFooter).gap) ||
+          0
+        : 0;
+      const minimumComposerWidth =
+        COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX + composerRightActionsWidth + composerFooterGap;
       const hasComposerOverflow = composerForm.scrollWidth > composerForm.clientWidth + 0.5;
       const overflowsViewport = formRect.width > viewportContentWidth + 0.5;
+      const violatesMinimumComposerWidth = composerForm.clientWidth + 0.5 < minimumComposerWidth;
 
       if (previousSidebarWidth.length > 0) {
         wrapper.style.setProperty("--sidebar-width", previousSidebarWidth);
@@ -100,7 +120,7 @@ const DiffPanelInlineSidebar = (props: {
         wrapper.style.removeProperty("--sidebar-width");
       }
 
-      return !hasComposerOverflow && !overflowsViewport;
+      return !hasComposerOverflow && !overflowsViewport && !violatesMinimumComposerWidth;
     },
     [],
   );
@@ -140,8 +160,8 @@ function ChatThreadRouteView() {
   });
   const search = Route.useSearch();
   const threadExists = useStore((store) => store.threads.some((thread) => thread.id === threadId));
-  const draftThreadExists = useComposerDraftStore(
-    (store) => Object.hasOwn(store.draftThreadsByThreadId, threadId),
+  const draftThreadExists = useComposerDraftStore((store) =>
+    Object.hasOwn(store.draftThreadsByThreadId, threadId),
   );
   const routeThreadExists = threadExists || draftThreadExists;
   const diffOpen = search.diff === "1";
@@ -208,5 +228,8 @@ function ChatThreadRouteView() {
 
 export const Route = createFileRoute("/_chat/$threadId")({
   validateSearch: (search) => parseDiffRouteSearch(search),
+  search: {
+    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
+  },
   component: ChatThreadRouteView,
 });

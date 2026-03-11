@@ -663,6 +663,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         }
       }
 
+
       yield* provider.stopAll();
       const stoppedRuntime = yield* runtimeRepository.getByThreadId({
         threadId: session.threadId,

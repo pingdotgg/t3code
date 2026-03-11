@@ -1,6 +1,7 @@
 # Server-Authoritative Event-Sourcing Cleanup Plan
 
 Goal:
+
 - Move to a cleaner service architecture with:
   - durable, server-authoritative event sourcing
   - strict command routing/validation
@@ -85,6 +86,7 @@ CheckpointCatalog        ------> SQLite
 ## Commit Series
 
 ### Commit 1: Split public vs system orchestration command contracts
+
 - Create separate schemas/types:
   - `ClientOrchestrationCommandSchema`
   - `SystemOrchestrationCommandSchema`
@@ -100,6 +102,7 @@ CheckpointCatalog        ------> SQLite
   - preserve internal dispatch functionality for system commands
 
 ### Commit 2: Introduce `OrchestrationCommandRouter` + handler boundary
+
 - Add dedicated router service to validate, authorize, and route commands.
 - Move command-to-event mapping out of `orchestration/Layer.ts` into handlers.
 - Add aggregate-level invariant checks before append (thread exists, project exists, etc.).
@@ -113,6 +116,7 @@ CheckpointCatalog        ------> SQLite
   - handler happy-path tests per command type
 
 ### Commit 3: Harden event store for idempotency + optimistic append metadata
+
 - Add DB-level idempotency guard for `command_id` (`UNIQUE` where non-null).
 - Extend append API to support idempotent replays and deterministic return of prior event on duplicate `commandId`.
 - Add optional aggregate version metadata for future optimistic concurrency.
@@ -125,6 +129,7 @@ CheckpointCatalog        ------> SQLite
   - concurrent append behavior stays ordered and deterministic
 
 ### Commit 4: Extract provider-runtime -> orchestration bridge from `wsServer`
+
 - Create `ProviderRuntimeIngestionService` that:
   - subscribes to `ProviderService.streamEvents`
   - translates runtime events into orchestration commands
@@ -139,6 +144,7 @@ CheckpointCatalog        ------> SQLite
   - ws integration confirms same external push behavior
 
 ### Commit 5: Make session directory durable (`ProviderSessionRegistry`)
+
 - Replace in-memory-only `ProviderSessionDirectoryLive` with persistence-backed registry.
 - Keep in-memory cache optional, but source of truth must be persistent.
 - Add startup reconciliation to prune dead sessions / keep known thread mapping.
@@ -152,6 +158,7 @@ CheckpointCatalog        ------> SQLite
   - stale session cleanup semantics
 
 ### Commit 6: Re-key checkpoint metadata from session to thread identity
+
 - Change checkpoint catalog primary identity from `provider_session_id` to durable `thread_id`.
 - Keep `session_id` as nullable metadata only.
 - Update checkpoint flows (`initialize`, `capture`, `list`, `diff`, `revert`) to use thread identity.
@@ -165,6 +172,7 @@ CheckpointCatalog        ------> SQLite
   - revert/diff still work after session churn
 
 ### Commit 7: Add durable projection persistence for orchestration read models
+
 - Introduce projection tables/snapshots persisted in DB to avoid full replay dependency.
 - Keep event stream as source of truth; projection rebuild stays deterministic.
 - `getSnapshot` reads from projection store (memory cache optional).
@@ -177,6 +185,7 @@ CheckpointCatalog        ------> SQLite
   - projection rebuild from events yields same result as previous reducer semantics
 
 ### Commit 8: Narrow `ProviderService` responsibilities
+
 - Keep `ProviderService` focused on provider RPC/session lifecycle + unified runtime stream.
 - Move checkpoint-capture side effects out of provider event worker into dedicated ingestion/checkpoint pipeline service.
 - Preserve adapter pluggability and provider-neutral contracts.
@@ -188,6 +197,7 @@ CheckpointCatalog        ------> SQLite
   - checkpoint capture still triggered by turn completion through new coordinator
 
 ### Commit 9: Look over schemas (contracts and events)
+
 - Scan for unused schemas.
 - Use effect/Schema everywhere
 - Analyze which we need
@@ -196,6 +206,7 @@ CheckpointCatalog        ------> SQLite
   - Persistence entities
 
 ### Commit 10: Remove dead legacy path and finalize docs
+
 - Remove unused legacy manager/store path from active architecture:
   - `providerManager.ts`
   - `filesystemCheckpointStore.ts` (if no longer needed by tests/tools)
@@ -210,6 +221,7 @@ CheckpointCatalog        ------> SQLite
   - no regressions in WS protocol behavior
 
 ## Risk Controls
+
 - Keep WS method names and payload contracts stable throughout.
 - Gate each commit with targeted integration tests before moving forward.
 - Avoid broad event-type churn in one step; migrate schemas incrementally with clear compatibility windows.

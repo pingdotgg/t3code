@@ -1,7 +1,7 @@
-import { ProjectId, ThreadId, TurnId, type OrchestrationReadModel } from "@t3tools/contracts";
+import { DEFAULT_MODEL_BY_PROVIDER, ProjectId, ThreadId, TurnId, type OrchestrationReadModel } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { markThreadUnread, syncServerReadModel, type AppState } from "./store";
+import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -87,6 +87,22 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
   };
 }
 
+function makeReadModelProject(
+  overrides: Partial<OrchestrationReadModel["projects"][number]>,
+): OrchestrationReadModel["projects"][number] {
+  return {
+    id: ProjectId.makeUnsafe("project-1"),
+    title: "Project",
+    workspaceRoot: "/tmp/project",
+    defaultModel: "gpt-5.3-codex",
+    createdAt: "2026-02-27T00:00:00.000Z",
+    updatedAt: "2026-02-27T00:00:00.000Z",
+    deletedAt: null,
+    scripts: [],
+    ...overrides,
+  };
+}
+
 describe("store pure functions", () => {
   it("markThreadUnread moves lastVisitedAt before completion for a completed thread", () => {
     const latestTurnCompletedAt = "2026-02-25T12:30:00.000Z";
@@ -125,6 +141,46 @@ describe("store pure functions", () => {
     const next = markThreadUnread(initialState, ThreadId.makeUnsafe("thread-1"));
 
     expect(next).toEqual(initialState);
+  });
+
+  it("reorderProjects moves a project to a target index", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const project3 = ProjectId.makeUnsafe("project-3");
+    const state: AppState = {
+      projects: [
+        {
+          id: project1,
+          name: "Project 1",
+          cwd: "/tmp/project-1",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          scripts: [],
+        },
+        {
+          id: project2,
+          name: "Project 2",
+          cwd: "/tmp/project-2",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          scripts: [],
+        },
+        {
+          id: project3,
+          name: "Project 3",
+          cwd: "/tmp/project-3",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          scripts: [],
+        },
+      ],
+      threads: [],
+      threadsHydrated: true,
+    };
+
+    const next = reorderProjects(state, project1, project3);
+
+    expect(next.projects.map((project) => project.id)).toEqual([project2, project3, project1]);
   });
 });
 
@@ -185,5 +241,59 @@ describe("store read model sync", () => {
 
     expect(next.threads[0]?.model).toBe("composer-1.5");
     expect(next.threads[0]?.session?.provider).toBe("cursor");
+  });
+
+  it("preserves the current project order when syncing incoming read model updates", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const project3 = ProjectId.makeUnsafe("project-3");
+    const initialState: AppState = {
+      projects: [
+        {
+          id: project2,
+          name: "Project 2",
+          cwd: "/tmp/project-2",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          scripts: [],
+        },
+        {
+          id: project1,
+          name: "Project 1",
+          cwd: "/tmp/project-1",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          scripts: [],
+        },
+      ],
+      threads: [],
+      threadsHydrated: true,
+    };
+    const readModel: OrchestrationReadModel = {
+      snapshotSequence: 2,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      projects: [
+        makeReadModelProject({
+          id: project1,
+          title: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+        }),
+        makeReadModelProject({
+          id: project2,
+          title: "Project 2",
+          workspaceRoot: "/tmp/project-2",
+        }),
+        makeReadModelProject({
+          id: project3,
+          title: "Project 3",
+          workspaceRoot: "/tmp/project-3",
+        }),
+      ],
+      threads: [],
+    };
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
   });
 });
