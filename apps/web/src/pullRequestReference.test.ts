@@ -22,9 +22,9 @@ describe("parsePullRequestReference", () => {
   });
 
   it("accepts GitLab merge request URLs", () => {
-    expect(
-      parsePullRequestReference("https://gitlab.com/group/project/-/merge_requests/42"),
-    ).toBe("https://gitlab.com/group/project/-/merge_requests/42");
+    expect(parsePullRequestReference("https://gitlab.com/group/project/-/merge_requests/42")).toBe(
+      "https://gitlab.com/group/project/-/merge_requests/42",
+    );
   });
 
   it("accepts GitLab merge request URLs with subgroups", () => {

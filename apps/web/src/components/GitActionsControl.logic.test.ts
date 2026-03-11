@@ -1033,7 +1033,13 @@ describe("GitLab platform: MR terminology", () => {
   const gitlab = "gitlab" as const;
 
   it("resolveQuickAction uses MR in labels for gitlab", () => {
-    const quick = resolveQuickAction(status({ hasWorkingTreeChanges: true }), false, false, true, gitlab);
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      gitlab,
+    );
     assert.deepInclude(quick, {
       kind: "run_action",
       action: "commit_push_pr",
@@ -1097,12 +1103,7 @@ describe("GitLab platform: MR terminology", () => {
   });
 
   it("buildMenuItems uses Create MR for gitlab when no open MR", () => {
-    const items = buildMenuItems(
-      status({ aheadCount: 2, pr: null }),
-      false,
-      true,
-      gitlab,
-    );
+    const items = buildMenuItems(status({ aheadCount: 2, pr: null }), false, true, gitlab);
     const prItem = items.find((item) => item.id === "pr");
     assert.equal(prItem?.label, "Create MR");
   });

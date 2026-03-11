@@ -207,8 +207,7 @@ function parseGitLabMrList(raw: string): ReadonlyArray<PullRequestSummary> {
       baseRefName: r.target_branch,
       headRefName: r.source_branch,
       state: normalizeGitLabState(r.state as string | null | undefined),
-      updatedAt:
-        typeof r.updated_at === "string" && r.updated_at.length > 0 ? r.updated_at : null,
+      updatedAt: typeof r.updated_at === "string" && r.updated_at.length > 0 ? r.updated_at : null,
       isCrossRepository,
     });
   }

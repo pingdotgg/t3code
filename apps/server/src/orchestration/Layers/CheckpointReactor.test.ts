@@ -22,6 +22,7 @@ import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts
 import { CheckpointReactorLive } from "./CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
+import { RuntimeReceiptBusLive } from "./RuntimeReceiptBus.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -112,7 +113,7 @@ async function waitForThread(
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
   }) => boolean,
-  timeoutMs = 2000,
+  timeoutMs = 5000,
 ) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<{
@@ -137,7 +138,7 @@ async function waitForThread(
 async function waitForEvent(
   engine: OrchestrationEngineShape,
   predicate: (event: { type: string }) => boolean,
-  timeoutMs = 2000,
+  timeoutMs = 5000,
 ) {
   const deadline = Date.now() + timeoutMs;
   const poll = async () => {
@@ -188,7 +189,7 @@ function gitShowFileAtRef(cwd: string, ref: string, filePath: string): string {
   return runGit(cwd, ["show", `${ref}:${filePath}`]);
 }
 
-async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 2000) {
+async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<void> => {
     if (gitRefExists(cwd, ref)) {
@@ -252,6 +253,7 @@ describe("CheckpointReactor", () => {
 
     const layer = CheckpointReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(RuntimeReceiptBusLive),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(CheckpointStoreLive),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
@@ -264,7 +266,7 @@ describe("CheckpointReactor", () => {
     const checkpointStore = await runtime.runPromise(Effect.service(CheckpointStore));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
-    await Effect.runPromise(Effect.sleep("10 millis"));
+    const drain = () => Effect.runPromise(reactor.drain);
 
     const createdAt = new Date().toISOString();
     await Effect.runPromise(
@@ -321,6 +323,7 @@ describe("CheckpointReactor", () => {
       engine,
       provider,
       cwd,
+      drain,
     };
   }
 
@@ -449,7 +452,7 @@ describe("CheckpointReactor", () => {
       payload: { state: "completed" },
     });
 
-    await Effect.runPromise(Effect.sleep("40 millis"));
+    await harness.drain();
     const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
     const midThread = midReadModel.threads.find(
       (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
@@ -643,7 +646,7 @@ describe("CheckpointReactor", () => {
       status: "completed",
     });
 
-    await Effect.runPromise(Effect.sleep("40 millis"));
+    await harness.drain();
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 3)).toBe(

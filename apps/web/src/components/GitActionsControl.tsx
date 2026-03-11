@@ -149,7 +149,10 @@ const COMMIT_DIALOG_DESCRIPTION =
 function HostingPlatformIcon({
   platform,
   className,
-}: { platform: GitHostingPlatform; className?: string }) {
+}: {
+  platform: GitHostingPlatform;
+  className?: string;
+}) {
   return platform === "gitlab" ? (
     <GitLabIcon className={className} />
   ) : (
@@ -160,7 +163,10 @@ function HostingPlatformIcon({
 function GitActionItemIcon({
   icon,
   platform,
-}: { icon: GitActionIconName; platform: GitHostingPlatform }) {
+}: {
+  icon: GitActionIconName;
+  platform: GitHostingPlatform;
+}) {
   if (icon === "commit") return <GitCommitIcon />;
   if (icon === "push") return <CloudUploadIcon />;
   return <HostingPlatformIcon platform={platform} />;
@@ -169,7 +175,10 @@ function GitActionItemIcon({
 function GitQuickActionIcon({
   quickAction,
   platform,
-}: { quickAction: GitQuickAction; platform: GitHostingPlatform }) {
+}: {
+  quickAction: GitQuickAction;
+  platform: GitHostingPlatform;
+}) {
   const iconClassName = "size-3.5";
   if (quickAction.kind === "open_pr")
     return <HostingPlatformIcon platform={platform} className={iconClassName} />;
@@ -240,7 +249,13 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         hostingPlatform,
         hostingCliAuthenticated,
       ),
-    [gitStatusForActions, hasOriginRemote, hostingCliAuthenticated, hostingPlatform, isGitActionRunning],
+    [
+      gitStatusForActions,
+      hasOriginRemote,
+      hostingCliAuthenticated,
+      hostingPlatform,
+      isGitActionRunning,
+    ],
   );
   const quickAction = useMemo(
     () =>
@@ -301,7 +316,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         data: threadToastData,
       });
     });
-  }, [gitStatusForActions?.pr?.state, gitStatusForActions?.pr?.url, hostingPlatform, threadToastData]);
+  }, [
+    gitStatusForActions?.pr?.state,
+    gitStatusForActions?.pr?.url,
+    hostingPlatform,
+    threadToastData,
+  ]);
 
   const runGitActionWithToast = useCallback(
     async ({
