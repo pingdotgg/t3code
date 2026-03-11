@@ -280,6 +280,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.makeUnsafe("thread-1"),
             status: "running",
             providerName: "codex",
+            providerSessionId: null,
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,

@@ -627,7 +627,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
   const orchestrationReactor = yield* OrchestrationReactor;
-  const { openInEditor } = yield* Open;
+  const { openInEditor, openInWarp } = yield* Open;
 
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
@@ -804,6 +804,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.shellOpenInEditor: {
         const body = stripRequestTag(request.body);
         return yield* openInEditor(body);
+      }
+
+      case WS_METHODS.shellOpenInWarp: {
+        const body = stripRequestTag(request.body);
+        return yield* openInWarp(body);
       }
 
       case WS_METHODS.gitStatus: {

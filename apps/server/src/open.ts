@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
-import { EDITORS, type EditorId } from "@t3tools/contracts";
+import { EDITORS, type EditorId, type OpenInWarpInput } from "@t3tools/contracts";
 import { ServiceMap, Schema, Effect, Layer } from "effect";
 
 // ==============================
@@ -192,6 +192,11 @@ export interface OpenShape {
    * Launches the editor as a detached process so server startup is not blocked.
    */
   readonly openInEditor: (input: OpenInEditorInput) => Effect.Effect<void, OpenError>;
+
+  /**
+   * Open Warp terminal, optionally resuming a Claude Code session.
+   */
+  readonly openInWarp: (input: OpenInWarpInput) => Effect.Effect<void, OpenError>;
 }
 
 /**
@@ -270,6 +275,29 @@ const make = Effect.gen(function* () {
         catch: (cause) => new OpenError({ message: "Browser auto-open failed", cause }),
       }),
     openInEditor: (input) => Effect.flatMap(resolveEditorLaunch(input), launchDetached),
+    openInWarp: (input) =>
+      Effect.gen(function* () {
+        const claudeArgs = input.sessionId ? ` --resume ${input.sessionId}` : "";
+        const command = `cd ${input.cwd.replace(/'/g, "'\\''")} && claude${claudeArgs}`;
+        const escapedCommand = command.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        yield* launchDetached({
+          command: "osascript",
+          args: [
+            "-e",
+            `tell application "Warp" to activate`,
+            "-e",
+            `delay 0.5`,
+            "-e",
+            `tell application "System Events" to tell process "Warp" to keystroke "t" using command down`,
+            "-e",
+            `delay 0.5`,
+            "-e",
+            `tell application "System Events" to tell process "Warp" to keystroke "${escapedCommand}"`,
+            "-e",
+            `tell application "System Events" to tell process "Warp" to key code 36`,
+          ],
+        });
+      }),
   } satisfies OpenShape;
 });
 

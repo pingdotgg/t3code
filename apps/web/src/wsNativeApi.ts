@@ -118,6 +118,7 @@ export function createWsNativeApi(): NativeApi {
     shell: {
       openInEditor: (cwd, editor) =>
         transport.request(WS_METHODS.shellOpenInEditor, { cwd, editor }),
+      openInWarp: (input) => transport.request(WS_METHODS.shellOpenInWarp, input),
       openExternal: async (url) => {
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);

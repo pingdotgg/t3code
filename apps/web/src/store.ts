@@ -300,6 +300,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         session: thread.session
           ? {
               provider: toLegacyProvider(thread.session.providerName),
+              providerSessionId: thread.session.providerSessionId ?? null,
               status: toLegacySessionStatus(thread.session.status),
               orchestrationStatus: thread.session.status,
               activeTurnId: thread.session.activeTurnId ?? undefined,

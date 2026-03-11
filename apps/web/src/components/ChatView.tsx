@@ -143,6 +143,7 @@ import {
   ListTodoIcon,
   LockIcon,
   LockOpenIcon,
+  TerminalIcon,
   Undo2Icon,
   XIcon,
   CopyIcon,
@@ -3574,6 +3575,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
+          sessionProvider={activeThread.session?.provider ?? null}
+          providerSessionId={activeThread.session?.providerSessionId ?? null}
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}
@@ -4275,6 +4278,8 @@ interface ChatHeaderProps {
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
+  sessionProvider: string | null;
+  providerSessionId: string | null;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -4295,12 +4300,22 @@ const ChatHeader = memo(function ChatHeader({
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
+  sessionProvider,
+  providerSessionId,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
   onToggleDiff,
 }: ChatHeaderProps) {
+  const openInWarp = useCallback(() => {
+    const api = readNativeApi();
+    if (!api || !openInCwd) return;
+    void api.shell.openInWarp({
+      cwd: openInCwd,
+      ...(providerSessionId ? { sessionId: providerSessionId } : {}),
+    });
+  }, [openInCwd, providerSessionId]);
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -4340,6 +4355,30 @@ const ChatHeader = memo(function ChatHeader({
             availableEditors={availableEditors}
             openInCwd={openInCwd}
           />
+        )}
+        {sessionProvider === "claudeCode" && openInCwd && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={openInWarp}
+                  aria-label="Open in Warp"
+                >
+                  <TerminalIcon aria-hidden="true" className="size-3.5" />
+                  <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
+                    Warp
+                  </span>
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {providerSessionId
+                ? "Resume Claude Code session in Warp"
+                : "Open Warp in project directory"}
+            </TooltipPopup>
+          </Tooltip>
         )}
         {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
         <Tooltip>
@@ -5657,7 +5696,7 @@ function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): o
   label: string;
   available: true;
 } {
-  return option.available && option.value !== "claudeCode";
+  return option.available;
 }
 
 const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);

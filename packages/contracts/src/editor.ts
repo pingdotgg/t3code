@@ -16,3 +16,9 @@ export const OpenInEditorInput = Schema.Struct({
   editor: EditorId,
 });
 export type OpenInEditorInput = typeof OpenInEditorInput.Type;
+
+export const OpenInWarpInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  sessionId: Schema.optional(TrimmedNonEmptyString),
+});
+export type OpenInWarpInput = typeof OpenInWarpInput.Type;

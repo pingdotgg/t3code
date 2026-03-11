@@ -62,6 +62,7 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const defaultOpenService: OpenShape = {
   openBrowser: () => Effect.void,
   openInEditor: () => Effect.void,
+  openInWarp: () => Effect.void,
 };
 
 const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
@@ -990,6 +991,7 @@ describe("WebSocket Server", () => {
         openCalls.push({ cwd: input.cwd, editor: input.editor });
         return Effect.void;
       },
+      openInWarp: () => Effect.void,
     };
 
     server = await createTestServer({ cwd: "/my/workspace", open: openService });
@@ -1468,6 +1470,7 @@ describe("WebSocket Server", () => {
       openBrowser: () => Effect.void,
       openInEditor: () =>
         Effect.sync(() => BigInt(1)).pipe(Effect.map((result) => result as unknown as void)),
+      openInWarp: () => Effect.void,
     };
 
     try {

@@ -47,7 +47,7 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
-import { EditorId } from "./editor";
+import { EditorId, type OpenInWarpInput } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -133,6 +133,7 @@ export interface NativeApi {
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
+    openInWarp: (input: OpenInWarpInput) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
   };
   git: {
