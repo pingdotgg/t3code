@@ -1517,7 +1517,7 @@ export default function Sidebar() {
                                       render={<div role="button" tabIndex={0} />}
                                       size="sm"
                                       isActive={isActive}
-                                      className={`h-7 w-full translate-x-0 cursor-default justify-start px-2 text-left select-none hover:bg-accent hover:text-foreground focus-visible:ring-0 ${
+                                      className={`h-7 w-full translate-x-0 justify-start px-2 text-left select-none hover:bg-accent hover:text-foreground focus-visible:ring-0 ${
                                         isSelected
                                           ? "bg-primary/15 text-foreground dark:bg-primary/10"
                                           : isActive
