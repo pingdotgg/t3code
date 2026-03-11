@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasUnseenCompletion,
+  hasUnseenError,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
@@ -24,13 +25,68 @@ describe("hasUnseenCompletion", () => {
   it("returns true when a thread completed after its last visit", () => {
     expect(
       hasUnseenCompletion({
-        interactionMode: "default",
         latestTurn: makeLatestTurn(),
         lastVisitedAt: "2026-03-09T10:04:00.000Z",
-        proposedPlans: [],
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("hasUnseenError", () => {
+  it("returns true when an error activity happened after the last visit", () => {
+    expect(
+      hasUnseenError({
+        activities: [
+          {
+            id: "activity-1" as never,
+            tone: "error",
+            kind: "checkpoint.capture.failed",
+            summary: "Checkpoint capture failed",
+            payload: {},
+            turnId: null,
+            createdAt: "2026-03-09T10:05:00.000Z",
+          },
+        ],
+        latestTurn: null,
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
         session: null,
       }),
     ).toBe(true);
+  });
+
+  it("returns false when all error signals predate the last visit", () => {
+    expect(
+      hasUnseenError({
+        activities: [
+          {
+            id: "activity-1" as never,
+            tone: "error",
+            kind: "checkpoint.capture.failed",
+            summary: "Checkpoint capture failed",
+            payload: {},
+            turnId: null,
+            createdAt: "2026-03-09T10:03:00.000Z",
+          },
+        ],
+        latestTurn: {
+          turnId: "turn-1" as never,
+          state: "error",
+          assistantMessageId: null,
+          requestedAt: "2026-03-09T10:00:00.000Z",
+          startedAt: "2026-03-09T10:00:00.000Z",
+          completedAt: "2026-03-09T10:03:30.000Z",
+        },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        session: {
+          provider: "codex" as const,
+          status: "error" as const,
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:03:45.000Z",
+          orchestrationStatus: "error" as const,
+          lastError: "Turn failed",
+        },
+      }),
+    ).toBe(false);
   });
 });
 
@@ -64,6 +120,7 @@ describe("shouldClearThreadSelectionOnMouseDown", () => {
 
 describe("resolveThreadStatusPill", () => {
   const baseThread = {
+    activities: [],
     interactionMode: "plan" as const,
     latestTurn: null,
     lastVisitedAt: undefined,
@@ -85,6 +142,37 @@ describe("resolveThreadStatusPill", () => {
         hasPendingUserInput: true,
       }),
     ).toMatchObject({ label: "Pending Approval", pulse: false });
+  });
+
+  it("shows error before every other derived status when an unseen error exists", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          latestTurn: makeLatestTurn(),
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          activities: [
+            {
+              id: "activity-1" as never,
+              tone: "error",
+              kind: "checkpoint.capture.failed",
+              summary: "Checkpoint capture failed",
+              payload: {},
+              turnId: null,
+              createdAt: "2026-03-09T10:05:30.000Z",
+            },
+          ],
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+        hasPendingApprovals: true,
+        hasPendingUserInput: true,
+      }),
+    ).toMatchObject({ label: "Error", pulse: false });
   });
 
   it("shows awaiting input when plan mode is blocked on user answers", () => {

@@ -1,10 +1,12 @@
 import type { Thread } from "../types";
 import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
+import { hasUnseenCompletion, hasUnseenError } from "../thread-status";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 
 export interface ThreadStatusPill {
   label:
+    | "Error"
     | "Working"
     | "Connecting"
     | "Completed"
@@ -18,19 +20,9 @@ export interface ThreadStatusPill {
 
 type ThreadStatusInput = Pick<
   Thread,
-  "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
+  "activities" | "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
 >;
-
-export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
-  if (!thread.latestTurn?.completedAt) return false;
-  const completedAt = Date.parse(thread.latestTurn.completedAt);
-  if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return true;
-
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
-}
+export { hasUnseenCompletion, hasUnseenError } from "../thread-status";
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
@@ -43,6 +35,15 @@ export function resolveThreadStatusPill(input: {
   hasPendingUserInput: boolean;
 }): ThreadStatusPill | null {
   const { hasPendingApprovals, hasPendingUserInput, thread } = input;
+
+  if (hasUnseenError(thread)) {
+    return {
+      label: "Error",
+      colorClass: "text-red-600 dark:text-red-300/90",
+      dotClass: "bg-red-500 dark:bg-red-300/90",
+      pulse: false,
+    };
+  }
 
   if (hasPendingApprovals) {
     return {
