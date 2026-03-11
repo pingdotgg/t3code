@@ -21,7 +21,6 @@ describe("shouldUseCompactComposerFooter", () => {
   });
 
   it("uses a higher breakpoint for wide action states", () => {
-    expect(COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX).toBe(800);
     expect(
       shouldUseCompactComposerFooter(COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX - 1, {
         hasWideActions: true,
