@@ -2,6 +2,7 @@ import {
   CommandId,
   EventId,
   MessageId,
+  type OrchestrationThread,
   type ProjectId,
   ThreadId,
   TurnId,
@@ -19,6 +20,7 @@ import {
 import { clearWorkspaceIndexCache } from "../../workspaceEntries.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { resolveCheckpointAssistantMessageId } from "../assistantMessageIdentity.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
@@ -190,13 +192,7 @@ const make = Effect.gen(function* () {
   const captureAndDispatchCheckpoint = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly turnId: TurnId;
-    readonly thread: {
-      readonly messages: ReadonlyArray<{
-        readonly id: MessageId;
-        readonly role: string;
-        readonly turnId: TurnId | null;
-      }>;
-    };
+    readonly thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "checkpoints">;
     readonly cwd: string;
     readonly turnCount: number;
     readonly status: "ready" | "missing" | "error";
@@ -262,12 +258,14 @@ const make = Effect.gen(function* () {
         ),
       );
 
-    const assistantMessageId =
-      input.assistantMessageId ??
-      input.thread.messages
-        .toReversed()
-        .find((entry) => entry.role === "assistant" && entry.turnId === input.turnId)?.id ??
-      MessageId.makeUnsafe(`assistant:${input.turnId}`);
+    const assistantMessageId = resolveCheckpointAssistantMessageId({
+      thread: input.thread,
+      threadId: input.threadId,
+      turnId: input.turnId,
+      ...(input.assistantMessageId !== undefined
+        ? { assistantMessageId: input.assistantMessageId }
+        : {}),
+    });
 
     yield* orchestrationEngine.dispatch({
       type: "thread.turn.diff.complete",

@@ -49,7 +49,7 @@ export interface ProjectionThreadMessageRepositoryShape {
   /**
    * Insert or replace a projected thread message row.
    *
-   * Upserts by `messageId`.
+   * Upserts by `(threadId, messageId)`.
    */
   readonly upsert: (
     message: ProjectionThreadMessage,

@@ -1308,7 +1308,8 @@ describe("WebSocket Server", () => {
     const domainPush = await waitForPush(ws, ORCHESTRATION_WS_CHANNELS.domainEvent, (push) => {
       const event = push.data as { type?: string; payload?: { messageId?: string; text?: string } };
       return (
-        event.type === "thread.message-sent" && event.payload?.messageId === "assistant:item-1"
+        event.type === "thread.message-sent" &&
+        event.payload?.messageId === "assistant:thread-1:item:item-1"
       );
     });
 
@@ -1317,7 +1318,7 @@ describe("WebSocket Server", () => {
       payload: { messageId: string; text: string };
     };
     expect(domainEvent.type).toBe("thread.message-sent");
-    expect(domainEvent.payload.messageId).toBe("assistant:item-1");
+    expect(domainEvent.payload.messageId).toBe("assistant:thread-1:item:item-1");
     expect(domainEvent.payload.text).toBe("hello from runtime");
   });
 

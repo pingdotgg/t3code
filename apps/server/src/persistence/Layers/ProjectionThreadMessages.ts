@@ -50,16 +50,16 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             (
               SELECT attachments_json
               FROM projection_thread_messages
-              WHERE message_id = ${row.messageId}
+              WHERE thread_id = ${row.threadId}
+                AND message_id = ${row.messageId}
             )
           ),
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
           ${row.updatedAt}
         )
-        ON CONFLICT (message_id)
+        ON CONFLICT (thread_id, message_id)
         DO UPDATE SET
-          thread_id = excluded.thread_id,
           turn_id = excluded.turn_id,
           role = excluded.role,
           text = excluded.text,

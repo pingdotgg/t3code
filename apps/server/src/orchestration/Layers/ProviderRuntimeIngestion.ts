@@ -16,6 +16,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
+import { resolveRuntimeAssistantMessageId } from "../assistantMessageIdentity.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   ProviderRuntimeIngestionService,
@@ -891,9 +892,7 @@ const make = Effect.gen(function* () {
         event.type === "turn.proposed.delta" ? event.payload.delta : undefined;
 
       if (assistantDelta && assistantDelta.length > 0) {
-        const assistantMessageId = MessageId.makeUnsafe(
-          `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
-        );
+        const assistantMessageId = resolveRuntimeAssistantMessageId(thread, event);
         const turnId = toTurnId(event.turnId);
         if (turnId) {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
@@ -934,9 +933,7 @@ const make = Effect.gen(function* () {
       const assistantCompletion =
         event.type === "item.completed" && event.payload.itemType === "assistant_message"
           ? {
-              messageId: MessageId.makeUnsafe(
-                `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
-              ),
+              messageId: resolveRuntimeAssistantMessageId(thread, event),
               fallbackText: event.payload.detail,
             }
           : undefined;
@@ -1071,9 +1068,7 @@ const make = Effect.gen(function* () {
           if (thread.checkpoints.some((c) => c.turnId === turnId)) {
             // Already tracked; no-op.
           } else {
-            const assistantMessageId = MessageId.makeUnsafe(
-              `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
-            );
+            const assistantMessageId = resolveRuntimeAssistantMessageId(thread, event);
             const maxTurnCount = thread.checkpoints.reduce(
               (max, c) => Math.max(max, c.checkpointTurnCount),
               0,

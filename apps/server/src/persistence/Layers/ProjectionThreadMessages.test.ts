@@ -103,4 +103,47 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.deepEqual(rows[0]?.attachments, []);
     }),
   );
+
+  it.effect("keeps same message IDs isolated per thread", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const firstThreadId = ThreadId.makeUnsafe("thread-shared-message-a");
+      const secondThreadId = ThreadId.makeUnsafe("thread-shared-message-b");
+      const messageId = MessageId.makeUnsafe("message-shared-across-threads");
+
+      yield* repository.upsert({
+        messageId,
+        threadId: firstThreadId,
+        turnId: null,
+        role: "assistant",
+        text: "first thread text",
+        isStreaming: false,
+        createdAt: "2026-03-11T00:00:00.000Z",
+        updatedAt: "2026-03-11T00:00:00.000Z",
+      });
+
+      yield* repository.upsert({
+        messageId,
+        threadId: secondThreadId,
+        turnId: null,
+        role: "assistant",
+        text: "second thread text",
+        isStreaming: false,
+        createdAt: "2026-03-11T00:00:01.000Z",
+        updatedAt: "2026-03-11T00:00:01.000Z",
+      });
+
+      const firstRows = yield* repository.listByThreadId({ threadId: firstThreadId });
+      const secondRows = yield* repository.listByThreadId({ threadId: secondThreadId });
+
+      assert.deepEqual(
+        firstRows.map((row) => row.text),
+        ["first thread text"],
+      );
+      assert.deepEqual(
+        secondRows.map((row) => row.text),
+        ["second thread text"],
+      );
+    }),
+  );
 });
