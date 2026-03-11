@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas";
+import { TrimmedNonEmptyString } from "./baseSchemas";
 import { ProviderModelOptions } from "./model";
 import {
   ApprovalRequestId,
@@ -17,6 +17,7 @@ import {
   ProviderInteractionMode,
   ProviderKind,
   ProviderRequestKind,
+  ProviderStartOptions,
   ProviderUserInputAnswers,
   RuntimeMode,
 } from "./orchestration";
@@ -44,27 +45,6 @@ export const ProviderSession = Schema.Struct({
   lastError: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderSession = typeof ProviderSession.Type;
-
-const CodexProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  homePath: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-const ClaudeCodeProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  permissionMode: Schema.optional(TrimmedNonEmptyStringSchema),
-  maxThinkingTokens: Schema.optional(NonNegativeInt),
-});
-
-const CursorProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-const ProviderStartOptions = Schema.Struct({
-  codex: Schema.optional(CodexProviderStartOptions),
-  claudeCode: Schema.optional(ClaudeCodeProviderStartOptions),
-  cursor: Schema.optional(CursorProviderStartOptions),
-});
 
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,

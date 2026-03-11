@@ -6,11 +6,13 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 
 import { APP_DISPLAY_NAME } from "../branding";
+import { getAuthToken, setAuthToken } from "../authToken";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
@@ -22,6 +24,11 @@ import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { gitQueryKeys } from "../lib/gitReactQuery";
+import {
+  type ConnectionStatus,
+  getConnectionStatus,
+  subscribeConnectionStatus,
+} from "../wsTransport";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 
 export const Route = createRootRouteWithContext<{
@@ -35,6 +42,12 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
+  const connectionStatus: ConnectionStatus = useSyncExternalStore(
+    subscribeConnectionStatus,
+    getConnectionStatus,
+    () => "connecting" as ConnectionStatus,
+  );
+
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
@@ -47,6 +60,10 @@ function RootRouteView() {
     );
   }
 
+  if (connectionStatus === "auth-required") {
+    return <AuthTokenGate />;
+  }
+
   return (
     <ToastProvider>
       <AnchoredToastProvider>
@@ -55,6 +72,59 @@ function RootRouteView() {
         <Outlet />
       </AnchoredToastProvider>
     </ToastProvider>
+  );
+}
+
+function AuthTokenGate() {
+  const existingToken = getAuthToken();
+  const [token, setToken] = useState(existingToken ?? "");
+  const [error, setError] = useState(existingToken ? "Invalid or expired auth token." : "");
+
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      const trimmed = token.trim();
+      if (!trimmed) {
+        setError("Please enter an auth token.");
+        return;
+      }
+      setAuthToken(trimmed);
+      window.location.reload();
+    },
+    [token],
+  );
+
+  return (
+    <div className="flex h-screen flex-col bg-background text-foreground">
+      <div className="flex flex-1 items-center justify-center px-4">
+        <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
+          <div className="space-y-1.5">
+            <h1 className="text-lg font-semibold tracking-tight">Authentication Required</h1>
+            <p className="text-sm text-muted-foreground">
+              This {APP_DISPLAY_NAME} server requires an auth token to connect.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Input
+              type="password"
+              placeholder="Paste your auth token"
+              value={token}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                setToken(e.target.value);
+                setError("");
+              }}
+              autoFocus
+            />
+            {error && <p className="text-xs text-destructive">{error}</p>}
+          </div>
+
+          <Button type="submit" className="w-full">
+            Connect
+          </Button>
+        </form>
+      </div>
+    </div>
   );
 }
 

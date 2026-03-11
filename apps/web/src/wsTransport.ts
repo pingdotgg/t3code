@@ -1,6 +1,8 @@
 import { WebSocketResponse, WsPush, WsResponse } from "@t3tools/contracts";
 import { Cause, Schema } from "effect";
 
+import { appendAuthTokenToUrl } from "./authToken";
+
 type PushListener = (data: unknown) => void;
 
 interface PendingRequest {
@@ -14,6 +16,36 @@ const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
 const decodeWsResponseFromJson = Schema.decodeUnknownExit(Schema.fromJsonString(WsResponse));
 const isWsPushEnvelope = Schema.is(WsPush);
 const isWebSocketResponseEnvelope = Schema.is(WebSocketResponse);
+
+// ---------------------------------------------------------------------------
+// Module-level connection status (consumed by React via useSyncExternalStore)
+// ---------------------------------------------------------------------------
+export type ConnectionStatus = "connecting" | "connected" | "auth-required";
+
+let _connectionStatus: ConnectionStatus = "connecting";
+let _connectionStatusListeners: Array<() => void> = [];
+
+export function getConnectionStatus(): ConnectionStatus {
+  return _connectionStatus;
+}
+
+export function subscribeConnectionStatus(listener: () => void): () => void {
+  _connectionStatusListeners.push(listener);
+  return () => {
+    _connectionStatusListeners = _connectionStatusListeners.filter((l) => l !== listener);
+  };
+}
+
+function setConnectionStatus(status: ConnectionStatus): void {
+  if (_connectionStatus === status) return;
+  _connectionStatus = status;
+  for (const listener of _connectionStatusListeners) {
+    listener();
+  }
+}
+
+/** Number of consecutive connection failures before we surface auth-required. */
+const AUTH_REQUIRED_THRESHOLD = 3;
 
 interface WsRequestEnvelope {
   id: string;
@@ -32,19 +64,22 @@ export class WsTransport {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
   private readonly url: string;
+  private hasEverConnected = false;
+  private consecutiveFailures = 0;
 
   constructor(url?: string) {
     const bridgeUrl = window.desktopBridge?.getWsUrl();
     // In dev mode, VITE_WS_URL points to the server's WebSocket endpoint.
     // In production, the page is served by the WS server on the same host:port.
     const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-    this.url =
+    const baseUrl =
       url ??
       (bridgeUrl && bridgeUrl.length > 0
         ? bridgeUrl
         : envUrl && envUrl.length > 0
           ? envUrl
           : `ws://${window.location.hostname}:${window.location.port}`);
+    this.url = appendAuthTokenToUrl(baseUrl);
     this.connect();
   }
 
@@ -107,10 +142,15 @@ export class WsTransport {
     if (this.disposed) return;
 
     const ws = new WebSocket(this.url);
+    let didOpen = false;
 
     ws.addEventListener("open", () => {
+      didOpen = true;
       this.ws = ws;
       this.reconnectAttempt = 0;
+      this.consecutiveFailures = 0;
+      this.hasEverConnected = true;
+      setConnectionStatus("connected");
     });
 
     ws.addEventListener("message", (event) => {
@@ -119,6 +159,12 @@ export class WsTransport {
 
     ws.addEventListener("close", () => {
       this.ws = null;
+      if (!didOpen) {
+        this.consecutiveFailures++;
+        if (!this.hasEverConnected && this.consecutiveFailures >= AUTH_REQUIRED_THRESHOLD) {
+          setConnectionStatus("auth-required");
+        }
+      }
       this.scheduleReconnect();
     });
 

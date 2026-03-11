@@ -67,11 +67,17 @@ function getSocket(): MockWebSocket {
 beforeEach(() => {
   sockets.length = 0;
 
+  const store = new Map<string, string>();
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
       location: { hostname: "localhost", port: "3020" },
       desktopBridge: undefined,
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => store.set(key, value),
+        removeItem: (key: string) => store.delete(key),
+      },
     },
   });
 

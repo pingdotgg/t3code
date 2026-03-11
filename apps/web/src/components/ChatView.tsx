@@ -200,9 +200,9 @@ import {
 } from "~/projectScripts";
 import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
-import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
+import { newCommandId, newMessageId, newThreadId, uuid } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
-import { getAppModelOptions, useAppSettings } from "../appSettings";
+import { type AppSettings, getAppModelOptions, useAppSettings } from "../appSettings";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -239,6 +239,27 @@ const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 const WORKTREE_BRANCH_PREFIX = "t3code";
+
+function buildProviderOptionsFromSettings(settings: AppSettings) {
+  const hasCodexOptions = settings.codexBinaryPath || settings.codexHomePath;
+  const hasClaudeOptions = settings.claudeBinaryPath;
+  if (!hasCodexOptions && !hasClaudeOptions) return undefined;
+  return {
+    ...(hasCodexOptions
+      ? {
+          codex: {
+            ...(settings.codexBinaryPath ? { binaryPath: settings.codexBinaryPath } : {}),
+            ...(settings.codexHomePath ? { homePath: settings.codexHomePath } : {}),
+          },
+        }
+      : {}),
+    ...(hasClaudeOptions
+      ? {
+          claudeCode: { binaryPath: settings.claudeBinaryPath },
+        }
+      : {}),
+  };
+}
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
   const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
@@ -417,7 +438,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 function buildTemporaryWorktreeBranchName(): string {
   // Keep the 8-hex suffix shape for backend temporary-branch detection.
-  const token = crypto.randomUUID().slice(0, 8).toLowerCase();
+  const token = uuid().slice(0, 8).toLowerCase();
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
@@ -732,18 +753,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
 
   useEffect(() => {
-    if (!activeThread?.id) return;
+    if (!activeThreadId) return;
     if (!latestTurnSettled) return;
     if (!activeLatestTurn?.completedAt) return;
-    const turnCompletedAt = Date.parse(activeLatestTurn.completedAt);
-    if (Number.isNaN(turnCompletedAt)) return;
-    const lastVisitedAt = activeThread.lastVisitedAt ? Date.parse(activeThread.lastVisitedAt) : NaN;
-    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= turnCompletedAt) return;
 
-    markThreadVisited(activeThread.id);
+    markThreadVisited(activeThreadId, activeLatestTurn.completedAt);
   }, [
-    activeThread?.id,
-    activeThread?.lastVisitedAt,
+    activeThreadId,
     activeLatestTurn?.completedAt,
     latestTurnSettled,
     markThreadVisited,
@@ -1367,13 +1383,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, setTerminalOpen, terminalState.terminalOpen]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedTerminalLimit) return;
-    const terminalId = `terminal-${crypto.randomUUID()}`;
+    const terminalId = `terminal-${uuid()}`;
     storeSplitTerminal(activeThreadId, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeThreadId, storeSplitTerminal, hasReachedTerminalLimit]);
   const createNewTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedTerminalLimit) return;
-    const terminalId = `terminal-${crypto.randomUUID()}`;
+    const terminalId = `terminal-${uuid()}`;
     storeNewTerminal(activeThreadId, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeThreadId, storeNewTerminal, hasReachedTerminalLimit]);
@@ -1442,7 +1458,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const shouldCreateNewTerminal =
         wantsNewTerminal && terminalState.terminalIds.length < MAX_THREAD_TERMINAL_COUNT;
       const targetTerminalId = shouldCreateNewTerminal
-        ? `terminal-${crypto.randomUUID()}`
+        ? `terminal-${uuid()}`
         : baseTerminalId;
 
       setTerminalOpen(true);
@@ -2233,7 +2249,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const previewUrl = URL.createObjectURL(file);
       nextImages.push({
         type: "image",
-        id: crypto.randomUUID(),
+        id: uuid(),
         name: file.name || "image",
         mimeType: file.type,
         sizeBytes: file.size,
@@ -2586,6 +2602,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ? { modelOptions: selectedModelOptionsForDispatch }
           : {}),
         provider: selectedProvider,
+        providerOptions: buildProviderOptionsFromSettings(settings),
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
         interactionMode,
@@ -2856,6 +2873,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
+          providerOptions: buildProviderOptionsFromSettings(settings),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: nextInteractionMode,
@@ -2887,7 +2905,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       selectedModelOptionsForDispatch,
       selectedProvider,
       setThreadError,
-      settings.enableAssistantStreaming,
+      settings,
     ],
   );
 
@@ -2954,6 +2972,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
+          providerOptions: buildProviderOptionsFromSettings(settings),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: "default",
@@ -3002,7 +3021,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedModel,
     selectedModelOptionsForDispatch,
     selectedProvider,
-    settings.enableAssistantStreaming,
+    settings,
     syncServerReadModel,
   ]);
 
