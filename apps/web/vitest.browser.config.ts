@@ -16,6 +16,7 @@ export default mergeConfig(
     },
     test: {
       include: [
+        "src/components/BranchToolbar.browser.tsx",
         "src/components/ChatView.browser.tsx",
         "src/components/KeybindingsToast.browser.tsx",
       ],

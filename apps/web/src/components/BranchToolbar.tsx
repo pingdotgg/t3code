@@ -11,7 +11,7 @@ import {
   resolveEffectiveEnvMode,
 } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
-import { Button } from "./ui/button";
+import { Toggle, ToggleGroup } from "./ui/toggle-group";
 
 interface BranchToolbarProps {
   threadId: ThreadId;
@@ -20,6 +20,9 @@ interface BranchToolbarProps {
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
+
+const ENV_MODE_TOGGLE_CLASS_NAME =
+  "rounded-full border-0 px-3 text-xs font-medium text-muted-foreground/70 shadow-none hover:bg-background/80 hover:text-foreground/85 data-[pressed]:bg-background data-[pressed]:text-foreground data-[pressed]:shadow-xs data-disabled:opacity-100 data-disabled:text-muted-foreground/60";
 
 export default function BranchToolbar({
   threadId,
@@ -47,6 +50,9 @@ export default function BranchToolbar({
     hasServerThread,
     draftThreadEnvMode: draftThread?.envMode,
   });
+  const envToggleValue = activeWorktreePath ? "worktree" : effectiveEnvMode;
+  const envToggleDisabled = envLocked || activeWorktreePath !== null;
+  const worktreeToggleLabel = activeWorktreePath ? "Worktree" : "New worktree";
 
   const setThreadBranch = useCallback(
     (branch: string | null, worktreePath: string | null) => {
@@ -103,23 +109,39 @@ export default function BranchToolbar({
   if (!activeThreadId || !activeProject) return null;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-5 pb-3 pt-1">
-      <div className="flex items-center gap-2">
-        {envLocked || activeWorktreePath ? (
-          <span className="border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
-            {activeWorktreePath ? "Worktree" : "Local"}
-          </span>
-        ) : (
-          <Button
-            type="button"
-            variant="ghost"
-            className="text-muted-foreground/70 hover:text-foreground/80"
-            size="xs"
-            onClick={() => onEnvModeChange(effectiveEnvMode === "local" ? "worktree" : "local")}
+    <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-5 pb-3 pt-1">
+      <div className="flex shrink-0 items-center gap-2">
+        <ToggleGroup
+          aria-label="Thread workspace mode"
+          className="rounded-full border border-border/70 bg-muted/30 p-0.5 shadow-xs/5"
+          size="xs"
+          multiple={false}
+          value={[envToggleValue]}
+          onValueChange={(value) => {
+            if (envToggleDisabled) return;
+            const nextMode = value[0];
+            if ((nextMode === "local" || nextMode === "worktree") && nextMode !== envToggleValue) {
+              onEnvModeChange(nextMode);
+            }
+          }}
+        >
+          <Toggle
+            className={ENV_MODE_TOGGLE_CLASS_NAME}
+            disabled={envToggleDisabled}
+            title="Use the local repository"
+            value="local"
           >
-            {effectiveEnvMode === "worktree" ? "New worktree" : "Local"}
-          </Button>
-        )}
+            Local
+          </Toggle>
+          <Toggle
+            className={ENV_MODE_TOGGLE_CLASS_NAME}
+            disabled={envToggleDisabled}
+            title="Use a separate worktree"
+            value="worktree"
+          >
+            {worktreeToggleLabel}
+          </Toggle>
+        </ToggleGroup>
       </div>
 
       <BranchToolbarBranchSelector
