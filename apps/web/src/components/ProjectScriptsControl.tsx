@@ -420,6 +420,7 @@ export default function ProjectScriptsControl({
                   </Popover>
                   <Input
                     id="script-name"
+                    autoFocus
                     placeholder="Test"
                     value={name}
                     onChange={(event) => setName(event.target.value)}
