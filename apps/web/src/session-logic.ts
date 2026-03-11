@@ -579,7 +579,9 @@ export function deriveTimelineEntries(
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
     kind: "message",
-    createdAt: message.createdAt,
+    createdAt: message.role === "assistant"
+      ? (message.completedAt ?? "\uFFFF")
+      : message.createdAt,
     message,
   }));
   const proposedPlanRows: TimelineEntry[] = proposedPlans.map((proposedPlan) => ({

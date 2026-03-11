@@ -1539,35 +1539,51 @@ export default function Sidebar() {
                                 {project.name}
                               </span>
                             </SidebarMenuButton>
-                            <Tooltip>
-                              <TooltipTrigger
-                                render={
-                                  <SidebarMenuAction
-                                    render={
-                                      <button
-                                        type="button"
-                                        aria-label={`Create new thread in ${project.name}`}
-                                        data-testid="new-thread-button"
-                                      />
-                                    }
-                                    showOnHover
-                                    className="top-1 right-1 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
-                                    onClick={(event) => {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      void handleNewThread(project.id);
-                                    }}
-                                  >
-                                    <SquarePenIcon className="size-3.5" />
-                                  </SidebarMenuAction>
-                                }
-                              />
-                              <TooltipPopup side="top">
-                                {newThreadShortcutLabel
-                                  ? `New thread (${newThreadShortcutLabel})`
-                                  : "New thread"}
-                              </TooltipPopup>
-                            </Tooltip>
+                            <div className="absolute top-1 right-1 flex items-center gap-0.5 opacity-0 group-hover/project-header:opacity-100 transition-opacity">
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <button
+                                      type="button"
+                                      aria-label={`Review PR in ${project.name}`}
+                                      className="inline-flex size-5 items-center justify-center rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        setReviewPrProjectId(project.id);
+                                      }}
+                                    >
+                                      <GitPullRequestIcon className="size-3.5" />
+                                    </button>
+                                  }
+                                />
+                                <TooltipPopup side="top">Review PR</TooltipPopup>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <button
+                                      type="button"
+                                      aria-label={`Create new thread in ${project.name}`}
+                                      data-testid="new-thread-button"
+                                      className="inline-flex size-5 items-center justify-center rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        void handleNewThread(project.id);
+                                      }}
+                                    >
+                                      <SquarePenIcon className="size-3.5" />
+                                    </button>
+                                  }
+                                />
+                                <TooltipPopup side="top">
+                                  {newThreadShortcutLabel
+                                    ? `New thread (${newThreadShortcutLabel})`
+                                    : "New thread"}
+                                </TooltipPopup>
+                              </Tooltip>
+                            </div>
                           </div>
 
                           <CollapsibleContent keepMounted>
