@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
+import { DEFAULT_WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
@@ -97,6 +98,7 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const worktreeBranchPrefix = settings.worktreeBranchPrefix;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -300,6 +302,60 @@ function SettingsRouteView() {
                   >
                     Reset codex overrides
                   </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Git</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Configure how T3 Code names new worktree branches and dedicated cross-repo PR
+                  worktree branches.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="worktree-branch-prefix" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">
+                    Worktree branch prefix
+                  </span>
+                  <Input
+                    id="worktree-branch-prefix"
+                    value={worktreeBranchPrefix}
+                    onChange={(event) =>
+                      updateSettings({ worktreeBranchPrefix: event.target.value })
+                    }
+                    placeholder={DEFAULT_WORKTREE_BRANCH_PREFIX}
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Example branches: <code>{worktreeBranchPrefix}/1a2b3c4d</code> and{" "}
+                    <code>{worktreeBranchPrefix}/pr-42/main</code>
+                  </span>
+                </label>
+
+                <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p>Default prefix</p>
+                    <p className="mt-1 font-mono text-[11px] text-foreground">
+                      {DEFAULT_WORKTREE_BRANCH_PREFIX}
+                    </p>
+                  </div>
+                  {worktreeBranchPrefix !== defaults.worktreeBranchPrefix ? (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      className="self-start"
+                      onClick={() =>
+                        updateSettings({
+                          worktreeBranchPrefix: defaults.worktreeBranchPrefix,
+                        })
+                      }
+                    >
+                      Reset branch prefix
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </section>

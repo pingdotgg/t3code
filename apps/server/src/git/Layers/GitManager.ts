@@ -4,7 +4,7 @@ import { realpathSync } from "node:fs";
 import { Effect, FileSystem, Layer, Path } from "effect";
 import {
   resolveAutoFeatureBranchName,
-  sanitizeBranchFragment,
+  resolvePullRequestWorktreeLocalBranchName,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 
@@ -79,18 +79,6 @@ function resolveHeadRepositoryNameWithOwner(
   }
 
   return `${ownerLogin}/${repositoryName}`;
-}
-
-function resolvePullRequestWorktreeLocalBranchName(
-  pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
-): string {
-  if (!pullRequest.isCrossRepository) {
-    return pullRequest.headBranch;
-  }
-
-  const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
-  const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `t3code/pr-${pullRequest.number}/${suffix}`;
 }
 
 function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
@@ -872,8 +860,14 @@ export const makeGitManager = Effect.gen(function* () {
         ...pullRequest,
         ...toPullRequestHeadRemoteInfo(pullRequestSummary),
       } as const;
-      const localPullRequestBranch =
-        resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
+      const localPullRequestBranch = resolvePullRequestWorktreeLocalBranchName({
+        number: pullRequestWithRemoteInfo.number,
+        headBranch: pullRequestWithRemoteInfo.headBranch,
+        ...(pullRequestWithRemoteInfo.isCrossRepository !== undefined
+          ? { isCrossRepository: pullRequestWithRemoteInfo.isCrossRepository }
+          : {}),
+        ...(input.branchPrefix ? { branchPrefix: input.branchPrefix } : {}),
+      });
 
       const findLocalHeadBranch = (cwd: string) =>
         gitCore.listBranches({ cwd }).pipe(

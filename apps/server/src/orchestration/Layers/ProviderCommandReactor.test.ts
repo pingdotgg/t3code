@@ -171,14 +171,13 @@ describe("ProviderCommandReactor", () => {
             : "renamed-branch",
       }),
     );
-    const generateBranchName = vi.fn(() =>
+    const generateBranchName = vi.fn((() =>
       Effect.fail(
         new TextGenerationError({
           operation: "generateBranchName",
           detail: "disabled in test harness",
         }),
-      ),
-    );
+      )) as TextGenerationShape["generateBranchName"]);
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
@@ -847,5 +846,57 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.status).toBe("stopped");
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
+  it("preserves a custom temporary worktree prefix when renaming the first-turn branch", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.generateBranchName.mockImplementation(() =>
+      Effect.succeed({
+        branch: "feat/refine-toolbar",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-thread-meta-custom-prefix"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        branch: "custom/team/1a2b3c4d",
+        worktreePath: "/tmp/provider-project-worktree",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-custom-prefix"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-custom-prefix"),
+          role: "user",
+          text: "refine the branch toolbar interactions",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
+    expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
+      oldBranch: "custom/team/1a2b3c4d",
+      newBranch: "custom/team/feat/refine-toolbar",
+    });
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+      );
+      return thread?.branch === "custom/team/feat/refine-toolbar";
+    });
   });
 });

@@ -29,6 +29,7 @@ import {
   normalizeModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
+import { normalizeWorktreeBranchPrefix } from "@t3tools/shared/git";
 import {
   memo,
   useCallback,
@@ -264,7 +265,6 @@ const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnsw
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
-const WORKTREE_BRANCH_PREFIX = "t3code";
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
   const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
@@ -430,10 +430,10 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-function buildTemporaryWorktreeBranchName(): string {
+function buildTemporaryWorktreeBranchName(prefix: string): string {
   // Keep the 8-hex suffix shape for backend temporary-branch detection.
   const token = randomUUID().slice(0, 8).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+  return `${normalizeWorktreeBranchPrefix(prefix)}/${token}`;
 }
 
 function cloneComposerImageForRetry(image: ComposerImageAttachment): ComposerImageAttachment {
@@ -2659,7 +2659,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
         beginSendPhase("preparing-worktree");
-        const newBranch = buildTemporaryWorktreeBranchName();
+        const newBranch = buildTemporaryWorktreeBranchName(settings.worktreeBranchPrefix);
         const result = await createWorktreeMutation.mutateAsync({
           cwd: activeProject.cwd,
           branch: baseBranchForWorktree,
@@ -4122,6 +4122,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               key={pullRequestDialogState.key}
               open
               cwd={activeProject?.cwd ?? null}
+              branchPrefix={settings.worktreeBranchPrefix}
               initialReference={pullRequestDialogState.initialReference}
               onOpenChange={(open) => {
                 if (!open) {

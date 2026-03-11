@@ -462,7 +462,7 @@ function resolvePullRequest(manager: GitManagerShape, input: { cwd: string; refe
 
 function preparePullRequestThread(
   manager: GitManagerShape,
-  input: { cwd: string; reference: string; mode: "local" | "worktree" },
+  input: { cwd: string; reference: string; mode: "local" | "worktree"; branchPrefix?: string },
 ) {
   return manager.preparePullRequestThread(input);
 }
@@ -1761,6 +1761,59 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           ])).stdout.trim(),
         ).toBe("t3code/pr-91/main");
       }),
+  );
+
+  it.effect("uses a custom prefix for cross-repo PR worktree branches", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "fork-main-source"]);
+      fs.writeFileSync(path.join(repoDir, "fork-custom-prefix.txt"), "fork custom prefix\n");
+      yield* runGit(repoDir, ["add", "fork-custom-prefix.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Fork custom prefix branch"]);
+      yield* runGit(repoDir, ["push", "-u", "fork-seed", "fork-main-source:main"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 93,
+            title: "Fork main custom prefix PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/93",
+            baseRefName: "main",
+            headRefName: "main",
+            state: "open",
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "octocat/codething-mvp",
+            headRepositoryOwnerLogin: "octocat",
+          },
+          repositoryCloneUrls: {
+            "octocat/codething-mvp": {
+              url: forkDir,
+              sshUrl: forkDir,
+            },
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "93",
+        mode: "worktree",
+        branchPrefix: "custom/team",
+      });
+
+      expect(result.branch).toBe("custom/team/pr-93/main");
+      expect(result.worktreePath).not.toBeNull();
+      expect(
+        (yield* runGit(result.worktreePath as string, ["branch", "--show-current"])).stdout.trim(),
+      ).toBe("custom/team/pr-93/main");
+    }),
   );
 
   it.effect(
