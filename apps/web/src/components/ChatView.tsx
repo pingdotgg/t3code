@@ -4370,14 +4370,6 @@ const ChatHeader = memo(function ChatHeader({
   onDeleteProjectScript,
   onToggleDiff,
 }: ChatHeaderProps) {
-  const openInWarp = useCallback(() => {
-    const api = readNativeApi();
-    if (!api || !openInCwd) return;
-    void api.shell.openInWarp({
-      cwd: openInCwd,
-      ...(providerSessionId ? { sessionId: providerSessionId } : {}),
-    });
-  }, [openInCwd, providerSessionId]);
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -4416,31 +4408,9 @@ const ChatHeader = memo(function ChatHeader({
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
+            sessionProvider={sessionProvider}
+            providerSessionId={providerSessionId}
           />
-        )}
-        {sessionProvider === "claudeCode" && openInCwd && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={openInWarp}
-                  aria-label="Open in Warp"
-                >
-                  <TerminalIcon aria-hidden="true" className="size-3.5" />
-                  <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
-                    Warp
-                  </span>
-                </Button>
-              }
-            />
-            <TooltipPopup side="bottom">
-              {providerSessionId
-                ? "Resume Claude Code session in Warp"
-                : "Open Warp in project directory"}
-            </TooltipPopup>
-          </Tooltip>
         )}
         {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
         <Tooltip>
@@ -6147,10 +6117,14 @@ const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  sessionProvider,
+  providerSessionId,
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  sessionProvider: string | null;
+  providerSessionId: string | null;
 }) {
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
@@ -6257,6 +6231,21 @@ const OpenInPicker = memo(function OpenInPicker({
               )}
             </MenuItem>
           ))}
+          {sessionProvider === "claudeCode" && openInCwd && (
+            <MenuItem
+              onClick={() => {
+                const api = readNativeApi();
+                if (!api || !openInCwd) return;
+                void api.shell.openInWarp({
+                  cwd: openInCwd,
+                  ...(providerSessionId ? { sessionId: providerSessionId } : {}),
+                });
+              }}
+            >
+              <TerminalIcon aria-hidden="true" className="text-muted-foreground" />
+              {providerSessionId ? "Resume in Warp" : "Open in Warp"}
+            </MenuItem>
+          )}
         </MenuPopup>
       </Menu>
     </Group>

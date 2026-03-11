@@ -671,27 +671,27 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           )}
         </div>
       ) : showBranchDiff ? (
-        <div
-          ref={patchViewportRef}
-          className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
-        >
-          {branchDiffQuery.isLoading ? (
-            <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
-              <p>Loading branch diff...</p>
-            </div>
-          ) : branchDiffQuery.isError ? (
-            <div className="px-3 pt-2">
-              <p className="text-[11px] text-red-500/80">
-                {branchDiffQuery.error instanceof Error
-                  ? branchDiffQuery.error.message
-                  : "Failed to load branch diff."}
-              </p>
-            </div>
-          ) : !branchDiffPatch ? (
-            <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
-              <p>No changes compared to {defaultBranchName}.</p>
-            </div>
-          ) : branchDiffPatch.kind === "files" ? (
+        branchDiffQuery.isLoading ? (
+          <div className="flex flex-1 items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
+            <p>Loading branch diff...</p>
+          </div>
+        ) : branchDiffQuery.isError ? (
+          <div className="flex-1 px-3 pt-2">
+            <p className="text-[11px] text-red-500/80">
+              {branchDiffQuery.error instanceof Error
+                ? branchDiffQuery.error.message
+                : "Failed to load branch diff."}
+            </p>
+          </div>
+        ) : !branchDiffPatch ? (
+          <div className="flex flex-1 items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
+            <p>No changes compared to {defaultBranchName}.</p>
+          </div>
+        ) : branchDiffPatch.kind === "files" ? (
+          <div
+            ref={patchViewportRef}
+            className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
+          >
             <Virtualizer
               className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
               config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
@@ -750,17 +750,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 );
               })}
             </Virtualizer>
-          ) : (
-            <div className="h-full overflow-auto p-2">
-              <div className="space-y-2">
-                <p className="text-[11px] text-muted-foreground/75">{branchDiffPatch.reason}</p>
-                <pre className="max-h-[72vh] overflow-auto rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90">
-                  {branchDiffPatch.text}
-                </pre>
-              </div>
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-auto p-2">
+            <div className="space-y-2">
+              <p className="text-[11px] text-muted-foreground/75">{branchDiffPatch.reason}</p>
+              <pre className="overflow-auto rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-muted-foreground/90">
+                {branchDiffPatch.text}
+              </pre>
             </div>
-          )}
-        </div>
+          </div>
+        )
       ) : orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
