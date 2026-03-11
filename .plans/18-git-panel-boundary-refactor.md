@@ -120,10 +120,10 @@ Run these checks after each phase:
 
 | Progress | Workstream | Scope | Exit criteria |
 | --- | --- | --- | --- |
-| Not started | Extract workspace section | Move workspace card, dedicated workspace actions, and primary checkout attention flow | Workspace behavior lives in one section component |
-| Not started | Extract sync section | Move merge source picker, conflict banner, abort flow, and last merge result | Sync behavior lives in one section component |
-| Not started | Move section guards | Relocate section specific disabled reason logic near section view models | Container no longer owns most section guard logic |
-| Not started | Verify checks | Run formatting, lint, and typecheck | Validation gate passes |
+| Done | Extract workspace section | Move workspace card, dedicated workspace actions, and primary checkout attention flow | Workspace behavior lives in one section component |
+| Done | Extract sync section | Move merge source picker, conflict banner, abort flow, and last merge result | Sync behavior lives in one section component |
+| Done | Move section guards | Relocate section specific disabled reason logic near section view models | Container no longer owns most section guard logic |
+| Done | Verify checks | Run formatting, lint, and typecheck | Validation gate passes |
 
 ## Phase 4
 

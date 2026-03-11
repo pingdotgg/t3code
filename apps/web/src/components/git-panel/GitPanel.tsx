@@ -8,11 +8,8 @@ import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  ArrowRightIcon,
   CloudUploadIcon,
-  DownloadIcon,
   ExternalLinkIcon,
-  FolderGit2Icon,
   GitCommitIcon,
   GitMergeIcon,
   GitPullRequestIcon,
@@ -32,11 +29,8 @@ import {
 import {
   buildPrimaryWorkspaceResolutionPrompt,
   buildResolveConflictPrompt,
-  buildCommitToBranchLabel,
   deriveWorkspaceStatusInfo,
   resolveDefaultMergeSourceBranch,
-  resolveCommitToBranchDisabledReason,
-  resolveDedicatedWorkspaceActionState,
 } from "./GitPanel.logic";
 import {
   resolveDraftEnvModeAfterBranchChange,
@@ -73,8 +67,9 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import { useStore } from "~/store";
 import { formatWorktreePathForDisplay } from "~/worktreeCleanup";
 import { GitPanelSection } from "./GitPanelSection";
+import { GitSyncSection } from "./GitSyncSection";
 import { GitStatusDot } from "./GitStatusDot";
-import { GitWorkspaceCard } from "./GitWorkspaceCard";
+import { GitWorkspaceSection } from "./GitWorkspaceSection";
 import { GitCommitDialog } from "./GitCommitDialog";
 import { GitDefaultBranchDialog } from "./GitDefaultBranchDialog";
 import { GitPromoteDialog } from "./GitPromoteDialog";
@@ -1199,69 +1194,6 @@ export default function GitPanel({
         : !(gitStatusForActions.hasWorkingTreeChanges || gitStatusForActions.aheadCount > 0)
           ? "Nothing to push"
           : null;
-  const createWorktreeDisabledReason = !isPrimaryWorkspace
-    ? null
-    : !activeProjectId
-      ? "No project context"
-      : !gitStatusForActions
-        ? "Status unavailable"
-        : !repoCwd || !activeWorkspaceBranch
-          ? "Checkout branch first"
-          : gitStatusForActions.hasWorkingTreeChanges
-            ? "Commit changes first"
-            : createWorktreeMutation.isPending
-              ? "Creating..."
-              : null;
-  const mergeDisabledReason = !gitStatusForActions
-    ? "Status unavailable"
-    : !activeWorkspaceBranch
-      ? "Checkout branch first"
-      : mergeSourceBranch.length === 0
-        ? "No branches to merge"
-        : activeWorkspaceHasConflicts
-          ? "Resolve conflicts first"
-          : activeWorkspaceMerge.inProgress
-            ? "Finish current merge"
-            : gitStatusForActions.hasWorkingTreeChanges
-              ? "Commit changes first"
-              : isMergeRunning
-                ? "Merging..."
-                : null;
-  const syncFromTargetDisabledReason = !activeTargetBranch
-    ? "No target branch"
-    : activeTargetBranch === activeWorkspaceBranch
-      ? "Already on target branch"
-      : !gitStatusForActions
-        ? "Status unavailable"
-        : !activeWorkspaceBranch
-          ? "Checkout branch first"
-          : activeWorkspaceHasConflicts
-            ? "Resolve conflicts first"
-            : activeWorkspaceMerge.inProgress
-              ? "Finish current merge"
-              : gitStatusForActions.hasWorkingTreeChanges
-                ? "Commit changes first"
-                : isMergeRunning
-                  ? "Merging..."
-                  : null;
-  const commitToBranchDisabledReason = resolveCommitToBranchDisabledReason({
-    gitStatus: gitStatusForActions,
-    hasConflicts: activeWorkspaceHasConflicts,
-    isBusy: isGitActionRunning,
-  });
-  const dedicatedWorkspaceActionState = resolveDedicatedWorkspaceActionState({
-    gitStatus: gitStatusForActions,
-    hasConflicts: activeWorkspaceHasConflicts,
-    mergeInProgress: activeWorkspaceMerge.inProgress,
-    isClosing: removeWorktreeMutation.isPending,
-    hasRepoContext: repoCwd !== null,
-    hasThreadContext: activeThreadId !== null,
-  });
-  const primaryWorkspaceNeedsAttention =
-    (primaryWorkspaceStatus?.merge.conflictedFiles.length ?? 0) > 0 ||
-    primaryWorkspaceStatus?.merge.inProgress === true ||
-    primaryWorkspaceStatus?.hasWorkingTreeChanges === true;
-
   if (!workspaceCwd) return null;
 
   return (
@@ -1426,248 +1358,65 @@ export default function GitPanel({
             {/* WORKSPACE SECTION */}
             {/* ============================================================ */}
             {isRepo && (
-              <GitPanelSection title="Workspace">
-                <GitWorkspaceCard
-                  isPrimary={isPrimaryWorkspace}
-                  name={
-                    isPrimaryWorkspace || !workspaceCwd
-                      ? "Primary checkout"
-                      : formatWorktreePathForDisplay(workspaceCwd)
+              <GitWorkspaceSection
+                workspaceCwd={workspaceCwd}
+                repoCwd={repoCwd}
+                activeProjectId={activeProjectId}
+                activeThreadId={activeThreadId}
+                activeThreadBranch={activeThreadBranch}
+                activeWorkspaceBranch={activeWorkspaceBranch}
+                activeWorkspaceBranchMeta={activeWorkspaceBranchMeta}
+                activeTargetBranch={activeTargetBranch}
+                gitStatus={gitStatusForActions}
+                primaryWorkspaceStatus={primaryWorkspaceStatus}
+                primaryWorkspaceStatusErrorMessage={primaryWorkspaceStatusError?.message ?? null}
+                isPrimaryWorkspace={isPrimaryWorkspace}
+                hasConflicts={activeWorkspaceHasConflicts}
+                mergeInProgress={activeWorkspaceMerge.inProgress}
+                isGitActionRunning={isGitActionRunning}
+                isMerging={isMergeRunning}
+                isCreatingWorktree={createWorktreeMutation.isPending}
+                isRemovingWorktree={removeWorktreeMutation.isPending}
+                statusInfo={statusInfo}
+                onOpenWorkspace={() => openPathInEditor(workspaceCwd)}
+                onCreateDedicatedWorkspace={createDedicatedWorkspace}
+                onOpenCommitDialog={() => {
+                  if (commitItem) {
+                    openDialogForMenuItem(commitItem);
                   }
-                  branch={activeWorkspaceBranch ?? "Detached HEAD"}
-                  targetBranch={activeTargetBranch}
-                  path={workspaceCwd}
-                  statusLevel={statusInfo.level}
-                  statusLabel={statusInfo.label}
-                  aheadCount={gitStatusForActions?.aheadCount ?? 0}
-                  behindCount={gitStatusForActions?.behindCount ?? 0}
-                  hasOpenPr={gitStatusForActions?.pr?.state === "open"}
-                  isDefaultBranch={activeWorkspaceBranchMeta?.isDefault ?? false}
-                  onOpen={() => openPathInEditor(workspaceCwd)}
-                />
-                {/* Create dedicated workspace - only show in primary */}
-                {isPrimaryWorkspace && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={createWorktreeDisabledReason !== null}
-                    onClick={() => void createDedicatedWorkspace()}
-                    className="w-full justify-start"
-                  >
-                    <FolderGit2Icon className="size-4" />
-                    Create dedicated workspace
-                    {createWorktreeDisabledReason && (
-                      <span className="ml-auto text-[10px] text-muted-foreground">
-                        {createWorktreeDisabledReason}
-                      </span>
-                    )}
-                  </Button>
-                )}
-                {!isPrimaryWorkspace && (
-                  <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
-                    <Button
-                      variant="default"
-                      size="sm"
-                      disabled={commitToBranchDisabledReason !== null}
-                      onClick={() => {
-                        if (commitItem) {
-                          openDialogForMenuItem(commitItem);
-                        }
-                      }}
-                      className="w-full justify-center"
-                    >
-                      <GitCommitIcon className="size-4" />
-                      {buildCommitToBranchLabel(
-                        activeThreadBranch ?? activeWorkspaceBranch ?? null,
-                      )}
-                    </Button>
-                    {commitToBranchDisabledReason && (
-                      <p className="text-center text-xs text-muted-foreground">
-                        {commitToBranchDisabledReason}
-                      </p>
-                    )}
-                    {activeTargetBranch && activeTargetBranch !== activeWorkspaceBranch && (
-                      <div className="space-y-1.5">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={syncFromTargetDisabledReason !== null}
-                          onClick={() => {
-                            void runMergeFromBranch(activeTargetBranch);
-                          }}
-                          className="w-full justify-center"
-                        >
-                          <DownloadIcon className="size-4" />
-                          Sync from {activeTargetBranch}
-                        </Button>
-                        {syncFromTargetDisabledReason ? (
-                          <p className="text-center text-xs text-muted-foreground">
-                            {syncFromTargetDisabledReason}
-                          </p>
-                        ) : (
-                          <p className="text-center text-xs text-muted-foreground">
-                            Merge the target branch into this workspace before closing it.
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    <div className="grid gap-1.5 sm:grid-cols-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={dedicatedWorkspaceActionState.closeDisabledReason !== null}
-                        onClick={() => {
-                          void closeDedicatedWorkspace(false);
-                        }}
-                        className="w-full justify-center"
-                      >
-                        <FolderGit2Icon className="size-4" />
-                        Close workspace
-                      </Button>
-                      {dedicatedWorkspaceActionState.showDiscardAction && (
-                        <Button
-                          variant="destructive-outline"
-                          size="sm"
-                          disabled={dedicatedWorkspaceActionState.discardDisabledReason !== null}
-                          onClick={() => {
-                            void closeDedicatedWorkspace(true);
-                          }}
-                          className="w-full justify-center"
-                        >
-                          Discard changes and close
-                        </Button>
-                      )}
-                    </div>
-                    {primaryWorkspaceNeedsAttention && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          void openPrimaryWorkspaceResolutionDraft();
-                        }}
-                        className="w-full justify-center"
-                      >
-                        Prepare primary checkout
-                      </Button>
-                    )}
-                    <p className="text-xs text-muted-foreground">
-                      {dedicatedWorkspaceActionState.closeDisabledReason ??
-                        "Close the dedicated checkout once changes are committed to the branch."}
-                    </p>
-                    {primaryWorkspaceStatusError && (
-                      <p className="text-xs text-destructive-foreground">
-                        {primaryWorkspaceStatusError.message}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </GitPanelSection>
+                }}
+                onSyncFromTarget={() => {
+                  if (activeTargetBranch) {
+                    void runMergeFromBranch(activeTargetBranch);
+                  }
+                }}
+                onCloseWorkspace={() => closeDedicatedWorkspace(false)}
+                onDiscardAndCloseWorkspace={() => closeDedicatedWorkspace(true)}
+                onPreparePrimaryCheckout={openPrimaryWorkspaceResolutionDraft}
+              />
             )}
 
             {/* ============================================================ */}
             {/* SYNC SECTION - Pull changes INTO this workspace */}
             {/* ============================================================ */}
             {isRepo && localBranches.length > 1 && (
-              <GitPanelSection title="Sync" collapsible defaultOpen={mergeExpanded}>
-                <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
-                  <p className="text-xs text-muted-foreground">
-                    Pull a branch <span className="font-medium">into</span> this workspace
-                  </p>
-
-                  <div className="grid grid-cols-[1fr_auto] items-end gap-2">
-                    <label className="space-y-1 text-xs">
-                      <span className="text-muted-foreground">From branch</span>
-                      <select
-                        className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
-                        value={mergeSourceBranch}
-                        onChange={(e) => setMergeSourceBranch(e.target.value)}
-                        disabled={localBranches.length < 2}
-                      >
-                        {mergeSourceBranch.length === 0 && <option value="">No candidates</option>}
-                        {localBranches
-                          .filter((branch) => branch.name !== activeWorkspaceBranch)
-                          .map((branch) => (
-                            <option key={branch.name} value={branch.name}>
-                              {branch.name}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={mergeDisabledReason !== null}
-                      onClick={() => void runLocalMerge()}
-                    >
-                      <DownloadIcon className="size-4" />
-                      {isMergeRunning ? "Syncing..." : "Sync"}
-                    </Button>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className="font-mono">{mergeSourceBranch || "..."}</span>
-                    <ArrowRightIcon className="size-3" />
-                    <span className="font-mono font-medium">{activeWorkspaceBranch ?? "..."}</span>
-                  </div>
-
-                  {mergeDisabledReason && (
-                    <p className="text-xs text-muted-foreground">{mergeDisabledReason}</p>
-                  )}
-
-                  {/* Conflict indicator */}
-                  {activeWorkspaceHasConflicts && (
-                    <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/[0.04] p-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-medium text-destructive-foreground">
-                          {activeWorkspaceMerge.conflictedFiles.length} conflicted file
-                          {activeWorkspaceMerge.conflictedFiles.length === 1 ? "" : "s"}
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            disabled={!activeThreadId}
-                            onClick={createResolveConflictDraft}
-                          >
-                            Resolve conflict
-                          </Button>
-                          <Button
-                            variant="destructive-outline"
-                            size="xs"
-                            disabled={isAbortMergeRunning}
-                            onClick={() => void abortActiveMerge()}
-                          >
-                            Abort
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {activeWorkspaceMerge.conflictedFiles.map((file) => (
-                          <Badge key={file} variant="outline" size="sm">
-                            {file}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Last merge result */}
-                  {lastMergeResult && !activeWorkspaceHasConflicts && (
-                    <div
-                      className={cn(
-                        "rounded-md border p-2 text-xs",
-                        lastMergeResult.status === "merged"
-                          ? "border-success/30 bg-success/[0.04] text-success-foreground"
-                          : "border-destructive/30 bg-destructive/[0.04] text-destructive-foreground",
-                      )}
-                    >
-                      {lastMergeResult.status === "merged"
-                        ? `Merged ${lastMergeResult.sourceBranch} → ${lastMergeResult.targetBranch}`
-                        : `Conflicts merging ${lastMergeResult.sourceBranch}`}
-                    </div>
-                  )}
-                </div>
-              </GitPanelSection>
+              <GitSyncSection
+                localBranches={localBranches}
+                activeWorkspaceBranch={activeWorkspaceBranch}
+                mergeSourceBranch={mergeSourceBranch}
+                onMergeSourceBranchChange={setMergeSourceBranch}
+                gitStatus={gitStatusForActions}
+                mergeState={activeWorkspaceMerge}
+                hasConflicts={activeWorkspaceHasConflicts}
+                isMergeRunning={isMergeRunning}
+                isAbortMergeRunning={isAbortMergeRunning}
+                activeThreadId={activeThreadId}
+                lastMergeResult={lastMergeResult}
+                defaultOpen={mergeExpanded}
+                onRunLocalMerge={runLocalMerge}
+                onCreateResolveConflictDraft={createResolveConflictDraft}
+                onAbortActiveMerge={abortActiveMerge}
+              />
             )}
 
             {/* ============================================================ */}
