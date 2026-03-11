@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   DEFAULT_RUNTIME_MODE,
@@ -21,6 +21,7 @@ import { toastManager } from "./ui/toast";
 import {
   gitCreateWorktreeMutationOptions,
   gitFetchPrDetailsMutationOptions,
+  gitListOpenPrsQueryOptions,
   invalidateGitQueries,
 } from "../lib/gitReactQuery";
 import { newThreadId } from "../lib/utils";
@@ -95,6 +96,7 @@ export default function ReviewPrDialog({ projectId, projectCwd, onClose }: Revie
 
   const fetchPrMutation = useMutation(gitFetchPrDetailsMutationOptions());
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
+  const openPrsQuery = useQuery(gitListOpenPrsQueryOptions(projectCwd));
 
   const handleFetch = useCallback(() => {
     const trimmed = prInput.trim();
@@ -220,6 +222,56 @@ export default function ReviewPrDialog({ projectId, projectCwd, onClose }: Revie
               </Button>
             </div>
           </form>
+
+          {!prDetails && openPrsQuery.data && openPrsQuery.data.pullRequests.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground/60">
+                Open pull requests
+              </p>
+              <div className="max-h-48 overflow-y-auto rounded-md border border-border/70">
+                {openPrsQuery.data.pullRequests.map((pr) => (
+                  <button
+                    key={pr.number}
+                    type="button"
+                    className="flex w-full items-center gap-2 border-b border-border/40 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-accent/50"
+                    disabled={isBusy}
+                    onClick={() => {
+                      setPrInput(pr.url);
+                      setPrDetails(null);
+                      fetchPrMutation.mutate(
+                        { cwd: projectCwd, prUrl: pr.url },
+                        {
+                          onSuccess: (data) => setPrDetails(data),
+                          onError: (error) => {
+                            toastManager.add({
+                              type: "error",
+                              title: "Failed to fetch PR details",
+                              description: error instanceof Error ? error.message : "An error occurred.",
+                            });
+                          },
+                        },
+                      );
+                    }}
+                  >
+                    <GitPullRequestIcon className="size-3.5 shrink-0 text-emerald-500" />
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                      #{pr.number} {pr.title}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-muted-foreground/60">
+                      {pr.headRefName}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!prDetails && openPrsQuery.isLoading && (
+            <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground/60">
+              <LoaderIcon className="size-3 animate-spin" />
+              Loading open pull requests...
+            </div>
+          )}
 
           {prDetails && (
             <div className="rounded-lg border bg-muted/50 p-3">

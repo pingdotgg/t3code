@@ -73,6 +73,19 @@ export function gitDiffBranchQueryOptions(input: { cwd: string | null; base: str
   });
 }
 
+export function gitListOpenPrsQueryOptions(cwd: string | null) {
+  return queryOptions({
+    queryKey: ["git", "openPrs", cwd] as const,
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!cwd) throw new Error("Git PR list is unavailable.");
+      return api.git.listOpenPrs({ cwd });
+    },
+    enabled: cwd !== null,
+    staleTime: 30_000,
+  });
+}
+
 export function gitResolvePullRequestQueryOptions(input: {
   cwd: string | null;
   reference: string | null;

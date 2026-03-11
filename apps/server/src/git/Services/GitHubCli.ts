@@ -56,11 +56,11 @@ export interface GitHubCliShape {
   }) => Effect.Effect<ProcessRunResult, GitHubCliError>;
 
   /**
-   * List open pull requests for a head branch.
+   * List open pull requests, optionally filtered by head branch.
    */
   readonly listOpenPullRequests: (input: {
     readonly cwd: string;
-    readonly headSelector: string;
+    readonly headSelector?: string;
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 

@@ -876,6 +876,15 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* gitHubCli.fetchPrDetails(body);
       }
 
+      case WS_METHODS.gitListOpenPrs: {
+        const body = stripRequestTag(request.body);
+        const pullRequests = yield* gitHubCli.listOpenPullRequests({
+          cwd: body.cwd,
+          limit: 30,
+        });
+        return { pullRequests };
+      }
+
       case WS_METHODS.terminalOpen: {
         const body = stripRequestTag(request.body);
         return yield* terminalManager.open(body);

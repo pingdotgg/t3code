@@ -131,6 +131,24 @@ export const GitFetchPrDetailsInput = Schema.Struct({
 });
 export type GitFetchPrDetailsInput = typeof GitFetchPrDetailsInput.Type;
 
+export const GitListOpenPrsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type GitListOpenPrsInput = typeof GitListOpenPrsInput.Type;
+
+const GitOpenPrSummary = Schema.Struct({
+  number: PositiveInt,
+  title: TrimmedNonEmptyStringSchema,
+  url: Schema.String,
+  baseRefName: TrimmedNonEmptyStringSchema,
+  headRefName: TrimmedNonEmptyStringSchema,
+});
+
+export const GitListOpenPrsResult = Schema.Struct({
+  pullRequests: Schema.Array(GitOpenPrSummary),
+});
+export type GitListOpenPrsResult = typeof GitListOpenPrsResult.Type;
+
 // RPC Results
 
 const GitStatusPr = Schema.Struct({

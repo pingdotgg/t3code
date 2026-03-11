@@ -13,6 +13,8 @@ import type {
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
+  GitListOpenPrsInput,
+  GitListOpenPrsResult,
   GitPullInput,
   GitPullResult,
   GitRemoveWorktreeInput,
@@ -158,6 +160,7 @@ export interface NativeApi {
     diffBranch: (input: GitDiffBranchInput) => Promise<GitDiffBranchResult>;
     // GitHub PR API
     fetchPrDetails: (input: GitFetchPrDetailsInput) => Promise<GitFetchPrDetailsResult>;
+    listOpenPrs: (input: GitListOpenPrsInput) => Promise<GitListOpenPrsResult>;
   };
   contextMenu: {
     show: <T extends string>(
