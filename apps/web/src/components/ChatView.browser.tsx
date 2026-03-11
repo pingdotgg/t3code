@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  type TurnId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -511,6 +512,16 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
+  );
+}
+
+async function waitForThreadSidebarItem(threadTitle: string): Promise<HTMLElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-thread-item]")).find((item) =>
+        item.textContent?.includes(threadTitle),
+      ) ?? null,
+    `Unable to find sidebar item for thread "${threadTitle}".`,
   );
 }
 
@@ -1043,6 +1054,57 @@ describe("ChatView timeline estimator parity (full app)", () => {
         .element(page.getByText("Send a message to start the conversation."))
         .toBeInTheDocument();
       await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the chat and sidebar working indicators visible when a resumed thread stays active", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-resume-working" as MessageId,
+        targetText: "resume working regression",
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(useStore.getState().threadsHydrated).toBe(true);
+          expect(useStore.getState().threads).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useStore.setState((state) => ({
+        ...state,
+        threads: state.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                session: thread.session
+                  ? {
+                      ...thread.session,
+                      status: "ready",
+                      orchestrationStatus: "running",
+                      activeTurnId: "turn-resumed" as TurnId,
+                    }
+                  : thread.session,
+              }
+            : thread,
+        ),
+      }));
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Working...");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const threadItem = await waitForThreadSidebarItem("Browser test thread");
+      expect(threadItem.textContent).toContain("Working");
     } finally {
       await mounted.cleanup();
     }
