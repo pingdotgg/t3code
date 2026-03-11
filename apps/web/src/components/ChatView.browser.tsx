@@ -2,6 +2,7 @@
 import "../index.css";
 
 import {
+  EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
@@ -25,6 +26,7 @@ import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
+const SECOND_THREAD_ID = "thread-browser-test-2" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
@@ -295,6 +297,103 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   return {
     ...snapshot,
     threads: [],
+  };
+}
+
+function createSnapshotWithPendingUserInputThreads(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-pending-input-target" as MessageId,
+    targetText: "pending input thread",
+  });
+
+  return {
+    ...snapshot,
+    threads: [
+      {
+        ...snapshot.threads[0]!,
+        id: THREAD_ID,
+        title: "Pending input thread",
+        activities: [
+          {
+            id: EventId.makeUnsafe("evt-user-input-requested"),
+            tone: "info",
+            kind: "user-input.requested",
+            summary: "User input requested",
+            payload: {
+              requestId: "req-plan-1",
+              questions: [
+                {
+                  id: "scope",
+                  header: "Scope",
+                  question: "Which scope should the fix target first?",
+                  options: [
+                    {
+                      label: "Client-local",
+                      description: "Persist answers in local draft state",
+                    },
+                    {
+                      label: "Server-wide",
+                      description: "Persist answers in the server read model",
+                    },
+                  ],
+                },
+                {
+                  id: "compat",
+                  header: "Compatibility",
+                  question: "How strict should compatibility be?",
+                  options: [
+                    {
+                      label: "Keep current behavior",
+                      description: "Preserve existing runtime behavior",
+                    },
+                    {
+                      label: "Allow cleanup",
+                      description: "Permit small UX cleanup during the fix",
+                    },
+                  ],
+                },
+              ],
+            },
+            turnId: null,
+            sequence: 1,
+            createdAt: isoAt(50),
+          },
+        ],
+      },
+      {
+        id: SECOND_THREAD_ID,
+        projectId: PROJECT_ID,
+        title: "Other thread",
+        model: "gpt-5",
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        branch: "main",
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+        messages: [
+          createUserMessage({
+            id: "msg-user-other-thread" as MessageId,
+            text: "other thread",
+            offsetSeconds: 400,
+          }),
+        ],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        session: {
+          threadId: SECOND_THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW_ISO,
+        },
+      },
+    ],
   };
 }
 
@@ -1043,6 +1142,96 @@ describe("ChatView timeline estimator parity (full app)", () => {
         .element(page.getByText("Send a message to start the conversation."))
         .toBeInTheDocument();
       await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("persists pending plan-mode answers across thread re-entry", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInputThreads(),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Which scope should the fix target first?");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const firstAnswerButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find((button) =>
+            button.textContent?.includes("Client-local"),
+          ) as HTMLButtonElement | null,
+        "Unable to find the first pending input option button.",
+      );
+      firstAnswerButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("How strict should compatibility be?");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.pendingUserInputsByRequestId[
+          "req-plan-1"
+        ],
+      ).toMatchObject({
+        questionIndex: 1,
+        answersByQuestionId: {
+          scope: {
+            selectedOptionLabel: "Client-local",
+          },
+        },
+      });
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: SECOND_THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${SECOND_THREAD_ID}`,
+        "Route should change to the second thread.",
+      );
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${THREAD_ID}`,
+        "Route should change back to the original thread.",
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("How strict should compatibility be?");
+          expect(document.body.textContent).not.toContain(
+            "Which scope should the fix target first?",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.pendingUserInputsByRequestId[
+          "req-plan-1"
+        ],
+      ).toMatchObject({
+        questionIndex: 1,
+        answersByQuestionId: {
+          scope: {
+            selectedOptionLabel: "Client-local",
+          },
+        },
+      });
     } finally {
       await mounted.cleanup();
     }

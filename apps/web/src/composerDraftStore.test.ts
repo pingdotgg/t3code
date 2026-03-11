@@ -158,6 +158,140 @@ describe("composerDraftStore clearComposerContent", () => {
   });
 });
 
+describe("composerDraftStore pending user input drafts", () => {
+  const threadId = ThreadId.makeUnsafe("thread-pending-user-input");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("stores pending user input answers and question index inside the thread draft", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setPendingUserInputAnswer(threadId, "req-1", "scope", {
+      selectedOptionLabel: "Client-local",
+      customAnswer: "",
+    });
+    store.setPendingUserInputQuestionIndex(threadId, "req-1", 1);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+      pendingUserInputsByRequestId: {
+        "req-1": {
+          questionIndex: 1,
+          answersByQuestionId: {
+            scope: {
+              selectedOptionLabel: "Client-local",
+              customAnswer: "",
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("preserves pending user input drafts even when the normal composer content is empty", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setPendingUserInputAnswer(threadId, "req-1", "scope", {
+      selectedOptionLabel: "Client-local",
+      customAnswer: "",
+    });
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeDefined();
+    expect(
+      useComposerDraftStore.getState().draftsByThreadId[threadId]?.pendingUserInputsByRequestId,
+    ).toMatchObject({
+      "req-1": {
+        questionIndex: 0,
+        answersByQuestionId: {
+          scope: {
+            selectedOptionLabel: "Client-local",
+            customAnswer: "",
+          },
+        },
+      },
+    });
+  });
+
+  it("clears only the targeted pending user input request", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setPendingUserInputAnswer(threadId, "req-1", "scope", {
+      selectedOptionLabel: "Client-local",
+    });
+    store.setPendingUserInputAnswer(threadId, "req-2", "compat", {
+      customAnswer: "Keep it local",
+    });
+
+    store.clearPendingUserInputRequest(threadId, "req-1");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+      pendingUserInputsByRequestId: {
+        "req-2": {
+          questionIndex: 0,
+          answersByQuestionId: {
+            compat: {
+              customAnswer: "Keep it local",
+            },
+          },
+        },
+      },
+    });
+    expect(
+      useComposerDraftStore.getState().draftsByThreadId[threadId]?.pendingUserInputsByRequestId[
+        "req-1"
+      ],
+    ).toBeUndefined();
+  });
+
+  it("removes stale pending user input requests when synced with the active request list", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setPendingUserInputAnswer(threadId, "req-1", "scope", {
+      selectedOptionLabel: "Client-local",
+    });
+    store.setPendingUserInputAnswer(threadId, "req-2", "compat", {
+      customAnswer: "Keep it local",
+    });
+
+    store.syncPendingUserInputRequests(threadId, ["req-2"]);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+      pendingUserInputsByRequestId: {
+        "req-2": {
+          questionIndex: 0,
+          answersByQuestionId: {
+            compat: {
+              customAnswer: "Keep it local",
+            },
+          },
+        },
+      },
+    });
+    expect(
+      useComposerDraftStore.getState().draftsByThreadId[threadId]?.pendingUserInputsByRequestId[
+        "req-1"
+      ],
+    ).toBeUndefined();
+  });
+
+  it("clears pending user input drafts when the thread draft is cleared", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setPendingUserInputAnswer(threadId, "req-1", "scope", {
+      selectedOptionLabel: "Client-local",
+    });
+
+    store.clearThreadDraft(threadId);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+});
+
 describe("composerDraftStore project draft thread mapping", () => {
   const projectId = ProjectId.makeUnsafe("project-a");
   const otherProjectId = ProjectId.makeUnsafe("project-b");

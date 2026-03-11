@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
+import type { PendingUserInputDraftAnswer } from "./pendingUserInput";
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
@@ -81,6 +82,7 @@ interface PersistedComposerThreadDraftState {
   effort?: CodexReasoningEffort | null;
   codexFastMode?: boolean | null;
   serviceTier?: string | null;
+  pendingUserInputsByRequestId?: Record<string, PersistedPendingUserInputRequestDraftState>;
 }
 
 interface PersistedDraftThreadState {
@@ -110,6 +112,17 @@ interface ComposerThreadDraftState {
   interactionMode: ProviderInteractionMode | null;
   effort: CodexReasoningEffort | null;
   codexFastMode: boolean;
+  pendingUserInputsByRequestId: Record<string, PendingUserInputRequestDraftState>;
+}
+
+interface PersistedPendingUserInputRequestDraftState {
+  questionIndex: number;
+  answersByQuestionId: Record<string, PendingUserInputDraftAnswer>;
+}
+
+interface PendingUserInputRequestDraftState {
+  questionIndex: number;
+  answersByQuestionId: Record<string, PendingUserInputDraftAnswer>;
 }
 
 export interface DraftThreadState {
@@ -177,6 +190,19 @@ interface ComposerDraftStoreState {
     threadId: ThreadId,
     attachments: PersistedComposerImageAttachment[],
   ) => void;
+  setPendingUserInputAnswer: (
+    threadId: ThreadId,
+    requestId: string,
+    questionId: string,
+    draftAnswer: PendingUserInputDraftAnswer | undefined,
+  ) => void;
+  setPendingUserInputQuestionIndex: (
+    threadId: ThreadId,
+    requestId: string,
+    questionIndex: number,
+  ) => void;
+  syncPendingUserInputRequests: (threadId: ThreadId, requestIds: string[]) => void;
+  clearPendingUserInputRequest: (threadId: ThreadId, requestId: string) => void;
   clearComposerContent: (threadId: ThreadId) => void;
   clearThreadDraft: (threadId: ThreadId) => void;
 }
@@ -190,9 +216,12 @@ const EMPTY_PERSISTED_DRAFT_STORE_STATE: PersistedComposerDraftStoreState = {
 const EMPTY_IMAGES: ComposerImageAttachment[] = [];
 const EMPTY_IDS: string[] = [];
 const EMPTY_PERSISTED_ATTACHMENTS: PersistedComposerImageAttachment[] = [];
+const EMPTY_PENDING_USER_INPUTS_BY_REQUEST_ID: Record<string, PendingUserInputRequestDraftState> =
+  {};
 Object.freeze(EMPTY_IMAGES);
 Object.freeze(EMPTY_IDS);
 Object.freeze(EMPTY_PERSISTED_ATTACHMENTS);
+Object.freeze(EMPTY_PENDING_USER_INPUTS_BY_REQUEST_ID);
 const EMPTY_THREAD_DRAFT = Object.freeze({
   prompt: "",
   images: EMPTY_IMAGES,
@@ -204,7 +233,8 @@ const EMPTY_THREAD_DRAFT = Object.freeze({
   interactionMode: null,
   effort: null,
   codexFastMode: false,
-}) as ComposerThreadDraftState;
+  pendingUserInputsByRequestId: EMPTY_PENDING_USER_INPUTS_BY_REQUEST_ID,
+}) satisfies ComposerThreadDraftState;
 
 const REASONING_EFFORT_VALUES = new Set<CodexReasoningEffort>(
   REASONING_EFFORT_OPTIONS_BY_PROVIDER.codex,
@@ -222,6 +252,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     interactionMode: null,
     effort: null,
     codexFastMode: false,
+    pendingUserInputsByRequestId: {},
   };
 }
 
@@ -241,7 +272,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.runtimeMode === null &&
     draft.interactionMode === null &&
     draft.effort === null &&
-    draft.codexFastMode === false
+    draft.codexFastMode === false &&
+    Object.keys(draft.pendingUserInputsByRequestId).length === 0
   );
 }
 
@@ -298,6 +330,66 @@ function normalizeDraftThreadEnvMode(
     return value;
   }
   return fallbackWorktreePath ? "worktree" : "local";
+}
+
+function normalizePendingUserInputDraftAnswer(value: unknown): PendingUserInputDraftAnswer | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  const selectedOptionLabel =
+    typeof candidate.selectedOptionLabel === "string" && candidate.selectedOptionLabel.length > 0
+      ? candidate.selectedOptionLabel
+      : undefined;
+  const customAnswer =
+    typeof candidate.customAnswer === "string" ? candidate.customAnswer : undefined;
+  if (selectedOptionLabel === undefined && customAnswer === undefined) {
+    return null;
+  }
+  return {
+    ...(selectedOptionLabel !== undefined ? { selectedOptionLabel } : {}),
+    ...(customAnswer !== undefined ? { customAnswer } : {}),
+  };
+}
+
+function normalizePendingUserInputRequestDraftState(
+  value: unknown,
+): PendingUserInputRequestDraftState | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  const rawAnswersByQuestionId = candidate.answersByQuestionId;
+  const answersByQuestionId: Record<string, PendingUserInputDraftAnswer> = {};
+  if (rawAnswersByQuestionId && typeof rawAnswersByQuestionId === "object") {
+    for (const [questionId, draftAnswer] of Object.entries(
+      rawAnswersByQuestionId as Record<string, unknown>,
+    )) {
+      if (questionId.length === 0) {
+        continue;
+      }
+      const normalizedAnswer = normalizePendingUserInputDraftAnswer(draftAnswer);
+      if (!normalizedAnswer) {
+        continue;
+      }
+      answersByQuestionId[questionId] = normalizedAnswer;
+    }
+  }
+
+  const rawQuestionIndex = candidate.questionIndex;
+  const questionIndex =
+    typeof rawQuestionIndex === "number" && Number.isFinite(rawQuestionIndex)
+      ? Math.max(0, Math.floor(rawQuestionIndex))
+      : 0;
+
+  if (questionIndex === 0 && Object.keys(answersByQuestionId).length === 0) {
+    return null;
+  }
+
+  return {
+    questionIndex,
+    answersByQuestionId,
+  };
 }
 
 function normalizePersistedComposerDraftState(value: unknown): PersistedComposerDraftStoreState {
@@ -427,6 +519,24 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
     const codexFastMode =
       draftCandidate.codexFastMode === true ||
       (typeof draftCandidate.serviceTier === "string" && draftCandidate.serviceTier === "fast");
+    const pendingUserInputsByRequestId: Record<string, PendingUserInputRequestDraftState> = {};
+    if (
+      draftCandidate.pendingUserInputsByRequestId &&
+      typeof draftCandidate.pendingUserInputsByRequestId === "object"
+    ) {
+      for (const [requestId, requestDraft] of Object.entries(
+        draftCandidate.pendingUserInputsByRequestId as Record<string, unknown>,
+      )) {
+        if (requestId.length === 0) {
+          continue;
+        }
+        const normalizedRequestDraft = normalizePendingUserInputRequestDraftState(requestDraft);
+        if (!normalizedRequestDraft) {
+          continue;
+        }
+        pendingUserInputsByRequestId[requestId] = normalizedRequestDraft;
+      }
+    }
     if (
       prompt.length === 0 &&
       attachments.length === 0 &&
@@ -435,7 +545,8 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       !runtimeMode &&
       !interactionMode &&
       !effort &&
-      !codexFastMode
+      !codexFastMode &&
+      Object.keys(pendingUserInputsByRequestId).length === 0
     ) {
       continue;
     }
@@ -448,6 +559,9 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       ...(interactionMode ? { interactionMode } : {}),
       ...(effort ? { effort } : {}),
       ...(codexFastMode ? { codexFastMode } : {}),
+      ...(Object.keys(pendingUserInputsByRequestId).length > 0
+        ? { pendingUserInputsByRequestId }
+        : {}),
     };
   }
   return {
@@ -554,6 +668,11 @@ function toHydratedThreadDraft(
     interactionMode: persistedDraft.interactionMode ?? null,
     effort: persistedDraft.effort ?? null,
     codexFastMode: persistedDraft.codexFastMode === true,
+    pendingUserInputsByRequestId: Object.fromEntries(
+      Object.entries(persistedDraft.pendingUserInputsByRequestId ?? {}).map(
+        ([requestId, requestDraft]) => [requestId, requestDraft],
+      ),
+    ),
   };
 }
 
@@ -1144,6 +1263,152 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           });
         });
       },
+      setPendingUserInputAnswer: (threadId, requestId, questionId, draftAnswer) => {
+        if (threadId.length === 0 || requestId.length === 0 || questionId.length === 0) {
+          return;
+        }
+        const normalizedDraftAnswer = normalizePendingUserInputDraftAnswer(draftAnswer);
+        set((state) => {
+          const existing = state.draftsByThreadId[threadId] ?? createEmptyThreadDraft();
+          const existingRequestDraft = existing.pendingUserInputsByRequestId[requestId] ?? {
+            questionIndex: 0,
+            answersByQuestionId: {},
+          };
+          const nextAnswersByQuestionId = { ...existingRequestDraft.answersByQuestionId };
+          if (normalizedDraftAnswer) {
+            nextAnswersByQuestionId[questionId] = normalizedDraftAnswer;
+          } else {
+            delete nextAnswersByQuestionId[questionId];
+          }
+          const nextPendingUserInputsByRequestId = {
+            ...existing.pendingUserInputsByRequestId,
+          };
+          if (
+            existingRequestDraft.questionIndex === 0 &&
+            Object.keys(nextAnswersByQuestionId).length === 0
+          ) {
+            delete nextPendingUserInputsByRequestId[requestId];
+          } else {
+            nextPendingUserInputsByRequestId[requestId] = {
+              questionIndex: existingRequestDraft.questionIndex,
+              answersByQuestionId: nextAnswersByQuestionId,
+            };
+          }
+          const nextDraft: ComposerThreadDraftState = {
+            ...existing,
+            pendingUserInputsByRequestId: nextPendingUserInputsByRequestId,
+          };
+          const nextDraftsByThreadId = { ...state.draftsByThreadId };
+          if (shouldRemoveDraft(nextDraft)) {
+            delete nextDraftsByThreadId[threadId];
+          } else {
+            nextDraftsByThreadId[threadId] = nextDraft;
+          }
+          return { draftsByThreadId: nextDraftsByThreadId };
+        });
+      },
+      setPendingUserInputQuestionIndex: (threadId, requestId, questionIndex) => {
+        if (threadId.length === 0 || requestId.length === 0) {
+          return;
+        }
+        const nextQuestionIndex =
+          Number.isFinite(questionIndex) && questionIndex > 0 ? Math.floor(questionIndex) : 0;
+        set((state) => {
+          const existing = state.draftsByThreadId[threadId] ?? createEmptyThreadDraft();
+          const existingRequestDraft = existing.pendingUserInputsByRequestId[requestId] ?? {
+            questionIndex: 0,
+            answersByQuestionId: {},
+          };
+          if (existingRequestDraft.questionIndex === nextQuestionIndex) {
+            return state;
+          }
+          const nextPendingUserInputsByRequestId = {
+            ...existing.pendingUserInputsByRequestId,
+          };
+          if (
+            nextQuestionIndex === 0 &&
+            Object.keys(existingRequestDraft.answersByQuestionId).length === 0
+          ) {
+            delete nextPendingUserInputsByRequestId[requestId];
+          } else {
+            nextPendingUserInputsByRequestId[requestId] = {
+              questionIndex: nextQuestionIndex,
+              answersByQuestionId: existingRequestDraft.answersByQuestionId,
+            };
+          }
+          const nextDraft: ComposerThreadDraftState = {
+            ...existing,
+            pendingUserInputsByRequestId: nextPendingUserInputsByRequestId,
+          };
+          const nextDraftsByThreadId = { ...state.draftsByThreadId };
+          if (shouldRemoveDraft(nextDraft)) {
+            delete nextDraftsByThreadId[threadId];
+          } else {
+            nextDraftsByThreadId[threadId] = nextDraft;
+          }
+          return { draftsByThreadId: nextDraftsByThreadId };
+        });
+      },
+      syncPendingUserInputRequests: (threadId, requestIds) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        const openRequestIds = new Set(requestIds.filter((requestId) => requestId.length > 0));
+        set((state) => {
+          const existing = state.draftsByThreadId[threadId];
+          if (!existing) {
+            return state;
+          }
+          const nextPendingUserInputsByRequestId = Object.fromEntries(
+            Object.entries(existing.pendingUserInputsByRequestId).filter(([requestId]) =>
+              openRequestIds.has(requestId),
+            ),
+          );
+          if (
+            Object.keys(nextPendingUserInputsByRequestId).length ===
+            Object.keys(existing.pendingUserInputsByRequestId).length
+          ) {
+            return state;
+          }
+          const nextDraft: ComposerThreadDraftState = {
+            ...existing,
+            pendingUserInputsByRequestId: nextPendingUserInputsByRequestId,
+          };
+          const nextDraftsByThreadId = { ...state.draftsByThreadId };
+          if (shouldRemoveDraft(nextDraft)) {
+            delete nextDraftsByThreadId[threadId];
+          } else {
+            nextDraftsByThreadId[threadId] = nextDraft;
+          }
+          return { draftsByThreadId: nextDraftsByThreadId };
+        });
+      },
+      clearPendingUserInputRequest: (threadId, requestId) => {
+        if (threadId.length === 0 || requestId.length === 0) {
+          return;
+        }
+        set((state) => {
+          const existing = state.draftsByThreadId[threadId];
+          if (!existing || existing.pendingUserInputsByRequestId[requestId] === undefined) {
+            return state;
+          }
+          const nextPendingUserInputsByRequestId = {
+            ...existing.pendingUserInputsByRequestId,
+          };
+          delete nextPendingUserInputsByRequestId[requestId];
+          const nextDraft: ComposerThreadDraftState = {
+            ...existing,
+            pendingUserInputsByRequestId: nextPendingUserInputsByRequestId,
+          };
+          const nextDraftsByThreadId = { ...state.draftsByThreadId };
+          if (shouldRemoveDraft(nextDraft)) {
+            delete nextDraftsByThreadId[threadId];
+          } else {
+            nextDraftsByThreadId[threadId] = nextDraft;
+          }
+          return { draftsByThreadId: nextDraftsByThreadId };
+        });
+      },
       clearComposerContent: (threadId) => {
         if (threadId.length === 0) {
           return;
@@ -1223,7 +1488,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             draft.runtimeMode === null &&
             draft.interactionMode === null &&
             draft.effort === null &&
-            draft.codexFastMode === false
+            draft.codexFastMode === false &&
+            Object.keys(draft.pendingUserInputsByRequestId).length === 0
           ) {
             continue;
           }
@@ -1248,6 +1514,19 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           if (draft.codexFastMode) {
             persistedDraft.codexFastMode = true;
+          }
+          if (Object.keys(draft.pendingUserInputsByRequestId).length > 0) {
+            persistedDraft.pendingUserInputsByRequestId = Object.fromEntries(
+              Object.entries(draft.pendingUserInputsByRequestId).map(
+                ([requestId, requestDraft]) => [
+                  requestId,
+                  {
+                    questionIndex: requestDraft.questionIndex,
+                    answersByQuestionId: requestDraft.answersByQuestionId,
+                  },
+                ],
+              ),
+            );
           }
           persistedDraftsByThreadId[threadId as ThreadId] = persistedDraft;
         }
