@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type ProviderKind } from "@repo/contracts";
-import { APP_BASE_NAME } from "@repo/shared/branding";
+import { APP_BASE_NAME, normalizeAppBaseName } from "@repo/shared/branding";
 import { DEFAULT_GIT_BRANCH_PREFIX, normalizeGitBranchPrefix } from "@repo/shared/git";
 import { getModelOptions, normalizeModelSlug } from "@repo/shared/model";
 
@@ -100,12 +100,13 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const [customAppNameInput, setCustomAppNameInput] = useState(settings.customAppName);
   const [gitBranchPrefixInput, setGitBranchPrefixInput] = useState(settings.gitBranchPrefix);
   const [gitBranchPrefixError, setGitBranchPrefixError] = useState<string | null>(null);
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
-  const effectiveAppDisplayName = getAppDisplayName(settings.customAppName);
+  const effectiveAppDisplayName = getAppDisplayName(customAppNameInput);
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const normalizedGitBranchPrefixPreview = useMemo(
     () => normalizeGitBranchPrefix(gitBranchPrefixInput) ?? settings.gitBranchPrefix,
@@ -113,8 +114,20 @@ function SettingsRouteView() {
   );
 
   useEffect(() => {
+    setCustomAppNameInput(settings.customAppName);
+  }, [settings.customAppName]);
+
+  useEffect(() => {
     setGitBranchPrefixInput(settings.gitBranchPrefix);
   }, [settings.gitBranchPrefix]);
+
+  const commitCustomAppName = useCallback(() => {
+    const normalized = normalizeAppBaseName(customAppNameInput) ?? "";
+    setCustomAppNameInput(normalized);
+    if (normalized !== settings.customAppName) {
+      updateSettings({ customAppName: normalized });
+    }
+  }, [customAppNameInput, settings.customAppName, updateSettings]);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -289,8 +302,17 @@ function SettingsRouteView() {
                   <span className="text-xs font-medium text-foreground">Custom app name</span>
                   <Input
                     id="custom-app-name"
-                    value={settings.customAppName}
-                    onChange={(event) => updateSettings({ customAppName: event.target.value })}
+                    value={customAppNameInput}
+                    onChange={(event) => setCustomAppNameInput(event.target.value)}
+                    onBlur={commitCustomAppName}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") {
+                        return;
+                      }
+                      event.preventDefault();
+                      commitCustomAppName();
+                      event.currentTarget.blur();
+                    }}
                     placeholder={APP_BASE_NAME}
                     maxLength={MAX_CUSTOM_APP_NAME_LENGTH}
                     spellCheck={false}
@@ -307,7 +329,10 @@ function SettingsRouteView() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => updateSettings({ customAppName: defaults.customAppName })}
+                    onClick={() => {
+                      setCustomAppNameInput(defaults.customAppName);
+                      updateSettings({ customAppName: defaults.customAppName });
+                    }}
                     disabled={settings.customAppName === defaults.customAppName}
                   >
                     Reset to default

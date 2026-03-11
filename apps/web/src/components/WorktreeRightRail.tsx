@@ -2,14 +2,19 @@ import type { ProjectId, ThreadId, WorktreeId } from "@repo/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CircleIcon,
   ExternalLinkIcon,
+  FolderTreeIcon,
+  ListTreeIcon,
   LoaderIcon,
   PanelRightCloseIcon,
   PlusIcon,
   SaveIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
@@ -43,7 +48,6 @@ import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
 import { Skeleton } from "./ui/skeleton";
 import { Textarea } from "./ui/textarea";
-import { Toggle, ToggleGroup } from "./ui/toggle-group";
 import { toastManager } from "./ui/toast";
 import VscodeEntryIcon from "./VscodeEntryIcon";
 
@@ -70,24 +74,28 @@ function renderExplorerStat(stat: WorktreeExplorerStat | null | undefined) {
   if (stat.insertions === 0 && stat.deletions === 0) return null;
   return (
     <span className="shrink-0 font-mono text-[11px]">
-      <span className="text-success">+{stat.insertions}</span>
-      <span className="text-muted-foreground"> / </span>
-      <span className="text-destructive">-{stat.deletions}</span>
+      {stat.insertions > 0 ? <span className="text-success">+{stat.insertions}</span> : null}
+      {stat.insertions > 0 && stat.deletions > 0 ? (
+        <span className="px-1 text-muted-foreground" aria-hidden="true">
+          {" "}
+        </span>
+      ) : null}
+      {stat.deletions > 0 ? <span className="text-destructive">-{stat.deletions}</span> : null}
     </span>
   );
 }
 
-function resolveCheckLabelColor(state: string): string {
+function renderCheckStatusIcon(state: string) {
   switch (state) {
     case "failure":
-      return "text-destructive";
+      return <XIcon className="size-3.5 shrink-0 text-destructive" />;
     case "success":
-      return "text-success";
+      return <CheckIcon className="size-3.5 shrink-0 text-success" />;
     case "pending":
     case "in_progress":
-      return "text-warning";
+      return <CircleIcon className="size-3 shrink-0 fill-current text-warning" />;
     default:
-      return "text-muted-foreground";
+      return <CircleIcon className="size-3 shrink-0 fill-current text-muted-foreground" />;
   }
 }
 
@@ -433,6 +441,7 @@ export default function WorktreeRightRail({
   const activeExplorerViewMode =
     activeTab === "all-files" ? railState.allFilesViewMode : railState.changesViewMode;
   const explorerListKey = `${activeTab}:${activeExplorerViewMode}`;
+  const showChecksTodos = false;
   const isAllFilesLoading =
     activeTab === "all-files" &&
     (allFilesQuery.isPending ||
@@ -483,37 +492,59 @@ export default function WorktreeRightRail({
             Checks
           </button>
         </div>
-        <Button size="icon-xs" variant="ghost" aria-label="Close right rail" onClick={onClose}>
-          <PanelRightCloseIcon className="size-3.5" />
-        </Button>
+        <div className="flex items-center gap-0.5">
+          {activeTab !== "checks" ? (
+            <Fragment>
+              <button
+                type="button"
+                aria-label="Tree view"
+                title="Tree view"
+                className={cn(
+                  "inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground",
+                  activeExplorerViewMode === "tree"
+                    ? "bg-accent text-foreground"
+                    : "bg-transparent",
+                )}
+                onClick={() => {
+                  if (activeTab === "all-files") {
+                    setRailState({ allFilesViewMode: "tree" });
+                  } else {
+                    setRailState({ changesViewMode: "tree" });
+                  }
+                }}
+              >
+                <FolderTreeIcon className="size-3" />
+              </button>
+              <button
+                type="button"
+                aria-label="List view"
+                title="List view"
+                className={cn(
+                  "inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground",
+                  activeExplorerViewMode === "list"
+                    ? "bg-accent text-foreground"
+                    : "bg-transparent",
+                )}
+                onClick={() => {
+                  if (activeTab === "all-files") {
+                    setRailState({ allFilesViewMode: "list" });
+                  } else {
+                    setRailState({ changesViewMode: "list" });
+                  }
+                }}
+              >
+                <ListTreeIcon className="size-3" />
+              </button>
+            </Fragment>
+          ) : null}
+          <Button size="icon-xs" variant="ghost" aria-label="Close right rail" onClick={onClose}>
+            <PanelRightCloseIcon className="size-3.5" />
+          </Button>
+        </div>
       </div>
 
       {activeTab !== "checks" ? (
         <Fragment>
-          <div className="flex items-center justify-between gap-2 border-b border-border/50 px-3 py-2">
-            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-              {activeTab === "all-files" ? "Workspace" : "Changed files"}
-            </p>
-            <ToggleGroup
-              value={[
-                activeTab === "all-files" ? railState.allFilesViewMode : railState.changesViewMode,
-              ]}
-              size="sm"
-              variant="outline"
-              onValueChange={(value) => {
-                const nextValue = value[0];
-                if (nextValue !== "tree" && nextValue !== "list") return;
-                if (activeTab === "all-files") {
-                  setRailState({ allFilesViewMode: nextValue });
-                } else {
-                  setRailState({ changesViewMode: nextValue });
-                }
-              }}
-            >
-              <Toggle value="tree">Tree</Toggle>
-              <Toggle value="list">List</Toggle>
-            </ToggleGroup>
-          </div>
           {isExplorerLoading ? (
             <ExplorerLoadingState
               description={
@@ -570,8 +601,8 @@ export default function WorktreeRightRail({
                   <Textarea
                     value={editingPrBody}
                     onChange={(event) => setEditingPrBody(event.target.value)}
-                    rows={8}
-                    className="bg-background text-sm"
+                    rows={5}
+                    className="bg-background text-sm **:[textarea]:max-h-56 **:[textarea]:overflow-y-auto **:[textarea]:resize-none"
                   />
                   <div className="flex items-center gap-2">
                     <Button
@@ -627,16 +658,6 @@ export default function WorktreeRightRail({
                       PR
                       <ExternalLinkIcon className="ml-1.5 size-3" />
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        void openExternalUrl(currentPullRequest?.reviewUrl ?? null);
-                      }}
-                    >
-                      Review
-                      <ExternalLinkIcon className="ml-1.5 size-3" />
-                    </Button>
                   </div>
                 </div>
               ) : (
@@ -689,21 +710,21 @@ export default function WorktreeRightRail({
                       <button
                         type="button"
                         key={deployment.id}
-                        className="flex w-full items-center justify-between gap-3 rounded-md border border-border/50 bg-background/40 px-3 py-2 text-left text-sm transition-colors hover:bg-accent/40"
+                        className={cn(
+                          "flex w-full min-w-0 items-center justify-between gap-3 rounded-md px-1.5 py-1 text-left text-sm transition-colors hover:bg-accent/25",
+                          (deployment.previewUrl ?? deployment.detailsUrl) ? "cursor-pointer" : "",
+                        )}
                         onClick={() => {
                           void openExternalUrl(deployment.previewUrl ?? deployment.detailsUrl);
                         }}
                       >
                         <span className="flex min-w-0 items-center gap-2">
-                          <span
-                            className={cn(
-                              "size-2 rounded-full",
-                              resolveCheckLabelColor(deployment.state),
-                            )}
-                          />
-                          <span className="truncate">{deployment.name}</span>
+                          {renderCheckStatusIcon(deployment.state)}
+                          <span className="truncate text-foreground/90">{deployment.name}</span>
                         </span>
-                        <ExternalLinkIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                        {(deployment.previewUrl ?? deployment.detailsUrl) ? (
+                          <ExternalLinkIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                        ) : null}
                       </button>
                     ))}
                   </div>
@@ -720,24 +741,26 @@ export default function WorktreeRightRail({
                       <button
                         type="button"
                         key={check.id}
-                        className="flex w-full items-center justify-between gap-3 rounded-md border border-border/50 bg-background/40 px-3 py-2 text-left text-sm transition-colors hover:bg-accent/40"
+                        className={cn(
+                          "flex w-full min-w-0 items-center justify-between gap-3 rounded-md px-1.5 py-1 text-left text-sm transition-colors hover:bg-accent/25",
+                          check.linkUrl ? "cursor-pointer" : "",
+                        )}
                         onClick={() => {
                           void openExternalUrl(check.linkUrl);
                         }}
                       >
                         <span className="flex min-w-0 items-center gap-2">
-                          <span
-                            className={cn(
-                              "size-2 rounded-full",
-                              resolveCheckLabelColor(check.state),
-                            )}
-                          />
-                          <span className="truncate">{check.label}</span>
+                          {renderCheckStatusIcon(check.state)}
+                          <span className="truncate text-foreground/90">{check.label}</span>
+                          {formatRuntime(check.runtimeSeconds) ? (
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {formatRuntime(check.runtimeSeconds)}
+                            </span>
+                          ) : null}
                         </span>
-                        <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                          {formatRuntime(check.runtimeSeconds)}
-                          {check.linkUrl ? <ExternalLinkIcon className="size-3.5" /> : null}
-                        </span>
+                        {check.linkUrl ? (
+                          <ExternalLinkIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                        ) : null}
                       </button>
                     ))}
                   </div>
@@ -754,7 +777,10 @@ export default function WorktreeRightRail({
                       <button
                         type="button"
                         key={comment.id}
-                        className="w-full min-w-0 overflow-hidden rounded-md border border-border/50 bg-background/40 px-3 py-2 text-left transition-colors hover:bg-accent/40"
+                        className={cn(
+                          "w-full min-w-0 overflow-hidden rounded-md border border-border/50 bg-background/40 px-3 py-2 text-left transition-colors hover:bg-accent/40",
+                          comment.url ? "cursor-pointer" : "",
+                        )}
                         onClick={() => {
                           void openExternalUrl(comment.url);
                         }}
@@ -774,109 +800,112 @@ export default function WorktreeRightRail({
                 )}
               </section>
 
-              <section className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-medium">Todos</h3>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      value={newTodoText}
-                      onChange={(event) => setNewTodoText(event.target.value)}
-                      placeholder="Add todo"
-                      className="h-8 w-40 bg-background"
-                    />
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      disabled={addTodoMutation.isPending || newTodoText.trim().length === 0}
-                      onClick={() => {
-                        const text = newTodoText.trim();
-                        if (text.length === 0) return;
-                        void addTodoMutation
-                          .mutateAsync(text)
-                          .then(() => setNewTodoText(""))
-                          .catch((error) => {
-                            toastManager.add({
-                              type: "error",
-                              title: "Could not add todo",
-                              description:
-                                error instanceof Error
-                                  ? error.message
-                                  : "An unknown error occurred.",
-                            });
-                          });
-                      }}
-                    >
-                      {addTodoMutation.isPending ? (
-                        <LoaderIcon className="size-3 animate-spin" />
-                      ) : (
-                        <PlusIcon className="size-3" />
-                      )}
-                    </Button>
-                  </div>
-                </div>
-                {checksData?.todos.length ? (
-                  <div className="space-y-1">
-                    {checksData.todos.map((todo) => (
-                      <div
-                        key={todo.todoId}
-                        className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/40 px-3 py-2"
-                      >
-                        <label className="flex min-w-0 items-center gap-2 text-sm">
-                          <Checkbox
-                            checked={todo.completed}
-                            onCheckedChange={(checked) => {
-                              void updateTodoMutation
-                                .mutateAsync({
-                                  todoId: todo.todoId,
-                                  completed: checked === true,
-                                })
-                                .catch((error) => {
-                                  toastManager.add({
-                                    type: "error",
-                                    title: "Could not update todo",
-                                    description:
-                                      error instanceof Error
-                                        ? error.message
-                                        : "An unknown error occurred.",
-                                  });
-                                });
-                            }}
-                          />
-                          <span
-                            className={cn(
-                              "truncate",
-                              todo.completed && "text-muted-foreground line-through",
-                            )}
-                          >
-                            {todo.text}
-                          </span>
-                        </label>
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          aria-label={`Delete ${todo.text}`}
-                          onClick={() => {
-                            void deleteTodoMutation.mutateAsync(todo.todoId).catch((error) => {
+              {/* Hiding the todos section for now until the Checks tab UX is finalized. */}
+              {showChecksTodos ? (
+                <section className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-medium">Todos</h3>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={newTodoText}
+                        onChange={(event) => setNewTodoText(event.target.value)}
+                        placeholder="Add todo"
+                        className="h-8 w-40 bg-background"
+                      />
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        disabled={addTodoMutation.isPending || newTodoText.trim().length === 0}
+                        onClick={() => {
+                          const text = newTodoText.trim();
+                          if (text.length === 0) return;
+                          void addTodoMutation
+                            .mutateAsync(text)
+                            .then(() => setNewTodoText(""))
+                            .catch((error) => {
                               toastManager.add({
                                 type: "error",
-                                title: "Could not delete todo",
+                                title: "Could not add todo",
                                 description:
                                   error instanceof Error
                                     ? error.message
                                     : "An unknown error occurred.",
                               });
                             });
-                          }}
-                        >
-                          <Trash2Icon className="size-3.5" />
-                        </Button>
-                      </div>
-                    ))}
+                        }}
+                      >
+                        {addTodoMutation.isPending ? (
+                          <LoaderIcon className="size-3 animate-spin" />
+                        ) : (
+                          <PlusIcon className="size-3" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No todos yet.</p>
-                )}
-              </section>
+                  {checksData?.todos.length ? (
+                    <div className="space-y-1">
+                      {checksData.todos.map((todo) => (
+                        <div
+                          key={todo.todoId}
+                          className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/40 px-3 py-2"
+                        >
+                          <label className="flex min-w-0 items-center gap-2 text-sm">
+                            <Checkbox
+                              checked={todo.completed}
+                              onCheckedChange={(checked) => {
+                                void updateTodoMutation
+                                  .mutateAsync({
+                                    todoId: todo.todoId,
+                                    completed: checked === true,
+                                  })
+                                  .catch((error) => {
+                                    toastManager.add({
+                                      type: "error",
+                                      title: "Could not update todo",
+                                      description:
+                                        error instanceof Error
+                                          ? error.message
+                                          : "An unknown error occurred.",
+                                    });
+                                  });
+                              }}
+                            />
+                            <span
+                              className={cn(
+                                "truncate",
+                                todo.completed && "text-muted-foreground line-through",
+                              )}
+                            >
+                              {todo.text}
+                            </span>
+                          </label>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label={`Delete ${todo.text}`}
+                            onClick={() => {
+                              void deleteTodoMutation.mutateAsync(todo.todoId).catch((error) => {
+                                toastManager.add({
+                                  type: "error",
+                                  title: "Could not delete todo",
+                                  description:
+                                    error instanceof Error
+                                      ? error.message
+                                      : "An unknown error occurred.",
+                                });
+                              });
+                            }}
+                          >
+                            <Trash2Icon className="size-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No todos yet.</p>
+                  )}
+                </section>
+              ) : null}
             </div>
           )}
         </div>

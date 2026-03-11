@@ -1262,19 +1262,46 @@ export default function WorktreeChatWorkspace({
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <div className="flex h-full min-h-0 min-w-0 overflow-hidden">
           <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-            <DockviewReact
-              className="h-full w-full"
-              components={dockComponents}
-              defaultRenderer="always"
-              defaultTabComponent={DockThreadTab}
-              disableFloatingGroups
-              rightHeaderActionsComponent={rightHeaderActionsComponent}
-              scrollbars="native"
-              theme={resolvedTheme === "dark" ? themeDark : themeLight}
-              onReady={(event: DockviewReadyEvent) => {
-                setDockviewApi(event.api);
-              }}
-            />
+            <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+              <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                <DockviewReact
+                  className="h-full w-full"
+                  components={dockComponents}
+                  defaultRenderer="always"
+                  defaultTabComponent={DockThreadTab}
+                  disableFloatingGroups
+                  rightHeaderActionsComponent={rightHeaderActionsComponent}
+                  scrollbars="native"
+                  theme={resolvedTheme === "dark" ? themeDark : themeLight}
+                  onReady={(event: DockviewReadyEvent) => {
+                    setDockviewApi(event.api);
+                  }}
+                />
+              </div>
+
+              {terminalState.terminalOpen && activeProject ? (
+                <ThreadTerminalDrawer
+                  key={worktreeId}
+                  threadId={worktreeTerminalOwnerId}
+                  cwd={gitCwd ?? activeProject.cwd}
+                  runtimeEnv={threadTerminalRuntimeEnv}
+                  height={terminalState.terminalHeight}
+                  terminalIds={terminalState.terminalIds}
+                  activeTerminalId={terminalState.activeTerminalId}
+                  terminalGroups={terminalState.terminalGroups}
+                  activeTerminalGroupId={terminalState.activeTerminalGroupId}
+                  focusRequestId={terminalFocusRequestId}
+                  onSplitTerminal={splitTerminal}
+                  onNewTerminal={createNewTerminal}
+                  splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+                  newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+                  closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+                  onActiveTerminalChange={activateTerminal}
+                  onCloseTerminal={closeTerminal}
+                  onHeightChange={setTerminalHeight}
+                />
+              ) : null}
+            </div>
           </div>
 
           {!isMobile && rightRailState.open ? (
@@ -1307,29 +1334,6 @@ export default function WorktreeChatWorkspace({
           ) : null}
         </div>
       </div>
-
-      {terminalState.terminalOpen && activeProject ? (
-        <ThreadTerminalDrawer
-          key={worktreeId}
-          threadId={worktreeTerminalOwnerId}
-          cwd={gitCwd ?? activeProject.cwd}
-          runtimeEnv={threadTerminalRuntimeEnv}
-          height={terminalState.terminalHeight}
-          terminalIds={terminalState.terminalIds}
-          activeTerminalId={terminalState.activeTerminalId}
-          terminalGroups={terminalState.terminalGroups}
-          activeTerminalGroupId={terminalState.activeTerminalGroupId}
-          focusRequestId={terminalFocusRequestId}
-          onSplitTerminal={splitTerminal}
-          onNewTerminal={createNewTerminal}
-          splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-          newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-          closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-          onActiveTerminalChange={activateTerminal}
-          onCloseTerminal={closeTerminal}
-          onHeightChange={setTerminalHeight}
-        />
-      ) : null}
 
       {isMobile ? (
         <Sheet
