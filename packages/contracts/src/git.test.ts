@@ -27,15 +27,17 @@ describe("GitCreateWorktreeInput", () => {
 });
 
 describe("GitPreparePullRequestThreadInput", () => {
-  it("accepts pull request references and mode", () => {
+  it("accepts pull request references, mode, and an optional branch prefix", () => {
     const parsed = decodePreparePullRequestThreadInput({
       cwd: "/repo",
       reference: "#42",
       mode: "worktree",
+      branchPrefix: "custom/team",
     });
 
     expect(parsed.reference).toBe("#42");
     expect(parsed.mode).toBe("worktree");
+    expect(parsed.branchPrefix).toBe("custom/team");
   });
 });
 
