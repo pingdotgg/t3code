@@ -80,6 +80,7 @@ import {
   formatElapsed,
   formatTimestamp,
 } from "../session-logic";
+import { hasUnseenError } from "../thread-status";
 import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "../chat-scroll";
 import {
   buildPendingUserInputAnswers,
@@ -862,6 +863,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     latestTurnSettled,
     markThreadVisited,
   ]);
+
+  useEffect(() => {
+    if (!activeThread?.id) return;
+    if (!hasUnseenError(activeThread)) return;
+
+    markThreadVisited(activeThread.id);
+  }, [activeThread, markThreadVisited]);
 
   const sessionProvider = activeThread?.session?.provider ?? null;
   const selectedProviderByThreadId = composerDraft.provider;
