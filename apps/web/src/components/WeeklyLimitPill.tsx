@@ -32,13 +32,7 @@ function windowLabel(kind: "weekly" | "session"): string {
   return kind === "weekly" ? "Weekly Usage" : "Session Usage";
 }
 
-function LimitBar({
-  label,
-  window,
-}: {
-  label: string;
-  window: RateLimitWindow;
-}) {
+function LimitBar({ label, window }: { label: string; window: RateLimitWindow }) {
   const usedPercent = Math.min(100, Math.max(0, window.usedPercent ?? 0));
   const remainingPercent = 100 - usedPercent;
   const resetsIn = formatResetsAt(window.resetsAt);
@@ -125,10 +119,7 @@ export const WeeklyLimitPill = memo(function WeeklyLimitPill() {
         >
           <div className="min-h-0 overflow-hidden">
             <div className="pb-2 mb-2 border-b border-border/30">
-              <LimitBar
-                label={expandableWindow.label}
-                window={expandableWindow.window}
-              />
+              <LimitBar label={expandableWindow.label} window={expandableWindow.window} />
             </div>
           </div>
         </div>

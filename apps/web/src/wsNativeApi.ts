@@ -107,9 +107,7 @@ export function onServerConfigUpdated(
   };
 }
 
-export function onRateLimitsUpdated(
-  listener: (payload: RateLimitsPayload) => void,
-): () => void {
+export function onRateLimitsUpdated(listener: (payload: RateLimitsPayload) => void): () => void {
   rateLimitsListeners.add(listener);
 
   if (lastRateLimits) {
