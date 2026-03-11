@@ -11,7 +11,6 @@ import { Keybindings } from "./keybindings";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
-import { ProviderService } from "./provider/Services/ProviderService";
 
 export interface ServerBootstrapStateShape {
   readonly cwd: string;
@@ -109,7 +108,6 @@ export const ServerRuntimeStateLive = Layer.effect(
   Effect.gen(function* () {
     const keybindingsManager = yield* Keybindings;
     const orchestrationReactor = yield* OrchestrationReactor;
-    const providerService = yield* ProviderService;
 
     yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
       Effect.catch((error) =>
@@ -124,11 +122,6 @@ export const ServerRuntimeStateLive = Layer.effect(
     const startupScope = yield* Scope.make("sequential");
     yield* Effect.addFinalizer(() => Scope.close(startupScope, Exit.void));
     yield* Scope.provide(orchestrationReactor.start, startupScope);
-    yield* Effect.addFinalizer(() =>
-      providerService
-        .stopAll()
-        .pipe(Effect.catch((cause) => Effect.logWarning("failed to stop provider service", { cause }))),
-    );
 
     return {
       bootstrapState: yield* resolveBootstrapState(),

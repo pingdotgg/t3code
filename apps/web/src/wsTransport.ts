@@ -82,8 +82,6 @@ export class WsTransport {
           ? envUrl
           : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`);
     this.url = normalizeWsUrl(resolvedUrl);
-          : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`);
-    this.url = normalizeWsUrl(resolvedUrl);
     this.connect();
   }
 

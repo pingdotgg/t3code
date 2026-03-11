@@ -7,6 +7,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_TERMINAL_ID,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   type ProviderRuntimeEvent,
   ServerRpcGroup,
   type ServerConfig as ServerConfigPayload,
@@ -64,7 +65,6 @@ const defaultProviderService: ProviderServiceShape = {
   listSessions: () => Effect.succeed([]),
   getCapabilities: () => Effect.die(new Error("getCapabilities not implemented in test")),
   rollbackConversation: () => Effect.die(new Error("rollbackConversation not implemented in test")),
-  stopAll: () => Effect.void,
   streamEvents: Stream.empty as Stream.Stream<ProviderRuntimeEvent>,
 };
 
@@ -340,7 +340,9 @@ describe("wsServer", () => {
               expect(snapshot.threads).toHaveLength(1);
               expect(snapshot.projects[0]?.workspaceRoot).toBe("/workspace/example-project");
               expect(snapshot.threads[0]?.projectId).toBe(bootstrap.bootstrapProjectId);
-              expect(snapshot.threads[0]?.interactionMode).toBe("chat");
+              expect(snapshot.threads[0]?.interactionMode).toBe(
+                DEFAULT_PROVIDER_INTERACTION_MODE,
+              );
               expect(snapshot.threads[0]?.runtimeMode).toBe("full-access");
             }),
           ),

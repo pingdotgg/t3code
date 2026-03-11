@@ -212,7 +212,7 @@ export const makeServerRpcHandlersLayer = Layer.unwrap(
         ),
       subscribeServerConfig: () =>
         mapRpcStreamError(
-          keybindingsManager.changes.pipe(
+          keybindingsManager.streamChanges.pipe(
             Stream.mapEffect((event) =>
               providerHealth.getStatuses.pipe(
                 Effect.map((providers) => ({
