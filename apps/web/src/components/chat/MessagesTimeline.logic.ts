@@ -23,3 +23,11 @@ export function computeMessageDurationStart(
 
   return result;
 }
+
+export function normalizeCompactToolLabel(value: string): string {
+  const trimmed = value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+  if (/^command run$/i.test(trimmed)) {
+    return "Ran command";
+  }
+  return trimmed;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeMessageDurationStart } from "./MessagesTimeline.logic";
+import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -131,5 +131,16 @@ describe("computeMessageDurationStart", () => {
 
   it("returns empty map for empty input", () => {
     expect(computeMessageDurationStart([])).toEqual(new Map());
+  });
+});
+
+describe("normalizeCompactToolLabel", () => {
+  it("renames command run labels to ran command", () => {
+    expect(normalizeCompactToolLabel("Command run")).toBe("Ran command");
+    expect(normalizeCompactToolLabel("Command run complete")).toBe("Ran command");
+  });
+
+  it("removes trailing completion wording from other labels", () => {
+    expect(normalizeCompactToolLabel("File read completed")).toBe("File read");
   });
 });

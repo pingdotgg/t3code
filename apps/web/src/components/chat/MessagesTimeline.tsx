@@ -37,7 +37,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { computeMessageDurationStart } from "./MessagesTimeline.logic";
+import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
 import { Badge } from "../ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
@@ -332,18 +332,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               )}
               <div className="space-y-0.5">
                 {enableCodexToolCallUi
-                  ? visibleEntries.map((workEntry, workEntryIndex) =>
+                  ? visibleEntries.map((workEntry) =>
                       isRichToolWorkEntry(workEntry) ? (
-                        <ToolWorkEntryRow
-                          key={`work-row:${workEntry.id}`}
-                          workEntry={workEntry}
-                          workEntryIndex={workEntryIndex}
-                        />
+                        <ToolWorkEntryRow key={`work-row:${workEntry.id}`} workEntry={workEntry} />
                       ) : (
                         <SimpleWorkEntryRow
                           key={`work-row:${workEntry.id}`}
                           workEntry={workEntry}
-                          workEntryIndex={workEntryIndex}
                         />
                       ),
                     )
@@ -747,6 +742,15 @@ function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
   if (workEntry.requestKind === "file-read") return EyeIcon;
   if (workEntry.requestKind === "file-change") return SquarePenIcon;
 
+  if (workEntry.itemType === "command_execution" || workEntry.command) {
+    return TerminalIcon;
+  }
+  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
+    return SquarePenIcon;
+  }
+  if (workEntry.itemType === "web_search") return SearchIcon;
+  if (workEntry.itemType === "image_view") return EyeIcon;
+
   const haystack = [
     workEntry.label,
     workEntry.toolTitle,
@@ -784,19 +788,11 @@ function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
   if (haystack.includes("store_memory")) return FolderIcon;
 
   switch (workEntry.itemType) {
-    case "command_execution":
-      return TerminalIcon;
-    case "file_change":
-      return SquarePenIcon;
     case "mcp_tool_call":
       return WrenchIcon;
     case "dynamic_tool_call":
     case "collab_agent_tool_call":
       return HammerIcon;
-    case "web_search":
-      return SearchIcon;
-    case "image_view":
-      return EyeIcon;
   }
 
   return workToneIcon(workEntry.tone).icon;
@@ -810,13 +806,9 @@ function capitalizePhrase(value: string): string {
   return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
 }
 
-function stripToolCompletionSuffix(value: string): string {
-  return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
-}
-
 function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
   if (!workEntry.toolTitle) {
-    return capitalizePhrase(stripToolCompletionSuffix(workEntry.label));
+    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
 
   if (workEntry.toolStatus === "failed") {
@@ -831,7 +823,7 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
   if (workEntry.activityKind === "tool.started") {
     return capitalizePhrase(`${workEntry.toolTitle} started`);
   }
-  return capitalizePhrase(workEntry.toolTitle);
+  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
 
 function primaryWorkEntryPath(workEntry: TimelineWorkEntry): string | null {
@@ -878,11 +870,8 @@ function isRichToolWorkEntry(workEntry: TimelineWorkEntry): boolean {
   return workEntry.activityKind === "tool.completed" || workEntry.activityKind === "tool.updated";
 }
 
-const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
-  workEntry: TimelineWorkEntry;
-  workEntryIndex: number;
-}) {
-  const { workEntry, workEntryIndex } = props;
+const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: { workEntry: TimelineWorkEntry }) {
+  const { workEntry } = props;
   const [open, setOpen] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
@@ -1003,25 +992,11 @@ const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
   );
 
   if (!hasExpandedDetails) {
-    return (
-      <div
-        className="animate-in fade-in slide-in-from-bottom-1 rounded-lg duration-200"
-        style={{
-          animationDelay: `${Math.min(workEntryIndex, 4) * 40}ms`,
-        }}
-      >
-        {summaryRow}
-      </div>
-    );
+    return <div className="rounded-lg">{summaryRow}</div>;
   }
 
   return (
-    <div
-      className="animate-in fade-in slide-in-from-bottom-1 rounded-lg duration-200"
-      style={{
-        animationDelay: `${Math.min(workEntryIndex, 4) * 40}ms`,
-      }}
-    >
+    <div className="rounded-lg">
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger className="block w-full text-left">{summaryRow}</CollapsibleTrigger>
         <CollapsibleContent>{expandedDetails}</CollapsibleContent>
@@ -1032,9 +1007,8 @@ const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
-  workEntryIndex: number;
 }) {
-  const { workEntry, workEntryIndex } = props;
+  const { workEntry } = props;
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const preview = workEntryPreview(workEntry);
@@ -1043,19 +1017,14 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
 
   return (
-    <div
-      className="animate-in fade-in slide-in-from-bottom-1 rounded-lg px-1 py-1 duration-200"
-      style={{
-        animationDelay: `${Math.min(workEntryIndex, 4) * 40}ms`,
-      }}
-    >
+    <div className="rounded-lg px-1 py-1">
       <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
         <span
           className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
         >
           <EntryIcon className="size-3" />
         </span>
-        <div className="min-w-0 flex-1 overflow-hidden animate-in fade-in duration-300">
+        <div className="min-w-0 flex-1 overflow-hidden">
           <p
             className={cn(
               "truncate text-[11px] leading-5",
@@ -1072,7 +1041,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         </div>
       </div>
       {hasChangedFiles && !previewIsChangedFiles && (
-        <div className="animate-in fade-in slide-in-from-bottom-1 mt-1 flex flex-wrap gap-1 pl-6 duration-200">
+        <div className="mt-1 flex flex-wrap gap-1 pl-6">
           {workEntry.changedFiles?.slice(0, 4).map((filePath) => (
             <span
               key={`${workEntry.id}:${filePath}`}
