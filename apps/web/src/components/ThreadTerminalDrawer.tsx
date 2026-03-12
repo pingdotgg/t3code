@@ -12,10 +12,10 @@ import {
   useState,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { openInPreferredEditor } from "../editorPreferences";
 import {
   extractTerminalLinks,
   isTerminalLinkActivation,
-  preferredTerminalEditor,
   resolvePathLinkTarget,
 } from "../terminal-links";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
@@ -236,7 +236,7 @@ function TerminalViewport({
               }
 
               const target = resolvePathLinkTarget(match.text, cwd);
-              void api.shell.openInEditor(target, preferredTerminalEditor()).catch((error) => {
+              void openInPreferredEditor(api, target).catch((error) => {
                 writeSystemMessage(
                   latestTerminal,
                   error instanceof Error ? error.message : "Unable to open path",
