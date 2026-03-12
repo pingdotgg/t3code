@@ -502,6 +502,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                 provider: PROVIDER,
                 createdAt: observedAt,
                 method: sdkNativeMethod(message),
+                threadId: context.session.threadId,
                 ...(typeof message.session_id === "string"
                   ? { providerThreadId: message.session_id }
                   : {}),
@@ -510,7 +511,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                 payload: message,
               },
             },
-            null,
+            context.session.threadId,
           );
       });
 
