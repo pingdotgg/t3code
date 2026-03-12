@@ -36,6 +36,7 @@ import type {
   TerminalWriteInput,
 } from "./terminal";
 import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
+import type { WorkspaceOpenTargetId } from "./openTarget";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -131,6 +132,7 @@ export interface NativeApi {
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
+    openWorkspace: (cwd: string, target: WorkspaceOpenTargetId) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
   };
   git: {

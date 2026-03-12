@@ -109,6 +109,7 @@ function createBaseServerConfig(): ServerConfig {
       },
     ],
     availableEditors: [],
+    availableOpenTargets: [],
   };
 }
 
@@ -897,6 +898,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
           availableEditors: ["vscode"],
+          availableOpenTargets: ["vscode"],
         };
       },
     });
@@ -924,6 +926,80 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens Ghostty from the workspace Open menu without changing the file editor preference", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    window.localStorage.setItem("t3code:last-editor", "vscode");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode"],
+          availableOpenTargets: ["ghostty", "vscode"],
+        };
+      },
+    });
+
+    try {
+      const menuTrigger = await waitForElement(() => {
+        const openActions = Array.from(
+          document.querySelectorAll("[aria-label='Subscription actions']"),
+        ).find((group) =>
+          Array.from(group.querySelectorAll("button")).some(
+            (button) => button.textContent?.trim() === "Open",
+          ),
+        );
+        if (!openActions) return null;
+        return (openActions.querySelectorAll("button")[1] ?? null) as HTMLButtonElement | null;
+      }, "Unable to find Open menu trigger.");
+      menuTrigger.click();
+
+      const ghosttyOption = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("[role='menuitem']")).find((item) =>
+            item.textContent?.includes("Ghostty"),
+          ) as HTMLElement | null,
+        "Unable to find Ghostty option.",
+      );
+      ghosttyOption.click();
+
+      await vi.waitFor(
+        () => {
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenWorkspace,
+          );
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.shellOpenWorkspace,
+            cwd: "/repo/project",
+            target: "ghostty",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(window.localStorage.getItem("t3code:last-editor")).toBe("vscode");
     } finally {
       await mounted.cleanup();
     }

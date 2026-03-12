@@ -6,11 +6,16 @@
  *
  * @module Open
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
-import { EDITORS, type EditorId } from "@t3tools/contracts";
+import {
+  EDITORS,
+  type EditorId,
+  WORKSPACE_OPEN_TARGETS,
+  type WorkspaceOpenTargetId,
+} from "@t3tools/contracts";
 import { ServiceMap, Schema, Effect, Layer } from "effect";
 
 // ==============================
@@ -27,6 +32,11 @@ export interface OpenInEditorInput {
   readonly editor: EditorId;
 }
 
+export interface OpenWorkspaceInput {
+  readonly cwd: string;
+  readonly target: WorkspaceOpenTargetId;
+}
+
 interface EditorLaunch {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -35,6 +45,10 @@ interface EditorLaunch {
 interface CommandAvailabilityOptions {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
+}
+
+interface OpenTargetAvailabilityOptions extends CommandAvailabilityOptions {
+  readonly isMacApplicationAvailable?: (appName: string) => boolean;
 }
 
 const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
@@ -53,6 +67,16 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
       return "explorer";
     default:
       return "xdg-open";
+  }
+}
+
+function ghosttyCommandForPlatform(platform: NodeJS.Platform): string | null {
+  switch (platform) {
+    case "darwin":
+    case "linux":
+      return "ghostty";
+    default:
+      return null;
   }
 }
 
@@ -177,6 +201,90 @@ export function resolveAvailableEditors(
   return available;
 }
 
+function isWorkspaceEditorTarget(target: WorkspaceOpenTargetId): target is EditorId {
+  return target !== "ghostty";
+}
+
+function resolveWorkspaceTargetCommand(
+  target: WorkspaceOpenTargetId,
+  platform: NodeJS.Platform,
+): string | null {
+  if (target === "ghostty") {
+    return ghosttyCommandForPlatform(platform);
+  }
+
+  const editorDef = EDITORS.find((editor) => editor.id === target);
+  if (!editorDef) return null;
+  return editorDef.command ?? fileManagerCommandForPlatform(platform);
+}
+
+function isMacApplicationAvailable(appName: string): boolean {
+  const result = spawnSync("open", ["-Ra", appName], {
+    stdio: "ignore",
+  });
+  return result.status === 0;
+}
+
+function isWorkspaceTargetAvailable(
+  target: WorkspaceOpenTargetId,
+  options: OpenTargetAvailabilityOptions,
+): boolean {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+
+  if (target === "ghostty") {
+    switch (platform) {
+      case "darwin":
+        return (options.isMacApplicationAvailable ?? isMacApplicationAvailable)("Ghostty");
+      case "linux":
+        return isCommandAvailable("ghostty", { platform, env });
+      default:
+        return false;
+    }
+  }
+
+  const command = resolveWorkspaceTargetCommand(target, platform);
+  if (!command) return false;
+  return isCommandAvailable(command, { platform, env });
+}
+
+export function resolveAvailableOpenTargets(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  options: Omit<OpenTargetAvailabilityOptions, "platform" | "env"> = {},
+): ReadonlyArray<WorkspaceOpenTargetId> {
+  const available: WorkspaceOpenTargetId[] = [];
+
+  for (const target of WORKSPACE_OPEN_TARGETS) {
+    if (
+      isWorkspaceTargetAvailable(target.id, {
+        platform,
+        env,
+        ...options,
+      })
+    ) {
+      available.push(target.id);
+    }
+  }
+
+  return available;
+}
+
+function escapeAppleScriptString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function ghosttyAppleScript(cwd: string): string {
+  return [
+    'tell application "Ghostty"',
+    "    activate",
+    "    set cfg to new surface configuration",
+    `    set initial working directory of cfg to ${escapeAppleScriptString(cwd)}`,
+    "    new window with configuration cfg",
+    "end tell",
+  ].join("\n");
+}
+
 /**
  * OpenShape - Service API for browser and editor launch actions.
  */
@@ -192,6 +300,11 @@ export interface OpenShape {
    * Launches the editor as a detached process so server startup is not blocked.
    */
   readonly openInEditor: (input: OpenInEditorInput) => Effect.Effect<void, OpenError>;
+
+  /**
+   * Open a workspace in a selected workspace launcher target.
+   */
+  readonly openWorkspace: (input: OpenWorkspaceInput) => Effect.Effect<void, OpenError>;
 }
 
 /**
@@ -223,6 +336,32 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
   }
 
   return { command: fileManagerCommandForPlatform(platform), args: [input.cwd] };
+});
+
+export const resolveWorkspaceLaunch = Effect.fnUntraced(function* (
+  input: OpenWorkspaceInput,
+  platform: NodeJS.Platform = process.platform,
+): Effect.fn.Return<EditorLaunch, OpenError> {
+  if (isWorkspaceEditorTarget(input.target)) {
+    return yield* resolveEditorLaunch({ cwd: input.cwd, editor: input.target }, platform);
+  }
+
+  switch (platform) {
+    case "darwin":
+      return {
+        command: "osascript",
+        args: ["-e", ghosttyAppleScript(input.cwd)],
+      };
+    case "linux":
+      return {
+        command: "ghostty",
+        args: ["+new-window", "--working-directory", input.cwd],
+      };
+    default:
+      return yield* new OpenError({
+        message: `Unsupported workspace target ${input.target} on platform ${platform}`,
+      });
+  }
 });
 
 export const launchDetached = (launch: EditorLaunch) =>
@@ -270,6 +409,7 @@ const make = Effect.gen(function* () {
         catch: (cause) => new OpenError({ message: "Browser auto-open failed", cause }),
       }),
     openInEditor: (input) => Effect.flatMap(resolveEditorLaunch(input), launchDetached),
+    openWorkspace: (input) => Effect.flatMap(resolveWorkspaceLaunch(input), launchDetached),
   } satisfies OpenShape;
 });
 

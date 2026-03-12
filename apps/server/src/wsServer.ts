@@ -57,7 +57,7 @@ import { ProviderService } from "./provider/Services/ProviderService";
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { clamp } from "effect/Number";
-import { Open, resolveAvailableEditors } from "./open";
+import { Open, resolveAvailableEditors, resolveAvailableOpenTargets } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
@@ -249,6 +249,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     autoBootstrapProjectFromCwd,
   } = serverConfig;
   const availableEditors = resolveAvailableEditors();
+  const availableOpenTargets = resolveAvailableOpenTargets();
 
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
@@ -602,7 +603,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
   const orchestrationReactor = yield* OrchestrationReactor;
-  const { openInEditor } = yield* Open;
+  const { openInEditor, openWorkspace } = yield* Open;
 
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
@@ -781,6 +782,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* openInEditor(body);
       }
 
+      case WS_METHODS.shellOpenWorkspace: {
+        const body = stripRequestTag(request.body);
+        return yield* openWorkspace(body);
+      }
+
       case WS_METHODS.gitStatus: {
         const body = stripRequestTag(request.body);
         return yield* gitManager.status(body);
@@ -875,6 +881,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
+          availableOpenTargets,
         };
 
       case WS_METHODS.serverUpsertKeybinding: {

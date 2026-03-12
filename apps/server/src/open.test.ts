@@ -8,7 +8,9 @@ import {
   isCommandAvailable,
   launchDetached,
   resolveAvailableEditors,
+  resolveAvailableOpenTargets,
   resolveEditorLaunch,
+  resolveWorkspaceLaunch,
 } from "./open";
 import { Effect } from "effect";
 import { assertSuccess } from "@effect/vitest/utils";
@@ -117,6 +119,78 @@ describe("resolveEditorLaunch", () => {
   );
 });
 
+describe("resolveWorkspaceLaunch", () => {
+  it.effect("returns editor-backed workspace launches for existing workspace targets", () =>
+    Effect.gen(function* () {
+      const cursorLaunch = yield* resolveWorkspaceLaunch(
+        { cwd: "/tmp/workspace", target: "cursor" },
+        "darwin",
+      );
+      assert.deepEqual(cursorLaunch, {
+        command: "cursor",
+        args: ["/tmp/workspace"],
+      });
+
+      const fileManagerLaunch = yield* resolveWorkspaceLaunch(
+        { cwd: "/tmp/workspace", target: "file-manager" },
+        "linux",
+      );
+      assert.deepEqual(fileManagerLaunch, {
+        command: "xdg-open",
+        args: ["/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("uses AppleScript for Ghostty on macOS", () =>
+    Effect.gen(function* () {
+      const launch = yield* resolveWorkspaceLaunch(
+        { cwd: "/tmp/workspace", target: "ghostty" },
+        "darwin",
+      );
+
+      assert.deepEqual(launch, {
+        command: "osascript",
+        args: [
+          "-e",
+          [
+            'tell application "Ghostty"',
+            "    activate",
+            "    set cfg to new surface configuration",
+            '    set initial working directory of cfg to "/tmp/workspace"',
+            "    new window with configuration cfg",
+            "end tell",
+          ].join("\n"),
+        ],
+      });
+    }),
+  );
+
+  it.effect("uses Ghostty CLI for Linux", () =>
+    Effect.gen(function* () {
+      const launch = yield* resolveWorkspaceLaunch(
+        { cwd: "/tmp/workspace", target: "ghostty" },
+        "linux",
+      );
+
+      assert.deepEqual(launch, {
+        command: "ghostty",
+        args: ["+new-window", "--working-directory", "/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("rejects Ghostty on unsupported platforms", () =>
+    Effect.gen(function* () {
+      const result = yield* resolveWorkspaceLaunch(
+        { cwd: "C:\\workspace", target: "ghostty" },
+        "win32",
+      ).pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+    }),
+  );
+});
+
 describe("launchDetached", () => {
   it.effect("resolves when command can be spawned", () =>
     Effect.gen(function* () {
@@ -215,6 +289,83 @@ describe("resolveAvailableEditors", () => {
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
       assert.deepEqual(editors, ["cursor", "file-manager"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveAvailableOpenTargets", () => {
+  it("returns Ghostty on macOS when the app is installed", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-open-targets-darwin-"));
+    try {
+      fs.writeFileSync(path.join(dir, "cursor"), "#!/bin/sh\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(dir, "open"), "#!/bin/sh\n", { mode: 0o755 });
+
+      const targets = resolveAvailableOpenTargets(
+        "darwin",
+        {
+          PATH: dir,
+        },
+        {
+          isMacApplicationAvailable: (appName) => appName === "Ghostty",
+        },
+      );
+      assert.deepEqual(targets, ["cursor", "ghostty", "file-manager"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("omits Ghostty on macOS when the app is not installed", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-open-targets-darwin-missing-"));
+    try {
+      fs.writeFileSync(path.join(dir, "cursor"), "#!/bin/sh\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(dir, "open"), "#!/bin/sh\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(dir, "ghostty"), "#!/bin/sh\n", { mode: 0o755 });
+
+      const targets = resolveAvailableOpenTargets(
+        "darwin",
+        {
+          PATH: dir,
+        },
+        {
+          isMacApplicationAvailable: () => false,
+        },
+      );
+      assert.deepEqual(targets, ["cursor", "file-manager"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns Ghostty on Linux only when the CLI is available", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-open-targets-"));
+    try {
+      fs.writeFileSync(path.join(dir, "cursor"), "#!/bin/sh\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(dir, "ghostty"), "#!/bin/sh\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(dir, "xdg-open"), "#!/bin/sh\n", { mode: 0o755 });
+
+      const targets = resolveAvailableOpenTargets("linux", {
+        PATH: dir,
+      });
+      assert.deepEqual(targets, ["cursor", "ghostty", "file-manager"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("omits Ghostty on unsupported platforms", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-open-targets-win-"));
+    try {
+      fs.writeFileSync(path.join(dir, "cursor.CMD"), "@echo off\r\n", "utf8");
+      fs.writeFileSync(path.join(dir, "explorer.EXE"), "MZ", "utf8");
+
+      const targets = resolveAvailableOpenTargets("win32", {
+        PATH: dir,
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      });
+      assert.deepEqual(targets, ["cursor", "file-manager"]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

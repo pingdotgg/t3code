@@ -14,6 +14,7 @@ import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serve
 import {
   DEFAULT_TERMINAL_ID,
   EDITORS,
+  WORKSPACE_OPEN_TARGETS,
   EventId,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
@@ -62,6 +63,7 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const defaultOpenService: OpenShape = {
   openBrowser: () => Effect.void,
   openInEditor: () => Effect.void,
+  openWorkspace: () => Effect.void,
 };
 
 const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
@@ -442,12 +444,23 @@ function compileKeybindings(bindings: KeybindingsConfig): ResolvedKeybindingsCon
 
 const DEFAULT_RESOLVED_KEYBINDINGS = compileKeybindings([...DEFAULT_KEYBINDINGS]);
 const VALID_EDITOR_IDS = new Set(EDITORS.map((editor) => editor.id));
+const VALID_OPEN_TARGET_IDS = new Set(WORKSPACE_OPEN_TARGETS.map((target) => target.id));
 
 function expectAvailableEditors(value: unknown): void {
   expect(Array.isArray(value)).toBe(true);
   for (const editorId of value as unknown[]) {
     expect(typeof editorId).toBe("string");
     expect(VALID_EDITOR_IDS.has(editorId as (typeof EDITORS)[number]["id"])).toBe(true);
+  }
+}
+
+function expectAvailableOpenTargets(value: unknown): void {
+  expect(Array.isArray(value)).toBe(true);
+  for (const targetId of value as unknown[]) {
+    expect(typeof targetId).toBe("string");
+    expect(
+      VALID_OPEN_TARGET_IDS.has(targetId as (typeof WORKSPACE_OPEN_TARGETS)[number]["id"]),
+    ).toBe(true);
   }
 }
 
@@ -831,8 +844,12 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      availableOpenTargets: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
+    expectAvailableOpenTargets(
+      (response.result as { availableOpenTargets: unknown }).availableOpenTargets,
+    );
   });
 
   it("bootstraps default keybindings file when missing", async () => {
@@ -856,8 +873,12 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      availableOpenTargets: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
+    expectAvailableOpenTargets(
+      (response.result as { availableOpenTargets: unknown }).availableOpenTargets,
+    );
 
     const persistedConfig = JSON.parse(
       fs.readFileSync(keybindingsPath, "utf8"),
@@ -891,8 +912,12 @@ describe("WebSocket Server", () => {
       ],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      availableOpenTargets: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
+    expectAvailableOpenTargets(
+      (response.result as { availableOpenTargets: unknown }).availableOpenTargets,
+    );
     expect(fs.readFileSync(keybindingsPath, "utf8")).toBe("{ not-json");
   });
 
@@ -925,6 +950,7 @@ describe("WebSocket Server", () => {
       issues: Array<{ kind: string; index?: number; message: string }>;
       providers: ReadonlyArray<ServerProviderStatus>;
       availableEditors: unknown;
+      availableOpenTargets: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
     expect(result.keybindingsConfigPath).toBe(keybindingsPath);
@@ -945,6 +971,7 @@ describe("WebSocket Server", () => {
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
     expect(result.providers).toEqual(defaultProviderStatuses);
     expectAvailableEditors(result.availableEditors);
+    expectAvailableOpenTargets(result.availableOpenTargets);
   });
 
   it("pushes server.configUpdated issues when keybindings file changes", async () => {
@@ -990,6 +1017,7 @@ describe("WebSocket Server", () => {
         openCalls.push({ cwd: input.cwd, editor: input.editor });
         return Effect.void;
       },
+      openWorkspace: () => Effect.void,
     };
 
     server = await createTestServer({ cwd: "/my/workspace", open: openService });
@@ -1005,6 +1033,32 @@ describe("WebSocket Server", () => {
     });
     expect(response.error).toBeUndefined();
     expect(openCalls).toEqual([{ cwd: "/my/workspace", editor: "cursor" }]);
+  });
+
+  it("routes shell.openWorkspace through the injected open service", async () => {
+    const openCalls: Array<{ cwd: string; target: string }> = [];
+    const openService: OpenShape = {
+      openBrowser: () => Effect.void,
+      openInEditor: () => Effect.void,
+      openWorkspace: (input) => {
+        openCalls.push({ cwd: input.cwd, target: input.target });
+        return Effect.void;
+      },
+    };
+
+    server = await createTestServer({ cwd: "/my/workspace", open: openService });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.shellOpenWorkspace, {
+      cwd: "/my/workspace",
+      target: "ghostty",
+    });
+    expect(response.error).toBeUndefined();
+    expect(openCalls).toEqual([{ cwd: "/my/workspace", target: "ghostty" }]);
   });
 
   it("reads keybindings from the configured state directory", async () => {
@@ -1038,8 +1092,12 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      availableOpenTargets: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
+    expectAvailableOpenTargets(
+      (response.result as { availableOpenTargets: unknown }).availableOpenTargets,
+    );
   });
 
   it("upserts keybinding rules and updates cached server config", async () => {
@@ -1085,9 +1143,13 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      availableOpenTargets: expect.any(Array),
     });
     expectAvailableEditors(
       (configResponse.result as { availableEditors: unknown }).availableEditors,
+    );
+    expectAvailableOpenTargets(
+      (configResponse.result as { availableOpenTargets: unknown }).availableOpenTargets,
     );
   });
 
@@ -1467,6 +1529,7 @@ describe("WebSocket Server", () => {
       openBrowser: () => Effect.void,
       openInEditor: () =>
         Effect.sync(() => BigInt(1)).pipe(Effect.map((result) => result as unknown as void)),
+      openWorkspace: () => Effect.void,
     };
 
     try {
