@@ -310,20 +310,6 @@ export default function Sidebar() {
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const shouldBrowseForProjectImmediately = isElectron;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
-  const pendingApprovalByThreadId = useMemo(() => {
-    const map = new Map<ThreadId, boolean>();
-    for (const thread of threads) {
-      map.set(thread.id, derivePendingApprovals(thread.activities).length > 0);
-    }
-    return map;
-  }, [threads]);
-  const pendingUserInputByThreadId = useMemo(() => {
-    const map = new Map<ThreadId, boolean>();
-    for (const thread of threads) {
-      map.set(thread.id, derivePendingUserInputs(thread.activities).length > 0);
-    }
-    return map;
-  }, [threads]);
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
@@ -1509,9 +1495,9 @@ export default function Sidebar() {
                                 const threadStatus = resolveThreadStatusPill({
                                   thread,
                                   hasPendingApprovals:
-                                    pendingApprovalByThreadId.get(thread.id) === true,
+                                    derivePendingApprovals(thread.activities).length > 0,
                                   hasPendingUserInput:
-                                    pendingUserInputByThreadId.get(thread.id) === true,
+                                    derivePendingUserInputs(thread.activities).length > 0,
                                 });
                                 const prStatus = prStatusIndicator(
                                   prByThreadId.get(thread.id) ?? null,
