@@ -73,7 +73,7 @@ export const codexTurnToolFixture = [
     turnId: TURN_ID,
     payload: {
       itemType: "command_execution",
-      title: "Command run",
+      title: "Ran command",
       detail: "echo integration",
     },
   },
@@ -85,7 +85,7 @@ export const codexTurnToolFixture = [
     payload: {
       itemType: "command_execution",
       status: "completed",
-      title: "Command run",
+      title: "Ran command",
       detail: "echo integration",
     },
   },

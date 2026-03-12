@@ -164,7 +164,7 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
     case "plan":
       return "Plan";
     case "command_execution":
-      return "Command run";
+      return "Ran command";
     case "file_change":
       return "File change";
     case "mcp_tool_call":

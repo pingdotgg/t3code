@@ -400,7 +400,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:02.000Z",
-        summary: "Command run complete",
+        summary: "Ran command complete",
         tone: "tool",
         kind: "tool.completed",
       }),
@@ -437,7 +437,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "command-tool",
         kind: "tool.completed",
-        summary: "Command run complete",
+        summary: "Ran command complete",
         payload: {
           itemType: "command_execution",
           data: {

@@ -135,12 +135,11 @@ describe("computeMessageDurationStart", () => {
 });
 
 describe("normalizeCompactToolLabel", () => {
-  it("renames command run labels to ran command", () => {
-    expect(normalizeCompactToolLabel("Command run")).toBe("Ran command");
-    expect(normalizeCompactToolLabel("Command run complete")).toBe("Ran command");
+  it("removes trailing completion wording from command labels", () => {
+    expect(normalizeCompactToolLabel("Ran command complete")).toBe("Ran command");
   });
 
   it("removes trailing completion wording from other labels", () => {
-    expect(normalizeCompactToolLabel("File read completed")).toBe("File read");
+    expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
   });
 });
