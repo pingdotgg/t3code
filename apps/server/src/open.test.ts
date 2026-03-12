@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import { assertSuccess } from "@effect/vitest/utils";
 import { FileSystem, Path, Effect } from "effect";
 
@@ -10,7 +10,7 @@ import {
   resolveEditorLaunch,
 } from "./open";
 
-describe("resolveEditorLaunch", () => {
+it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
   it.effect("returns commands for command-based editors", () =>
     Effect.gen(function* () {
       const antigravityLaunch = yield* resolveEditorLaunch(
@@ -123,7 +123,7 @@ describe("resolveEditorLaunch", () => {
   );
 });
 
-describe("launchDetached", () => {
+it.layer(NodeServices.layer)("launchDetached", (it) => {
   it.effect("resolves when command can be spawned", () =>
     Effect.gen(function* () {
       const result = yield* launchDetached({
