@@ -97,7 +97,7 @@ export async function configureTray(): Promise<void> {
 export async function setTrayEnabled(enabled: boolean): Promise<void> {
   if (enabled) {
     if (tray && !tray.isDestroyed()) return;
-    await createTray(Menu.buildFromTemplate([]));
+    await configureTray();
   } else {
     if (tray?.isDestroyed() == false) tray.destroy();
     tray = null;
