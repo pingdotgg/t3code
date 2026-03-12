@@ -1,4 +1,8 @@
-import { ThreadId } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type OrchestrationReadModel,
+  type OrchestrationSessionStatus,
+} from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -16,6 +20,7 @@ import { AnchoredToastProvider, ToastProvider, toastManager } from "../component
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useAppSettings } from "../appSettings";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { preferredTerminalEditor } from "../terminal-links";
@@ -23,6 +28,7 @@ import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { isAppBackgrounded, showNativeNotification } from "../lib/nativeNotifications";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -135,12 +141,17 @@ function EventRouter() {
   const removeOrphanedTerminalStates = useTerminalStateStore(
     (store) => store.removeOrphanedTerminalStates,
   );
+  const { settings } = useAppSettings();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const pathnameRef = useRef(pathname);
   const lastConfigIssuesSignatureRef = useRef<string | null>(null);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
+  const lastSessionByThreadRef = useRef(
+    new Map<string, { status: OrchestrationSessionStatus; activeTurnId: string | null }>(),
+  );
+  const lastNotifiedTurnByThreadRef = useRef(new Map<string, string>());
 
   pathnameRef.current = pathname;
 
@@ -153,10 +164,66 @@ function EventRouter() {
     let pending = false;
     let needsProviderInvalidation = false;
 
+    const maybeNotifyForTurnCompletion = (snapshot: OrchestrationReadModel) => {
+      // Only notify when the app is backgrounded and the user has enabled notifications.
+      const shouldNotify = isAppBackgrounded() && settings.enableNotifications;
+      const seenThreadIds = new Set<string>();
+      for (const thread of snapshot.threads) {
+        seenThreadIds.add(thread.id);
+        const session = thread.session;
+        const previous = lastSessionByThreadRef.current.get(thread.id);
+
+        // A completed/failed turn transitions from running with an activeTurnId
+        // to a session with no active turn and status ready/error.
+        if (
+          shouldNotify &&
+          session &&
+          previous &&
+          previous.status === "running" &&
+          previous.activeTurnId &&
+          session.activeTurnId === null &&
+          (session.status === "ready" || session.status === "error")
+        ) {
+          const lastNotifiedTurnId = lastNotifiedTurnByThreadRef.current.get(thread.id);
+
+          if (lastNotifiedTurnId !== previous.activeTurnId) {
+            const title = session.status === "error" ? "Task failed" : "Task completed";
+            const detail =
+              session.status === "error" && session.lastError ? session.lastError : thread.title;
+            const body = detail.length > 180 ? `${detail.slice(0, 177)}...` : detail;
+            const tag = `t3code:${thread.id}:${previous.activeTurnId}:${session.status}`;
+
+            if (showNativeNotification({ title, body, tag })) {
+              lastNotifiedTurnByThreadRef.current.set(thread.id, previous.activeTurnId);
+            }
+          }
+        }
+
+        if (session) {
+          // Persist latest session state so we can detect transitions next time.
+          lastSessionByThreadRef.current.set(thread.id, {
+            status: session.status,
+            activeTurnId: session.activeTurnId ?? null,
+          });
+        } else {
+          lastSessionByThreadRef.current.delete(thread.id);
+        }
+      }
+
+      // Drop state for threads that no longer exist in the snapshot.
+      for (const threadId of lastSessionByThreadRef.current.keys()) {
+        if (!seenThreadIds.has(threadId)) {
+          lastSessionByThreadRef.current.delete(threadId);
+          lastNotifiedTurnByThreadRef.current.delete(threadId);
+        }
+      }
+    };
+
     const flushSnapshotSync = async (): Promise<void> => {
       const snapshot = await api.orchestration.getSnapshot();
       if (disposed) return;
       latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
+      maybeNotifyForTurnCompletion(snapshot);
       syncServerReadModel(snapshot);
       const draftThreadIds = Object.keys(
         useComposerDraftStore.getState().draftThreadsByThreadId,
@@ -307,6 +374,7 @@ function EventRouter() {
     queryClient,
     removeOrphanedTerminalStates,
     setProjectExpanded,
+    settings.enableNotifications,
     syncServerReadModel,
   ]);
 
