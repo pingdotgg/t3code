@@ -260,8 +260,8 @@ function SettingsRouteView() {
                   <div>
                     <p className="text-sm font-medium text-foreground">Timestamp format</p>
                     <p className="text-xs text-muted-foreground">
-                      Locale follows your browser or OS conventions. <code>12-hour</code> and{" "}
-                      <code>24-hour</code> force the hour cycle.
+                      System default follows your browser or OS time format. <code>12-hour</code>{" "}
+                      and <code>24-hour</code> force the hour cycle.
                     </p>
                   </div>
                   <Select
@@ -277,7 +277,7 @@ function SettingsRouteView() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectPopup align="end">
-                      <SelectItem value="locale">Locale</SelectItem>
+                      <SelectItem value="locale">System default</SelectItem>
                       <SelectItem value="12-hour">12-hour</SelectItem>
                       <SelectItem value="24-hour">24-hour</SelectItem>
                     </SelectPopup>
