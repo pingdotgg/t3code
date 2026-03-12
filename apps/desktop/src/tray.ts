@@ -99,7 +99,7 @@ export async function setTrayEnabled(enabled: boolean): Promise<void> {
     if (tray && !tray.isDestroyed()) return;
     await createTray(Menu.buildFromTemplate([]));
   } else {
-    if (tray?.isDestroyed()) tray.destroy();
+    if (tray?.isDestroyed() == false) tray.destroy();
     tray = null;
   }
 }
