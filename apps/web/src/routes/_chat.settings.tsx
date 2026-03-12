@@ -7,8 +7,10 @@ import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
+import { useNotification } from "../hooks/useNotification";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
+import { showNativeNotification } from "../lib/nativeNotifications";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
@@ -93,6 +95,7 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const { permission: notificationPermission, requestPermission } = useNotification();
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
@@ -483,6 +486,95 @@ function SettingsRouteView() {
                     Restore default
                   </Button>
                 </div>
+              ) : null}
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Notifications</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Allow T3 Code to show OS notifications when a task completes.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Enable notifications</p>
+                  <p className="text-xs text-muted-foreground">
+                    Show OS notifications for completed or failed tasks.
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.enableNotifications}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      enableNotifications: Boolean(checked),
+                    })
+                  }
+                  aria-label="Enable notifications"
+                />
+              </div>
+
+              <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">Permission status</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {isElectron
+                      ? "Desktop app permissions are managed by your OS."
+                      : notificationPermission === "unsupported"
+                        ? "Notifications are not supported by this browser."
+                        : notificationPermission === "granted"
+                          ? "Allowed"
+                          : notificationPermission === "denied"
+                            ? "Blocked"
+                            : "Not yet requested"}
+                  </p>
+                </div>
+                {isElectron ? null : (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={
+                      notificationPermission === "unsupported" ||
+                      notificationPermission === "granted"
+                    }
+                    onClick={requestPermission}
+                  >
+                    Request permission
+                  </Button>
+                )}
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={
+                    !settings.enableNotifications ||
+                    (!isElectron && notificationPermission !== "granted")
+                  }
+                  onClick={() => {
+                    showNativeNotification({
+                      title: "T3 Code",
+                      body: "Notification test from settings.",
+                      tag: "t3code:test",
+                    });
+                  }}
+                >
+                  Send test notification
+                </Button>
+              </div>
+
+              {!isElectron && notificationPermission === "denied" ? (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Enable notifications in your browser site settings to allow OS alerts.
+                </p>
+              ) : null}
+              {isElectron || notificationPermission === "granted" ? (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  If notifications still do not appear, check OS notification settings for your
+                  browser or desktop app.
+                </p>
               ) : null}
             </section>
 
