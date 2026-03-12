@@ -484,6 +484,7 @@ const make = Effect.gen(function* () {
   const assistantDeliveryModeRef = yield* Ref.make<AssistantDeliveryMode>(
     DEFAULT_ASSISTANT_DELIVERY_MODE,
   );
+  const placeholderCheckpointTurnsRef = yield* Ref.make(new Set<string>());
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -780,6 +781,17 @@ const make = Effect.gen(function* () {
 
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
+      if (eventTurnId && (event.type === "turn.completed" || event.type === "turn.aborted")) {
+        const eventTurnKey = providerTurnKey(thread.id, eventTurnId);
+        yield* Ref.update(placeholderCheckpointTurnsRef, (seen) => {
+          if (!seen.has(eventTurnKey)) {
+            return seen;
+          }
+          const next = new Set(seen);
+          next.delete(eventTurnKey);
+          return next;
+        });
+      }
       const activeTurnId = thread.session?.activeTurnId ?? null;
 
       const conflictsWithActiveTurn =
@@ -1053,13 +1065,22 @@ const make = Effect.gen(function* () {
       if (event.type === "turn.diff.updated") {
         const turnId = toTurnId(event.turnId);
         if (turnId && (yield* isGitRepoForThread(thread.id))) {
+          const turnKey = providerTurnKey(thread.id, turnId);
+          const placeholderAlreadyQueued = yield* Ref.get(placeholderCheckpointTurnsRef).pipe(
+            Effect.map((seen) => seen.has(turnKey)),
+          );
           // Skip if a checkpoint already exists for this turn. A real
           // (non-placeholder) capture from CheckpointReactor should not
           // be clobbered, and dispatching a duplicate placeholder for the
           // same turnId would produce an unstable checkpointTurnCount.
-          if (thread.checkpoints.some((c) => c.turnId === turnId)) {
+          if (placeholderAlreadyQueued || thread.checkpoints.some((c) => c.turnId === turnId)) {
             // Already tracked; no-op.
           } else {
+            yield* Ref.update(placeholderCheckpointTurnsRef, (seen) => {
+              const next = new Set(seen);
+              next.add(turnKey);
+              return next;
+            });
             const assistantMessageId = MessageId.makeUnsafe(
               `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
             );
@@ -1067,19 +1088,32 @@ const make = Effect.gen(function* () {
               (max, c) => Math.max(max, c.checkpointTurnCount),
               0,
             );
-            yield* orchestrationEngine.dispatch({
-              type: "thread.turn.diff.complete",
-              commandId: providerCommandId(event, "thread-turn-diff-complete"),
-              threadId: thread.id,
-              turnId,
-              completedAt: now,
-              checkpointRef: CheckpointRef.makeUnsafe(`provider-diff:${event.eventId}`),
-              status: "missing",
-              files: [],
-              assistantMessageId,
-              checkpointTurnCount: maxTurnCount + 1,
-              createdAt: now,
-            });
+            yield* orchestrationEngine
+              .dispatch({
+                type: "thread.turn.diff.complete",
+                commandId: providerCommandId(event, "thread-turn-diff-complete"),
+                threadId: thread.id,
+                turnId,
+                completedAt: now,
+                checkpointRef: CheckpointRef.makeUnsafe(`provider-diff:${event.eventId}`),
+                status: "missing",
+                files: [],
+                assistantMessageId,
+                checkpointTurnCount: maxTurnCount + 1,
+                createdAt: now,
+              })
+              .pipe(
+                Effect.tapError(() =>
+                  Ref.update(placeholderCheckpointTurnsRef, (seen) => {
+                    if (!seen.has(turnKey)) {
+                      return seen;
+                    }
+                    const next = new Set(seen);
+                    next.delete(turnKey);
+                    return next;
+                  }),
+                ),
+              );
           }
         }
       }

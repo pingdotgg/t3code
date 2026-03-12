@@ -84,6 +84,7 @@ function isCheckpointTemporarilyUnavailable(error: unknown): boolean {
   const message = asCheckpointErrorMessage(error).toLowerCase();
   return (
     message.includes("exceeds current turn count") ||
+    message.includes("checkpoint ref is unavailable for turn") ||
     message.includes("checkpoint is unavailable for turn") ||
     message.includes("filesystem checkpoint is unavailable")
   );
