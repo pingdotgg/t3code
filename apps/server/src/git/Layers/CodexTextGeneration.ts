@@ -10,6 +10,9 @@ import {
   type BranchNameGenerationInput,
   type BranchNameGenerationResult,
   type CommitMessageGenerationResult,
+  type JiraTicketContentGenerationResult,
+  type JiraProgressCommentGenerationResult,
+  type JiraCompletionSummaryGenerationResult,
   type PrContentGenerationResult,
   type TextGenerationShape,
   TextGeneration,
@@ -412,10 +415,114 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     });
   };
 
+  const generateJiraTicketContent: TextGenerationShape["generateJiraTicketContent"] = (input) => {
+    const prompt = [
+      "You create Jira ticket content from conversation context.",
+      "Return a JSON object with keys: summary, description.",
+      "Rules:",
+      "- summary: concise ticket title (imperative, 5-15 words)",
+      "- description: markdown body with context, acceptance criteria, and scope",
+      "",
+      `Project key: ${input.projectKey}`,
+      "",
+      "Conversation context:",
+      limitSection(input.conversationContext, 16_000),
+    ].join("\n");
+
+    return runClaudeJson({
+      operation: "generateCommitMessage",
+      cwd: process.cwd(),
+      prompt,
+      outputSchemaJson: Schema.Struct({
+        summary: Schema.String,
+        description: Schema.String,
+      }),
+    }).pipe(
+      Effect.map(
+        (generated) =>
+          ({
+            summary: generated.summary.trim(),
+            description: generated.description.trim(),
+          }) satisfies JiraTicketContentGenerationResult,
+      ),
+    );
+  };
+
+  const generateJiraProgressComment: TextGenerationShape["generateJiraProgressComment"] = (
+    input,
+  ) => {
+    const prompt = [
+      "You write concise Jira progress comments.",
+      "Return a JSON object with key: comment.",
+      "Rules:",
+      "- Summarize what was accomplished in the conversation",
+      "- Use bullet points for key changes",
+      "- Keep it factual and brief (3-8 bullet points)",
+      "",
+      `Ticket: ${input.ticketKey} - ${input.ticketTitle}`,
+      "",
+      "Recent conversation:",
+      limitSection(input.recentConversation, 16_000),
+    ].join("\n");
+
+    return runClaudeJson({
+      operation: "generateCommitMessage",
+      cwd: process.cwd(),
+      prompt,
+      outputSchemaJson: Schema.Struct({
+        comment: Schema.String,
+      }),
+    }).pipe(
+      Effect.map(
+        (generated) =>
+          ({
+            comment: generated.comment.trim(),
+          }) satisfies JiraProgressCommentGenerationResult,
+      ),
+    );
+  };
+
+  const generateJiraCompletionSummary: TextGenerationShape["generateJiraCompletionSummary"] = (
+    input,
+  ) => {
+    const prompt = [
+      "You write Jira completion summaries for finished work.",
+      "Return a JSON object with key: comment.",
+      "Rules:",
+      "- Summarize the full scope of work completed",
+      "- Include key changes, files modified, and testing notes",
+      "- Use bullet points, keep it factual (5-12 bullet points)",
+      "",
+      `Ticket: ${input.ticketKey} - ${input.ticketTitle}`,
+      "",
+      "Full conversation:",
+      limitSection(input.fullConversation, 24_000),
+    ].join("\n");
+
+    return runClaudeJson({
+      operation: "generateCommitMessage",
+      cwd: process.cwd(),
+      prompt,
+      outputSchemaJson: Schema.Struct({
+        comment: Schema.String,
+      }),
+    }).pipe(
+      Effect.map(
+        (generated) =>
+          ({
+            comment: generated.comment.trim(),
+          }) satisfies JiraCompletionSummaryGenerationResult,
+      ),
+    );
+  };
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
+    generateJiraTicketContent,
+    generateJiraProgressComment,
+    generateJiraCompletionSummary,
   } satisfies TextGenerationShape;
 });
 

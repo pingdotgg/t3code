@@ -52,6 +52,36 @@ export interface BranchNameGenerationResult {
   branch: string;
 }
 
+export interface JiraTicketContentGenerationInput {
+  conversationContext: string;
+  projectKey: string;
+}
+
+export interface JiraTicketContentGenerationResult {
+  summary: string;
+  description: string;
+}
+
+export interface JiraProgressCommentGenerationInput {
+  ticketKey: string;
+  ticketTitle: string;
+  recentConversation: string;
+}
+
+export interface JiraProgressCommentGenerationResult {
+  comment: string;
+}
+
+export interface JiraCompletionSummaryGenerationInput {
+  ticketKey: string;
+  ticketTitle: string;
+  fullConversation: string;
+}
+
+export interface JiraCompletionSummaryGenerationResult {
+  comment: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -84,6 +114,27 @@ export interface TextGenerationShape {
   readonly generateBranchName: (
     input: BranchNameGenerationInput,
   ) => Effect.Effect<BranchNameGenerationResult, TextGenerationError>;
+
+  /**
+   * Generate Jira ticket summary and description from conversation context.
+   */
+  readonly generateJiraTicketContent: (
+    input: JiraTicketContentGenerationInput,
+  ) => Effect.Effect<JiraTicketContentGenerationResult, TextGenerationError>;
+
+  /**
+   * Generate a Jira progress comment from recent conversation.
+   */
+  readonly generateJiraProgressComment: (
+    input: JiraProgressCommentGenerationInput,
+  ) => Effect.Effect<JiraProgressCommentGenerationResult, TextGenerationError>;
+
+  /**
+   * Generate a Jira completion summary from full conversation.
+   */
+  readonly generateJiraCompletionSummary: (
+    input: JiraCompletionSummaryGenerationInput,
+  ) => Effect.Effect<JiraCompletionSummaryGenerationResult, TextGenerationError>;
 }
 
 /**

@@ -47,6 +47,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
+import { JiraManager } from "./jira/Services/JiraManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
@@ -236,6 +237,7 @@ export type ServerCoreRuntimeServices =
 export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
   | GitManager
+  | JiraManager
   | GitCore
   | GitHubCli
   | TerminalManager
@@ -275,6 +277,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const availableEditors = resolveAvailableEditors();
 
   const gitManager = yield* GitManager;
+  const jiraManager = yield* JiraManager;
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
@@ -895,6 +898,46 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           limit: 30,
         });
         return { pullRequests };
+      }
+
+      case WS_METHODS.jiraViewIssue: {
+        const body = stripRequestTag(request.body);
+        return yield* jiraManager.viewIssue(body);
+      }
+
+      case WS_METHODS.jiraCreateIssue: {
+        const body = stripRequestTag(request.body);
+        return yield* jiraManager.createIssue(body);
+      }
+
+      case WS_METHODS.jiraMoveIssue: {
+        const body = stripRequestTag(request.body);
+        return yield* jiraManager.moveIssue(body);
+      }
+
+      case WS_METHODS.jiraAddComment: {
+        const body = stripRequestTag(request.body);
+        return yield* jiraManager.addComment(body);
+      }
+
+      case WS_METHODS.jiraListIssues: {
+        const body = stripRequestTag(request.body);
+        return yield* jiraManager.listIssues(body);
+      }
+
+      case WS_METHODS.jiraGenerateTicketContent: {
+        const body = stripRequestTag(request.body);
+        return yield* jiraManager.generateTicketContent(body);
+      }
+
+      case WS_METHODS.jiraGenerateProgressComment: {
+        const body = stripRequestTag(request.body);
+        return yield* jiraManager.generateProgressComment(body);
+      }
+
+      case WS_METHODS.jiraGenerateCompletionSummary: {
+        const body = stripRequestTag(request.body);
+        return yield* jiraManager.generateCompletionSummary(body);
       }
 
       case WS_METHODS.terminalOpen: {

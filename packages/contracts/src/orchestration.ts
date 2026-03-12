@@ -1,4 +1,5 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
+import { LinkedJiraTicket } from "./jira";
 import { ProviderModelOptions } from "./model";
 import {
   ApprovalRequestId,
@@ -288,6 +289,7 @@ export const OrchestrationThread = Schema.Struct({
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
+  linkedJiraTicket: Schema.NullOr(LinkedJiraTicket).pipe(Schema.withDecodingDefault(() => null)),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
@@ -355,6 +357,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  linkedJiraTicket: Schema.optional(Schema.NullOr(LinkedJiraTicket)),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -640,6 +643,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  linkedJiraTicket: Schema.optional(Schema.NullOr(LinkedJiraTicket)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -655,6 +659,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  linkedJiraTicket: Schema.optional(Schema.NullOr(LinkedJiraTicket)),
   updatedAt: IsoDateTime,
 });
 

@@ -133,6 +133,19 @@ export function createWsNativeApi(): NativeApi {
         window.open(url, "_blank", "noopener,noreferrer");
       },
     },
+    jira: {
+      viewIssue: (input) => transport.request(WS_METHODS.jiraViewIssue, input),
+      createIssue: (input) => transport.request(WS_METHODS.jiraCreateIssue, input),
+      moveIssue: (input) => transport.request(WS_METHODS.jiraMoveIssue, input),
+      addComment: (input) => transport.request(WS_METHODS.jiraAddComment, input),
+      listIssues: (input) => transport.request(WS_METHODS.jiraListIssues, input),
+      generateTicketContent: (input) =>
+        transport.request(WS_METHODS.jiraGenerateTicketContent, input),
+      generateProgressComment: (input) =>
+        transport.request(WS_METHODS.jiraGenerateProgressComment, input),
+      generateCompletionSummary: (input) =>
+        transport.request(WS_METHODS.jiraGenerateCompletionSummary, input),
+    },
     git: {
       pull: (input) => transport.request(WS_METHODS.gitPull, input),
       status: (input) => transport.request(WS_METHODS.gitStatus, input),

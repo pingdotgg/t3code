@@ -74,6 +74,7 @@ function makeSnapshot(input: {
           },
         ],
         session: null,
+        linkedJiraTicket: null,
       },
     ],
   };

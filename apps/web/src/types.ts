@@ -4,6 +4,7 @@ import type {
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
+  LinkedJiraTicket,
   ThreadId,
   ProjectId,
   TurnId,
@@ -103,6 +104,7 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  linkedJiraTicket: LinkedJiraTicket | null;
 }
 
 export interface ThreadSession {

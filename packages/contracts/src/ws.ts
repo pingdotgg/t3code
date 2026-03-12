@@ -28,6 +28,16 @@ import {
   GitStatusInput,
 } from "./git";
 import {
+  JiraIssueViewInput,
+  JiraIssueCreateInput,
+  JiraIssueMoveInput,
+  JiraCommentAddInput,
+  JiraIssueListInput,
+  JiraGenerateTicketContentInput,
+  JiraGenerateProgressCommentInput,
+  JiraGenerateCompletionSummaryInput,
+} from "./jira";
+import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
@@ -70,6 +80,16 @@ export const WS_METHODS = {
   gitPreparePullRequestThread: "git.preparePullRequestThread",
   gitDiffBranch: "git.diffBranch",
   gitListOpenPrs: "git.listOpenPrs",
+
+  // Jira methods
+  jiraViewIssue: "jira.viewIssue",
+  jiraCreateIssue: "jira.createIssue",
+  jiraMoveIssue: "jira.moveIssue",
+  jiraAddComment: "jira.addComment",
+  jiraListIssues: "jira.listIssues",
+  jiraGenerateTicketContent: "jira.generateTicketContent",
+  jiraGenerateProgressComment: "jira.generateProgressComment",
+  jiraGenerateCompletionSummary: "jira.generateCompletionSummary",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -138,6 +158,16 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.gitPreparePullRequestThread, GitPreparePullRequestThreadInput),
   tagRequestBody(WS_METHODS.gitDiffBranch, GitDiffBranchInput),
   tagRequestBody(WS_METHODS.gitListOpenPrs, GitListOpenPrsInput),
+
+  // Jira methods
+  tagRequestBody(WS_METHODS.jiraViewIssue, JiraIssueViewInput),
+  tagRequestBody(WS_METHODS.jiraCreateIssue, JiraIssueCreateInput),
+  tagRequestBody(WS_METHODS.jiraMoveIssue, JiraIssueMoveInput),
+  tagRequestBody(WS_METHODS.jiraAddComment, JiraCommentAddInput),
+  tagRequestBody(WS_METHODS.jiraListIssues, JiraIssueListInput),
+  tagRequestBody(WS_METHODS.jiraGenerateTicketContent, JiraGenerateTicketContentInput),
+  tagRequestBody(WS_METHODS.jiraGenerateProgressComment, JiraGenerateProgressCommentInput),
+  tagRequestBody(WS_METHODS.jiraGenerateCompletionSummary, JiraGenerateCompletionSummaryInput),
 
   // Terminal methods
   tagRequestBody(WS_METHODS.terminalOpen, TerminalOpenInput),

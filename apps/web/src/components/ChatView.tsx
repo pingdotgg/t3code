@@ -351,6 +351,7 @@ function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+    linkedJiraTicket: null,
   };
 }
 
