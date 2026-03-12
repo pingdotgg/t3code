@@ -31,12 +31,12 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { isElectron } from "../env";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import { stripDiffSearchParams } from "../diffRouteSearch";
 import {
   type ComposerTrigger,
   detectComposerTrigger,
@@ -125,7 +125,7 @@ import {
   useComposerThreadDraft,
 } from "../composerDraftStore";
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
-import { selectThreadRightPanelState, useRightPanelStateStore } from "../rightPanelStateStore";
+import type { RightPanelKind } from "../rightPanelStateStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -173,9 +173,15 @@ const SCRIPT_TERMINAL_ROWS = 30;
 
 interface ChatViewProps {
   threadId: ThreadId;
+  selectedSidePanel: RightPanelKind | null;
+  onSelectSidePanel: (panel: RightPanelKind | null) => void;
 }
 
-export default function ChatView({ threadId }: ChatViewProps) {
+export default function ChatView({
+  threadId,
+  selectedSidePanel,
+  onSelectSidePanel,
+}: ChatViewProps) {
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
   const markThreadVisited = useStore((store) => store.markThreadVisited);
@@ -184,14 +190,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const { settings } = useAppSettings();
   const navigate = useNavigate();
-  const rawSearch = useSearch({
-    strict: false,
-    select: (params) => parseDiffRouteSearch(params),
-  });
-  const rightPanelState = useRightPanelStateStore((state) =>
-    selectThreadRightPanelState(state.rightPanelStateByThreadId, threadId),
-  );
-  const setSelectedPanel = useRightPanelStateStore((state) => state.setSelectedPanel);
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
@@ -1000,23 +998,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const browserPanelShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "browser.toggle"),
     [keybindings],
-  );
-  const forcedSelectedSidePanel = rawSearch.diff === "1" || rawSearch.diffTurnId ? "diff" : null;
-  const selectedSidePanel = forcedSelectedSidePanel ?? rightPanelState.selectedPanel;
-  const onSelectSidePanel = useCallback(
-    (panel: "diff" | "browser" | null) => {
-      setSelectedPanel(threadId, panel);
-      void navigate({
-        to: "/$threadId",
-        params: { threadId },
-        replace: true,
-        search: (previous) => {
-          const rest = stripDiffSearchParams(previous);
-          return rest;
-        },
-      });
-    },
-    [navigate, setSelectedPanel, threadId],
   );
   const onToggleDiff = useCallback(() => {
     onSelectSidePanel(selectedSidePanel === "diff" ? null : "diff");
@@ -3129,7 +3110,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const expandedImageItem = expandedImage ? expandedImage.images[expandedImage.index] : null;
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
-      setSelectedPanel(threadId, "diff");
+      onSelectSidePanel("diff");
       void navigate({
         to: "/$threadId",
         params: { threadId },
@@ -3141,7 +3122,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         },
       });
     },
-    [navigate, setSelectedPanel, threadId],
+    [navigate, onSelectSidePanel, threadId],
   );
   const onRevertUserMessage = (messageId: MessageId) => {
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);

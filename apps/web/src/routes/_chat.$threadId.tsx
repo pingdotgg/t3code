@@ -430,6 +430,16 @@ function ChatThreadRouteView() {
   const reopenPanel = useCallback(() => {
     openPanel(rightPanelState.lastSelectedPanel);
   }, [openPanel, rightPanelState.lastSelectedPanel]);
+  const handleSelectSidePanel = useCallback(
+    (panel: RightPanelKind | null) => {
+      if (panel === null) {
+        closePanel();
+        return;
+      }
+      openPanel(panel);
+    },
+    [closePanel, openPanel],
+  );
   const createTab = useCallback(() => {
     const nextTab = createBrowserTab();
     updateThreadBrowserState(threadId, (state) => ({
@@ -696,7 +706,12 @@ function ChatThreadRouteView() {
     return (
       <>
         <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-          <ChatView key={threadId} threadId={threadId} />
+          <ChatView
+            key={threadId}
+            threadId={threadId}
+            selectedSidePanel={selectedPanel}
+            onSelectSidePanel={handleSelectSidePanel}
+          />
         </SidebarInset>
         <RightPanelInlineSidebar
           panelOpen={selectedPanel !== null}
@@ -712,7 +727,12 @@ function ChatThreadRouteView() {
   return (
     <>
       <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-        <ChatView key={threadId} threadId={threadId} />
+        <ChatView
+          key={threadId}
+          threadId={threadId}
+          selectedSidePanel={selectedPanel}
+          onSelectSidePanel={handleSelectSidePanel}
+        />
       </SidebarInset>
       <RightPanelSheet panelOpen={selectedPanel !== null} onClosePanel={closePanel}>
         {selectedPanel === null ? null : selectedPanel === "browser" ? (
