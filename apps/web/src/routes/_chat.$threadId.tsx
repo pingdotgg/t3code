@@ -1,10 +1,14 @@
 import { ThreadId } from "@t3tools/contracts";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, stripSearchParams, useNavigate } from "@tanstack/react-router";
 import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 
 import ChatView from "../components/ChatView";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  type DiffRouteSearch,
+  parseDiffRouteSearch,
+  stripDiffSearchParams,
+} from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
@@ -16,6 +20,36 @@ const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
 const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
+const CLEAR_DIFF_SEARCH_VALUE = "1";
+
+type ChatThreadRouteSearch = DiffRouteSearch & {
+  clearDiff?: typeof CLEAR_DIFF_SEARCH_VALUE;
+};
+
+function shouldClearDiff(value: unknown): boolean {
+  return value === CLEAR_DIFF_SEARCH_VALUE || value === 1 || value === true;
+}
+
+function parseChatThreadRouteSearch(search: Record<string, unknown>): ChatThreadRouteSearch {
+  const parsed = parseDiffRouteSearch(search);
+  return shouldClearDiff(search.clearDiff)
+    ? { ...parsed, clearDiff: CLEAR_DIFF_SEARCH_VALUE }
+    : parsed;
+}
+
+function retainDiffUnlessCleared({
+  search,
+  next,
+}: {
+  search: ChatThreadRouteSearch;
+  next: (newSearch: ChatThreadRouteSearch) => ChatThreadRouteSearch;
+}): ChatThreadRouteSearch {
+  const result = next(search);
+  if (result.clearDiff === CLEAR_DIFF_SEARCH_VALUE || "diff" in result) {
+    return result;
+  }
+  return search.diff ? { ...result, diff: search.diff } : result;
+}
 
 const DiffPanelSheet = (props: {
   children: ReactNode;
@@ -166,7 +200,12 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$threadId",
       params: { threadId },
-      search: { diff: undefined },
+      search: (previous) => {
+        return {
+          ...stripDiffSearchParams(previous),
+          clearDiff: CLEAR_DIFF_SEARCH_VALUE,
+        };
+      },
     });
   }, [navigate, threadId]);
   const openDiff = useCallback(() => {
@@ -221,6 +260,12 @@ function ChatThreadRouteView() {
 }
 
 export const Route = createFileRoute("/_chat/$threadId")({
-  validateSearch: (search) => parseDiffRouteSearch(search),
+  validateSearch: (search) => parseChatThreadRouteSearch(search),
+  search: {
+    middlewares: [
+      retainDiffUnlessCleared,
+      stripSearchParams<ChatThreadRouteSearch>(["clearDiff"]),
+    ],
+  },
   component: ChatThreadRouteView,
 });
