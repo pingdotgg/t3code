@@ -50,4 +50,31 @@ describe("browserStateStore actions", () => {
     expect(afterEntry).toBe(beforeEntry);
     expect(afterEntry?.tabs).toBe(beforeEntry?.tabs);
   });
+
+  it("drops malformed persisted tabs without throwing", () => {
+    expect(() => {
+      useBrowserStateStore.getState().updateThreadBrowserState(THREAD_ID, () => ({
+        activeTabId: "bad-tab",
+        tabs: [
+          { id: null, url: "http://localhost:3000" } as unknown as ReturnType<
+            typeof createBrowserTab
+          >,
+        ],
+        inputValue: "",
+        focusRequestId: 0,
+      }));
+    }).not.toThrow();
+
+    const browserState = selectThreadBrowserState(
+      useBrowserStateStore.getState().browserStateByThreadId,
+      THREAD_ID,
+    );
+
+    expect(browserState).toEqual({
+      activeTabId: null,
+      tabs: [],
+      inputValue: "",
+      focusRequestId: 0,
+    });
+  });
 });

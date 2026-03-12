@@ -37,7 +37,12 @@ function threadBrowserStateEqual(left: ThreadBrowserState, right: ThreadBrowserS
 }
 
 function isValidBrowserTab(tab: BrowserTab): boolean {
-  return tab.id.trim().length > 0 && typeof tab.url === "string" && tab.url.length > 0;
+  return (
+    typeof tab.id === "string" &&
+    tab.id.trim().length > 0 &&
+    typeof tab.url === "string" &&
+    tab.url.length > 0
+  );
 }
 
 function normalizeThreadBrowserState(state: ThreadBrowserState): ThreadBrowserState {
