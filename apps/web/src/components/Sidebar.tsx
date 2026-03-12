@@ -93,6 +93,7 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   isContextMenuPointerDown,
+  isMacOS,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -927,6 +928,7 @@ export default function Sidebar() {
         isContextMenuPointerDown({
           button: event.button,
           ctrlKey: event.ctrlKey,
+          isMac: isMacOS(),
         })
       ) {
         // Keep context-menu gestures from arming the sortable drag sensor.

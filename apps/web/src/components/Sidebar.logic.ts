@@ -38,9 +38,20 @@ export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
 }
 
-export function isContextMenuPointerDown(input: { button: number; ctrlKey: boolean }): boolean {
+export function isMacOS(): boolean {
+  const nav = window.navigator as Navigator & {
+    userAgentData?: { platform: string };
+  };
+  return nav.userAgentData ? nav.userAgentData.platform === "macOS" : /Mac/i.test(nav.userAgent);
+}
+
+export function isContextMenuPointerDown(input: {
+  button: number;
+  ctrlKey: boolean;
+  isMac: boolean;
+}): boolean {
   if (input.button === 2) return true;
-  return input.button === 0 && input.ctrlKey;
+  return input.isMac && input.button === 0 && input.ctrlKey;
 }
 
 export function resolveThreadRowClassName(input: {
