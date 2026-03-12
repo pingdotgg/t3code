@@ -37,6 +37,7 @@ import { KeybindingRule } from "./keybindings";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
 import { ServerConfigUpdatedPayload } from "./server";
+import { OpenWorkspaceTargetInput } from "./openTarget";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
 
@@ -50,6 +51,7 @@ export const WS_METHODS = {
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
+  shellOpenWorkspace: "shell.openWorkspace",
 
   // Git methods
   gitPull: "git.pull",
@@ -114,6 +116,7 @@ const WebSocketRequestBody = Schema.Union([
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),
+  tagRequestBody(WS_METHODS.shellOpenWorkspace, OpenWorkspaceTargetInput),
 
   // Git methods
   tagRequestBody(WS_METHODS.gitPull, GitPullInput),

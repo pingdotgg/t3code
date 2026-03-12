@@ -1,7 +1,12 @@
-import { EDITORS, type EditorId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import {
+  EDITORS,
+  type EditorId,
+  type ResolvedKeybindingsConfig,
+  type WorkspaceOpenTargetId,
+} from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
-import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
+import { ChevronDownIcon, FolderClosedIcon, TerminalIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
@@ -14,18 +19,20 @@ const LAST_EDITOR_KEY = "t3code:last-editor";
 export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
+  availableOpenTargets,
   openInCwd,
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
+  availableOpenTargets: ReadonlyArray<WorkspaceOpenTargetId>;
   openInCwd: string | null;
 }) {
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
-    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
+    return EDITORS.some((editor) => editor.id === stored) ? (stored as EditorId) : EDITORS[0].id;
   });
 
-  const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: EditorId }>>(
+  const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: WorkspaceOpenTargetId }>>(
     () => [
       {
         label: "Cursor",
@@ -43,6 +50,11 @@ export const OpenInPicker = memo(function OpenInPicker({
         value: "zed",
       },
       {
+        label: "Ghostty",
+        Icon: TerminalIcon,
+        value: "ghostty",
+      },
+      {
         label: isMacPlatform(navigator.platform)
           ? "Finder"
           : isWindowsPlatform(navigator.platform)
@@ -54,15 +66,23 @@ export const OpenInPicker = memo(function OpenInPicker({
     ],
     [],
   );
-  const options = useMemo(
-    () => allOptions.filter((option) => availableEditors.includes(option.value)),
+  const openTargetOptions = useMemo(
+    () => allOptions.filter((option) => availableOpenTargets.includes(option.value)),
+    [allOptions, availableOpenTargets],
+  );
+  const editorOptions = useMemo(
+    () =>
+      allOptions.filter(
+        (option) =>
+          option.value !== "ghostty" && availableEditors.includes(option.value as EditorId),
+      ),
     [allOptions, availableEditors],
   );
 
-  const effectiveEditor = options.some((option) => option.value === lastEditor)
+  const effectiveEditor = editorOptions.some((option) => option.value === lastEditor)
     ? lastEditor
-    : (options[0]?.value ?? null);
-  const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
+    : ((editorOptions[0]?.value ?? null) as EditorId | null);
+  const primaryOption = editorOptions.find(({ value }) => value === effectiveEditor) ?? null;
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
@@ -74,7 +94,21 @@ export const OpenInPicker = memo(function OpenInPicker({
       localStorage.setItem(LAST_EDITOR_KEY, editor);
       setLastEditor(editor);
     },
-    [effectiveEditor, openInCwd, setLastEditor],
+    [effectiveEditor, openInCwd],
+  );
+
+  const openTarget = useCallback(
+    (target: WorkspaceOpenTargetId) => {
+      const api = readNativeApi();
+      if (!api || !openInCwd) return;
+      if (target === "ghostty") {
+        void api.shell.openWorkspace(openInCwd, target);
+        return;
+      }
+
+      openInEditor(target);
+    },
+    [openInCwd, openInEditor],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -83,18 +117,16 @@ export const OpenInPicker = memo(function OpenInPicker({
   );
 
   useEffect(() => {
-    const handler = (e: globalThis.KeyboardEvent) => {
-      const api = readNativeApi();
-      if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!api || !openInCwd) return;
-      if (!effectiveEditor) return;
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (!isOpenFavoriteEditorShortcut(event, keybindings)) return;
+      if (!openInCwd || !effectiveEditor) return;
 
-      e.preventDefault();
-      void api.shell.openInEditor(openInCwd, effectiveEditor);
+      event.preventDefault();
+      openInEditor(effectiveEditor);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [effectiveEditor, keybindings, openInCwd]);
+  }, [effectiveEditor, keybindings, openInCwd, openInEditor]);
 
   return (
     <Group aria-label="Subscription actions">
@@ -111,13 +143,22 @@ export const OpenInPicker = memo(function OpenInPicker({
       </Button>
       <GroupSeparator className="hidden @sm/header-actions:block" />
       <Menu>
-        <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
+        <MenuTrigger
+          render={
+            <Button
+              aria-label="Open options"
+              data-open-options-trigger="true"
+              size="icon-xs"
+              variant="outline"
+            />
+          }
+        >
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
-          {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
-          {options.map(({ label, Icon, value }) => (
-            <MenuItem key={value} onClick={() => openInEditor(value)}>
+          {openTargetOptions.length === 0 && <MenuItem disabled>No open targets found</MenuItem>}
+          {openTargetOptions.map(({ label, Icon, value }) => (
+            <MenuItem key={value} onClick={() => openTarget(value)}>
               <Icon aria-hidden="true" className="text-muted-foreground" />
               {label}
               {value === effectiveEditor && openFavoriteEditorShortcutLabel && (

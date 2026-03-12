@@ -3,6 +3,7 @@ import {
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
+  type WorkspaceOpenTargetId,
 } from "@t3tools/contracts";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
@@ -24,6 +25,7 @@ interface ChatHeaderProps {
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
+  availableOpenTargets: ReadonlyArray<WorkspaceOpenTargetId>;
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
@@ -44,6 +46,7 @@ export const ChatHeader = memo(function ChatHeader({
   preferredScriptId,
   keybindings,
   availableEditors,
+  availableOpenTargets,
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
@@ -90,6 +93,7 @@ export const ChatHeader = memo(function ChatHeader({
           <OpenInPicker
             keybindings={keybindings}
             availableEditors={availableEditors}
+            availableOpenTargets={availableOpenTargets}
             openInCwd={openInCwd}
           />
         )}

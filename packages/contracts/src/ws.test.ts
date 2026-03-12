@@ -73,6 +73,20 @@ it.effect("accepts git.preparePullRequestThread requests", () =>
   }),
 );
 
+it.effect("accepts shell.openWorkspace requests", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeWebSocketRequest({
+      id: "req-open-workspace-1",
+      body: {
+        _tag: WS_METHODS.shellOpenWorkspace,
+        cwd: "/repo",
+        target: "ghostty",
+      },
+    });
+    assert.strictEqual(parsed.body._tag, WS_METHODS.shellOpenWorkspace);
+  }),
+);
+
 it.effect("accepts typed websocket push envelopes with sequence", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeWsResponse({

@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
 const showContextMenuFallbackMock =
   vi.fn<
@@ -115,6 +116,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  if (originalWindowDescriptor) {
+    Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+  } else {
+    Reflect.deleteProperty(globalThis, "window");
+  }
 });
 
 describe("wsNativeApi", () => {
@@ -317,6 +323,32 @@ describe("wsNativeApi", () => {
       cwd: "/tmp/project",
       relativePath: "plan.md",
       contents: "# Plan\n",
+    });
+  });
+
+  it("forwards shell.openInEditor requests to the websocket shell method", async () => {
+    requestMock.mockResolvedValue(undefined);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.shell.openInEditor("/tmp/project", "vscode");
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.shellOpenInEditor, {
+      cwd: "/tmp/project",
+      editor: "vscode",
+    });
+  });
+
+  it("forwards shell.openWorkspace requests to the websocket shell method", async () => {
+    requestMock.mockResolvedValue(undefined);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.shell.openWorkspace("/tmp/project", "ghostty");
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.shellOpenWorkspace, {
+      cwd: "/tmp/project",
+      target: "ghostty",
     });
   });
 
