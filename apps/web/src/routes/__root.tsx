@@ -378,7 +378,9 @@ function DesktopTrayBootstrap() {
     bridge.updateTrayState({
       threads: threads.map((thread) => {
         const lastVisitedAt = thread.lastVisitedAt ? Date.parse(thread.lastVisitedAt) : NaN;
-        const latestTurnCompletedAt = thread.latestTurn?.completedAt ? Date.parse(thread.latestTurn.completedAt) : NaN;
+        const latestTurnCompletedAt = thread.latestTurn?.completedAt
+          ? Date.parse(thread.latestTurn.completedAt)
+          : NaN;
         console.log(thread.id, latestTurnCompletedAt, lastVisitedAt);
         return {
           id: thread.id,
