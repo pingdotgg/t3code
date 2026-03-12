@@ -258,3 +258,70 @@ describe("store read model sync", () => {
     expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
   });
 });
+
+describe("sidebar cache hydration", () => {
+  it("syncServerReadModel replaces cached threads and sets threadsHydrated", () => {
+    const cachedState: AppState = {
+      projects: [
+        {
+          id: ProjectId.makeUnsafe("stale-project"),
+          name: "Stale Project",
+          cwd: "/tmp/stale",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          scripts: [],
+        },
+      ],
+      threads: [
+        makeThread({
+          id: ThreadId.makeUnsafe("stale-thread"),
+          projectId: ProjectId.makeUnsafe("stale-project"),
+          title: "Stale Thread",
+        }),
+      ],
+      threadsHydrated: false,
+    };
+
+    const readModel = makeReadModel(
+      makeReadModelThread({ title: "Fresh Thread" }),
+    );
+    const next = syncServerReadModel(cachedState, readModel);
+
+    expect(next.threadsHydrated).toBe(true);
+    expect(next.threads).toHaveLength(1);
+    expect(next.threads[0]?.title).toBe("Fresh Thread");
+  });
+
+  it("cached threads with empty defaults are valid input to syncServerReadModel", () => {
+    const cachedState: AppState = {
+      projects: [
+        {
+          id: ProjectId.makeUnsafe("project-1"),
+          name: "Project",
+          cwd: "/tmp/project",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          expanded: true,
+          scripts: [],
+        },
+      ],
+      threads: [
+        makeThread({
+          session: null,
+          messages: [],
+          activities: [],
+          proposedPlans: [],
+          turnDiffSummaries: [],
+          latestTurn: null,
+        }),
+      ],
+      threadsHydrated: false,
+    };
+
+    const readModel = makeReadModel(makeReadModelThread());
+    const next = syncServerReadModel(cachedState, readModel);
+
+    expect(next.threadsHydrated).toBe(true);
+    expect(next.threads[0]?.session).toBeNull();
+    expect(next.threads[0]?.messages).toEqual([]);
+  });
+});
