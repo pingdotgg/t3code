@@ -33,6 +33,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
+import { openOrReuseProjectDraftThread as openProjectDraftThread } from "~/lib/projectDraftThreads";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { isElectron } from "../env";
@@ -386,42 +387,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setPullRequestDialogState(null);
   }, []);
 
-  const openOrReuseProjectDraftThread = useCallback(
+  const openPreparedProjectDraftThread = useCallback(
     async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
       if (!activeProject) {
         throw new Error("No active project is available for this pull request.");
       }
-      const storedDraftThread = getDraftThreadByProjectId(activeProject.id);
-      if (storedDraftThread) {
-        setDraftThreadContext(storedDraftThread.threadId, input);
-        setProjectDraftThreadId(activeProject.id, storedDraftThread.threadId, input);
-        if (storedDraftThread.threadId !== threadId) {
-          await navigate({
+      await openProjectDraftThread({
+        projectId: activeProject.id,
+        currentThreadId: threadId,
+        options: input,
+        getDraftThreadByProjectId,
+        getDraftThread,
+        setDraftThreadContext,
+        setProjectDraftThreadId,
+        clearProjectDraftThreadId,
+        navigateToThread: (nextThreadId) =>
+          navigate({
             to: "/$threadId",
-            params: { threadId: storedDraftThread.threadId },
-          });
-        }
-        return;
-      }
-
-      const activeDraftThread = getDraftThread(threadId);
-      if (!isServerThread && activeDraftThread?.projectId === activeProject.id) {
-        setDraftThreadContext(threadId, input);
-        setProjectDraftThreadId(activeProject.id, threadId, input);
-        return;
-      }
-
-      clearProjectDraftThreadId(activeProject.id);
-      const nextThreadId = newThreadId();
-      setProjectDraftThreadId(activeProject.id, nextThreadId, {
-        createdAt: new Date().toISOString(),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
-        interactionMode: DEFAULT_INTERACTION_MODE,
-        ...input,
-      });
-      await navigate({
-        to: "/$threadId",
-        params: { threadId: nextThreadId },
+            params: { threadId: nextThreadId },
+          }),
       });
     },
     [
@@ -429,7 +413,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       clearProjectDraftThreadId,
       getDraftThread,
       getDraftThreadByProjectId,
-      isServerThread,
       navigate,
       setDraftThreadContext,
       setProjectDraftThreadId,
@@ -439,14 +422,52 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const handlePreparedPullRequestThread = useCallback(
     async (input: { branch: string; worktreePath: string | null }) => {
-      await openOrReuseProjectDraftThread({
+      await openPreparedProjectDraftThread({
         branch: input.branch,
         worktreePath: input.worktreePath,
         envMode: input.worktreePath ? "worktree" : "local",
       });
     },
-    [openOrReuseProjectDraftThread],
+    [openPreparedProjectDraftThread],
   );
+
+  const handleNewThreadSlashCommand = useCallback(async () => {
+    if (!activeProject) {
+      return;
+    }
+
+    await openProjectDraftThread({
+      projectId: activeProject.id,
+      currentThreadId: threadId,
+      options: {
+        branch: activeThread?.branch ?? null,
+        worktreePath: activeThread?.worktreePath ?? null,
+        envMode: draftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+      },
+      getDraftThreadByProjectId,
+      getDraftThread,
+      setDraftThreadContext,
+      setProjectDraftThreadId,
+      clearProjectDraftThreadId,
+      navigateToThread: (nextThreadId) =>
+        navigate({
+          to: "/$threadId",
+          params: { threadId: nextThreadId },
+        }),
+    });
+  }, [
+    activeProject,
+    activeThread?.branch,
+    activeThread?.worktreePath,
+    clearProjectDraftThreadId,
+    draftThread?.envMode,
+    getDraftThread,
+    getDraftThreadByProjectId,
+    navigate,
+    setDraftThreadContext,
+    setProjectDraftThreadId,
+    threadId,
+  ]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -916,6 +937,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           command: "default",
           label: "/default",
           description: "Switch this thread back to normal chat mode",
+        },
+        {
+          id: "slash:new",
+          type: "slash-command",
+          command: "new",
+          label: "/new",
+          description: "Start a new thread in this project",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const query = composerTrigger.query.trim().toLowerCase();
@@ -2172,12 +2200,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const standaloneSlashCommand =
       composerImages.length === 0 ? parseStandaloneComposerSlashCommand(trimmed) : null;
     if (standaloneSlashCommand) {
-      await handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
       setComposerTrigger(null);
+      if (standaloneSlashCommand === "new") {
+        await handleNewThreadSlashCommand();
+      } else {
+        await handleInteractionModeChange(standaloneSlashCommand);
+      }
       return;
     }
     if (!trimmed && composerImages.length === 0) return;
@@ -2961,6 +2993,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           return;
         }
+        if (item.command === "new") {
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: expectedToken,
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+            void handleNewThreadSlashCommand();
+          }
+          return;
+        }
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: expectedToken,
@@ -2980,6 +3022,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [
       applyPromptReplacement,
+      handleNewThreadSlashCommand,
       handleInteractionModeChange,
       onProviderModelSelect,
       resolveActiveComposerTrigger,

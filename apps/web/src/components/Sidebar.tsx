@@ -27,7 +27,6 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
@@ -40,12 +39,13 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
-import { isMacPlatform, newCommandId, newProjectId, newThreadId } from "../lib/utils";
+import { isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { openOrReuseProjectDraftThread } from "../lib/projectDraftThreads";
 import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
@@ -393,59 +393,31 @@ export default function Sidebar() {
         envMode?: DraftThreadEnvMode;
       },
     ): Promise<void> => {
-      const hasBranchOption = options?.branch !== undefined;
-      const hasWorktreePathOption = options?.worktreePath !== undefined;
-      const hasEnvModeOption = options?.envMode !== undefined;
-      const storedDraftThread = getDraftThreadByProjectId(projectId);
-      if (storedDraftThread) {
-        return (async () => {
-          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
-            setDraftThreadContext(storedDraftThread.threadId, {
-              ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-              ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-              ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-            });
-          }
-          setProjectDraftThreadId(projectId, storedDraftThread.threadId);
-          if (routeThreadId === storedDraftThread.threadId) {
-            return;
-          }
-          await navigate({
+      return openOrReuseProjectDraftThread({
+        projectId,
+        currentThreadId: routeThreadId ?? null,
+        ...(options
+          ? {
+              options: {
+                ...(options.branch !== undefined ? { branch: options.branch } : {}),
+                ...(options.worktreePath !== undefined
+                  ? { worktreePath: options.worktreePath }
+                  : {}),
+                ...(options.envMode !== undefined ? { envMode: options.envMode } : {}),
+              },
+            }
+          : {}),
+        getDraftThreadByProjectId,
+        getDraftThread,
+        setDraftThreadContext,
+        setProjectDraftThreadId,
+        clearProjectDraftThreadId,
+        navigateToThread: (threadId) =>
+          navigate({
             to: "/$threadId",
-            params: { threadId: storedDraftThread.threadId },
-          });
-        })();
-      }
-      clearProjectDraftThreadId(projectId);
-
-      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
-      if (activeDraftThread && routeThreadId && activeDraftThread.projectId === projectId) {
-        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
-          setDraftThreadContext(routeThreadId, {
-            ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-            ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-          });
-        }
-        setProjectDraftThreadId(projectId, routeThreadId);
-        return Promise.resolve();
-      }
-      const threadId = newThreadId();
-      const createdAt = new Date().toISOString();
-      return (async () => {
-        setProjectDraftThreadId(projectId, threadId, {
-          createdAt,
-          branch: options?.branch ?? null,
-          worktreePath: options?.worktreePath ?? null,
-          envMode: options?.envMode ?? "local",
-          runtimeMode: DEFAULT_RUNTIME_MODE,
-        });
-
-        await navigate({
-          to: "/$threadId",
-          params: { threadId },
-        });
-      })();
+            params: { threadId },
+          }),
+      }).then(() => undefined);
     },
     [
       clearProjectDraftThreadId,

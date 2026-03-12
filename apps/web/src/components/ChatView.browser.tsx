@@ -1048,6 +1048,49 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("starts a fresh draft thread from the composer /new slash command", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/new ");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-slash-new-test" as MessageId,
+        targetText: "slash new thread test",
+      }),
+    });
+
+    try {
+      const sendButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]'),
+        "Unable to find the composer send button.",
+      );
+
+      sendButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID after /new.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().projectDraftThreadIdByProjectId[PROJECT_ID]).toBe(
+        newThreadId,
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe("");
+      expect(
+        wsRequests.some((request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand),
+      ).toBe(false);
+
+      await expect
+        .element(page.getByText("Send a message to start the conversation."))
+        .toBeInTheDocument();
+      await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps long proposed plans lightweight until the user expands them", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
