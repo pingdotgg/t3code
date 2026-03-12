@@ -3,29 +3,29 @@ name: PR Size
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/pr-size.yml
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: read
 
 jobs:
-  label:
-    name: Label PR size
+  prepare-config:
+    name: Prepare PR size config
     runs-on: ubuntu-24.04
-    concurrency:
-      group: pr-size-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
+    outputs:
+      labels_json: ${{ steps.config.outputs.labels_json }}
     steps:
-      - name: Sync PR size label
+      - id: config
+        name: Build PR size label config
         uses: actions/github-script@v7
         with:
+          result-encoding: string
           script: |
-            const issueNumber = context.payload.pull_request.number;
-            const additions = context.payload.pull_request.additions ?? 0;
-            const deletions = context.payload.pull_request.deletions ?? 0;
-            const changedLines = additions + deletions;
-
             const managedLabels = [
               {
                 name: "size:XS",
@@ -59,31 +59,23 @@ jobs:
               },
             ];
 
-            const managedLabelNames = new Set(managedLabels.map((label) => label.name));
-
-            const resolveSizeLabel = (totalChangedLines) => {
-              if (totalChangedLines < 10) {
-                return "size:XS";
-              }
-
-              if (totalChangedLines < 30) {
-                return "size:S";
-              }
-
-              if (totalChangedLines < 100) {
-                return "size:M";
-              }
-
-              if (totalChangedLines < 500) {
-                return "size:L";
-              }
-
-              if (totalChangedLines < 1000) {
-                return "size:XL";
-              }
-
-              return "size:XXL";
-            };
+            core.setOutput("labels_json", JSON.stringify(managedLabels));
+  sync-label-definitions:
+    name: Sync PR size label definitions
+    needs: prepare-config
+    if: github.event_name != 'pull_request_target'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Ensure PR size labels exist
+        uses: actions/github-script@v7
+        env:
+          PR_SIZE_LABELS_JSON: ${{ needs.prepare-config.outputs.labels_json }}
+        with:
+          script: |
+            const managedLabels = JSON.parse(process.env.PR_SIZE_LABELS_JSON ?? "[]");
 
             for (const label of managedLabels) {
               try {
@@ -125,6 +117,56 @@ jobs:
                 }
               }
             }
+  label:
+    name: Label PR size
+    needs: prepare-config
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: write
+    concurrency:
+      group: pr-size-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Sync PR size label
+        uses: actions/github-script@v7
+        env:
+          PR_SIZE_LABELS_JSON: ${{ needs.prepare-config.outputs.labels_json }}
+        with:
+          script: |
+            const issueNumber = context.payload.pull_request.number;
+            const additions = context.payload.pull_request.additions ?? 0;
+            const deletions = context.payload.pull_request.deletions ?? 0;
+            const changedLines = additions + deletions;
+            const managedLabels = JSON.parse(process.env.PR_SIZE_LABELS_JSON ?? "[]");
+
+            const managedLabelNames = new Set(managedLabels.map((label) => label.name));
+
+            const resolveSizeLabel = (totalChangedLines) => {
+              if (totalChangedLines < 10) {
+                return "size:XS";
+              }
+
+              if (totalChangedLines < 30) {
+                return "size:S";
+              }
+
+              if (totalChangedLines < 100) {
+                return "size:M";
+              }
+
+              if (totalChangedLines < 500) {
+                return "size:L";
+              }
+
+              if (totalChangedLines < 1000) {
+                return "size:XL";
+              }
+
+              return "size:XXL";
+            };
 
             const nextLabelName = resolveSizeLabel(changedLines);
 
