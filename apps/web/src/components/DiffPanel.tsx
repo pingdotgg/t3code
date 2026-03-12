@@ -12,11 +12,12 @@ import {
   useRef,
   useState,
 } from "react";
+import { openInPreferredEditor } from "../editorPreferences";
 import { gitBranchesQueryOptions } from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
-import { preferredTerminalEditor, resolvePathLinkTarget } from "../terminal-links";
+import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
@@ -311,7 +312,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       const api = readNativeApi();
       if (!api) return;
       const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
-      void api.shell.openInEditor(targetPath, preferredTerminalEditor()).catch((error) => {
+      void openInPreferredEditor(api, targetPath).catch((error) => {
         console.warn("Failed to open diff file in editor.", error);
       });
     },
