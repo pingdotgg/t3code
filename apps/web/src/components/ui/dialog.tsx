@@ -2,11 +2,9 @@
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
-import { useEffect } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { useBlockingOverlayStore } from "~/blockingOverlayStore";
 
 const DialogCreateHandle = DialogPrimitive.createHandle;
 
@@ -58,20 +56,6 @@ function DialogPopup({
   showCloseButton?: boolean;
   bottomStickOnMobile?: boolean;
 }) {
-  const incrementBlockingOverlayCount = useBlockingOverlayStore(
-    (store) => store.incrementBlockingOverlayCount,
-  );
-  const decrementBlockingOverlayCount = useBlockingOverlayStore(
-    (store) => store.decrementBlockingOverlayCount,
-  );
-
-  useEffect(() => {
-    incrementBlockingOverlayCount();
-    return () => {
-      decrementBlockingOverlayCount();
-    };
-  }, [decrementBlockingOverlayCount, incrementBlockingOverlayCount]);
-
   return (
     <DialogPortal>
       <DialogBackdrop />
