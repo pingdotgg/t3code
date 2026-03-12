@@ -535,7 +535,28 @@ function handleCheckForUpdatesMenuClick(): void {
   if (!BrowserWindow.getAllWindows().length) {
     mainWindow = createWindow();
   }
-  void checkForUpdates("menu");
+  void checkForUpdatesFromMenu();
+}
+
+async function checkForUpdatesFromMenu(): Promise<void> {
+  await checkForUpdates("menu");
+
+  if (updateState.status === "up-to-date") {
+    void dialog.showMessageBox({
+      type: "info",
+      title: "You're up to date!",
+      message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
+      buttons: ["OK"],
+    });
+  } else if (updateState.status === "error") {
+    void dialog.showMessageBox({
+      type: "warning",
+      title: "Update check failed",
+      message: "Could not check for updates.",
+      detail: updateState.message ?? "An unknown error occurred. Please try again later.",
+      buttons: ["OK"],
+    });
+  }
 }
 
 function configureApplicationMenu(): void {
