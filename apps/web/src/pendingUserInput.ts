@@ -15,6 +15,7 @@ export interface PendingUserInputProgress {
   usingCustomAnswer: boolean;
   answeredQuestionCount: number;
   isLastQuestion: boolean;
+  isReviewStep: boolean;
   isComplete: boolean;
   canAdvance: boolean;
 }
@@ -94,6 +95,10 @@ export function derivePendingUserInputProgress(
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
   questionIndex: number,
 ): PendingUserInputProgress {
+  const isComplete = buildPendingUserInputAnswers(questions, draftAnswers) !== null;
+  // questionIndex === questions.length means the user has been advanced past
+  // the last question and is now on the review/summary step.
+  const isReviewStep = questions.length > 0 && questionIndex >= questions.length && isComplete;
   const normalizedQuestionIndex =
     questions.length === 0 ? 0 : Math.max(0, Math.min(questionIndex, questions.length - 1));
   const activeQuestion = questions[normalizedQuestionIndex] ?? null;
@@ -114,7 +119,8 @@ export function derivePendingUserInputProgress(
     usingCustomAnswer: customAnswer.trim().length > 0,
     answeredQuestionCount,
     isLastQuestion,
-    isComplete: buildPendingUserInputAnswers(questions, draftAnswers) !== null,
+    isReviewStep,
+    isComplete,
     canAdvance: Boolean(resolvedAnswer),
   };
 }

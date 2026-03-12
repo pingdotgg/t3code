@@ -84,6 +84,7 @@ import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "..
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
+  resolvePendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
@@ -969,8 +970,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
+    () => deriveWorkLogEntries(threadActivities, undefined),
+    [threadActivities],
   );
   const latestTurnHasToolActivity = useMemo(
     () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
@@ -3007,12 +3008,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!activePendingUserInput || !activePendingProgress) {
       return;
     }
-    if (activePendingProgress.isLastQuestion) {
+    if (activePendingProgress.isReviewStep) {
+      // Submit from the review step
       if (activePendingResolvedAnswers) {
         void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
       }
       return;
     }
+    // Advance to next question, or to the review step (questionIndex === questions.length)
     setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
   }, [
     activePendingProgress,
@@ -3023,11 +3026,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   const onPreviousActivePendingUserInputQuestion = useCallback(() => {
-    if (!activePendingProgress) {
+    if (!activePendingProgress || !activePendingUserInput) {
       return;
     }
-    setActivePendingUserInputQuestionIndex(Math.max(activePendingProgress.questionIndex - 1, 0));
-  }, [activePendingProgress, setActivePendingUserInputQuestionIndex]);
+    if (activePendingProgress.isReviewStep) {
+      // Go back to the last question from the review step
+      setActivePendingUserInputQuestionIndex(activePendingUserInput.questions.length - 1);
+    } else {
+      setActivePendingUserInputQuestionIndex(Math.max(activePendingProgress.questionIndex - 1, 0));
+    }
+  }, [activePendingProgress, activePendingUserInput, setActivePendingUserInputQuestionIndex]);
 
   const onSubmitPlanFollowUp = useCallback(
     async ({
@@ -3838,7 +3846,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       isComposerApprovalState
                         ? ""
                         : activePendingProgress
-                          ? activePendingProgress.customAnswer
+                          ? activePendingProgress.isReviewStep
+                            ? ""
+                            : activePendingProgress.customAnswer
                           : prompt
                     }
                     cursor={composerCursor}
@@ -3857,7 +3867,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               ? "Ask for follow-up changes or attach images"
                               : "Ask anything, @tag files/folders, or use / to show available commands"
                     }
-                    disabled={isConnecting || isComposerApprovalState}
+                    disabled={isConnecting || isComposerApprovalState || !!activePendingProgress?.isReviewStep}
                   />
                 </div>
 
@@ -4022,7 +4032,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       ) : null}
                       {activePendingProgress ? (
                         <div className="flex items-center gap-2">
-                          {activePendingProgress.questionIndex > 0 ? (
+                          {activePendingProgress.questionIndex > 0 || activePendingProgress.isReviewStep ? (
                             <Button
                               size="sm"
                               variant="outline"
@@ -4039,14 +4049,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             className="rounded-full px-4"
                             disabled={
                               activePendingIsResponding ||
-                              (activePendingProgress.isLastQuestion
+                              (activePendingProgress.isReviewStep
                                 ? !activePendingResolvedAnswers
                                 : !activePendingProgress.canAdvance)
                             }
                           >
                             {activePendingIsResponding
                               ? "Submitting..."
-                              : activePendingProgress.isLastQuestion
+                              : activePendingProgress.isReviewStep
                                 ? "Submit answers"
                                 : "Next question"}
                           </Button>
@@ -4693,6 +4703,27 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   if (!activeQuestion) {
     return null;
+  }
+
+  if (progress.isReviewStep) {
+    return (
+      <div className="px-4 py-3 sm:px-5">
+        <span className="text-[11px] font-semibold tracking-widest text-muted-foreground/50 uppercase">
+          Review your answers
+        </span>
+        <div className="mt-2 space-y-1.5">
+          {prompt.questions.map((q) => {
+            const answer = resolvePendingUserInputAnswer(answers[q.id]);
+            return (
+              <div key={q.id} className="flex items-baseline gap-2 text-sm">
+                <span className="shrink-0 text-muted-foreground/60">{q.header}:</span>
+                <span className="font-medium text-foreground/80">{answer ?? "—"}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   }
 
   return (

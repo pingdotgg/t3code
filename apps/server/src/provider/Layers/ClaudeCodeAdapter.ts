@@ -28,6 +28,7 @@ import {
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
   type ProviderSession,
+  type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
@@ -92,6 +93,16 @@ interface ToolInFlight {
   inputJsonChunks: string[];
 }
 
+interface PendingUserInput {
+  readonly questions: Array<{
+    question: string;
+    header: string;
+    options: Array<{ label: string; description: string }>;
+    multiSelect?: boolean;
+  }>;
+  readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+}
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -99,6 +110,7 @@ interface ClaudeSessionContext {
   readonly startedAt: string;
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
+  readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: Array<{
     id: TurnId;
     items: Array<unknown>;
@@ -1401,6 +1413,28 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         }
         context.pendingApprovals.clear();
 
+        // Cancel any pending user-input requests (AskUserQuestion)
+        for (const [requestId, pending] of context.pendingUserInputs) {
+          yield* Deferred.succeed(pending.answers, {});
+          const stamp = yield* makeEventStamp();
+          yield* offerRuntimeEvent({
+            type: "user-input.resolved",
+            eventId: stamp.eventId,
+            provider: PROVIDER,
+            createdAt: stamp.createdAt,
+            threadId: context.session.threadId,
+            ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+            requestId: asRuntimeRequestId(requestId),
+            payload: { answers: {} },
+            providerRefs: {
+              ...providerThreadRef(context),
+              ...(context.turnState ? { providerTurnId: String(context.turnState.turnId) } : {}),
+              providerRequestId: requestId,
+            },
+          });
+        }
+        context.pendingUserInputs.clear();
+
         if (context.turnState) {
           yield* completeTurn(context, "interrupted", "Session stopped.");
         }
@@ -1489,6 +1523,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         );
 
         const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
+        const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
         const inFlightTools = new Map<number, ToolInFlight>();
 
         const contextRef = yield* Ref.make<ClaudeSessionContext | undefined>(undefined);
@@ -1501,6 +1536,120 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                 return {
                   behavior: "deny",
                   message: "Claude session context is unavailable.",
+                } satisfies PermissionResult;
+              }
+
+              // Special-case AskUserQuestion: show a rich user-input dialog
+              // instead of the generic file-change approval panel.
+              if (toolName === "AskUserQuestion") {
+                const questions = (toolInput as Record<string, unknown>).questions as
+                  | Array<{
+                      question: string;
+                      header: string;
+                      options: Array<{ label: string; description: string }>;
+                      multiSelect?: boolean;
+                    }>
+                  | undefined;
+
+                if (!Array.isArray(questions) || questions.length === 0) {
+                  return {
+                    behavior: "allow",
+                    updatedInput: toolInput,
+                  } satisfies PermissionResult;
+                }
+
+                const requestId = ApprovalRequestId.makeUnsafe(yield* Random.nextUUIDv4);
+                const answersDeferred = yield* Deferred.make<ProviderUserInputAnswers>();
+
+                const pendingInput: PendingUserInput = {
+                  questions,
+                  answers: answersDeferred,
+                };
+                context.pendingUserInputs.set(requestId, pendingInput);
+
+                // Emit user-input.requested event so the web UI shows the rich dialog
+                const stamp = yield* makeEventStamp();
+                yield* offerRuntimeEvent({
+                  type: "user-input.requested",
+                  eventId: stamp.eventId,
+                  provider: PROVIDER,
+                  createdAt: stamp.createdAt,
+                  threadId: context.session.threadId,
+                  ...(context.turnState
+                    ? { turnId: asCanonicalTurnId(context.turnState.turnId) }
+                    : {}),
+                  requestId: asRuntimeRequestId(requestId),
+                  payload: {
+                    questions: questions.map((q) => ({
+                      id: q.question,
+                      header: q.header,
+                      question: q.question,
+                      options: q.options.map((o) => ({
+                        label: o.label,
+                        description: o.description,
+                      })),
+                    })),
+                  },
+                  providerRefs: {
+                    ...(context.session.threadId
+                      ? { providerThreadId: context.session.threadId }
+                      : {}),
+                    ...(context.turnState
+                      ? { providerTurnId: String(context.turnState.turnId) }
+                      : {}),
+                    providerRequestId: requestId,
+                  },
+                  raw: {
+                    source: "claude.sdk.permission",
+                    method: "canUseTool/askUserQuestion",
+                    payload: { toolName, input: toolInput },
+                  },
+                });
+
+                // Handle abort (e.g. user cancels the turn)
+                const onAbort = () => {
+                  if (!context.pendingUserInputs.has(requestId)) return;
+                  context.pendingUserInputs.delete(requestId);
+                  Effect.runFork(Deferred.succeed(answersDeferred, {}));
+                };
+                callbackOptions.signal.addEventListener("abort", onAbort, { once: true });
+
+                // Wait for user answers
+                const answers = yield* Deferred.await(answersDeferred);
+                context.pendingUserInputs.delete(requestId);
+
+                // Emit user-input.resolved event
+                const resolvedStamp = yield* makeEventStamp();
+                yield* offerRuntimeEvent({
+                  type: "user-input.resolved",
+                  eventId: resolvedStamp.eventId,
+                  provider: PROVIDER,
+                  createdAt: resolvedStamp.createdAt,
+                  threadId: context.session.threadId,
+                  ...(context.turnState
+                    ? { turnId: asCanonicalTurnId(context.turnState.turnId) }
+                    : {}),
+                  requestId: asRuntimeRequestId(requestId),
+                  payload: { answers },
+                  providerRefs: {
+                    ...(context.session.threadId
+                      ? { providerThreadId: context.session.threadId }
+                      : {}),
+                    ...(context.turnState
+                      ? { providerTurnId: String(context.turnState.turnId) }
+                      : {}),
+                    providerRequestId: requestId,
+                  },
+                  raw: {
+                    source: "claude.sdk.permission",
+                    method: "canUseTool/askUserQuestion/resolved",
+                    payload: { answers },
+                  },
+                });
+
+                return {
+                  behavior: "allow",
+                  updatedInput: { ...toolInput, answers },
                 } satisfies PermissionResult;
               }
 
@@ -1725,6 +1874,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           startedAt,
           resumeSessionId: resumeState?.resume,
           pendingApprovals,
+          pendingUserInputs,
           turns: [],
           inFlightTools,
           turnState: undefined,
@@ -1914,15 +2064,21 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
     const respondToUserInput: ClaudeCodeAdapterShape["respondToUserInput"] = (
       threadId,
       requestId,
-      _answers,
+      answers,
     ) =>
-      Effect.fail(
-        new ProviderAdapterRequestError({
-          provider: PROVIDER,
-          method: "item/tool/requestUserInput",
-          detail: `Claude Code does not yet support structured user-input responses for thread '${threadId}' and request '${requestId}'.`,
-        }),
-      );
+      Effect.gen(function* () {
+        const context = yield* requireSession(threadId);
+        const pending = context.pendingUserInputs.get(requestId);
+        if (!pending) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "item/tool/requestUserInput",
+            detail: `Unknown pending user-input request: ${requestId}`,
+          });
+        }
+        context.pendingUserInputs.delete(requestId);
+        yield* Deferred.succeed(pending.answers, answers);
+      });
 
     const stopSession: ClaudeCodeAdapterShape["stopSession"] = (threadId) =>
       Effect.gen(function* () {
