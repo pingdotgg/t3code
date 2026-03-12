@@ -619,6 +619,7 @@ function configureApplicationMenu(): void {
 function resolveResourcePath(fileName: string): string | null {
   const candidates = [
     Path.join(__dirname, "../resources", fileName),
+    Path.join(__dirname, "../prod-resources", fileName),
     Path.join(process.resourcesPath, "resources", fileName),
     Path.join(process.resourcesPath, fileName),
   ];

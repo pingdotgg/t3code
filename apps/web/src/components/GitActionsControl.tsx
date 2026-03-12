@@ -16,6 +16,7 @@ import {
   summarizeGitResult,
 } from "./GitActionsControl.logic";
 import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import {
   Dialog,
   DialogDescription,
@@ -31,6 +32,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
+import { openInPreferredEditor } from "~/editorPreferences";
 import {
   gitBranchesQueryOptions,
   gitInitMutationOptions,
@@ -40,7 +42,7 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
-import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
+import { resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
 
 interface GitActionsControlProps {
@@ -55,6 +57,7 @@ interface PendingDefaultBranchAction {
   commitMessage?: string;
   forcePushOnlyProgress: boolean;
   onConfirmed?: () => void;
+  filePaths?: string[];
 }
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -158,6 +161,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const queryClient = useQueryClient();
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
+  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
 
@@ -177,6 +182,11 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   }, [isGitStatusOutOfSync, queryClient]);
 
   const gitStatusForActions = isGitStatusOutOfSync ? null : gitStatus;
+
+  const allFiles = gitStatusForActions?.workingTree.files ?? [];
+  const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
+  const allSelected = excludedFiles.size === 0;
+  const noneSelected = selectedFiles.length === 0;
 
   const initMutation = useMutation(gitInitMutationOptions({ cwd: gitCwd, queryClient }));
 
@@ -256,6 +266,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       featureBranch = false,
       isDefaultBranchOverride,
       progressToastId,
+      filePaths,
     }: {
       action: GitStackedAction;
       commitMessage?: string;
@@ -266,6 +277,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       featureBranch?: boolean;
       isDefaultBranchOverride?: boolean;
       progressToastId?: GitActionToastId;
+      filePaths?: string[];
     }) => {
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.branch ?? null;
@@ -288,6 +300,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           ...(commitMessage ? { commitMessage } : {}),
           forcePushOnlyProgress,
           ...(onConfirmed ? { onConfirmed } : {}),
+          ...(filePaths ? { filePaths } : {}),
         });
         return;
       }
@@ -337,6 +350,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         action,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
+        ...(filePaths ? { filePaths } : {}),
       });
 
       try {
@@ -438,7 +452,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const continuePendingDefaultBranchAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, forcePushOnlyProgress, onConfirmed } =
+    const { action, commitMessage, forcePushOnlyProgress, onConfirmed, filePaths } =
       pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
@@ -446,6 +460,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       ...(commitMessage ? { commitMessage } : {}),
       forcePushOnlyProgress,
       ...(onConfirmed ? { onConfirmed } : {}),
+      ...(filePaths ? { filePaths } : {}),
       skipDefaultBranchPrompt: true,
     });
   }, [pendingDefaultBranchAction, runGitActionWithToast]);
@@ -456,6 +471,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       commitMessage?: string;
       forcePushOnlyProgress?: boolean;
       onConfirmed?: () => void;
+      filePaths?: string[];
     }) => {
       void runGitActionWithToast({
         ...actionParams,
@@ -468,7 +484,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const checkoutFeatureBranchAndContinuePendingAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, forcePushOnlyProgress, onConfirmed } =
+    const { action, commitMessage, forcePushOnlyProgress, onConfirmed, filePaths } =
       pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     checkoutNewBranchAndRunAction({
@@ -476,6 +492,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       ...(commitMessage ? { commitMessage } : {}),
       forcePushOnlyProgress,
       ...(onConfirmed ? { onConfirmed } : {}),
+      ...(filePaths ? { filePaths } : {}),
     });
   }, [pendingDefaultBranchAction, checkoutNewBranchAndRunAction]);
 
@@ -485,12 +502,21 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
+    setExcludedFiles(new Set());
+    setIsEditingFiles(false);
 
     checkoutNewBranchAndRunAction({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
+      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
     });
-  }, [isCommitDialogOpen, dialogCommitMessage, checkoutNewBranchAndRunAction]);
+  }, [
+    allSelected,
+    isCommitDialogOpen,
+    dialogCommitMessage,
+    checkoutNewBranchAndRunAction,
+    selectedFiles,
+  ]);
 
   const runQuickAction = useCallback(() => {
     if (quickAction.kind === "open_pr") {
@@ -547,6 +573,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         void runGitActionWithToast({ action: "commit_push_pr" });
         return;
       }
+      setExcludedFiles(new Set());
+      setIsEditingFiles(false);
       setIsCommitDialogOpen(true);
     },
     [openExistingPr, runGitActionWithToast, setIsCommitDialogOpen],
@@ -557,14 +585,19 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     const commitMessage = dialogCommitMessage.trim();
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
+    setExcludedFiles(new Set());
+    setIsEditingFiles(false);
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
+      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
     });
   }, [
+    allSelected,
     dialogCommitMessage,
     isCommitDialogOpen,
     runGitActionWithToast,
+    selectedFiles,
     setDialogCommitMessage,
     setIsCommitDialogOpen,
   ]);
@@ -581,7 +614,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         return;
       }
       const target = resolvePathLinkTarget(filePath, gitCwd);
-      void api.shell.openInEditor(target, preferredTerminalEditor()).catch((error) => {
+      void openInPreferredEditor(api, target).catch((error) => {
         toastManager.add({
           type: "error",
           title: "Unable to open file",
@@ -729,6 +762,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           if (!open) {
             setIsCommitDialogOpen(false);
             setDialogCommitMessage("");
+            setExcludedFiles(new Set());
+            setIsEditingFiles(false);
           }
         }}
       >
@@ -751,37 +786,99 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                 </span>
               </div>
               <div className="space-y-1">
-                <p className="text-muted-foreground">Files</p>
-                {!gitStatusForActions || gitStatusForActions.workingTree.files.length === 0 ? (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {isEditingFiles && allFiles.length > 0 && (
+                      <Checkbox
+                        checked={allSelected}
+                        indeterminate={!allSelected && !noneSelected}
+                        onCheckedChange={() => {
+                          setExcludedFiles(
+                            allSelected ? new Set(allFiles.map((f) => f.path)) : new Set(),
+                          );
+                        }}
+                      />
+                    )}
+                    <span className="text-muted-foreground">Files</span>
+                    {!allSelected && !isEditingFiles && (
+                      <span className="text-muted-foreground">
+                        ({selectedFiles.length} of {allFiles.length})
+                      </span>
+                    )}
+                  </div>
+                  {allFiles.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setIsEditingFiles((prev) => !prev)}
+                    >
+                      {isEditingFiles ? "Done" : "Edit"}
+                    </Button>
+                  )}
+                </div>
+                {!gitStatusForActions || allFiles.length === 0 ? (
                   <p className="font-medium">none</p>
                 ) : (
                   <div className="space-y-2">
                     <ScrollArea className="h-44 rounded-md border border-input bg-background">
                       <div className="space-y-1 p-1">
-                        {gitStatusForActions.workingTree.files.map((file) => (
-                          <button
-                            type="button"
-                            key={file.path}
-                            className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 font-mono text-left transition-colors hover:bg-accent/50"
-                            onClick={() => openChangedFileInEditor(file.path)}
-                          >
-                            <span className="truncate">{file.path}</span>
-                            <span className="shrink-0">
-                              <span className="text-success">+{file.insertions}</span>
-                              <span className="text-muted-foreground"> / </span>
-                              <span className="text-destructive">-{file.deletions}</span>
-                            </span>
-                          </button>
-                        ))}
+                        {allFiles.map((file) => {
+                          const isExcluded = excludedFiles.has(file.path);
+                          return (
+                            <div
+                              key={file.path}
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono text-xs transition-colors hover:bg-accent/50"
+                            >
+                              {isEditingFiles && (
+                                <Checkbox
+                                  checked={!excludedFiles.has(file.path)}
+                                  onCheckedChange={() => {
+                                    setExcludedFiles((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(file.path)) {
+                                        next.delete(file.path);
+                                      } else {
+                                        next.add(file.path);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              )}
+                              <button
+                                type="button"
+                                className="flex flex-1 items-center justify-between gap-3 text-left truncate"
+                                onClick={() => openChangedFileInEditor(file.path)}
+                              >
+                                <span
+                                  className={`truncate${isExcluded ? " text-muted-foreground" : ""}`}
+                                >
+                                  {file.path}
+                                </span>
+                                <span className="shrink-0">
+                                  {isExcluded ? (
+                                    <span className="text-muted-foreground">Excluded</span>
+                                  ) : (
+                                    <>
+                                      <span className="text-success">+{file.insertions}</span>
+                                      <span className="text-muted-foreground"> / </span>
+                                      <span className="text-destructive">-{file.deletions}</span>
+                                    </>
+                                  )}
+                                </span>
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
                     </ScrollArea>
                     <div className="flex justify-end font-mono">
                       <span className="text-success">
-                        +{gitStatusForActions.workingTree.insertions}
+                        +{selectedFiles.reduce((sum, f) => sum + f.insertions, 0)}
                       </span>
                       <span className="text-muted-foreground"> / </span>
                       <span className="text-destructive">
-                        -{gitStatusForActions.workingTree.deletions}
+                        -{selectedFiles.reduce((sum, f) => sum + f.deletions, 0)}
                       </span>
                     </div>
                   </div>
@@ -805,14 +902,21 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
               onClick={() => {
                 setIsCommitDialogOpen(false);
                 setDialogCommitMessage("");
+                setExcludedFiles(new Set());
+                setIsEditingFiles(false);
               }}
             >
               Cancel
             </Button>
-            <Button variant="outline" size="sm" onClick={runDialogActionOnNewBranch}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={noneSelected}
+              onClick={runDialogActionOnNewBranch}
+            >
               Commit on new branch
             </Button>
-            <Button size="sm" onClick={runDialogAction}>
+            <Button size="sm" disabled={noneSelected} onClick={runDialogAction}>
               Commit
             </Button>
           </DialogFooter>
