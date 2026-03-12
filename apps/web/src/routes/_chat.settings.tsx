@@ -21,6 +21,7 @@ import {
 import { Switch } from "../components/ui/switch";
 import { APP_VERSION } from "../branding";
 import { SidebarInset } from "~/components/ui/sidebar";
+import { useTray } from "~/hooks/useTray";
 
 const THEME_OPTIONS = [
   {
@@ -106,6 +107,8 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+
+  const [isTrayEnabled, setTrayEnabled] = useTray();
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
@@ -666,6 +669,29 @@ function SettingsRouteView() {
                 </div>
               ) : null}
             </section>
+            {isElectron ? (
+              <section className="rounded-2xl border border-border bg-card p-5">
+                <div className="mb-4">
+                  <h2 className="text-sm font-medium text-foreground">Tray</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Control the system tray icon and context menu.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Show tray icon</p>
+                    <p className="text-xs text-muted-foreground">
+                      Show a system tray icon in the notification area.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={isTrayEnabled}
+                    onCheckedChange={(checked) => setTrayEnabled(Boolean(checked))}
+                    aria-label="Show tray icon"
+                  />
+                </div>
+              </section>
+            ) : null}
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">About</h2>
