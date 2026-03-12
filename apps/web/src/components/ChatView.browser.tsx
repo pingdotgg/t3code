@@ -936,7 +936,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.shellOpenInEditor,
             cwd: "/repo/project",
-            editor: "antigravity",
+            editor: "vscode",
           });
         },
         { timeout: 8_000, interval: 16 },
