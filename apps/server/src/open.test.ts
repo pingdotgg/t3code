@@ -1,8 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import os from "node:os";
-
-import { FileSystem, Path } from "effect";
 import { assert, describe, it } from "@effect/vitest";
+import { assertSuccess } from "@effect/vitest/utils";
+import { FileSystem, Path, Effect } from "effect";
 
 import {
   isCommandAvailable,
@@ -10,8 +9,6 @@ import {
   resolveAvailableEditors,
   resolveEditorLaunch,
 } from "./open";
-import { Effect } from "effect";
-import { assertSuccess } from "@effect/vitest/utils";
 
 describe("resolveEditorLaunch", () => {
   it.effect("returns commands for command-based editors", () =>
