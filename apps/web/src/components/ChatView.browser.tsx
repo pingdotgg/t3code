@@ -25,6 +25,7 @@ import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
+const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
@@ -85,6 +86,7 @@ interface MountedChatView {
   cleanup: () => Promise<void>;
   measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
   setViewport: (viewport: ViewportSpec) => Promise<void>;
+  router: ReturnType<typeof getRouter>;
 }
 
 function isoAt(offsetSeconds: number): string {
@@ -245,6 +247,46 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   };
 }
 
+function addThreadToSnapshot(
+  snapshot: OrchestrationReadModel,
+  threadId: ThreadId,
+): OrchestrationReadModel {
+  return {
+    ...snapshot,
+    snapshotSequence: snapshot.snapshotSequence + 1,
+    threads: [
+      ...snapshot.threads,
+      {
+        id: threadId,
+        projectId: PROJECT_ID,
+        title: "New thread",
+        model: "gpt-5",
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        branch: "main",
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+        messages: [],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW_ISO,
+        },
+      },
+    ],
+  };
+}
+
 function createDraftOnlySnapshot(): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-draft-target" as MessageId,
@@ -361,6 +403,7 @@ const worker = setupWorker(
     client.send(
       JSON.stringify({
         type: "push",
+        sequence: 1,
         channel: WS_CHANNELS.serverWelcome,
         data: fixture.welcome,
       }),
@@ -446,6 +489,22 @@ async function waitForElement<T extends Element>(
     throw new Error(errorMessage);
   }
   return element;
+}
+
+async function waitForURL(
+  router: ReturnType<typeof getRouter>,
+  predicate: (pathname: string) => boolean,
+  errorMessage: string,
+): Promise<string> {
+  let pathname = "";
+  await vi.waitFor(
+    () => {
+      pathname = router.state.location.pathname;
+      expect(predicate(pathname), errorMessage).toBe(true);
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  return pathname;
 }
 
 async function waitForComposerEditor(): Promise<HTMLElement> {
@@ -593,6 +652,7 @@ async function mountChatView(options: {
       await setViewport(viewport);
       await waitForProductionStyles();
     },
+    router,
   };
 }
 
@@ -929,6 +989,60 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the new thread selected after clicking the new-thread button", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-new-thread-test" as MessageId,
+        targetText: "new thread selection test",
+      }),
+    });
+
+    try {
+      // Wait for the sidebar to render with the project.
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      // The route should change to a new draft thread ID.
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      // The composer editor should be present for the new draft thread.
+      await waitForComposerEditor();
+
+      // Simulate the snapshot sync arriving from the server after the draft
+      // thread has been promoted to a server thread (thread.create + turn.start
+      // succeeded). The snapshot now includes the new thread, and the sync
+      // should clear the draft without disrupting the route.
+      const { syncServerReadModel } = useStore.getState();
+      syncServerReadModel(addThreadToSnapshot(fixture.snapshot, newThreadId));
+
+      // Clear the draft now that the server thread exists (mirrors EventRouter behavior).
+      useComposerDraftStore.getState().clearDraftThread(newThreadId);
+
+      // The route should still be on the new thread — not redirected away.
+      await waitForURL(
+        mounted.router,
+        (path) => path === newThreadPath,
+        "New thread should remain selected after snapshot sync clears the draft.",
+      );
+
+      // The empty thread view and composer should still be visible.
+      await expect
+        .element(page.getByText("Send a message to start the conversation."))
+        .toBeInTheDocument();
+      await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }

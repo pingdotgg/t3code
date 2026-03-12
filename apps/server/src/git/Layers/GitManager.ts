@@ -42,6 +42,17 @@ interface PullRequestHeadRemoteInfo {
   headRepositoryOwnerLogin?: string | null;
 }
 
+interface BranchHeadContext {
+  localBranch: string;
+  headBranch: string;
+  headSelectors: ReadonlyArray<string>;
+  preferredHeadSelector: string;
+  remoteName: string | null;
+  headRepositoryNameWithOwner: string | null;
+  headRepositoryOwnerLogin: string | null;
+  isCrossRepository: boolean;
+}
+
 function parseRepositoryNameFromPullRequestUrl(url: string): string | null {
   const trimmed = url.trim();
   const match = /^https:\/\/github\.com\/[^/]+\/([^/]+)\/pull\/\d+(?:\/.*)?$/i.exec(trimmed);
@@ -80,6 +91,30 @@ function resolvePullRequestWorktreeLocalBranchName(
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
   return `t3code/pr-${pullRequest.number}/${suffix}`;
+}
+
+function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
+  const trimmed = url?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const match =
+    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
+      trimmed,
+    );
+  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
+  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
+}
+
+function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
+  const trimmed = nameWithOwner?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return null;
+  }
+  const [ownerLogin] = trimmed.split("/");
+  const normalizedOwnerLogin = ownerLogin?.trim() ?? "";
+  return normalizedOwnerLogin.length > 0 ? normalizedOwnerLogin : null;
 }
 
 function parsePullRequestList(raw: unknown): PullRequestInfo[] {
@@ -215,6 +250,14 @@ function extractBranchFromRef(ref: string): string {
     return normalized;
   }
   return normalized.slice(firstSlash + 1).trim();
+}
+
+function appendUnique(values: string[], next: string | null | undefined): void {
+  const trimmed = next?.trim() ?? "";
+  if (trimmed.length === 0 || values.includes(trimmed)) {
+    return;
+  }
+  values.push(trimmed);
 }
 
 function toStatusPr(pr: PullRequestInfo): {
@@ -394,63 +437,162 @@ export const makeGitManager = Effect.gen(function* () {
 
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
 
-  const findOpenPr = (cwd: string, branch: string) =>
-    gitHubCli
-      .listOpenPullRequests({
-        cwd,
-        headBranch: branch,
-        limit: 1,
-      })
-      .pipe(
-        Effect.map((prs) => {
-          const [first] = prs;
-          if (!first) {
-            return null;
-          }
+  const readConfigValueNullable = (cwd: string, key: string) =>
+    gitCore.readConfigValue(cwd, key).pipe(Effect.catch(() => Effect.succeed(null)));
+
+  const resolveRemoteRepositoryContext = (cwd: string, remoteName: string | null) =>
+    Effect.gen(function* () {
+      if (!remoteName) {
+        return {
+          repositoryNameWithOwner: null,
+          ownerLogin: null,
+        };
+      }
+
+      const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
+      const repositoryNameWithOwner = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
+      return {
+        repositoryNameWithOwner,
+        ownerLogin: parseRepositoryOwnerLogin(repositoryNameWithOwner),
+      };
+    });
+
+  const resolveBranchHeadContext = (
+    cwd: string,
+    details: { branch: string; upstreamRef: string | null },
+  ) =>
+    Effect.gen(function* () {
+      const remoteName = yield* readConfigValueNullable(cwd, `branch.${details.branch}.remote`);
+      const headBranchFromUpstream = details.upstreamRef
+        ? extractBranchFromRef(details.upstreamRef)
+        : "";
+      const headBranch =
+        headBranchFromUpstream.length > 0 ? headBranchFromUpstream : details.branch;
+
+      const [remoteRepository, originRepository] = yield* Effect.all(
+        [
+          resolveRemoteRepositoryContext(cwd, remoteName),
+          resolveRemoteRepositoryContext(cwd, "origin"),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      const isCrossRepository =
+        remoteRepository.repositoryNameWithOwner !== null &&
+        originRepository.repositoryNameWithOwner !== null
+          ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
+            originRepository.repositoryNameWithOwner.toLowerCase()
+          : remoteName !== null &&
+            remoteName !== "origin" &&
+            remoteRepository.repositoryNameWithOwner !== null;
+
+      const ownerHeadSelector =
+        remoteRepository.ownerLogin && headBranch.length > 0
+          ? `${remoteRepository.ownerLogin}:${headBranch}`
+          : null;
+      const remoteAliasHeadSelector =
+        remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
+      const shouldProbeRemoteOwnedSelectors =
+        isCrossRepository || (remoteName !== null && remoteName !== "origin");
+
+      const headSelectors: string[] = [];
+      if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {
+        appendUnique(headSelectors, ownerHeadSelector);
+        appendUnique(
+          headSelectors,
+          remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
+        );
+      }
+      appendUnique(headSelectors, details.branch);
+      appendUnique(headSelectors, headBranch !== details.branch ? headBranch : null);
+      if (!isCrossRepository && shouldProbeRemoteOwnedSelectors) {
+        appendUnique(headSelectors, ownerHeadSelector);
+        appendUnique(
+          headSelectors,
+          remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
+        );
+      }
+
+      return {
+        localBranch: details.branch,
+        headBranch,
+        headSelectors,
+        preferredHeadSelector:
+          ownerHeadSelector && isCrossRepository ? ownerHeadSelector : headBranch,
+        remoteName,
+        headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
+        headRepositoryOwnerLogin: remoteRepository.ownerLogin,
+        isCrossRepository,
+      } satisfies BranchHeadContext;
+    });
+
+  const findOpenPr = (cwd: string, headSelectors: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      for (const headSelector of headSelectors) {
+        const pullRequests = yield* gitHubCli.listOpenPullRequests({
+          cwd,
+          headSelector,
+          limit: 1,
+        });
+
+        const [firstPullRequest] = pullRequests;
+        if (firstPullRequest) {
           return {
-            number: first.number,
-            title: first.title,
-            url: first.url,
-            baseRefName: first.baseRefName,
-            headRefName: first.headRefName,
+            number: firstPullRequest.number,
+            title: firstPullRequest.title,
+            url: firstPullRequest.url,
+            baseRefName: firstPullRequest.baseRefName,
+            headRefName: firstPullRequest.headRefName,
             state: "open",
             updatedAt: null,
           } satisfies PullRequestInfo;
-        }),
-      );
-
-  const findLatestPr = (cwd: string, branch: string) =>
-    Effect.gen(function* () {
-      const stdout = yield* gitHubCli
-        .execute({
-          cwd,
-          args: [
-            "pr",
-            "list",
-            "--head",
-            branch,
-            "--state",
-            "all",
-            "--limit",
-            "20",
-            "--json",
-            "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
-          ],
-        })
-        .pipe(Effect.map((result) => result.stdout));
-
-      const raw = stdout.trim();
-      if (raw.length === 0) {
-        return null;
+        }
       }
 
-      const parsedJson = yield* Effect.try({
-        try: () => JSON.parse(raw) as unknown,
-        catch: (cause) =>
-          gitManagerError("findLatestPr", "GitHub CLI returned invalid PR list JSON.", cause),
-      });
+      return null;
+    });
 
-      const parsed = parsePullRequestList(parsedJson).toSorted((a, b) => {
+  const findLatestPr = (cwd: string, details: { branch: string; upstreamRef: string | null }) =>
+    Effect.gen(function* () {
+      const headContext = yield* resolveBranchHeadContext(cwd, details);
+      const parsedByNumber = new Map<number, PullRequestInfo>();
+
+      for (const headSelector of headContext.headSelectors) {
+        const stdout = yield* gitHubCli
+          .execute({
+            cwd,
+            args: [
+              "pr",
+              "list",
+              "--head",
+              headSelector,
+              "--state",
+              "all",
+              "--limit",
+              "20",
+              "--json",
+              "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
+            ],
+          })
+          .pipe(Effect.map((result) => result.stdout));
+
+        const raw = stdout.trim();
+        if (raw.length === 0) {
+          continue;
+        }
+
+        const parsedJson = yield* Effect.try({
+          try: () => JSON.parse(raw) as unknown,
+          catch: (cause) =>
+            gitManagerError("findLatestPr", "GitHub CLI returned invalid PR list JSON.", cause),
+        });
+
+        for (const pr of parsePullRequestList(parsedJson)) {
+          parsedByNumber.set(pr.number, pr);
+        }
+      }
+
+      const parsed = Array.from(parsedByNumber.values()).toSorted((a, b) => {
         const left = a.updatedAt ? Date.parse(a.updatedAt) : 0;
         const right = b.updatedAt ? Date.parse(b.updatedAt) : 0;
         return right - left;
@@ -463,12 +605,17 @@ export const makeGitManager = Effect.gen(function* () {
       return parsed[0] ?? null;
     });
 
-  const resolveBaseBranch = (cwd: string, branch: string, upstreamRef: string | null) =>
+  const resolveBaseBranch = (
+    cwd: string,
+    branch: string,
+    upstreamRef: string | null,
+    headContext: Pick<BranchHeadContext, "isCrossRepository">,
+  ) =>
     Effect.gen(function* () {
       const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
       if (configured) return configured;
 
-      if (upstreamRef) {
+      if (upstreamRef && !headContext.isCrossRepository) {
         const upstreamBranch = extractBranchFromRef(upstreamRef);
         if (upstreamBranch.length > 0 && upstreamBranch !== branch) {
           return upstreamBranch;
@@ -571,7 +718,12 @@ export const makeGitManager = Effect.gen(function* () {
         );
       }
 
-      const existing = yield* findOpenPr(cwd, branch);
+      const headContext = yield* resolveBranchHeadContext(cwd, {
+        branch,
+        upstreamRef: details.upstreamRef,
+      });
+
+      const existing = yield* findOpenPr(cwd, headContext.headSelectors);
       if (existing) {
         return {
           status: "opened_existing" as const,
@@ -583,13 +735,13 @@ export const makeGitManager = Effect.gen(function* () {
         };
       }
 
-      const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef);
+      const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef, headContext);
       const rangeContext = yield* gitCore.readRangeContext(cwd, baseBranch);
 
       const generated = yield* textGeneration.generatePrContent({
         cwd,
         baseBranch,
-        headBranch: branch,
+        headBranch: headContext.headBranch,
         commitSummary: limitContext(rangeContext.commitSummary, 20_000),
         diffSummary: limitContext(rangeContext.diffSummary, 20_000),
         diffPatch: limitContext(rangeContext.diffPatch, 60_000),
@@ -607,18 +759,18 @@ export const makeGitManager = Effect.gen(function* () {
         .createPullRequest({
           cwd,
           baseBranch,
-          headBranch: branch,
+          headSelector: headContext.preferredHeadSelector,
           title: generated.title,
           bodyFile,
         })
         .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
 
-      const created = yield* findOpenPr(cwd, branch);
+      const created = yield* findOpenPr(cwd, headContext.headSelectors);
       if (!created) {
         return {
           status: "created" as const,
           baseBranch,
-          headBranch: branch,
+          headBranch: headContext.headBranch,
           title: generated.title,
         };
       }
@@ -638,7 +790,10 @@ export const makeGitManager = Effect.gen(function* () {
 
     const pr =
       details.branch !== null
-        ? yield* findLatestPr(input.cwd, details.branch).pipe(
+        ? yield* findLatestPr(input.cwd, {
+            branch: details.branch,
+            upstreamRef: details.upstreamRef,
+          }).pipe(
             Effect.map((latest) => (latest ? toStatusPr(latest) : null)),
             Effect.catch(() => Effect.succeed(null)),
           )

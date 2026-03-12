@@ -293,14 +293,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       }
       onConfirmed?.();
 
-      const pushTarget = !featureBranch && actionBranch ? `origin/${actionBranch}` : undefined;
       const progressStages = buildGitActionProgressStages({
         action,
         hasCustomCommitMessage: !!commitMessage?.trim(),
         hasWorkingTreeChanges: !!actionStatus?.hasWorkingTreeChanges,
         forcePushOnly: forcePushOnlyProgress,
         featureBranch,
-        ...(pushTarget ? { pushTarget } : {}),
       });
       const resolvedProgressToastId =
         progressToastId ??
