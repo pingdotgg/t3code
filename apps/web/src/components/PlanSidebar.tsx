@@ -86,6 +86,15 @@ const PlanSidebar = memo(function PlanSidebar({
     }, 2000);
   }, [planMarkdown]);
 
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current != null) {
+        clearTimeout(copiedTimerRef.current);
+      }
+    };
+  }, []);
+
   const handleDownload = useCallback(() => {
     if (!planMarkdown) return;
     const filename = buildProposedPlanMarkdownFilename(planMarkdown);
@@ -128,14 +137,6 @@ const PlanSidebar = memo(function PlanSidebar({
       {/* Header */}
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 px-3">
         <div className="flex items-center gap-2">
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (copiedTimerRef.current \!= null) {
-        clearTimeout(copiedTimerRef.current);
-      }
-    };
-  }, []);
           <Badge
             variant="secondary"
             className="rounded-md bg-blue-500/10 px-1.5 py-0 text-[10px] font-semibold tracking-wide text-blue-400 uppercase"

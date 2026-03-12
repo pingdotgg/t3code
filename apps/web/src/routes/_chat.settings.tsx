@@ -1,20 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
+import { useNotification } from "../hooks/useNotification";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
-import { preferredTerminalEditor } from "../terminal-links";
-import {
-  getNotificationPermission,
-  requestNotificationPermission,
-  showNativeNotification,
-} from "../lib/nativeNotifications";
+import { showNativeNotification } from "../lib/nativeNotifications";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
@@ -99,23 +95,12 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
-  const [notificationPermission, setNotificationPermission] = useState(getNotificationPermission());
+  const { permission: notificationPermission, requestPermission } = useNotification();
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
-
-  useEffect(() => {
-    const refreshPermission = () => {
-      setNotificationPermission(getNotificationPermission());
-    };
-    refreshPermission();
-    window.addEventListener("focus", refreshPermission);
-    return () => {
-      window.removeEventListener("focus", refreshPermission);
-    };
-  }, []);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -553,10 +538,7 @@ function SettingsRouteView() {
                       notificationPermission === "unsupported" ||
                       notificationPermission === "granted"
                     }
-                    onClick={async () => {
-                      const nextPermission = await requestNotificationPermission();
-                      setNotificationPermission(nextPermission);
-                    }}
+                    onClick={requestPermission}
                   >
                     Request permission
                   </Button>
