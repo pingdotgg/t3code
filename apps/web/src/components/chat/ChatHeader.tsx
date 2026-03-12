@@ -96,19 +96,20 @@ export const ChatHeader = memo(function ChatHeader({
           />
         )}
         {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
-        <ToggleGroup className="shrink-0" variant="outline" size="xs">
+        <ToggleGroup
+          className="shrink-0"
+          variant="outline"
+          size="xs"
+          value={selectedSidePanel ? [selectedSidePanel] : []}
+          onValueChange={(groupValue) => {
+            const nextPanel = groupValue[0];
+            onSelectSidePanel(nextPanel === "diff" || nextPanel === "browser" ? nextPanel : null);
+          }}
+        >
           <Tooltip>
             <TooltipTrigger
               render={
-                <Toggle
-                  value="diff"
-                  pressed={selectedSidePanel === "diff"}
-                  onPressedChange={(pressed) => {
-                    onSelectSidePanel(pressed ? "diff" : null);
-                  }}
-                  aria-label="Toggle diff panel"
-                  disabled={!isGitRepo}
-                >
+                <Toggle value="diff" aria-label="Toggle diff panel" disabled={!isGitRepo}>
                   <DiffIcon className="size-3" />
                 </Toggle>
               }
@@ -124,14 +125,7 @@ export const ChatHeader = memo(function ChatHeader({
           <Tooltip>
             <TooltipTrigger
               render={
-                <Toggle
-                  value="browser"
-                  pressed={selectedSidePanel === "browser"}
-                  onPressedChange={(pressed) => {
-                    onSelectSidePanel(pressed ? "browser" : null);
-                  }}
-                  aria-label="Toggle in-app browser"
-                >
+                <Toggle value="browser" aria-label="Toggle in-app browser">
                   <GlobeIcon className="size-3" />
                 </Toggle>
               }
