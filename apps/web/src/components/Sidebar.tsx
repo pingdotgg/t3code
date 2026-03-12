@@ -80,6 +80,7 @@ import {
   SidebarMenuSubItem,
   SidebarSeparator,
   SidebarTrigger,
+  useSidebar,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
@@ -195,12 +196,16 @@ function T3Wordmark() {
 function getServerHttpOrigin(): string {
   const bridgeUrl = window.desktopBridge?.getWsUrl();
   const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
+  const isRemote = window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1";
+  const locationWsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`;
   const wsUrl =
     bridgeUrl && bridgeUrl.length > 0
       ? bridgeUrl
-      : envUrl && envUrl.length > 0
-        ? envUrl
-        : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`;
+      : isRemote
+        ? locationWsUrl
+        : envUrl && envUrl.length > 0
+          ? envUrl
+          : locationWsUrl;
   // Parse to extract just the origin, dropping path/query (e.g. ?token=…)
   const httpUrl = wsUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
   try {
@@ -262,6 +267,7 @@ function SortableProjectItem({
 }
 
 export default function Sidebar() {
+  const { isMobile, setOpenMobile } = useSidebar();
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
@@ -933,6 +939,9 @@ export default function Sidebar() {
         clearSelection();
       }
       setSelectionAnchor(threadId);
+      if (isMobile) {
+        setOpenMobile(false);
+      }
       void navigate({
         to: "/$threadId",
         params: { threadId },
@@ -940,9 +949,11 @@ export default function Sidebar() {
     },
     [
       clearSelection,
+      isMobile,
       navigate,
       rangeSelectTo,
       selectedThreadIds.size,
+      setOpenMobile,
       setSelectionAnchor,
       toggleThreadSelection,
     ],

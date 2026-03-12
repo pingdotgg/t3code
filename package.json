@@ -22,9 +22,9 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev-runner.ts dev",
-    "dev:server": "node scripts/dev-runner.ts dev:server",
-    "dev:web": "node scripts/dev-runner.ts dev:web",
+    "dev": "node scripts/dev-runner.ts dev --host 0.0.0.0 --auth-token test123",
+    "dev:server": "node scripts/dev-runner.ts dev:server --host 0.0.0.0 --auth-token test123",
+    "dev:web": "node scripts/dev-runner.ts dev:web --host 0.0.0.0 --auth-token test123",
     "dev:marketing": "turbo run dev --filter=@t3tools/marketing",
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
     "start": "turbo run start --filter=t3",

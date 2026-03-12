@@ -513,9 +513,21 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           return;
         }
 
-        // In dev mode, redirect to Vite dev server
+        // In dev mode, proxy to Vite dev server
         if (devUrl) {
-          respond(302, { Location: devUrl.href });
+          const targetUrl = new URL(url.pathname + url.search, devUrl);
+          const proxyReq = http.request(
+            targetUrl,
+            { method: req.method, headers: { ...req.headers, host: targetUrl.host } },
+            (proxyRes) => {
+              res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
+              proxyRes.pipe(res);
+            },
+          );
+          proxyReq.on("error", () => {
+            respond(502, { "Content-Type": "text/plain" }, "Dev server unavailable");
+          });
+          req.pipe(proxyReq);
           return;
         }
 
