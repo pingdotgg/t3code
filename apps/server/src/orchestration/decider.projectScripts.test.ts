@@ -280,6 +280,86 @@ describe("decider project scripts", () => {
     });
   });
 
+  it("emits thread.sidebar-state-updated from thread.sidebar-state.update", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-1"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModel: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withProject, {
+        sequence: 2,
+        eventId: asEventId("evt-thread-create"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-1"),
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-thread-create"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-thread-create"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          model: "gpt-5-codex",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.sidebar-state.update",
+          commandId: CommandId.makeUnsafe("cmd-sidebar-state"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          sidebarHiddenAt: "2026-03-10T00:00:00.000Z",
+          dismissSidebarKeys: ["plan-submitted:plan-1", "plan-submitted:plan-1"],
+        },
+        readModel,
+      }),
+    );
+
+    const singleResult = Array.isArray(result) ? null : result;
+    if (singleResult === null) {
+      throw new Error("Expected a single sidebar-state-updated event.");
+    }
+    expect(singleResult).toMatchObject({
+      type: "thread.sidebar-state-updated",
+      payload: {
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        sidebarHiddenAt: "2026-03-10T00:00:00.000Z",
+        dismissedSidebarKeys: ["plan-submitted:plan-1"],
+      },
+    });
+  });
+
   it("emits thread.interaction-mode-set from thread.interaction-mode.set", async () => {
     const now = new Date().toISOString();
     const initial = createEmptyReadModel(now);

@@ -78,6 +78,8 @@ describe("orchestration projector", () => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        sidebarHiddenAt: null,
+        dismissedSidebarKeys: [],
         latestTurn: null,
         createdAt: now,
         updatedAt: now,
@@ -265,6 +267,91 @@ describe("orchestration projector", () => {
 
     expect(afterUpdate.threads[0]?.runtimeMode).toBe("approval-required");
     expect(afterUpdate.threads[0]?.updatedAt).toBe(updatedAt);
+  });
+
+  it("replaces sidebar dismissal keys and updates hidden timestamp", async () => {
+    const createdAt = "2026-03-10T00:00:00.000Z";
+    const updatedAt = "2026-03-10T00:00:01.000Z";
+    const clearedAt = "2026-03-10T00:00:02.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const next = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.sidebar-state-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: updatedAt,
+          commandId: "cmd-sidebar-state",
+          payload: {
+            threadId: "thread-1",
+            sidebarHiddenAt: createdAt,
+            dismissedSidebarKeys: [
+              "plan-submitted:plan-1",
+              "plan-submitted:plan-1",
+              "questions-asked:req-1",
+            ],
+            updatedAt,
+          },
+        }),
+      ),
+    );
+
+    const cleared = await Effect.runPromise(
+      projectEvent(
+        next,
+        makeEvent({
+          sequence: 3,
+          type: "thread.sidebar-state-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: clearedAt,
+          commandId: "cmd-sidebar-clear",
+          payload: {
+            threadId: "thread-1",
+            dismissedSidebarKeys: [],
+            updatedAt: clearedAt,
+          },
+        }),
+      ),
+    );
+
+    expect(next.threads[0]?.sidebarHiddenAt).toBe(createdAt);
+    expect(next.threads[0]?.dismissedSidebarKeys).toEqual([
+      "plan-submitted:plan-1",
+      "questions-asked:req-1",
+    ]);
+    expect(next.threads[0]?.updatedAt).toBe(updatedAt);
+    expect(cleared.threads[0]?.sidebarHiddenAt).toBe(createdAt);
+    expect(cleared.threads[0]?.dismissedSidebarKeys).toEqual([]);
+    expect(cleared.threads[0]?.updatedAt).toBe(clearedAt);
   });
 
   it("marks assistant messages completed with non-streaming updates", async () => {

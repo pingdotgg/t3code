@@ -215,6 +215,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.sidebar-state.update": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.sidebar-state-updated",
+        payload: {
+          threadId: command.threadId,
+          ...(command.sidebarHiddenAt !== undefined ? { sidebarHiddenAt: command.sidebarHiddenAt } : {}),
+          ...(command.dismissSidebarKeys !== undefined
+            ? { dismissedSidebarKeys: [...new Set(command.dismissSidebarKeys)] }
+            : {}),
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.runtime-mode.set": {
       yield* requireThread({
         readModel,

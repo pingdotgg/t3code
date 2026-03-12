@@ -3,10 +3,12 @@ import { it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import {
+  ClientOrchestrationCommand,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
+  OrchestrationThread,
   ProjectCreateCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
@@ -16,6 +18,7 @@ import {
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
@@ -23,6 +26,7 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 );
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
+const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -155,6 +159,56 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
     });
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+  }),
+);
+
+it.effect("decodes thread sidebar state defaults in orchestration threads", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThread({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread title",
+      model: "gpt-5.4",
+      interactionMode: "default",
+      runtimeMode: "full-access",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    });
+
+    assert.strictEqual(parsed.sidebarHiddenAt, null);
+    assert.deepStrictEqual(parsed.dismissedSidebarKeys, []);
+  }),
+);
+
+it.effect("decodes thread.sidebar-state.update with trimmed dismissed keys", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeClientOrchestrationCommand({
+      type: "thread.sidebar-state.update",
+      commandId: "cmd-sidebar-state",
+      threadId: "thread-1",
+      sidebarHiddenAt: null,
+      dismissSidebarKeys: [" pending-approval:req-1 ", "plan-submitted:plan-1"],
+    });
+
+    assert.strictEqual(parsed.type, "thread.sidebar-state.update");
+    if (parsed.type !== "thread.sidebar-state.update") {
+      return;
+    }
+
+    assert.strictEqual(parsed.sidebarHiddenAt, null);
+    assert.deepStrictEqual(parsed.dismissSidebarKeys, [
+      "pending-approval:req-1",
+      "plan-submitted:plan-1",
+    ]);
   }),
 );
 

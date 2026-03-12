@@ -341,6 +341,8 @@ function buildLocalDraftThread(
     createdAt: draftThread.createdAt,
     latestTurn: null,
     lastVisitedAt: draftThread.createdAt,
+    sidebarHiddenAt: null,
+    dismissedSidebarKeys: [],
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
     turnDiffSummaries: [],

@@ -261,6 +261,10 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sidebarHiddenAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  dismissedSidebarKeys: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(() => []),
+  ),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -337,6 +341,14 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+
+const ThreadSidebarStateUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.sidebar-state.update"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sidebarHiddenAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  dismissSidebarKeys: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -445,6 +457,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadMetaUpdateCommand,
+  ThreadSidebarStateUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
@@ -464,6 +477,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadMetaUpdateCommand,
+  ThreadSidebarStateUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
@@ -564,6 +578,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.created",
   "thread.deleted",
   "thread.meta-updated",
+  "thread.sidebar-state-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
@@ -635,6 +650,13 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadSidebarStateUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sidebarHiddenAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  dismissedSidebarKeys: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   updatedAt: IsoDateTime,
 });
 
@@ -792,6 +814,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.meta-updated"),
     payload: ThreadMetaUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.sidebar-state-updated"),
+    payload: ThreadSidebarStateUpdatedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

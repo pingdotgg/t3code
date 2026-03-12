@@ -425,6 +425,8 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            sidebarHiddenAt: null,
+            dismissedSidebarKeys: [],
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -446,6 +448,28 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
+              : {}),
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.sidebar-state-updated": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            ...(event.payload.sidebarHiddenAt !== undefined
+              ? { sidebarHiddenAt: event.payload.sidebarHiddenAt }
+              : {}),
+            ...(event.payload.dismissedSidebarKeys !== undefined
+              ? {
+                  dismissedSidebarKeys: [...new Set(event.payload.dismissedSidebarKeys)],
+                }
               : {}),
             updatedAt: event.payload.updatedAt,
           });

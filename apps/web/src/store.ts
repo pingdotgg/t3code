@@ -311,6 +311,8 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         createdAt: thread.createdAt,
         latestTurn: thread.latestTurn,
         lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
+        sidebarHiddenAt: thread.sidebarHiddenAt,
+        dismissedSidebarKeys: [...thread.dismissedSidebarKeys],
         branch: thread.branch,
         worktreePath: thread.worktreePath,
         turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({

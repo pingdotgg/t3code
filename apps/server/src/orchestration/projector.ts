@@ -18,6 +18,7 @@ import {
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
+  ThreadSidebarStateUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
   ThreadRevertedPayload,
@@ -41,6 +42,10 @@ function updateThread(
   patch: ThreadPatch,
 ): OrchestrationThread[] {
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
+}
+
+function uniqueStrings(values: ReadonlyArray<string>): string[] {
+  return [...new Set(values)];
 }
 
 function decodeForEvent<A>(
@@ -257,6 +262,8 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            sidebarHiddenAt: null,
+            dismissedSidebarKeys: [],
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -301,6 +308,32 @@ export function projectEvent(
             updatedAt: payload.updatedAt,
           }),
         })),
+      );
+
+    case "thread.sidebar-state-updated":
+      return decodeForEvent(
+        ThreadSidebarStateUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              ...(payload.sidebarHiddenAt !== undefined
+                ? { sidebarHiddenAt: payload.sidebarHiddenAt }
+                : {}),
+              ...(payload.dismissedSidebarKeys !== undefined && thread
+                ? {
+                    dismissedSidebarKeys: uniqueStrings(payload.dismissedSidebarKeys),
+                  }
+                : {}),
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
       );
 
     case "thread.runtime-mode-set":
