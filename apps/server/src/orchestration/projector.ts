@@ -43,14 +43,14 @@ function updateThread(
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
 }
 
-function decodeForEvent<A>(
-  schema: Schema.Schema<A>,
+function decodeForEvent<TSchema extends Schema.Top & { readonly DecodingServices: never }>(
+  schema: TSchema,
   value: unknown,
   eventType: OrchestrationEvent["type"],
   field: string,
-): Effect.Effect<A, OrchestrationProjectorDecodeError> {
+): Effect.Effect<TSchema["Type"], OrchestrationProjectorDecodeError> {
   return Effect.try({
-    try: () => Schema.decodeUnknownSync(schema as any)(value),
+    try: () => Schema.decodeUnknownSync(schema)(value),
     catch: (error) => toProjectorDecodeError(`${eventType}:${field}`)(error as Schema.SchemaError),
   });
 }

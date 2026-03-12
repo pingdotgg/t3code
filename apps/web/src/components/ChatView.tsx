@@ -321,6 +321,19 @@ function buildExpandedImagePreview(
   };
 }
 
+function resolveModelSlugFromCandidates(
+  provider: ProviderKind,
+  candidates: ReadonlyArray<string | null | undefined>,
+): ModelSlug {
+  for (const candidate of candidates) {
+    const normalized = normalizeModelSlug(candidate, provider);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return getDefaultModel(provider);
+}
+
 function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,
@@ -889,7 +902,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       selectedProvider,
       customModelsForSelectedProvider,
       draftModel,
-    ) as ModelSlug;
+    );
   }, [baseThreadModel, composerDraft.model, customModelsForSelectedProvider, selectedProvider]);
   const reasoningOptions = getReasoningEffortOptions(selectedProvider);
   const supportsReasoningEffort = reasoningOptions.length > 0;
@@ -2306,7 +2319,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!previous && current) {
       terminalOpenByThreadRef.current[activeThreadId] = current;
       setTerminalFocusRequestId((value) => value + 1);
-      return;
+      return undefined;
     } else if (previous && !current) {
       terminalOpenByThreadRef.current[activeThreadId] = current;
       const frame = window.requestAnimationFrame(() => {
@@ -2318,6 +2331,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     terminalOpenByThreadRef.current[activeThreadId] = current;
+    return undefined;
   }, [activeThreadId, focusComposer, terminalState.terminalOpen]);
 
   useEffect(() => {
@@ -2697,8 +2711,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
       }
       const title = truncateTitle(titleSeed);
-      let threadCreateModel: ModelSlug =
-        selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
+      const threadCreateModel = resolveModelSlugFromCandidates(selectedProvider, [
+        selectedModel,
+        activeProject.model,
+      ]);
 
       if (isLocalDraftThread) {
         await api.orchestration.dispatchCommand({
@@ -3120,11 +3136,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const planMarkdown = activeProposedPlan.planMarkdown;
     const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
     const nextThreadTitle = truncateTitle(buildPlanImplementationThreadTitle(planMarkdown));
-    const nextThreadModel: ModelSlug =
-      selectedModel ||
-      (activeThread.model as ModelSlug) ||
-      (activeProject.model as ModelSlug) ||
-      DEFAULT_MODEL_BY_PROVIDER.codex;
+    const nextThreadModel = resolveModelSlugFromCandidates(selectedProvider, [
+      selectedModel,
+      activeThread.model,
+      activeProject.model,
+    ]);
 
     sendInFlightRef.current = true;
     beginSendPhase("sending-turn");

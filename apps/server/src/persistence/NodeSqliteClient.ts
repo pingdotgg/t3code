@@ -4,7 +4,13 @@
  *
  * @module SqliteClient
  */
-import { DatabaseSync, type StatementSync } from "node:sqlite";
+import {
+  DatabaseSync,
+  type SQLInputValue,
+  type SQLOutputValue,
+  type StatementResultingChanges,
+  type StatementSync,
+} from "node:sqlite";
 
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
@@ -89,26 +95,68 @@ const makeWithDatabase = (
           }),
       });
 
+      type SqliteRow = Readonly<Record<string, SQLOutputValue>>;
+      type SqliteRawResult = StatementResultingChanges;
+
+      const isSqlInputValue = (value: unknown): value is SQLInputValue =>
+        value === null ||
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "bigint" ||
+        value instanceof Uint8Array;
+
+      const toSqlParam = (param: unknown): SQLInputValue => {
+        if (param === undefined) {
+          return null;
+        }
+        if (typeof param === "boolean") {
+          return param ? 1 : 0;
+        }
+        if (isSqlInputValue(param)) {
+          return param;
+        }
+        throw new SqlError({
+          cause: new TypeError(`Unsupported sqlite parameter type: ${typeof param}`),
+          message: "Failed to execute statement",
+        });
+      };
+
+      const toSqlParams = (params: ReadonlyArray<unknown>): ReadonlyArray<SQLInputValue> => {
+        const normalized: Array<SQLInputValue> = [];
+        for (const param of params) {
+          normalized.push(toSqlParam(param));
+        }
+        return normalized;
+      };
+
       const runStatement = (
         statement: StatementSync,
         params: ReadonlyArray<unknown>,
         raw: boolean,
-      ) =>
-        Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
+      ): Effect.Effect<ReadonlyArray<SqliteRow> | SqliteRawResult, SqlError> =>
+        Effect.withFiber<ReadonlyArray<SqliteRow> | SqliteRawResult, SqlError>((fiber) => {
           statement.setReadBigInts(Boolean(ServiceMap.get(fiber.services, Client.SafeIntegers)));
           try {
+            const sqlParams = toSqlParams(params);
             if (hasRows(statement)) {
-              return Effect.succeed(statement.all(...(params as any)));
+              return Effect.succeed(statement.all(...sqlParams));
             }
-            const result = statement.run(...(params as any));
-            return Effect.succeed(raw ? (result as unknown as ReadonlyArray<any>) : []);
+            const result = statement.run(...sqlParams);
+            return Effect.succeed(raw ? result : []);
           } catch (cause) {
             return Effect.fail(new SqlError({ cause, message: "Failed to execute statement" }));
           }
         });
 
-      const run = (sql: string, params: ReadonlyArray<unknown>, raw = false) =>
-        Effect.flatMap(Cache.get(prepareCache, sql), (s) => runStatement(s, params, raw));
+      const runRows = (sql: string, params: ReadonlyArray<unknown>) =>
+        Effect.flatMap(Cache.get(prepareCache, sql), (statement) =>
+          runStatement(statement, params, false).pipe(
+            Effect.map((result) => (Array.isArray(result) ? result : [])),
+          ),
+        );
+
+      const runRaw = (sql: string, params: ReadonlyArray<unknown>) =>
+        Effect.flatMap(Cache.get(prepareCache, sql), (statement) => runStatement(statement, params, true));
 
       const runValues = (sql: string, params: ReadonlyArray<unknown>) =>
         Effect.acquireUseRelease(
@@ -116,14 +164,14 @@ const makeWithDatabase = (
           (statement) =>
             Effect.try({
               try: () => {
+                const sqlParams = toSqlParams(params);
                 if (hasRows(statement)) {
                   statement.setReturnArrays(true);
-                  // Safe to cast to array after we've setReturnArrays(true)
-                  return statement.all(...(params as any)) as unknown as ReadonlyArray<
-                    ReadonlyArray<unknown>
-                  >;
+                  return statement
+                    .all(...sqlParams)
+                    .map((row) => Object.values(row) as ReadonlyArray<unknown>);
                 }
-                statement.run(...(params as any));
+                statement.run(...sqlParams);
                 return [];
               },
               catch: (cause) => new SqlError({ cause, message: "Failed to execute statement" }),
@@ -138,16 +186,19 @@ const makeWithDatabase = (
 
       return identity<Connection>({
         execute(sql, params, rowTransform) {
-          return rowTransform ? Effect.map(run(sql, params), rowTransform) : run(sql, params);
+          const effect = runRows(sql, params);
+          return rowTransform ? Effect.map(effect, rowTransform) : effect;
         },
         executeRaw(sql, params) {
-          return run(sql, params, true);
+          return runRaw(sql, params);
         },
         executeValues(sql, params) {
           return runValues(sql, params);
         },
         executeUnprepared(sql, params, rowTransform) {
-          const effect = runStatement(db.prepare(sql), params ?? [], false);
+          const effect = runStatement(db.prepare(sql), params ?? [], false).pipe(
+            Effect.map((result) => (Array.isArray(result) ? result : [])),
+          );
           return rowTransform ? Effect.map(effect, rowTransform) : effect;
         },
         executeStream(_sql, _params) {

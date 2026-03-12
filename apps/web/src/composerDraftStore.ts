@@ -9,54 +9,17 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
-import { Debouncer } from "@tanstack/react-pacer";
+import { Schema } from "effect";
+import {
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type ChatImageAttachment,
+} from "./types";
 import { create } from "zustand";
-import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 export type DraftThreadEnvMode = "local" | "worktree";
-
-const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
-
-interface DebouncedStorage extends StateStorage {
-  flush: () => void;
-}
-
-export function createDebouncedStorage(baseStorage: StateStorage): DebouncedStorage {
-  const debouncedSetItem = new Debouncer(
-    (name: string, value: string) => {
-      baseStorage.setItem(name, value);
-    },
-    { wait: COMPOSER_PERSIST_DEBOUNCE_MS },
-  );
-
-  return {
-    getItem: (name) => baseStorage.getItem(name),
-    setItem: (name, value) => {
-      debouncedSetItem.maybeExecute(name, value);
-    },
-    removeItem: (name) => {
-      debouncedSetItem.cancel();
-      baseStorage.removeItem(name);
-    },
-    flush: () => {
-      debouncedSetItem.flush();
-    },
-  };
-}
-
-const composerDebouncedStorage: DebouncedStorage =
-  typeof localStorage !== "undefined"
-    ? createDebouncedStorage(localStorage)
-    : { getItem: () => null, setItem: () => {}, removeItem: () => {}, flush: () => {} };
-
-// Flush pending composer draft writes before page unload to prevent data loss.
-if (typeof window !== "undefined") {
-  window.addEventListener("beforeunload", () => {
-    composerDebouncedStorage.flush();
-  });
-}
 
 export interface PersistedComposerImageAttachment {
   id: string;
@@ -209,6 +172,18 @@ const EMPTY_THREAD_DRAFT = Object.freeze({
 const REASONING_EFFORT_VALUES = new Set<CodexReasoningEffort>(
   REASONING_EFFORT_OPTIONS_BY_PROVIDER.codex,
 );
+const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
+const decodeProjectId = Schema.decodeUnknownOption(ProjectId);
+
+function toThreadId(value: unknown): ThreadId | null {
+  const decoded = decodeThreadId(value);
+  return decoded._tag === "Some" ? decoded.value : null;
+}
+
+function toProjectId(value: unknown): ProjectId | null {
+  const decoded = decodeProjectId(value);
+  return decoded._tag === "Some" ? decoded.value : null;
+}
 
 function createEmptyThreadDraft(): ComposerThreadDraftState {
   return {
@@ -328,8 +303,13 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       if (typeof projectId !== "string" || projectId.length === 0) {
         continue;
       }
-      draftThreadsByThreadId[threadId as ThreadId] = {
-        projectId: projectId as ProjectId,
+      const normalizedThreadId = toThreadId(threadId);
+      const normalizedProjectId = toProjectId(projectId);
+      if (!normalizedThreadId || !normalizedProjectId) {
+        continue;
+      }
+      draftThreadsByThreadId[normalizedThreadId] = {
+        projectId: normalizedProjectId,
         createdAt:
           typeof createdAt === "string" && createdAt.length > 0
             ? createdAt
@@ -365,10 +345,15 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
         typeof threadId === "string" &&
         threadId.length > 0
       ) {
-        projectDraftThreadIdByProjectId[projectId as ProjectId] = threadId as ThreadId;
-        if (!draftThreadsByThreadId[threadId as ThreadId]) {
-          draftThreadsByThreadId[threadId as ThreadId] = {
-            projectId: projectId as ProjectId,
+        const normalizedProjectId = toProjectId(projectId);
+        const normalizedThreadId = toThreadId(threadId);
+        if (!normalizedProjectId || !normalizedThreadId) {
+          continue;
+        }
+        projectDraftThreadIdByProjectId[normalizedProjectId] = normalizedThreadId;
+        if (!draftThreadsByThreadId[normalizedThreadId]) {
+          draftThreadsByThreadId[normalizedThreadId] = {
+            projectId: normalizedProjectId,
             createdAt: new Date().toISOString(),
             runtimeMode: DEFAULT_RUNTIME_MODE,
             interactionMode: DEFAULT_INTERACTION_MODE,
@@ -376,10 +361,10 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
             worktreePath: null,
             envMode: "local",
           };
-        } else if (draftThreadsByThreadId[threadId as ThreadId]?.projectId !== projectId) {
-          draftThreadsByThreadId[threadId as ThreadId] = {
-            ...draftThreadsByThreadId[threadId as ThreadId]!,
-            projectId: projectId as ProjectId,
+        } else if (draftThreadsByThreadId[normalizedThreadId]?.projectId !== normalizedProjectId) {
+          draftThreadsByThreadId[normalizedThreadId] = {
+            ...draftThreadsByThreadId[normalizedThreadId]!,
+            projectId: normalizedProjectId,
           };
         }
       }
@@ -439,7 +424,11 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
     ) {
       continue;
     }
-    nextDraftsByThreadId[threadId as ThreadId] = {
+    const normalizedThreadId = toThreadId(threadId);
+    if (!normalizedThreadId) {
+      continue;
+    }
+    nextDraftsByThreadId[normalizedThreadId] = {
       prompt,
       attachments,
       ...(provider ? { provider } : {}),
@@ -491,7 +480,8 @@ function hydreatePersistedComposerImageAttachment(
   attachment: PersistedComposerImageAttachment,
 ): File | null {
   const commaIndex = attachment.dataUrl.indexOf(",");
-  const header = commaIndex === -1 ? attachment.dataUrl : attachment.dataUrl.slice(0, commaIndex);
+  const header =
+    commaIndex === -1 ? attachment.dataUrl : attachment.dataUrl.slice(0, commaIndex);
   const payload = commaIndex === -1 ? "" : attachment.dataUrl.slice(commaIndex + 1);
   if (payload.length === 0) {
     return null;
@@ -600,8 +590,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const nextDraftThread: DraftThreadState = {
             projectId,
             createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
-            runtimeMode:
-              options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+            runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
             interactionMode:
               options?.interactionMode ??
               existingThread?.interactionMode ??
@@ -669,9 +658,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             return state;
           }
           const nextWorktreePath =
-            options.worktreePath === undefined
-              ? existing.worktreePath
-              : (options.worktreePath ?? null);
+            options.worktreePath === undefined ? existing.worktreePath : (options.worktreePath ?? null);
           const nextDraftThread: DraftThreadState = {
             projectId: nextProjectId,
             createdAt:
@@ -683,7 +670,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
             worktreePath: nextWorktreePath,
             envMode:
-              options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
+              options.envMode ??
+              (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
           };
           const isUnchanged =
             nextDraftThread.projectId === existing.projectId &&
@@ -1208,7 +1196,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
     {
       name: COMPOSER_DRAFT_STORAGE_KEY,
       version: 1,
-      storage: createJSONStorage(() => composerDebouncedStorage),
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => {
         const persistedDraftsByThreadId: PersistedComposerDraftStoreState["draftsByThreadId"] = {};
         for (const [threadId, draft] of Object.entries(state.draftsByThreadId)) {
@@ -1249,7 +1237,11 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           if (draft.codexFastMode) {
             persistedDraft.codexFastMode = true;
           }
-          persistedDraftsByThreadId[threadId as ThreadId] = persistedDraft;
+          const normalizedThreadId = toThreadId(threadId);
+          if (!normalizedThreadId) {
+            continue;
+          }
+          persistedDraftsByThreadId[normalizedThreadId] = persistedDraft;
         }
         return {
           draftsByThreadId: persistedDraftsByThreadId,
