@@ -3646,10 +3646,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
-      <ThreadErrorBanner
-        error={activeThread.error ?? (activeThread.session?.status === "error" ? activeThread.session.lastError ?? null : null)}
-        onDismiss={() => setThreadError(activeThread.id, null)}
-      />
+      {activeThread.session?.status !== "closed" && (
+        <ThreadErrorBanner
+          error={activeThread.error ?? (activeThread.session?.status === "error" ? activeThread.session.lastError ?? null : null)}
+          onDismiss={() => setThreadError(activeThread.id, null)}
+        />
+      )}
+      {activeThread.session?.status === "closed" && activeThread.session.lastError && (
+        <div className="flex items-center gap-3 border-b border-destructive/30 bg-destructive/10 px-4 py-2.5">
+          <CircleAlertIcon className="size-4 shrink-0 text-destructive" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-destructive">Session disconnected</p>
+            <p className="text-xs text-destructive/70">{activeThread.session.lastError}</p>
+          </div>
+        </div>
+      )}
       {isWorktreeMissing && (
         <div className="flex items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
           <FolderXIcon className="size-4 shrink-0 text-amber-500" />

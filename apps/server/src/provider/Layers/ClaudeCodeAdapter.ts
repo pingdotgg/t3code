@@ -1371,7 +1371,12 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             if (Cause.hasInterruptsOnly(cause) || context.stopped) {
               return;
             }
-            const message = toMessage(Cause.squash(cause), "Claude runtime stream failed.");
+            const rawMessage = toMessage(Cause.squash(cause), "Claude runtime stream failed.");
+            // Provide a human-readable message when a resumed session fails
+            const message =
+              context.resumeSessionId && /exit(ed)?\s*(with\s*)?(code\s*)?1/i.test(rawMessage)
+                ? "Session expired — the previous Claude Code process is no longer available. Send a new message to start a fresh session."
+                : rawMessage;
             yield* emitRuntimeError(context, message, cause);
             yield* completeTurn(context, "failed", message);
           }),
