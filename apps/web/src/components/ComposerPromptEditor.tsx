@@ -655,6 +655,7 @@ function ComposerPromptEditorInner({
     cursor: clampCursor(value, cursor),
     expandedCursor: clampCursor(value, cursor),
   });
+  const isApplyingControlledUpdateRef = useRef(false);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -684,12 +685,23 @@ function ComposerPromptEditorInner({
     };
 
     const rootElement = editor.getRootElement();
-    if (!rootElement || document.activeElement !== rootElement) {
+    const isFocused = Boolean(rootElement && document.activeElement === rootElement);
+    if (previousSnapshot.value === value && !isFocused) {
       return;
     }
 
+    isApplyingControlledUpdateRef.current = true;
     editor.update(() => {
-      $setSelectionAtComposerOffset(normalizedCursor);
+      const valueChanged = previousSnapshot.value !== value;
+      if (previousSnapshot.value !== value) {
+        $setComposerEditorPrompt(value);
+      }
+      if (valueChanged || isFocused) {
+        $setSelectionAtComposerOffset(normalizedCursor);
+      }
+    });
+    queueMicrotask(() => {
+      isApplyingControlledUpdateRef.current = false;
     });
   }, [cursor, editor, value]);
 
@@ -751,9 +763,7 @@ function ComposerPromptEditorInner({
       focus: () => {
         focusAt(snapshotRef.current.cursor);
       },
-      focusAt: (nextCursor: number) => {
-        focusAt(nextCursor);
-      },
+      focusAt,
       focusAtEnd: () => {
         focusAt(snapshotRef.current.value.length);
       },
@@ -781,6 +791,9 @@ function ComposerPromptEditorInner({
         previousSnapshot.cursor === nextCursor &&
         previousSnapshot.expandedCursor === nextExpandedCursor
       ) {
+        return;
+      }
+      if (isApplyingControlledUpdateRef.current) {
         return;
       }
       snapshotRef.current = {

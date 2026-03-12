@@ -111,7 +111,7 @@ jobs:
               },
             ];
 
-            const managedLabelNames = managedLabels.map((label) => label.name);
+            const managedLabelNames = new Set(managedLabels.map((label) => label.name));
 
             for (const label of managedLabels) {
               try {
@@ -138,13 +138,19 @@ jobs:
                   throw error;
                 }
 
-                await github.rest.issues.createLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: label.name,
-                  color: label.color,
-                  description: label.description,
-                });
+                try {
+                  await github.rest.issues.createLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name: label.name,
+                    color: label.color,
+                    description: label.description,
+                  });
+                } catch (createError) {
+                  if (createError.status !== 422) {
+                    throw createError;
+                  }
+                }
               }
             }
 
@@ -159,17 +165,35 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issueNumber,
+              per_page: 100,
             });
 
-            const preservedLabels = currentLabels
-              .map((label) => label.name)
-              .filter((name) => !managedLabelNames.includes(name));
+            for (const label of currentLabels) {
+              if (!managedLabelNames.has(label.name) || label.name === nextLabelName) {
+                continue;
+              }
 
-            await github.rest.issues.setLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              labels: [...preservedLabels, nextLabelName],
-            });
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  name: label.name,
+                });
+              } catch (removeError) {
+                if (removeError.status !== 404) {
+                  throw removeError;
+                }
+              }
+            }
+
+            if (!currentLabels.some((label) => label.name === nextLabelName)) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: [nextLabelName],
+              });
+            }
 
             core.info(`PR #${issueNumber}: ${status} -> ${nextLabelName}`);
