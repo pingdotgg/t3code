@@ -544,7 +544,7 @@ function SidebarRail({
     if (!wrapper) return;
 
     const storedWidth = getLocalStorageItem(resolvedResizable.storageKey, Schema.Finite);
-    if (!storedWidth) return;
+    if (storedWidth === null) return;
     const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
     wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
     resolvedResizable.onResize?.(clampedWidth);

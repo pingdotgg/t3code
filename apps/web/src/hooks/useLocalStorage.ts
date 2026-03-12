@@ -8,10 +8,12 @@ const isomorphicLocalStorage: Storage =
     : (function () {
         const store = new Map<string, string>();
         return {
-          clear: store.clear,
+          clear: () => store.clear(),
           getItem: (_) => store.get(_) ?? null,
           key: (_) => Record.keys(store).at(_) ?? null,
-          length: store.size,
+          get length() {
+            return store.size;
+          },
           removeItem: (_) => store.delete(_),
           setItem: (_, value) => store.set(_, value),
         };
