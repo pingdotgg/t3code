@@ -40,12 +40,14 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
+import { resolveThreadScopedGitStatus } from "~/lib/threadGitStatus";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadId: ThreadId | null;
+  activeThreadBranch: string | null;
 }
 
 interface PendingDefaultBranchAction {
@@ -150,7 +152,11 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+export default function GitActionsControl({
+  gitCwd,
+  activeThreadId,
+  activeThreadBranch,
+}: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -168,15 +174,27 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const isRepo = branchList?.isRepo ?? true;
   const hasOriginRemote = branchList?.hasOriginRemote ?? false;
   const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
+  const threadScopedGitStatus = useMemo(
+    () =>
+      resolveThreadScopedGitStatus({
+        gitStatus,
+        threadBranch: activeThreadBranch,
+      }),
+    [activeThreadBranch, gitStatus],
+  );
   const isGitStatusOutOfSync =
-    !!gitStatus?.branch && !!currentBranch && gitStatus.branch !== currentBranch;
+    !!threadScopedGitStatus?.branch &&
+    !!currentBranch &&
+    threadScopedGitStatus.branch !== currentBranch;
+  const threadBranchMismatch =
+    activeThreadBranch !== null && !!gitStatus?.branch && gitStatus.branch !== activeThreadBranch;
 
   useEffect(() => {
     if (!isGitStatusOutOfSync) return;
     void invalidateGitQueries(queryClient);
   }, [isGitStatusOutOfSync, queryClient]);
 
-  const gitStatusForActions = isGitStatusOutOfSync ? null : gitStatus;
+  const gitStatusForActions = isGitStatusOutOfSync ? null : threadScopedGitStatus;
 
   const initMutation = useMutation(gitInitMutationOptions({ cwd: gitCwd, queryClient }));
 
@@ -206,7 +224,9 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     [gitStatusForActions, hasOriginRemote, isDefaultBranch, isGitActionRunning],
   );
   const quickActionDisabledReason = quickAction.disabled
-    ? (quickAction.hint ?? "This action is currently unavailable.")
+    ? threadBranchMismatch
+      ? `This thread is pinned to "${activeThreadBranch}" but the current branch is "${gitStatus?.branch}".`
+      : (quickAction.hint ?? "This action is currently unavailable.")
     : null;
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({

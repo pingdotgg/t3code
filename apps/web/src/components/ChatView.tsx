@@ -3552,6 +3552,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       >
         <ChatHeader
           activeThreadId={activeThread.id}
+          activeThreadBranch={activeThread.branch}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
           isGitRepo={isGitRepo}
@@ -4255,6 +4256,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
+  activeThreadBranch: string | null;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
   isGitRepo: boolean;
@@ -4275,6 +4277,7 @@ interface ChatHeaderProps {
 
 const ChatHeader = memo(function ChatHeader({
   activeThreadId,
+  activeThreadBranch,
   activeThreadTitle,
   activeProjectName,
   isGitRepo,
@@ -4332,7 +4335,13 @@ const ChatHeader = memo(function ChatHeader({
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {activeProjectName && (
+          <GitActionsControl
+            gitCwd={gitCwd}
+            activeThreadId={activeThreadId}
+            activeThreadBranch={activeThreadBranch}
+          />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
