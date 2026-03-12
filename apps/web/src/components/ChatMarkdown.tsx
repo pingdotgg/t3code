@@ -1,8 +1,4 @@
-import {
-  getSharedHighlighter,
-  type DiffsHighlighter,
-  type SupportedLanguages,
-} from "@pierre/diffs";
+import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import React, {
   Children,
@@ -213,7 +209,12 @@ function SuspenseShikiCodeBlock({
   const highlightedHtml = useMemo(() => {
     try {
       return highlighter.codeToHtml(code, { lang: language, theme: themeName });
-    } catch {
+    } catch (error) {
+      // Log highlighting failures for debugging while falling back to plain text
+      console.warn(
+        `Code highlighting failed for language "${language}", falling back to plain text.`,
+        error instanceof Error ? error.message : error,
+      );
       // If highlighting fails for this language, render as plain text
       return highlighter.codeToHtml(code, { lang: "text", theme: themeName });
     }
