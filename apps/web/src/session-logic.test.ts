@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  derivePhase,
   PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -636,6 +637,33 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+describe("derivePhase", () => {
+  it("treats a resumed session as running when orchestration is still active", () => {
+    expect(
+      derivePhase({
+        provider: "codex",
+        status: "ready",
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "2026-03-09T10:00:01.000Z",
+        orchestrationStatus: "running",
+        activeTurnId: TurnId.makeUnsafe("turn-1"),
+      }),
+    ).toBe("running");
+  });
+
+  it("treats orchestration startup as connecting even before the legacy status catches up", () => {
+    expect(
+      derivePhase({
+        provider: "codex",
+        status: "ready",
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "2026-03-09T10:00:01.000Z",
+        orchestrationStatus: "starting",
+      }),
+    ).toBe("connecting");
   });
 });
 

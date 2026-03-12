@@ -121,6 +121,17 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
 
 type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
 type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
+type SessionPhaseState = Pick<ThreadSession, "status" | "orchestrationStatus">;
+
+export function isSessionConnecting(session: SessionPhaseState | null): boolean {
+  if (!session) return false;
+  return session.status === "connecting" || session.orchestrationStatus === "starting";
+}
+
+export function isSessionRunning(session: SessionPhaseState | null): boolean {
+  if (!session) return false;
+  return session.status === "running" || session.orchestrationStatus === "running";
+}
 
 export function isLatestTurnSettled(
   latestTurn: LatestTurnTiming | null,
@@ -614,7 +625,7 @@ export function inferCheckpointTurnCountByTurnId(
 
 export function derivePhase(session: ThreadSession | null): SessionPhase {
   if (!session || session.status === "closed") return "disconnected";
-  if (session.status === "connecting") return "connecting";
-  if (session.status === "running") return "running";
+  if (isSessionConnecting(session)) return "connecting";
+  if (isSessionRunning(session)) return "running";
   return "ready";
 }

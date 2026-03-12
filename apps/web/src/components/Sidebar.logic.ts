@@ -1,5 +1,5 @@
 import type { Thread } from "../types";
-import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
+import { derivePhase, findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 
@@ -43,6 +43,7 @@ export function resolveThreadStatusPill(input: {
   hasPendingUserInput: boolean;
 }): ThreadStatusPill | null {
   const { hasPendingApprovals, hasPendingUserInput, thread } = input;
+  const phase = derivePhase(thread.session);
 
   if (hasPendingApprovals) {
     return {
@@ -62,7 +63,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "running") {
+  if (phase === "running") {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -71,7 +72,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "connecting") {
+  if (phase === "connecting") {
     return {
       label: "Connecting",
       colorClass: "text-sky-600 dark:text-sky-300/80",
