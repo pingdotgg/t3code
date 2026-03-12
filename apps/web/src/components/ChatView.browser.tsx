@@ -11,6 +11,7 @@ import {
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
+  OrchestrationSessionStatus,
 } from "@t3tools/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
@@ -57,13 +58,6 @@ interface ViewportSpec {
   textTolerancePx: number;
   attachmentTolerancePx: number;
 }
-
-type SnapshotSessionStatus =
-  OrchestrationReadModel["threads"][number]["session"] extends infer Session
-    ? Session extends { status: infer Status }
-      ? Status
-      : never
-    : never;
 
 const DEFAULT_VIEWPORT: ViewportSpec = {
   name: "desktop",
@@ -160,7 +154,7 @@ function createSnapshotForTargetUser(options: {
   targetMessageId: MessageId;
   targetText: string;
   targetAttachmentCount?: number;
-  sessionStatus?: SnapshotSessionStatus;
+  sessionStatus?: OrchestrationSessionStatus;
 }): OrchestrationReadModel {
   const messages: Array<OrchestrationReadModel["threads"][number]["messages"][number]> = [];
 
