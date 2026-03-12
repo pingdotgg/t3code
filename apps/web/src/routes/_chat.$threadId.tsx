@@ -170,9 +170,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$threadId",
       params: { threadId },
-      search: (previous) => {
-        return stripDiffSearchParams(previous);
-      },
+      search: { diff: undefined },
     });
   }, [navigate, threadId]);
   const openDiff = useCallback(() => {
