@@ -38,13 +38,6 @@ export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
 }
 
-export function isMacOS(): boolean {
-  const nav = window.navigator as Navigator & {
-    userAgentData?: { platform: string };
-  };
-  return nav.userAgentData ? nav.userAgentData.platform === "macOS" : /Mac/i.test(nav.userAgent);
-}
-
 export function isContextMenuPointerDown(input: {
   button: number;
   ctrlKey: boolean;
