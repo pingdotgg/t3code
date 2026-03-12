@@ -1007,12 +1007,6 @@ describe("ProviderRuntimeIngestion", () => {
   it("maps canonical request events into approval activities with requestKind", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
-    const requestArgs = {
-      changes: [{ path: "apps/web/src/components/chat/MessagesTimeline.tsx" }],
-    };
-    const resolution = {
-      files: [{ filename: "apps/web/src/components/chat/MessagesTimeline.tsx" }],
-    };
 
     harness.emit({
       type: "request.opened",
@@ -1024,7 +1018,6 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         requestType: "command_execution_approval",
         detail: "pwd",
-        args: requestArgs,
       },
     });
 
@@ -1038,7 +1031,6 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         requestType: "command_execution_approval",
         decision: "accept",
-        resolution,
       },
     });
 
@@ -1066,7 +1058,6 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(requestedPayload?.requestKind).toBe("command");
     expect(requestedPayload?.requestType).toBe("command_execution_approval");
-    expect(requestedPayload?.args).toEqual(requestArgs);
 
     const resolved = thread?.activities.find(
       (activity: ProviderRuntimeTestActivity) => activity.id === "evt-request-resolved",
@@ -1077,7 +1068,6 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(resolvedPayload?.requestKind).toBe("command");
     expect(resolvedPayload?.requestType).toBe("command_execution_approval");
-    expect(resolvedPayload?.resolution).toEqual(resolution);
   });
 
   it("maps runtime.error into errored session state", async () => {

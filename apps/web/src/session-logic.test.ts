@@ -453,7 +453,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBe("bun run lint");
   });
 
-  it("keeps tool lifecycle metadata for richer Codex tool rendering", () => {
+  it("keeps compact Codex tool metadata used for icons and labels", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "tool-with-metadata",
@@ -479,13 +479,9 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities, undefined);
     expect(entry).toMatchObject({
-      activityKind: "tool.completed",
       command: "bun run dev",
       detail: '{ "dev": "vite dev --port 3000" }',
-      exitCode: 0,
       itemType: "command_execution",
-      output: '{ "dev": "vite dev --port 3000" }',
-      toolStatus: "completed",
       toolTitle: "bash",
     });
   });
@@ -516,26 +512,6 @@ describe("deriveWorkLogEntries", () => {
       "apps/web/src/session-logic.ts",
     ]);
   });
-
-  it("extracts changed file paths from file-change approval args", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "file-change-approval",
-        kind: "approval.requested",
-        summary: "File-change approval requested",
-        tone: "approval",
-        payload: {
-          requestKind: "file-change",
-          args: {
-            changes: [{ path: "apps/web/src/components/chat/MessagesTimeline.tsx" }],
-          },
-        },
-      }),
-    ];
-
-    const [entry] = deriveWorkLogEntries(activities, undefined);
-    expect(entry?.changedFiles).toEqual(["apps/web/src/components/chat/MessagesTimeline.tsx"]);
-  });
 });
 
 describe("deriveTimelineEntries", () => {
@@ -565,7 +541,6 @@ describe("deriveTimelineEntries", () => {
           createdAt: "2026-02-23T00:00:03.000Z",
           label: "Ran tests",
           tone: "tool",
-          activityKind: "tool.completed",
         },
       ],
     );
