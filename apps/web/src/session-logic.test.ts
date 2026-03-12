@@ -373,6 +373,28 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["task-progress"]);
   });
 
+  it("includes historical work entries when no turn filter is provided", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "turn-1-complete",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-1",
+        summary: "Turn 1 tool complete",
+        kind: "tool.completed",
+      }),
+      makeActivity({
+        id: "turn-2-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: "turn-2",
+        summary: "Turn 2 tool complete",
+        kind: "tool.completed",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["turn-1-complete", "turn-2-complete"]);
+  });
+
   it("filters by turn id when provided", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({ id: "turn-1", turnId: "turn-1", summary: "Tool call", kind: "tool.started" }),

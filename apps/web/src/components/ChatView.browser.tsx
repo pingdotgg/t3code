@@ -2,12 +2,14 @@
 import "../index.css";
 
 import {
+  type EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  type TurnId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -116,6 +118,7 @@ function createUserMessage(options: {
   id: MessageId;
   text: string;
   offsetSeconds: number;
+  turnId?: TurnId | null;
   attachments?: Array<{
     type: "image";
     id: string;
@@ -129,22 +132,49 @@ function createUserMessage(options: {
     role: "user" as const,
     text: options.text,
     ...(options.attachments ? { attachments: options.attachments } : {}),
-    turnId: null,
+    turnId: options.turnId ?? null,
     streaming: false,
     createdAt: isoAt(options.offsetSeconds),
     updatedAt: isoAt(options.offsetSeconds + 1),
   };
 }
 
-function createAssistantMessage(options: { id: MessageId; text: string; offsetSeconds: number }) {
+function createAssistantMessage(options: {
+  id: MessageId;
+  text: string;
+  offsetSeconds: number;
+  turnId?: TurnId | null;
+}) {
   return {
     id: options.id,
     role: "assistant" as const,
     text: options.text,
-    turnId: null,
+    turnId: options.turnId ?? null,
     streaming: false,
     createdAt: isoAt(options.offsetSeconds),
     updatedAt: isoAt(options.offsetSeconds + 1),
+  };
+}
+
+function createThreadActivity(options: {
+  id: EventId;
+  offsetSeconds: number;
+  tone: "info" | "tool" | "approval" | "error";
+  kind: string;
+  summary: string;
+  payload?: unknown;
+  turnId?: TurnId | null;
+  sequence?: number;
+}) {
+  return {
+    id: options.id,
+    tone: options.tone,
+    kind: options.kind,
+    summary: options.summary,
+    payload: options.payload ?? {},
+    turnId: options.turnId ?? null,
+    ...(options.sequence !== undefined ? { sequence: options.sequence } : {}),
+    createdAt: isoAt(options.offsetSeconds),
   };
 }
 
@@ -350,6 +380,140 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
           })
         : thread,
     ),
+  };
+}
+
+function createSnapshotWithHistoricalToolRows(): OrchestrationReadModel {
+  const turnOneId = "turn-history-1" as TurnId;
+  const firstUserMessageId = "msg-user-history-1" as MessageId;
+  const firstAssistantMessageId = "msg-assistant-history-1" as MessageId;
+
+  return {
+    snapshotSequence: 1,
+    projects: [
+      {
+        id: PROJECT_ID,
+        title: "Project",
+        workspaceRoot: "/repo/project",
+        defaultModel: "gpt-5",
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: [
+      {
+        id: THREAD_ID,
+        projectId: PROJECT_ID,
+        title: "Historical tool rows thread",
+        model: "gpt-5",
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        branch: "main",
+        worktreePath: null,
+        latestTurn: {
+          turnId: turnOneId,
+          state: "completed",
+          requestedAt: isoAt(0),
+          startedAt: isoAt(1),
+          completedAt: isoAt(6),
+          assistantMessageId: firstAssistantMessageId,
+        },
+        createdAt: NOW_ISO,
+        updatedAt: isoAt(6),
+        deletedAt: null,
+        messages: [
+          createUserMessage({
+            id: firstUserMessageId,
+            text: "initial request",
+            offsetSeconds: 0,
+            turnId: turnOneId,
+          }),
+          createAssistantMessage({
+            id: firstAssistantMessageId,
+            text: "initial response",
+            offsetSeconds: 6,
+            turnId: turnOneId,
+          }),
+        ],
+        activities: [
+          createThreadActivity({
+            id: "activity-history-tool" as EventId,
+            offsetSeconds: 2,
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "Run lint complete",
+            turnId: turnOneId,
+            sequence: 1,
+            payload: {
+              itemType: "command_execution",
+              data: {
+                item: {
+                  command: ["bun", "run", "lint"],
+                },
+              },
+            },
+          }),
+        ],
+        proposedPlans: [],
+        checkpoints: [],
+        session: {
+          threadId: THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: isoAt(6),
+        },
+      },
+    ],
+    updatedAt: isoAt(6),
+  };
+}
+
+function addNewLatestTurnToSnapshot(snapshot: OrchestrationReadModel): OrchestrationReadModel {
+  const nextTurnId = "turn-history-2" as TurnId;
+
+  return {
+    ...snapshot,
+    snapshotSequence: snapshot.snapshotSequence + 1,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            latestTurn: {
+              turnId: nextTurnId,
+              state: "running",
+              requestedAt: isoAt(10),
+              startedAt: isoAt(10),
+              completedAt: null,
+              assistantMessageId: null,
+            },
+            updatedAt: isoAt(10),
+            messages: [
+              ...thread.messages,
+              createUserMessage({
+                id: "msg-user-history-2" as MessageId,
+                text: "follow-up request",
+                offsetSeconds: 10,
+                turnId: nextTurnId,
+              }),
+            ],
+            session: {
+              threadId: THREAD_ID,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: nextTurnId,
+              lastError: null,
+              updatedAt: isoAt(10),
+            },
+          }
+        : thread,
+    ),
+    updatedAt: isoAt(10),
   };
 }
 
@@ -1080,6 +1244,50 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("preserves historical tool rows after a new user turn becomes latest", async () => {
+    const initialSnapshot = createSnapshotWithHistoricalToolRows();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: initialSnapshot,
+    });
+
+    try {
+      const initialCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("pre")).find((element) =>
+            element.textContent?.includes("bun run lint"),
+          ) as HTMLPreElement | null,
+        "Unable to find the historical tool command before the new turn starts.",
+      );
+      expect(initialCommand.textContent).toContain("bun run lint");
+
+      const nextSnapshot = addNewLatestTurnToSnapshot(initialSnapshot);
+      fixture.snapshot = nextSnapshot;
+      useStore.getState().syncServerReadModel(nextSnapshot);
+      await waitForLayout();
+
+      const preservedCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("pre")).find((element) =>
+            element.textContent?.includes("bun run lint"),
+          ) as HTMLPreElement | null,
+        "Historical tool command disappeared after the next turn became latest.",
+      );
+      expect(preservedCommand.textContent).toContain("bun run lint");
+
+      const followUpMessage = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("pre")).find((element) =>
+            element.textContent?.includes("follow-up request"),
+          ) as HTMLPreElement | null,
+        "Unable to find the follow-up user message after syncing the next snapshot.",
+      );
+      expect(followUpMessage.textContent).toContain("follow-up request");
     } finally {
       await mounted.cleanup();
     }
