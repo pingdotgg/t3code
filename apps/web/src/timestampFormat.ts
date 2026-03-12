@@ -1,18 +1,22 @@
 import { type TimestampFormat } from "./appSettings";
 
-function uses24HourClock(timestampFormat: TimestampFormat): boolean {
-  return timestampFormat === "24-hour";
-}
-
 export function getTimestampFormatOptions(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
 ): Intl.DateTimeFormatOptions {
-  return {
+  const baseOptions: Intl.DateTimeFormatOptions = {
     hour: "numeric",
     minute: "2-digit",
     ...(includeSeconds ? { second: "2-digit" } : {}),
-    hour12: !uses24HourClock(timestampFormat),
+  };
+
+  if (timestampFormat === "locale") {
+    return baseOptions;
+  }
+
+  return {
+    ...baseOptions,
+    hour12: timestampFormat === "12-hour",
   };
 }
 

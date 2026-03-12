@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import { Option, Schema } from "effect";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
@@ -7,9 +7,9 @@ import { useLocalStorage } from "./hooks/useLocalStorage";
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
-export const TIMESTAMP_FORMAT_OPTIONS = ["12-hour", "24-hour"] as const;
+export const TIMESTAMP_FORMAT_OPTIONS = ["locale", "12-hour", "24-hour"] as const;
 export type TimestampFormat = (typeof TIMESTAMP_FORMAT_OPTIONS)[number];
-export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "12-hour";
+export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
 };
@@ -25,7 +25,7 @@ const AppSettingsSchema = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
-  timestampFormat: Schema.Literals(["12-hour", "24-hour"]).pipe(
+  timestampFormat: Schema.Literals(["locale", "12-hour", "24-hour"]).pipe(
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TIMESTAMP_FORMAT)),
   ),
   customCodexModels: Schema.Array(Schema.String).pipe(
@@ -139,38 +139,6 @@ export function resolveAppModelSelection(
   );
 }
 
-function parseStoredAppSettingsValue(raw: string | null): unknown {
-  if (!raw) {
-    return null;
-  }
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
-  }
-}
-
-export function resolveLegacyTimestampFormat(value: unknown): TimestampFormat | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Record<string, unknown>;
-  if (candidate.timestampFormat === "12-hour" || candidate.timestampFormat === "24-hour") {
-    return null;
-  }
-
-  if (candidate.use24HourTimestamps === true) {
-    return "24-hour";
-  }
-
-  if (candidate.use24HourTimestamps === false) {
-    return "12-hour";
-  }
-
-  return null;
-}
-
 export function useAppSettings() {
   const [settings, setSettings] = useLocalStorage(
     APP_SETTINGS_STORAGE_KEY,
@@ -191,25 +159,6 @@ export function useAppSettings() {
   const resetSettings = useCallback(() => {
     setSettings(DEFAULT_APP_SETTINGS);
   }, [setSettings]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const rawSettings = window.localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
-    const legacyTimestampFormat = resolveLegacyTimestampFormat(
-      parseStoredAppSettingsValue(rawSettings),
-    );
-    if (!legacyTimestampFormat || settings.timestampFormat === legacyTimestampFormat) {
-      return;
-    }
-
-    setSettings((previous) => ({
-      ...previous,
-      timestampFormat: legacyTimestampFormat,
-    }));
-  }, [setSettings, settings.timestampFormat]);
 
   return {
     settings,

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_TIMESTAMP_FORMAT,
   getAppModelOptions,
   normalizeCustomModelSlugs,
   resolveAppModelSelection,
-  resolveLegacyTimestampFormat,
 } from "./appSettings";
 
 describe("normalizeCustomModelSlugs", () => {
@@ -59,21 +59,8 @@ describe("resolveAppModelSelection", () => {
   });
 });
 
-describe("resolveLegacyTimestampFormat", () => {
-  it("migrates legacy enabled booleans to 24-hour format", () => {
-    expect(resolveLegacyTimestampFormat({ use24HourTimestamps: true })).toBe("24-hour");
-  });
-
-  it("migrates legacy disabled booleans to 12-hour format", () => {
-    expect(resolveLegacyTimestampFormat({ use24HourTimestamps: false })).toBe("12-hour");
-  });
-
-  it("ignores legacy booleans when the new format is already present", () => {
-    expect(
-      resolveLegacyTimestampFormat({
-        timestampFormat: "24-hour",
-        use24HourTimestamps: false,
-      }),
-    ).toBeNull();
+describe("timestamp format defaults", () => {
+  it("defaults timestamp format to locale", () => {
+    expect(DEFAULT_TIMESTAMP_FORMAT).toBe("locale");
   });
 });

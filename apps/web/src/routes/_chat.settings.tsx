@@ -260,23 +260,24 @@ function SettingsRouteView() {
                   <div>
                     <p className="text-sm font-medium text-foreground">Timestamp format</p>
                     <p className="text-xs text-muted-foreground">
-                      Choose whether times render like <code>1:42:09 PM</code> or{" "}
-                      <code>13:42:09</code>.
+                      Locale follows your browser or OS conventions. <code>12-hour</code> and{" "}
+                      <code>24-hour</code> force the hour cycle.
                     </p>
                   </div>
                   <Select
                     value={settings.timestampFormat}
                     onValueChange={(value) => {
-                      if (value !== "12-hour" && value !== "24-hour") return;
+                      if (value !== "locale" && value !== "12-hour" && value !== "24-hour") return;
                       updateSettings({
                         timestampFormat: value,
                       });
                     }}
                   >
-                    <SelectTrigger className="w-36" aria-label="Timestamp format">
+                    <SelectTrigger className="w-40" aria-label="Timestamp format">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectPopup align="end">
+                      <SelectItem value="locale">Locale</SelectItem>
                       <SelectItem value="12-hour">12-hour</SelectItem>
                       <SelectItem value="24-hour">24-hour</SelectItem>
                     </SelectPopup>
