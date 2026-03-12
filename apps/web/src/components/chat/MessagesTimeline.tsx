@@ -9,7 +9,6 @@ import { deriveTimelineEntries, formatElapsed, formatTimestamp } from "../../ses
 import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX } from "../../chat-scroll";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
-import { computeMessageDurationStart } from "../ChatView.logic";
 import ChatMarkdown from "../ChatMarkdown";
 import { Undo2Icon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -20,6 +19,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { computeMessageDurationStart } from "./MessagesTimeline.logic";
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeMessageDurationStart } from "./ChatView.logic";
+import { computeMessageDurationStart } from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -24,10 +24,11 @@ describe("computeMessageDurationStart", () => {
         completedAt: "2026-01-01T00:00:30Z",
       },
     ]);
+
     expect(result).toEqual(
       new Map([
-        ["u1", "2026-01-01T00:00:00Z"], // user: own createdAt
-        ["a1", "2026-01-01T00:00:00Z"], // assistant: user's createdAt
+        ["u1", "2026-01-01T00:00:00Z"],
+        ["a1", "2026-01-01T00:00:00Z"],
       ]),
     );
   });
@@ -48,11 +49,12 @@ describe("computeMessageDurationStart", () => {
         completedAt: "2026-01-01T00:00:55Z",
       },
     ]);
+
     expect(result).toEqual(
       new Map([
-        ["u1", "2026-01-01T00:00:00Z"], // user: own createdAt
-        ["a1", "2026-01-01T00:00:00Z"], // first assistant: from user (duration = 30s)
-        ["a2", "2026-01-01T00:00:30Z"], // second assistant: from first assistant's completedAt (duration = 25s)
+        ["u1", "2026-01-01T00:00:00Z"],
+        ["a1", "2026-01-01T00:00:00Z"],
+        ["a2", "2026-01-01T00:00:30Z"],
       ]),
     );
   });
@@ -60,7 +62,7 @@ describe("computeMessageDurationStart", () => {
   it("does not advance the boundary for a streaming message without completedAt", () => {
     const result = computeMessageDurationStart([
       { id: "u1", role: "user", createdAt: "2026-01-01T00:00:00Z" },
-      { id: "a1", role: "assistant", createdAt: "2026-01-01T00:00:30Z" }, // streaming, no completedAt
+      { id: "a1", role: "assistant", createdAt: "2026-01-01T00:00:30Z" },
       {
         id: "a2",
         role: "assistant",
@@ -68,11 +70,12 @@ describe("computeMessageDurationStart", () => {
         completedAt: "2026-01-01T00:00:55Z",
       },
     ]);
+
     expect(result).toEqual(
       new Map([
-        ["u1", "2026-01-01T00:00:00Z"], // user
-        ["a1", "2026-01-01T00:00:00Z"], // streaming assistant: from user
-        ["a2", "2026-01-01T00:00:00Z"], // next assistant: still from user (boundary not advanced)
+        ["u1", "2026-01-01T00:00:00Z"],
+        ["a1", "2026-01-01T00:00:00Z"],
+        ["a2", "2026-01-01T00:00:00Z"],
       ]),
     );
   });
@@ -94,12 +97,13 @@ describe("computeMessageDurationStart", () => {
         completedAt: "2026-01-01T00:01:20Z",
       },
     ]);
+
     expect(result).toEqual(
       new Map([
-        ["u1", "2026-01-01T00:00:00Z"], // first user
-        ["a1", "2026-01-01T00:00:00Z"], // first assistant: from first user
-        ["u2", "2026-01-01T00:01:00Z"], // second user: own createdAt
-        ["a2", "2026-01-01T00:01:00Z"], // second assistant: from second user (not first assistant)
+        ["u1", "2026-01-01T00:00:00Z"],
+        ["a1", "2026-01-01T00:00:00Z"],
+        ["u2", "2026-01-01T00:01:00Z"],
+        ["a2", "2026-01-01T00:01:00Z"],
       ]),
     );
   });
@@ -115,11 +119,12 @@ describe("computeMessageDurationStart", () => {
         completedAt: "2026-01-01T00:00:30Z",
       },
     ]);
+
     expect(result).toEqual(
       new Map([
-        ["u1", "2026-01-01T00:00:00Z"], // user
-        ["s1", "2026-01-01T00:00:00Z"], // system: inherits user boundary
-        ["a1", "2026-01-01T00:00:00Z"], // assistant: from user
+        ["u1", "2026-01-01T00:00:00Z"],
+        ["s1", "2026-01-01T00:00:00Z"],
+        ["a1", "2026-01-01T00:00:00Z"],
       ]),
     );
   });

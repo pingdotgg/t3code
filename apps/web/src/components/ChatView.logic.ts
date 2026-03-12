@@ -138,32 +138,3 @@ export function getCustomModelOptionsByProvider(settings: {
     codex: getAppModelOptions("codex", settings.customCodexModels),
   };
 }
-
-/**
- * For the first assistant response after a user message, use the user's
- * timestamp. For subsequent assistant responses in the same turn, advance the
- * baseline to the previous assistant completion time.
- */
-export function computeMessageDurationStart(
-  messages: ReadonlyArray<{
-    id: string;
-    role: "user" | "assistant" | "system";
-    createdAt: string;
-    completedAt?: string | undefined;
-  }>,
-): Map<string, string> {
-  const result = new Map<string, string>();
-  let lastBoundary: string | null = null;
-
-  for (const message of messages) {
-    if (message.role === "user") {
-      lastBoundary = message.createdAt;
-    }
-    result.set(message.id, lastBoundary ?? message.createdAt);
-    if (message.role === "assistant" && message.completedAt) {
-      lastBoundary = message.completedAt;
-    }
-  }
-
-  return result;
-}
