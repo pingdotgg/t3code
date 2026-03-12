@@ -895,13 +895,21 @@ export default function Sidebar() {
       const api = readNativeApi();
       if (!api) return;
       const clicked = await api.contextMenu.show(
-        [{ id: "delete", label: "Delete", destructive: true }],
+        [
+          { id: "open-in-file-manager", label: "Open in File Manager" },
+          { id: "delete", label: "Delete", destructive: true },
+        ],
         position,
       );
-      if (clicked !== "delete") return;
 
       const project = projects.find((entry) => entry.id === projectId);
       if (!project) return;
+
+      if (clicked === "open-in-file-manager") {
+        void api.shell.openInEditor(project.cwd, "file-manager");
+        return;
+      }
+      if (clicked !== "delete") return;
 
       const projectThreads = threads.filter((thread) => thread.projectId === projectId);
       if (projectThreads.length > 0) {
