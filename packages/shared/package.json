@@ -16,6 +16,10 @@
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"
     },
+    "./pendingUserInput": {
+      "types": "./src/pendingUserInput.ts",
+      "import": "./src/pendingUserInput.ts"
+    },
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"

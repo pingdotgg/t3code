@@ -2,6 +2,7 @@ import { Effect, Exit, Layer, ManagedRuntime, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
+import { ColdStartLifecycle } from "../Services/ColdStartLifecycle.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
@@ -22,6 +23,13 @@ describe("OrchestrationReactor", () => {
 
     runtime = ManagedRuntime.make(
       Layer.effect(OrchestrationReactor, makeOrchestrationReactor).pipe(
+        Layer.provideMerge(
+          Layer.succeed(ColdStartLifecycle, {
+            run: Effect.sync(() => {
+              started.push("cold-start-lifecycle");
+            }),
+          }),
+        ),
         Layer.provideMerge(
           Layer.succeed(ProviderRuntimeIngestionService, {
             start: Effect.sync(() => {
@@ -54,6 +62,7 @@ describe("OrchestrationReactor", () => {
     await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
 
     expect(started).toEqual([
+      "cold-start-lifecycle",
       "provider-runtime-ingestion",
       "provider-command-reactor",
       "checkpoint-reactor",
