@@ -37,3 +37,7 @@ export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRoute
     ...(diffFilePath ? { diffFilePath } : {}),
   };
 }
+
+export const threadDiffRouteSearchOptions = {
+  validateSearch: parseDiffRouteSearch,
+} as const;
