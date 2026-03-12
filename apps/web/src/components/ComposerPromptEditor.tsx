@@ -748,6 +748,7 @@ function ComposerPromptEditorInner({
               "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[14px] leading-relaxed text-foreground focus:outline-none",
               className,
             )}
+            data-testid="composer-editor"
             aria-placeholder={placeholder}
             placeholder={<span />}
             onPaste={onPaste}
