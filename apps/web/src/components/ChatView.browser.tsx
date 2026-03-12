@@ -353,7 +353,8 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
   };
 }
 
-function resolveWsRpc(tag: string): unknown {
+function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
+  const tag = body._tag;
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
   }
@@ -395,6 +396,19 @@ function resolveWsRpc(tag: string): unknown {
       truncated: false,
     };
   }
+  if (tag === WS_METHODS.terminalOpen) {
+    return {
+      threadId: typeof body.threadId === "string" ? body.threadId : THREAD_ID,
+      terminalId: typeof body.terminalId === "string" ? body.terminalId : "default",
+      cwd: typeof body.cwd === "string" ? body.cwd : "/repo/project",
+      status: "running",
+      pid: 123,
+      history: "",
+      exitCode: null,
+      exitSignal: null,
+      updatedAt: NOW_ISO,
+    };
+  }
   return {};
 }
 
@@ -423,7 +437,7 @@ const worker = setupWorker(
       client.send(
         JSON.stringify({
           id: request.id,
-          result: resolveWsRpc(method),
+          result: resolveWsRpc(request.body),
         }),
       );
     });
