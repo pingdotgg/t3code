@@ -38,6 +38,7 @@ interface CommandAvailabilityOptions {
 }
 
 const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+
 function shouldUseGotoFlag(editorId: EditorId, target: string): boolean {
   return (
     (editorId === "cursor" || editorId === "vscode") && LINE_COLUMN_SUFFIX_PATTERN.test(target)
@@ -205,7 +206,6 @@ export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
 export const resolveEditorLaunch = Effect.fnUntraced(function* (
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
-  _env: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<EditorLaunch, OpenError> {
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {

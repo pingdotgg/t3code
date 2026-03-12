@@ -889,7 +889,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     },
   );
 
-  it("prefers Antigravity over Finder for draft threads without a worktree path", async () => {
+  it("opens the project cwd for draft threads without a worktree path", async () => {
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {
         [THREAD_ID]: {
@@ -913,7 +913,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       configureFixture: (nextFixture) => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
-          availableEditors: ["antigravity", "file-manager"],
+          availableEditors: ["vscode"],
         };
       },
     });
