@@ -15,7 +15,7 @@ import {
   protocol,
   shell,
 } from "electron";
-import type { MenuItemConstructorOptions } from "electron";
+import type { MenuItemConstructorOptions, Tray } from "electron";
 import * as Effect from "effect/Effect";
 import type {
   DesktopTheme,
@@ -43,6 +43,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { createTray } from "./tray";
 
 fixPath();
 
@@ -79,6 +80,7 @@ const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendAuthToken = "";
@@ -656,6 +658,11 @@ function resolveResourcePath(fileName: string): string | null {
 
 function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
   return resolveResourcePath(`icon.${ext}`);
+}
+
+async function configureTray(): Promise<void> {
+  // TODO: Add a context menu to the tray
+  tray = await createTray(Menu.buildFromTemplate([]));
 }
 
 /**
@@ -1330,6 +1337,8 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap backend start requested");
   mainWindow = createWindow();
   writeDesktopLogHeader("bootstrap main window created");
+  await configureTray();
+  writeDesktopLogHeader("bootstrap tray created");
 }
 
 app.on("before-quit", () => {
@@ -1337,6 +1346,8 @@ app.on("before-quit", () => {
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
   stopBackend();
+  tray?.destroy();
+  tray = null;
   restoreStdIoCapture?.();
 });
 
