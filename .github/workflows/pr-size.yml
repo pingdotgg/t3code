@@ -16,7 +16,7 @@ jobs:
     steps:
       - id: config
         name: Build PR size label config
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           result-encoding: string
           script: |
@@ -64,7 +64,7 @@ jobs:
       issues: write
     steps:
       - name: Ensure PR size labels exist
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           PR_SIZE_LABELS_JSON: ${{ needs.prepare-config.outputs.labels_json }}
         with:
@@ -125,7 +125,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Sync PR size label
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           PR_SIZE_LABELS_JSON: ${{ needs.prepare-config.outputs.labels_json }}
         with:
