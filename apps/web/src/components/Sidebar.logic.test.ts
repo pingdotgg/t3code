@@ -5,6 +5,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  sortThreadsForSidebar,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
 
@@ -176,6 +177,34 @@ describe("resolveThreadStatusPill", () => {
   });
 });
 
+describe("sortThreadsForSidebar", () => {
+  it("prioritizes pinned threads before recency", () => {
+    const threads = sortThreadsForSidebar([
+      {
+        id: "thread-1" as never,
+        pinned: false,
+        createdAt: "2026-03-09T10:10:00.000Z",
+      },
+      {
+        id: "thread-2" as never,
+        pinned: true,
+        createdAt: "2026-03-09T10:00:00.000Z",
+      },
+      {
+        id: "thread-3" as never,
+        pinned: true,
+        createdAt: "2026-03-09T10:20:00.000Z",
+      },
+    ]);
+
+    expect(threads.map((thread) => thread.id)).toEqual([
+      "thread-3" as never,
+      "thread-2" as never,
+      "thread-1" as never,
+    ]);
+  });
+});
+
 describe("resolveThreadRowClassName", () => {
   it("uses the darker selected palette when a thread is both selected and active", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
@@ -198,4 +227,3 @@ describe("resolveThreadRowClassName", () => {
     expect(className).toContain("bg-accent/85");
     expect(className).toContain("hover:bg-accent");
   });
-});

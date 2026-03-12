@@ -88,6 +88,7 @@ export interface Thread {
   codexThreadId: string | null;
   projectId: ProjectId;
   title: string;
+  pinned: boolean;
   model: string;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
