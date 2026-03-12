@@ -56,6 +56,12 @@ const MODEL_PROVIDER_SETTINGS: Array<{
   },
 ] as const;
 
+const TIMESTAMP_FORMAT_LABELS = {
+  locale: "System default",
+  "12-hour": "12-hour",
+  "24-hour": "24-hour",
+} as const;
+
 function getCustomModelsForProvider(
   settings: ReturnType<typeof useAppSettings>["settings"],
   provider: ProviderKind,
@@ -274,12 +280,12 @@ function SettingsRouteView() {
                     }}
                   >
                     <SelectTrigger className="w-40" aria-label="Timestamp format">
-                      <SelectValue />
+                      <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
                     </SelectTrigger>
                     <SelectPopup align="end">
-                      <SelectItem value="locale">System default</SelectItem>
-                      <SelectItem value="12-hour">12-hour</SelectItem>
-                      <SelectItem value="24-hour">24-hour</SelectItem>
+                      <SelectItem value="locale">{TIMESTAMP_FORMAT_LABELS.locale}</SelectItem>
+                      <SelectItem value="12-hour">{TIMESTAMP_FORMAT_LABELS["12-hour"]}</SelectItem>
+                      <SelectItem value="24-hour">{TIMESTAMP_FORMAT_LABELS["24-hour"]}</SelectItem>
                     </SelectPopup>
                   </Select>
                 </div>
