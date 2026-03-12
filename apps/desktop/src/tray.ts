@@ -50,7 +50,10 @@ async function rasterizeSvgToSquareTemplateImage(
 
 async function createTrayTemplateImage() {
   const rasterizeT3Wordmark = async (size: number) => {
-    const opticalYOffset = Math.max(0, Math.round((T3_TRAY_IMAGE_OPTICAL_Y_OFFSET_1X * size) / TRAY_SIZE_1X));
+    const opticalYOffset = Math.max(
+      0,
+      Math.round((T3_TRAY_IMAGE_OPTICAL_Y_OFFSET_1X * size) / TRAY_SIZE_1X),
+    );
     return await rasterizeSvgToSquareTemplateImage(
       T3_WORDMARK_VIEW_BOX,
       T3_WORDMARK_PATH_STRING,
