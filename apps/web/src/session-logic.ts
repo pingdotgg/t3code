@@ -4,6 +4,7 @@ import {
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   type ProviderKind,
+  type RateLimitsInfo,
   type UserInputQuestion,
   type TurnId,
 } from "@t3tools/contracts";
@@ -617,4 +618,28 @@ export function derivePhase(session: ThreadSession | null): SessionPhase {
   if (session.status === "connecting") return "connecting";
   if (session.status === "running") return "running";
   return "ready";
+}
+
+export function deriveLatestRateLimits(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): RateLimitsInfo | null {
+  for (let i = activities.length - 1; i >= 0; i--) {
+    const activity = activities[i]!;
+    if (activity.kind === "account.rate-limits.updated") {
+      const payload = activity.payload as { rateLimits?: unknown } | undefined;
+      if (payload?.rateLimits) {
+        // The Codex adapter wraps the raw notification payload as
+        // `{ rateLimits: event.payload }` where event.payload is already
+        // `{ rateLimits: { limitId, primary, ... } }`, producing a double
+        // nesting. Unwrap if needed.
+        const outer = payload.rateLimits as Record<string, unknown>;
+        const inner =
+          "primary" in outer || "secondary" in outer
+            ? outer
+            : ((outer.rateLimits as Record<string, unknown>) ?? outer);
+        return inner as RateLimitsInfo;
+      }
+    }
+  }
+  return null;
 }

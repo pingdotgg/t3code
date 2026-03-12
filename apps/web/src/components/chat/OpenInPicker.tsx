@@ -6,7 +6,7 @@ import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
-import { CursorIcon, Icon, VisualStudioCode, Zed } from "../Icons";
+import { CursorIcon, Icon, KiroIcon, VisualStudioCode, Zed } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 
@@ -21,6 +21,11 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       label: "VS Code",
       Icon: VisualStudioCode,
       value: "vscode",
+    },
+    {
+      label: "Kiro",
+      Icon: KiroIcon,
+      value: "kiro",
     },
     {
       label: "Zed",

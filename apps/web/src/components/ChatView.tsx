@@ -53,6 +53,7 @@ import {
   deriveActivePlanState,
   findLatestProposedPlan,
   deriveWorkLogEntries,
+  deriveLatestRateLimits,
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
@@ -141,6 +142,7 @@ import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPane
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
 import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
+import { RateLimitsBanner } from "./chat/RateLimitsBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
   buildLocalDraftThread,
@@ -570,6 +572,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
+    [threadActivities],
+  );
+  const latestRateLimits = useMemo(
+    () => deriveLatestRateLimits(threadActivities),
     [threadActivities],
   );
   const pendingUserInputs = useMemo(
@@ -3200,6 +3206,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
+      <RateLimitsBanner rateLimits={latestRateLimits} />
       <ThreadErrorBanner
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
