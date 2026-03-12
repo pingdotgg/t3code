@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { nativeImage, app, Tray, type Menu } from "electron";
+import { nativeImage, app, Tray, Menu } from "electron";
 
 // Stolen from the T3Wordmark component in the web app
 const T3_WORDMARK_VIEW_BOX = "15.5309 37 94.3941 56.96";
@@ -76,15 +76,32 @@ async function createTrayTemplateImage() {
   return image;
 }
 
-async function createTray(contextMenu: Menu): Promise<Tray | null> {
+let tray: Tray | null = null;
+
+async function createTray(contextMenu: Menu): Promise<void> {
   // macOS only (for now)
-  if (process.platform !== "darwin") return null;
+  if (process.platform !== "darwin") tray = null;
 
   const image = await createTrayTemplateImage();
-  const tray = new Tray(image);
-  tray.setToolTip(app.getName());
-  tray.setContextMenu(contextMenu);
-  return tray;
+  const newTray = new Tray(image);
+  newTray.setToolTip(app.getName());
+  newTray.setContextMenu(contextMenu);
+  tray = newTray;
+}
+
+export async function configureTray(): Promise<void> {
+  // TODO: Add a context menu to the tray
+  await createTray(Menu.buildFromTemplate([]));
+}
+
+export async function setTrayEnabled(enabled: boolean): Promise<void> {
+  if (enabled) {
+    if (tray && !tray.isDestroyed()) return;
+    await createTray(Menu.buildFromTemplate([]));
+  } else {
+    if (tray?.isDestroyed()) tray.destroy();
+    tray = null;
+  }
 }
 
 export { createTray };
