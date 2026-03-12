@@ -3235,6 +3235,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
               completionSummary={completionSummary}
               turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
               nowIso={nowIso}
+              enableCodexToolCallUi={
+                sessionProvider === "codex" ||
+                (sessionProvider === null && selectedProvider === "codex")
+              }
               expandedWorkGroups={expandedWorkGroups}
               onToggleWorkGroup={onToggleWorkGroup}
               onOpenTurnDiff={onOpenTurnDiff}

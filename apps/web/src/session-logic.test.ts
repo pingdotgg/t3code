@@ -453,6 +453,43 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBe("bun run lint");
   });
 
+  it("keeps tool lifecycle metadata for richer Codex tool rendering", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-with-metadata",
+        kind: "tool.completed",
+        summary: "bash complete",
+        payload: {
+          itemType: "command_execution",
+          title: "bash",
+          status: "completed",
+          detail: '{ "dev": "vite dev --port 3000" } <exited with exit code 0>',
+          data: {
+            item: {
+              command: ["bun", "run", "dev"],
+              result: {
+                content: '{ "dev": "vite dev --port 3000" } <exited with exit code 0>',
+                exitCode: 0,
+              },
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      activityKind: "tool.completed",
+      command: "bun run dev",
+      detail: '{ "dev": "vite dev --port 3000" }',
+      exitCode: 0,
+      itemType: "command_execution",
+      output: '{ "dev": "vite dev --port 3000" }',
+      toolStatus: "completed",
+      toolTitle: "bash",
+    });
+  });
+
   it("extracts changed file paths for file-change tool activities", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -508,6 +545,7 @@ describe("deriveTimelineEntries", () => {
           createdAt: "2026-02-23T00:00:03.000Z",
           label: "Ran tests",
           tone: "tool",
+          activityKind: "tool.completed",
         },
       ],
     );
