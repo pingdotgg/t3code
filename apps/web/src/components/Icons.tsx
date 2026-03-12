@@ -20,12 +20,6 @@ export const CursorIcon: Icon = (props) => (
   </svg>
 );
 
-export const GhosttyIcon: Icon = (props) => (
-  <svg {...props} viewBox="0 0 24 24" fill="currentColor">
-    <path d="M12 2a8 8 0 0 0-8 8v11l4-2.5 4 2.5 4-2.5 4 2.5V10a8 8 0 0 0-8-8Zm-2.75 8.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Zm5.5 0a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Zm-5.33 5.95a.75.75 0 0 1 .99-1.13c.45.4.98.6 1.59.6s1.14-.2 1.59-.6a.75.75 0 1 1 .99 1.13 3.85 3.85 0 0 1-2.58.97 3.85 3.85 0 0 1-2.58-.97Z" />
-  </svg>
-);
-
 export const VisualStudioCode: Icon = (props) => {
   const id = useId();
   const maskId = `${id}-vscode-a`;
