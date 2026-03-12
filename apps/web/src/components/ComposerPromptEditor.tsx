@@ -629,6 +629,7 @@ function ComposerPromptEditorInner({
   const [editor] = useLexicalComposerContext();
   const onChangeRef = useRef(onChange);
   const snapshotRef = useRef({ value, cursor: clampCursor(value, cursor) });
+  const isApplyingControlledUpdateRef = useRef(false);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -645,21 +646,26 @@ function ComposerPromptEditorInner({
       return;
     }
 
-    if (previousSnapshot.value !== value) {
-      editor.update(() => {
-        $setComposerEditorPrompt(value);
-      });
-    }
-
     snapshotRef.current = { value, cursor: normalizedCursor };
 
     const rootElement = editor.getRootElement();
-    if (!rootElement || document.activeElement !== rootElement) {
+    const isFocused = Boolean(rootElement && document.activeElement === rootElement);
+    if (previousSnapshot.value === value && !isFocused) {
       return;
     }
 
+    isApplyingControlledUpdateRef.current = true;
     editor.update(() => {
-      $setSelectionAtComposerOffset(normalizedCursor);
+      const valueChanged = previousSnapshot.value !== value;
+      if (previousSnapshot.value !== value) {
+        $setComposerEditorPrompt(value);
+      }
+      if (valueChanged || isFocused) {
+        $setSelectionAtComposerOffset(normalizedCursor);
+      }
+    });
+    queueMicrotask(() => {
+      isApplyingControlledUpdateRef.current = false;
     });
   }, [cursor, editor, value]);
 
@@ -705,9 +711,7 @@ function ComposerPromptEditorInner({
       focus: () => {
         focusAt(snapshotRef.current.cursor);
       },
-      focusAt: (nextCursor: number) => {
-        focusAt(nextCursor);
-      },
+      focusAt,
       focusAtEnd: () => {
         focusAt(snapshotRef.current.value.length);
       },
@@ -726,6 +730,9 @@ function ComposerPromptEditorInner({
       );
       const previousSnapshot = snapshotRef.current;
       if (previousSnapshot.value === nextValue && previousSnapshot.cursor === nextCursor) {
+        return;
+      }
+      if (isApplyingControlledUpdateRef.current) {
         return;
       }
       snapshotRef.current = {
