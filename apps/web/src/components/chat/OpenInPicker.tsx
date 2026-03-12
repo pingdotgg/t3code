@@ -1,11 +1,7 @@
-import { type EditorId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { EditorId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
-import {
-  readStoredPreferredEditor,
-  resolvePreferredEditor,
-  writeStoredPreferredEditor,
-} from "../../editorPreferences";
+import { usePreferredEditor } from "../../editorPreferences";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
@@ -13,6 +9,36 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu
 import { CursorIcon, Icon, VisualStudioCode, Zed } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
+
+const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
+  const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
+    {
+      label: "Cursor",
+      Icon: CursorIcon,
+      value: "cursor",
+    },
+    {
+      label: "VS Code",
+      Icon: VisualStudioCode,
+      value: "vscode",
+    },
+    {
+      label: "Zed",
+      Icon: Zed,
+      value: "zed",
+    },
+    {
+      label: isMacPlatform(platform)
+        ? "Finder"
+        : isWindowsPlatform(platform)
+          ? "Explorer"
+          : "Files",
+      Icon: FolderClosedIcon,
+      value: "file-manager",
+    },
+  ];
+  return baseOptions.filter((option) => availableEditors.includes(option.value));
+};
 
 export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
@@ -23,66 +49,23 @@ export const OpenInPicker = memo(function OpenInPicker({
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
 }) {
-  const [lastEditor, setLastEditor] = useState<EditorId | null>(() => readStoredPreferredEditor());
-
-  const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: EditorId }>>(
-    () => [
-      {
-        label: "Cursor",
-        Icon: CursorIcon,
-        value: "cursor",
-      },
-      {
-        label: "VS Code",
-        Icon: VisualStudioCode,
-        value: "vscode",
-      },
-      {
-        label: "Zed",
-        Icon: Zed,
-        value: "zed",
-      },
-      {
-        label: isMacPlatform(navigator.platform)
-          ? "Finder"
-          : isWindowsPlatform(navigator.platform)
-            ? "Explorer"
-            : "Files",
-        Icon: FolderClosedIcon,
-        value: "file-manager",
-      },
-    ],
-    [],
-  );
+  const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
-    () => allOptions.filter((option) => availableEditors.includes(option.value)),
-    [allOptions, availableEditors],
+    () => resolveOptions(navigator.platform, availableEditors),
+    [availableEditors],
   );
-
-  const effectiveEditor =
-    lastEditor && options.some((option) => option.value === lastEditor)
-      ? lastEditor
-      : resolvePreferredEditor(availableEditors);
-  const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
-
-  useEffect(() => {
-    if (!effectiveEditor) return;
-    const stored = readStoredPreferredEditor();
-    if (stored === effectiveEditor) return;
-    writeStoredPreferredEditor(effectiveEditor);
-  }, [effectiveEditor]);
+  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
       const api = readNativeApi();
       if (!api || !openInCwd) return;
-      const editor = editorId ?? effectiveEditor;
+      const editor = editorId ?? preferredEditor;
       if (!editor) return;
       void api.shell.openInEditor(openInCwd, editor);
-      writeStoredPreferredEditor(editor);
-      setLastEditor(editor);
+      setPreferredEditor(editor);
     },
-    [effectiveEditor, openInCwd, setLastEditor],
+    [preferredEditor, openInCwd, setPreferredEditor],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -95,22 +78,22 @@ export const OpenInPicker = memo(function OpenInPicker({
       const api = readNativeApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!api || !openInCwd) return;
-      if (!effectiveEditor) return;
+      if (!preferredEditor) return;
 
       e.preventDefault();
-      void api.shell.openInEditor(openInCwd, effectiveEditor);
+      void api.shell.openInEditor(openInCwd, preferredEditor);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [effectiveEditor, keybindings, openInCwd]);
+  }, [preferredEditor, keybindings, openInCwd]);
 
   return (
     <Group aria-label="Subscription actions">
       <Button
         size="xs"
         variant="outline"
-        disabled={!effectiveEditor || !openInCwd}
-        onClick={() => openInEditor(effectiveEditor)}
+        disabled={!preferredEditor || !openInCwd}
+        onClick={() => openInEditor(preferredEditor)}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
         <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
@@ -128,7 +111,7 @@ export const OpenInPicker = memo(function OpenInPicker({
             <MenuItem key={value} onClick={() => openInEditor(value)}>
               <Icon aria-hidden="true" className="text-muted-foreground" />
               {label}
-              {value === effectiveEditor && openFavoriteEditorShortcutLabel && (
+              {value === preferredEditor && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
               )}
             </MenuItem>

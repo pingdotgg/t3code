@@ -1,71 +1,35 @@
-import { EDITORS, type EditorId, type NativeApi } from "@t3tools/contracts";
+import { EDITORS, EditorId, NativeApi } from "@t3tools/contracts";
+import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
+import { useMemo } from "react";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
-type StorageLike = Pick<Storage, "getItem" | "setItem">;
+export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
+  const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
 
-function defaultStorage(): StorageLike | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
+  const effectiveEditor = useMemo(() => {
+    if (lastEditor && availableEditors.includes(lastEditor)) return lastEditor;
+    return EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null;
+  }, [lastEditor, availableEditors]);
 
-function isEditorId(value: string | null): value is EditorId {
-  return EDITORS.some((editor) => editor.id === value);
-}
-
-export function readStoredPreferredEditor(
-  storage: StorageLike | null = defaultStorage(),
-): EditorId | null {
-  const stored = storage?.getItem(LAST_EDITOR_KEY) ?? null;
-  return isEditorId(stored) ? stored : null;
-}
-
-export function writeStoredPreferredEditor(
-  editor: EditorId,
-  storage: StorageLike | null = defaultStorage(),
-): void {
-  storage?.setItem(LAST_EDITOR_KEY, editor);
-}
-
-export function resolvePreferredEditor(
-  availableEditors: readonly EditorId[],
-  storage: StorageLike | null = defaultStorage(),
-): EditorId | null {
-  const stored = readStoredPreferredEditor(storage);
-  if (stored && availableEditors.includes(stored)) {
-    return stored;
-  }
-
-  const availableEditorIds = new Set(availableEditors);
-  return EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
+  return [effectiveEditor, setLastEditor] as const;
 }
 
 export function resolveAndPersistPreferredEditor(
   availableEditors: readonly EditorId[],
-  storage: StorageLike | null = defaultStorage(),
 ): EditorId | null {
-  const editor = resolvePreferredEditor(availableEditors, storage);
-  if (editor) {
-    writeStoredPreferredEditor(editor, storage);
-  }
-  return editor;
+  const availableEditorIds = new Set(availableEditors);
+  const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
+  if (stored && availableEditorIds.has(stored)) return stored;
+  const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
+  if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
+  return editor ?? null;
 }
 
-export async function openInPreferredEditor(
-  api: Pick<NativeApi, "server" | "shell">,
-  targetPath: string,
-  storage: StorageLike | null = defaultStorage(),
-): Promise<EditorId> {
+export async function openInPreferredEditor(api: NativeApi, targetPath: string): Promise<EditorId> {
   const { availableEditors } = await api.server.getConfig();
-  const editor = resolveAndPersistPreferredEditor(availableEditors, storage);
-  if (!editor) {
-    throw new Error("No available editors found.");
-  }
-
+  const editor = resolveAndPersistPreferredEditor(availableEditors);
+  if (!editor) throw new Error("No available editors found.");
   await api.shell.openInEditor(targetPath, editor);
   return editor;
 }

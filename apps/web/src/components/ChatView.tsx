@@ -148,13 +148,14 @@ import {
   collectUserMessageBlobPreviewUrls,
   getCustomModelOptionsByProvider,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
+  LastInvokedScriptByProjectSchema,
   PullRequestDialogState,
   readFileAsDataUrl,
-  readLastInvokedScriptByProjectFromStorage,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   SendPhase,
 } from "./ChatView.logic";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -267,9 +268,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(() =>
     detectComposerTrigger(prompt, prompt.length),
   );
-  const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useState<
-    Record<string, string>
-  >(() => readLastInvokedScriptByProjectFromStorage());
+  const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
+    LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
+    {},
+    LastInvokedScriptByProjectSchema,
+  );
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const [messagesScrollElement, setMessagesScrollElement] = useState<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -1196,6 +1199,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setThreadError,
       storeNewTerminal,
       storeSetActiveTerminal,
+      setLastInvokedScriptByProjectId,
       terminalState.activeTerminalId,
       terminalState.runningTerminalIds,
       terminalState.terminalIds,
@@ -1437,21 +1441,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [serverThread],
   );
-
-  useEffect(() => {
-    try {
-      if (Object.keys(lastInvokedScriptByProjectId).length === 0) {
-        localStorage.removeItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
-        return;
-      }
-      localStorage.setItem(
-        LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
-        JSON.stringify(lastInvokedScriptByProjectId),
-      );
-    } catch {
-      // Ignore storage write failures (private mode, quota exceeded, etc.)
-    }
-  }, [lastInvokedScriptByProjectId]);
 
   // Auto-scroll on new messages
   const messageCount = timelineMessages.length;
