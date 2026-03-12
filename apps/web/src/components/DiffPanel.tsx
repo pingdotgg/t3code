@@ -25,6 +25,8 @@ import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
+import { useAppSettings } from "../appSettings";
+import { formatShortTimestamp } from "../timestampFormat";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
@@ -149,13 +151,6 @@ function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
 }
 
-function formatTurnChipTimestamp(isoDate: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(isoDate));
-}
-
 interface DiffPanelProps {
   mode?: "inline" | "sheet" | "sidebar";
 }
@@ -165,6 +160,7 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
+  const { settings } = useAppSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
@@ -487,7 +483,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       "?"}
                   </span>
                   <span className="text-[9px] leading-tight opacity-70">
-                    {formatTurnChipTimestamp(summary.completedAt)}
+                    {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                   </span>
                 </div>
               </div>

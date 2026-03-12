@@ -11,6 +11,13 @@ import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { APP_VERSION } from "../branding";
 import { SidebarInset } from "~/components/ui/sidebar";
@@ -48,6 +55,12 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     example: "gpt-6.7-codex-ultra-preview",
   },
 ] as const;
+
+const TIMESTAMP_FORMAT_LABELS = {
+  locale: "System default",
+  "12-hour": "12-hour",
+  "24-hour": "24-hour",
+} as const;
 
 function getCustomModelsForProvider(
   settings: ReturnType<typeof useAppSettings>["settings"],
@@ -210,43 +223,89 @@ function SettingsRouteView() {
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Appearance</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Choose how T3 Code handles light and dark mode.
+                  Choose how T3 Code looks across the app.
                 </p>
               </div>
 
-              <div className="space-y-2" role="radiogroup" aria-label="Theme preference">
-                {THEME_OPTIONS.map((option) => {
-                  const selected = theme === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
-                        selected
-                          ? "border-primary/60 bg-primary/8 text-foreground"
-                          : "border-border bg-background text-muted-foreground hover:bg-accent"
-                      }`}
-                      onClick={() => setTheme(option.value)}
-                    >
-                      <span className="flex flex-col">
-                        <span className="text-sm font-medium">{option.label}</span>
-                        <span className="text-xs">{option.description}</span>
-                      </span>
-                      {selected ? (
-                        <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-                          Selected
+              <div className="space-y-4">
+                <div className="space-y-2" role="radiogroup" aria-label="Theme preference">
+                  {THEME_OPTIONS.map((option) => {
+                    const selected = theme === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                          selected
+                            ? "border-primary/60 bg-primary/8 text-foreground"
+                            : "border-border bg-background text-muted-foreground hover:bg-accent"
+                        }`}
+                        onClick={() => setTheme(option.value)}
+                      >
+                        <span className="flex flex-col">
+                          <span className="text-sm font-medium">{option.label}</span>
+                          <span className="text-xs">{option.description}</span>
                         </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
+                        {selected ? (
+                          <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                            Selected
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
 
-              <p className="mt-4 text-xs text-muted-foreground">
-                Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
-              </p>
+                <p className="text-xs text-muted-foreground">
+                  Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
+                </p>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Timestamp format</p>
+                    <p className="text-xs text-muted-foreground">
+                      System default follows your browser or OS time format. <code>12-hour</code>{" "}
+                      and <code>24-hour</code> force the hour cycle.
+                    </p>
+                  </div>
+                  <Select
+                    value={settings.timestampFormat}
+                    onValueChange={(value) => {
+                      if (value !== "locale" && value !== "12-hour" && value !== "24-hour") return;
+                      updateSettings({
+                        timestampFormat: value,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="w-40" aria-label="Timestamp format">
+                      <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end">
+                      <SelectItem value="locale">{TIMESTAMP_FORMAT_LABELS.locale}</SelectItem>
+                      <SelectItem value="12-hour">{TIMESTAMP_FORMAT_LABELS["12-hour"]}</SelectItem>
+                      <SelectItem value="24-hour">{TIMESTAMP_FORMAT_LABELS["24-hour"]}</SelectItem>
+                    </SelectPopup>
+                  </Select>
+                </div>
+
+                {settings.timestampFormat !== defaults.timestampFormat ? (
+                  <div className="flex justify-end">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        updateSettings({
+                          timestampFormat: defaults.timestampFormat,
+                        })
+                      }
+                    >
+                      Restore default
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
