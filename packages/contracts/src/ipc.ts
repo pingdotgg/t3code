@@ -109,6 +109,7 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  setTrayEnabled: (enabled: boolean) => Promise<void>;
 }
 
 export interface NativeApi {

@@ -43,7 +43,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
-import { configureTray, setTrayEnabled } from "./tray";
+import { setupTrayIpcHandlers, setTrayEnabled } from "./tray";
 
 fixPath();
 
@@ -1331,8 +1331,8 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap backend start requested");
   mainWindow = createWindow();
   writeDesktopLogHeader("bootstrap main window created");
-  await configureTray();
-  writeDesktopLogHeader("bootstrap tray created");
+  setupTrayIpcHandlers();
+  writeDesktopLogHeader("bootstrap tray ipc handlers registered");
 }
 
 app.on("before-quit", () => {

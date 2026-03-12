@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { nativeImage, app, Tray, Menu } from "electron";
+import { nativeImage, app, ipcMain, Tray, Menu } from "electron";
 
 // Stolen from the T3Wordmark component in the web app
 const T3_WORDMARK_VIEW_BOX = "15.5309 37 94.3941 56.96";
@@ -89,6 +89,13 @@ async function createTray(contextMenu: Menu): Promise<void> {
   tray = newTray;
 }
 
+function setupTrayIpcHandlers(): void {
+  const SET_TRAY_ENABLED_CHANNEL = "desktop:set-tray-enabled";
+  ipcMain.handle(SET_TRAY_ENABLED_CHANNEL, async (_event, enabled: boolean) => {
+    await setTrayEnabled(enabled);
+  });
+}
+
 async function configureTray(): Promise<void> {
   // TODO: Add a context menu to the tray
   await createTray(Menu.buildFromTemplate([]));
@@ -104,4 +111,4 @@ async function setTrayEnabled(enabled: boolean): Promise<void> {
   }
 }
 
-export { createTray, configureTray, setTrayEnabled };
+export { setupTrayIpcHandlers, setTrayEnabled };
