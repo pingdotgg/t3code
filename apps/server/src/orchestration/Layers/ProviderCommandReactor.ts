@@ -12,7 +12,8 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
-import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Schema, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, Layer, Option, Schema, Stream } from "effect";
+import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
@@ -573,16 +574,14 @@ const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.catchCause((cause) =>
-          Effect.gen(function* () {
-            yield* appendProviderFailureActivity({
-              threadId: event.payload.threadId,
-              kind: "provider.user-input.respond.failed",
-              summary: "Provider user input response failed",
-              detail: Cause.pretty(cause),
-              turnId: null,
-              createdAt: event.payload.createdAt,
-              requestId: event.payload.requestId,
-            });
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.user-input.respond.failed",
+            summary: "Provider user input response failed",
+            detail: Cause.pretty(cause),
+            turnId: null,
+            createdAt: event.payload.createdAt,
+            requestId: event.payload.requestId,
           }),
         ),
       );
@@ -665,34 +664,28 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const start: ProviderCommandReactorShape["start"] = Effect.gen(function* () {
-    const queue = yield* Queue.unbounded<ProviderIntentEvent>();
-    yield* Effect.addFinalizer(() => Queue.shutdown(queue).pipe(Effect.asVoid));
+  const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
-    yield* Effect.forkScoped(
-      Effect.forever(Queue.take(queue).pipe(Effect.flatMap(processDomainEventSafely))),
-    );
+  const start: ProviderCommandReactorShape["start"] = Effect.forkScoped(
+    Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+      if (
+        event.type !== "thread.runtime-mode-set" &&
+        event.type !== "thread.turn-start-requested" &&
+        event.type !== "thread.turn-interrupt-requested" &&
+        event.type !== "thread.approval-response-requested" &&
+        event.type !== "thread.user-input-response-requested" &&
+        event.type !== "thread.session-stop-requested"
+      ) {
+        return Effect.void;
+      }
 
-    yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (
-          event.type !== "thread.runtime-mode-set" &&
-          event.type !== "thread.turn-start-requested" &&
-          event.type !== "thread.turn-interrupt-requested" &&
-          event.type !== "thread.approval-response-requested" &&
-          event.type !== "thread.user-input-response-requested" &&
-          event.type !== "thread.session-stop-requested"
-        ) {
-          return Effect.void;
-        }
-
-        return Queue.offer(queue, event).pipe(Effect.asVoid);
-      }),
-    );
-  });
+      return worker.enqueue(event);
+    }),
+  ).pipe(Effect.asVoid);
 
   return {
     start,
+    drain: worker.drain,
   } satisfies ProviderCommandReactorShape;
 });
 
