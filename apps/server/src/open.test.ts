@@ -25,21 +25,13 @@ function withTempDir(run: (dir: string) => void): void {
 describe("resolveEditorLaunch", () => {
   it.effect("returns commands for command-based editors", () =>
     Effect.gen(function* () {
-      withTempDir((dir) => {
-        const agyPath = path.join(dir, "agy");
-        fs.writeFileSync(agyPath, "#!/bin/sh\nexit 0\n", "utf8");
-        fs.chmodSync(agyPath, 0o755);
-        const env = {
-          PATH: dir,
-        } satisfies NodeJS.ProcessEnv;
-
-        const antigravityLaunch = Effect.runSync(
-          resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "antigravity" }, "darwin", env),
-        );
-        assert.deepEqual(antigravityLaunch, {
-          command: "agy",
-          args: ["/tmp/workspace"],
-        });
+      const antigravityLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "antigravity" },
+        "darwin",
+      );
+      assert.deepEqual(antigravityLaunch, {
+        command: "agy",
+        args: ["/tmp/workspace"],
       });
 
       const cursorLaunch = yield* resolveEditorLaunch(
