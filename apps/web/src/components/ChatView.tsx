@@ -119,6 +119,7 @@ import {
   summarizeTurnDiffStats,
   type TurnDiffTreeNode,
 } from "../lib/turnDiffTree";
+import { ApprovalDiffView } from "./ApprovalDiffView";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
@@ -2892,6 +2893,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const api = readNativeApi();
       if (!api || !activeThreadId) return;
 
+      // Capture feedback from the composer when declining
+      const feedback = decision === "decline" ? promptRef.current.trim() || undefined : undefined;
+
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
@@ -2902,6 +2906,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           threadId: activeThreadId,
           requestId,
           decision,
+          ...(feedback ? { feedback } : {}),
           createdAt: new Date().toISOString(),
         })
         .catch((err: unknown) => {
@@ -2910,9 +2915,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
             err instanceof Error ? err.message : "Failed to submit approval decision.",
           );
         });
+
+      // Clear composer after declining with feedback
+      if (feedback) {
+        setPrompt("");
+      }
+
       setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
-    [activeThreadId, setStoreThreadError],
+    [activeThreadId, setStoreThreadError, setPrompt],
   );
 
   const onRespondToUserInput = useCallback(
@@ -3843,13 +3854,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   <ComposerPromptEditor
                     ref={composerEditorRef}
                     value={
-                      isComposerApprovalState
-                        ? ""
-                        : activePendingProgress
-                          ? activePendingProgress.isReviewStep
-                            ? ""
-                            : activePendingProgress.customAnswer
-                          : prompt
+                      activePendingProgress
+                        ? activePendingProgress.isReviewStep
+                          ? ""
+                          : activePendingProgress.customAnswer
+                        : prompt
                     }
                     cursor={composerCursor}
                     onChange={onPromptChange}
@@ -3857,8 +3866,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     onPaste={onComposerPaste}
                     placeholder={
                       isComposerApprovalState
-                        ? (activePendingApproval?.detail ??
-                          "Resolve this approval request to continue")
+                        ? "Type review feedback for decline, or approve/reject below..."
                         : activePendingProgress
                           ? "Type your own answer, or leave this blank to use the selected option"
                           : showPlanFollowUpPrompt && activeProposedPlan
@@ -3867,7 +3875,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               ? "Ask for follow-up changes or attach images"
                               : "Ask anything, @tag files/folders, or use / to show available commands"
                     }
-                    disabled={isConnecting || isComposerApprovalState || !!activePendingProgress?.isReviewStep}
+                    disabled={isConnecting || !!activePendingProgress?.isReviewStep}
                   />
                 </div>
 
@@ -3877,6 +3885,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     <ComposerPendingApprovalActions
                       requestId={activePendingApproval.requestId}
                       isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
+                      hasFeedback={prompt.trim().length > 0}
                       onRespondToApproval={onRespondToApproval}
                     />
                   </div>
@@ -4530,14 +4539,19 @@ const ComposerPendingApprovalPanel = memo(function ComposerPendingApprovalPanel(
         : "File-change approval requested";
 
   return (
-    <div className="px-4 py-3.5 sm:px-5 sm:py-4">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="py-3.5 sm:py-4">
+      <div className="flex flex-wrap items-center gap-2 px-4 sm:px-5">
         <span className="uppercase text-sm tracking-[0.2em]">PENDING APPROVAL</span>
         <span className="text-sm font-medium">{approvalSummary}</span>
         {pendingCount > 1 ? (
           <span className="text-xs text-muted-foreground">1/{pendingCount}</span>
         ) : null}
       </div>
+      {approval.args !== undefined && (
+        <div className="mt-3">
+          <ApprovalDiffView args={approval.args} requestKind={approval.requestKind} />
+        </div>
+      )}
     </div>
   );
 });
@@ -4545,6 +4559,7 @@ const ComposerPendingApprovalPanel = memo(function ComposerPendingApprovalPanel(
 interface ComposerPendingApprovalActionsProps {
   requestId: ApprovalRequestId;
   isResponding: boolean;
+  hasFeedback: boolean;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -4554,6 +4569,7 @@ interface ComposerPendingApprovalActionsProps {
 const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
+  hasFeedback,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
   return (
@@ -4572,7 +4588,7 @@ const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActi
         disabled={isResponding}
         onClick={() => void onRespondToApproval(requestId, "decline")}
       >
-        Decline
+        {hasFeedback ? "Decline with feedback" : "Decline"}
       </Button>
       <Button
         size="sm"

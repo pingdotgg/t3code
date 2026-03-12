@@ -75,6 +75,7 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
+    feedback?: string,
   ) => Effect.Effect<void, TError>;
 
   /**

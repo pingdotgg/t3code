@@ -1429,6 +1429,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
       threadId,
       requestId,
       decision,
+      _feedback,
     ) =>
       Effect.tryPromise({
         try: () => manager.respondToRequest(threadId, requestId, decision),

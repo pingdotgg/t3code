@@ -72,6 +72,38 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+const MAX_ARGS_SIZE = 50_000;
+
+/**
+ * Truncate large string fields in approval `args` to prevent unbounded
+ * payloads flowing through the activity pipeline and to the web client.
+ */
+function truncateArgs(args: unknown): unknown {
+  if (args == null || typeof args !== "object") return args;
+  const serialized = JSON.stringify(args);
+  if (serialized.length <= MAX_ARGS_SIZE) return args;
+  // Deep-clone and truncate large string values
+  const clone = JSON.parse(serialized) as Record<string, unknown>;
+  const truncateStrings = (obj: Record<string, unknown>) => {
+    for (const key of Object.keys(obj)) {
+      const val = obj[key];
+      if (typeof val === "string" && val.length > 10_000) {
+        obj[key] = val.slice(0, 10_000) + "\n... (truncated)";
+      } else if (val != null && typeof val === "object" && !Array.isArray(val)) {
+        truncateStrings(val as Record<string, unknown>);
+      } else if (Array.isArray(val)) {
+        for (const item of val) {
+          if (item != null && typeof item === "object") {
+            truncateStrings(item as Record<string, unknown>);
+          }
+        }
+      }
+    }
+  };
+  truncateStrings(clone);
+  return clone;
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -246,6 +278,7 @@ function runtimeEventToActivities(
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.args !== undefined ? { args: truncateArgs(event.payload.args) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

@@ -77,11 +77,16 @@ interface ClaudeTurnState {
   readonly fallbackAssistantText: string;
 }
 
+interface ApprovalResponse {
+  readonly decision: ProviderApprovalDecision;
+  readonly feedback?: string;
+}
+
 interface PendingApproval {
   readonly requestType: CanonicalRequestType;
   readonly detail?: string;
   readonly suggestions?: ReadonlyArray<PermissionUpdate>;
-  readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
+  readonly decision: Deferred.Deferred<ApprovalResponse>;
 }
 
 interface ToolInFlight {
@@ -1390,7 +1395,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         context.stopped = true;
 
         for (const [requestId, pending] of context.pendingApprovals) {
-          yield* Deferred.succeed(pending.decision, "cancel");
+          yield* Deferred.succeed(pending.decision, { decision: "cancel" });
           const stamp = yield* makeEventStamp();
           yield* offerRuntimeEvent({
             type: "request.resolved",
@@ -1679,7 +1684,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               const requestId = ApprovalRequestId.makeUnsafe(yield* Random.nextUUIDv4);
               const requestType = classifyRequestType(toolName);
               const detail = summarizeToolRequest(toolName, toolInput);
-              const decisionDeferred = yield* Deferred.make<ProviderApprovalDecision>();
+              const decisionDeferred = yield* Deferred.make<ApprovalResponse>();
               const pendingApproval: PendingApproval = {
                 requestType,
                 detail,
@@ -1735,14 +1740,14 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                   return;
                 }
                 pendingApprovals.delete(requestId);
-                Effect.runFork(Deferred.succeed(decisionDeferred, "cancel"));
+                Effect.runFork(Deferred.succeed(decisionDeferred, { decision: "cancel" }));
               };
 
               callbackOptions.signal.addEventListener("abort", onAbort, {
                 once: true,
               });
 
-              const decision = yield* Deferred.await(decisionDeferred);
+              const approvalResponse = yield* Deferred.await(decisionDeferred);
               pendingApprovals.delete(requestId);
 
               const resolvedStamp = yield* makeEventStamp();
@@ -1758,7 +1763,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                 requestId: asRuntimeRequestId(requestId),
                 payload: {
                   requestType,
-                  decision,
+                  decision: approvalResponse.decision,
                 },
                 providerRefs: {
                   ...(context.session.threadId
@@ -1773,16 +1778,16 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                   source: "claude.sdk.permission",
                   method: "canUseTool/decision",
                   payload: {
-                    decision,
+                    decision: approvalResponse.decision,
                   },
                 },
               });
 
-              if (decision === "accept" || decision === "acceptForSession") {
+              if (approvalResponse.decision === "accept" || approvalResponse.decision === "acceptForSession") {
                 return {
                   behavior: "allow",
                   updatedInput: toolInput,
-                  ...(decision === "acceptForSession" && pendingApproval.suggestions
+                  ...(approvalResponse.decision === "acceptForSession" && pendingApproval.suggestions
                     ? { updatedPermissions: [...pendingApproval.suggestions] }
                     : {}),
                 } satisfies PermissionResult;
@@ -1791,9 +1796,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               return {
                 behavior: "deny",
                 message:
-                  decision === "cancel"
+                  approvalResponse.decision === "cancel"
                     ? "User cancelled tool execution."
-                    : "User declined tool execution.",
+                    : approvalResponse.feedback ?? "User declined tool execution.",
               } satisfies PermissionResult;
             }),
           );
@@ -2045,6 +2050,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       threadId,
       requestId,
       decision,
+      feedback,
     ) =>
       Effect.gen(function* () {
         const context = yield* requireSession(threadId);
@@ -2058,7 +2064,10 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         }
 
         context.pendingApprovals.delete(requestId);
-        yield* Deferred.succeed(pending.decision, decision);
+        yield* Deferred.succeed(
+          pending.decision,
+          feedback ? { decision, feedback } : { decision },
+        );
       });
 
     const respondToUserInput: ClaudeCodeAdapterShape["respondToUserInput"] = (
