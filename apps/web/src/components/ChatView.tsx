@@ -169,6 +169,7 @@ const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
+const COMPOSER_FILE_PATH_SEPARATOR = " ";
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -2070,17 +2071,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
     removeComposerImageFromDraft(imageId);
   };
 
+  const addComposerAttachments = (files: File[]) => {
+    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    const nonImageFiles = files.filter((f) => !f.type.startsWith("image/"));
+
+    if (imageFiles.length > 0) {
+      addComposerImages(imageFiles);
+    }
+
+    if (nonImageFiles.length > 0) {
+      const paths = nonImageFiles.map(
+        (file) => window.desktopBridge?.getPathForFile(file) ?? file.name,
+      );
+      const insertion = paths
+        .map((p) => (p.includes(" ") ? `"${p}"` : p))
+        .join(COMPOSER_FILE_PATH_SEPARATOR);
+      composerEditorRef.current?.insertTextAndFocus(insertion);
+    }
+  };
+
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) {
       return;
     }
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
-    if (imageFiles.length === 0) {
-      return;
-    }
     event.preventDefault();
-    addComposerImages(imageFiles);
+    addComposerAttachments(files);
   };
 
   const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2124,8 +2140,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     const files = Array.from(event.dataTransfer.files);
-    addComposerImages(files);
-    focusComposer();
+    const hasNonImageFiles = files.some((f) => !f.type.startsWith("image/"));
+    addComposerAttachments(files);
+    if (!hasNonImageFiles) focusComposer();
   };
 
   const onRevertToTurnCount = useCallback(

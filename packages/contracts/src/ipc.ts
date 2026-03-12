@@ -96,6 +96,7 @@ export interface DesktopUpdateActionResult {
 
 export interface DesktopBridge {
   getWsUrl: () => string | null;
+  getPathForFile: (file: File) => string;
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
