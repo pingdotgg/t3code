@@ -46,6 +46,23 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
+import { ThreadId } from "./baseSchemas";
+
+export interface DesktopTrayState {
+  threads: {
+    id: string;
+    name: string;
+    lastUpdated: number;
+    needsAttention: boolean;
+  }[];
+}
+
+interface DesktopTrayThreadMessage {
+  type: "thread-click";
+  threadId: ThreadId;
+}
+
+export type DesktopTrayMessage = DesktopTrayThreadMessage; // TODO: Add more message types as needed
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -110,6 +127,9 @@ export interface DesktopBridge {
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   setTrayEnabled: (enabled: boolean) => Promise<void>;
+  getTrayState: () => Promise<DesktopTrayState>;
+  updateTrayState: (state: Partial<DesktopTrayState>) => Promise<void>;
+  onTrayMessage: (listener: (message: DesktopTrayMessage) => void) => () => void;
 }
 
 export interface NativeApi {

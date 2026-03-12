@@ -1,5 +1,11 @@
 import sharp from "sharp";
-import { nativeImage, app, ipcMain, Tray, Menu } from "electron";
+import {
+  nativeImage, app, ipcMain, Tray, Menu,
+  type MenuItemConstructorOptions,
+  type BrowserWindow,
+} from "electron";
+import type { DesktopTrayState, DesktopTrayMessage, ThreadId } from "@t3tools/contracts";
+import { getMainWindow } from "./main";
 
 // Stolen from the T3Wordmark component in the web app
 const T3_WORDMARK_VIEW_BOX = "15.5309 37 94.3941 56.96";
@@ -78,15 +84,113 @@ async function createTrayTemplateImage() {
 
 let tray: Tray | null = null;
 
-async function createTray(contextMenu: Menu): Promise<void> {
+async function createTray(): Promise<void> {
   // macOS only (for now)
   if (process.platform !== "darwin") tray = null;
 
   const image = await createTrayTemplateImage();
   const newTray = new Tray(image);
   newTray.setToolTip(app.getName());
-  newTray.setContextMenu(contextMenu);
   tray = newTray;
+}
+
+let trayState: DesktopTrayState = {
+  threads: [],
+};
+
+// TODO: Maybe move this to a utils file?
+function truncateGraphemes(value: string, maxLength: number): string {
+  const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  const graphemes = Array.from(segmenter.segment(value), (segment) => segment.segment);
+
+  if (graphemes.length <= maxLength) {
+    return value;
+  }
+
+  return `${graphemes.slice(0, maxLength).join("")}...`;
+}
+
+const MAX_THREAD_NAME_LENGTH = 20;
+const MAX_THREADS_IN_CONTEXT_MENU = 3;
+const MAX_VIEW_MORE_THREADS = 5;
+function buildTrayContextMenu(): Menu {
+  const sortedThreads = trayState.threads.sort(
+    (a, b) => b.lastUpdated - a.lastUpdated,
+  );
+  const topLevelThreads = sortedThreads.slice(0, MAX_THREADS_IN_CONTEXT_MENU);
+  const viewMoreThreads = sortedThreads.slice(
+    MAX_THREADS_IN_CONTEXT_MENU,
+    MAX_THREADS_IN_CONTEXT_MENU + MAX_VIEW_MORE_THREADS,
+  );
+  function buildThreadMenuItem(
+    thread: DesktopTrayState["threads"][number],
+  ): MenuItemConstructorOptions {
+    return {
+      // TODO: This isn't accessible to screen readers!
+      label: `${thread.needsAttention ? "·" : ""} ${truncateGraphemes(thread.name, MAX_THREAD_NAME_LENGTH)}`,
+      click: () => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return;
+        sendTrayMessage({ type: "thread-click", threadId: thread.id as ThreadId }, mainWindow);
+        mainWindow.focus();
+      },
+    };
+  }
+  const menuItemConstructors: MenuItemConstructorOptions[] = [
+    ...topLevelThreads.map(buildThreadMenuItem),
+    {
+      type: "submenu",
+      label: `View More (${viewMoreThreads.length})`,
+      submenu: viewMoreThreads.map(buildThreadMenuItem),
+    },
+  ];
+  const menu = Menu.buildFromTemplate(menuItemConstructors);
+  return menu;
+}
+
+function updateTray(): void {
+  if (!tray) return;
+  tray.setContextMenu(buildTrayContextMenu());
+  const threadsNeedingAttention = trayState.threads.filter(
+    (thread) => thread.needsAttention,
+  ).length;
+  if (threadsNeedingAttention > 0) {
+    tray.setTitle(`(${threadsNeedingAttention} unread)`);
+    // TODO: Do we want an icon variant as well?
+  } else {
+    tray.setTitle(""); // Clear the title
+  }
+}
+
+async function getTrayState(): Promise<DesktopTrayState> {
+  return trayState;
+}
+
+function isSameThread(
+  a: DesktopTrayState["threads"][number],
+  b: DesktopTrayState["threads"][number],
+): boolean {
+  return a.id === b.id;
+}
+
+// TODO: This probably doesn't have the best performance!
+function mergeThreads(threads: DesktopTrayState["threads"]): DesktopTrayState["threads"] {
+  return threads.reduce<DesktopTrayState["threads"]>((acc, thread) => {
+    const existingThread = acc.find((t) => isSameThread(t, thread));
+    if (existingThread) {
+      return acc.map((t) => (isSameThread(t, thread) ? { ...t, ...thread } : t));
+    }
+    return [...acc, thread];
+  }, []);
+}
+
+async function updateTrayState(state: Partial<DesktopTrayState>): Promise<void> {
+  trayState = {
+    ...trayState,
+    ...state,
+    threads: mergeThreads([...trayState.threads, ...(state.threads ?? [])]),
+  };
+  updateTray();
 }
 
 function setupTrayIpcHandlers(): void {
@@ -94,17 +198,31 @@ function setupTrayIpcHandlers(): void {
   ipcMain.handle(SET_TRAY_ENABLED_CHANNEL, async (_event, enabled: boolean) => {
     await setTrayEnabled(enabled);
   });
+  const GET_TRAY_STATE_CHANNEL = "desktop:get-tray-state";
+  ipcMain.handle(GET_TRAY_STATE_CHANNEL, async (_event) => {
+    return await getTrayState();
+  });
+  const UPDATE_TRAY_STATE_CHANNEL = "desktop:update-tray-state";
+  ipcMain.handle(UPDATE_TRAY_STATE_CHANNEL, async (_event, state: DesktopTrayState) => {
+    await updateTrayState(state);
+  });
+}
+
+function sendTrayMessage(message: DesktopTrayMessage, window: BrowserWindow): void {
+  const TRAY_MESSAGE_CHANNEL = "desktop:tray-message";
+  window.webContents.send(TRAY_MESSAGE_CHANNEL, message);
 }
 
 async function configureTray(): Promise<void> {
   // TODO: Add a context menu to the tray
-  await createTray(Menu.buildFromTemplate([]));
+  await createTray();
 }
 
 async function setTrayEnabled(enabled: boolean): Promise<void> {
   if (enabled) {
     if (tray && !tray.isDestroyed()) return;
     await configureTray();
+    updateTray();
   } else {
     if (tray?.isDestroyed() == false) tray.destroy();
     tray = null;

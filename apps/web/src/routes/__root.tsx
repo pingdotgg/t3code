@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type DesktopTrayMessage } from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -6,7 +6,7 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
@@ -26,6 +26,7 @@ import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { isElectron } from "../env";
+import { useThreadSelectionStore } from "~/threadSelectionStore";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -332,15 +333,62 @@ function DesktopProjectBootstrap() {
 function DesktopTrayBootstrap() {
   const { settings } = useAppSettings();
 
+  const navigate = useNavigate();
+  const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
+
+  const onTrayMessage = useCallback(
+    (message: DesktopTrayMessage) => {
+      if (message.type === "thread-click") {
+        setSelectionAnchor(message.threadId);
+        void navigate({
+          to: "/$threadId",
+          params: { threadId: message.threadId },
+        });
+      }
+    },
+    [navigate],
+  );
+
   useEffect(() => {
     if (!isElectron) return;
     const bridge = window.desktopBridge;
     if (!bridge) return;
+    if (!settings.showTrayIcon) return;
+    const unsubscribe = bridge.onTrayMessage(onTrayMessage);
+    return () => {
+      unsubscribe();
+    };
+  }, [onTrayMessage, settings.showTrayIcon]);
 
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
     void bridge.setTrayEnabled(settings.showTrayIcon).catch(() => {
       // Keep the persisted setting as the source of truth and retry on the next change.
     });
   }, [settings.showTrayIcon]);
+
+  const threads = useStore((store) => store.threads);
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+    if (!settings.showTrayIcon) return;
+    bridge.updateTrayState({
+      threads: threads.map((thread) => {
+        const lastVisitedAt = thread.lastVisitedAt ? Date.parse(thread.lastVisitedAt) : NaN;
+        const latestTurnCompletedAt = thread.latestTurn?.completedAt ? Date.parse(thread.latestTurn.completedAt) : NaN;
+        console.log(thread.id, latestTurnCompletedAt, lastVisitedAt);
+        return {
+          id: thread.id,
+          name: thread.title,
+          lastUpdated: latestTurnCompletedAt,
+          needsAttention: latestTurnCompletedAt > lastVisitedAt,
+        };
+      }),
+    });
+  }, [threads, settings.showTrayIcon]);
 
   return null;
 }

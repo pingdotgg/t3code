@@ -1393,3 +1393,7 @@ if (process.platform !== "win32") {
     app.quit();
   });
 }
+
+export function getMainWindow(): BrowserWindow | null {
+  return mainWindow;
+}
