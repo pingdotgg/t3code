@@ -537,7 +537,12 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       listSessions,
       getCapabilities,
       rollbackConversation,
-      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+      // Each access creates a fresh PubSub subscription so that multiple
+      // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
+      // independently receive all runtime events.
+      get streamEvents(): ProviderServiceShape["streamEvents"] {
+        return Stream.fromPubSub(runtimeEventPubSub);
+      },
     } satisfies ProviderServiceShape;
   });
 
