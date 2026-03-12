@@ -516,6 +516,26 @@ describe("deriveWorkLogEntries", () => {
       "apps/web/src/session-logic.ts",
     ]);
   });
+
+  it("extracts changed file paths from file-change approval args", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "file-change-approval",
+        kind: "approval.requested",
+        summary: "File-change approval requested",
+        tone: "approval",
+        payload: {
+          requestKind: "file-change",
+          args: {
+            changes: [{ path: "apps/web/src/components/chat/MessagesTimeline.tsx" }],
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.changedFiles).toEqual(["apps/web/src/components/chat/MessagesTimeline.tsx"]);
+  });
 });
 
 describe("deriveTimelineEntries", () => {

@@ -701,9 +701,11 @@ function collectChangedFiles(value: unknown, target: string[], seen: Set<string>
 }
 
 function extractChangedFiles(payload: Record<string, unknown> | null): string[] {
-  const data = asRecord(payload?.data);
   const changedFiles: string[] = [];
-  collectChangedFiles(data, changedFiles, new Set<string>(), 0);
+  const seen = new Set<string>();
+  collectChangedFiles(asRecord(payload?.data), changedFiles, seen, 0);
+  collectChangedFiles(asRecord(payload?.args), changedFiles, seen, 0);
+  collectChangedFiles(asRecord(payload?.resolution), changedFiles, seen, 0);
   return changedFiles;
 }
 
