@@ -89,12 +89,12 @@ async function createTray(contextMenu: Menu): Promise<void> {
   tray = newTray;
 }
 
-export async function configureTray(): Promise<void> {
+async function configureTray(): Promise<void> {
   // TODO: Add a context menu to the tray
   await createTray(Menu.buildFromTemplate([]));
 }
 
-export async function setTrayEnabled(enabled: boolean): Promise<void> {
+async function setTrayEnabled(enabled: boolean): Promise<void> {
   if (enabled) {
     if (tray && !tray.isDestroyed()) return;
     await configureTray();
@@ -104,4 +104,4 @@ export async function setTrayEnabled(enabled: boolean): Promise<void> {
   }
 }
 
-export { createTray };
+export { createTray, configureTray, setTrayEnabled };
