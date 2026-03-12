@@ -6,6 +6,7 @@ import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
+import { resolveDisplayedAppVersion, useDesktopUpdateState } from "../hooks/useDesktopUpdateState";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
@@ -13,7 +14,6 @@ import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
-import { APP_VERSION } from "../branding";
 import { SidebarInset } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
@@ -84,6 +84,7 @@ function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const desktopUpdateState = useDesktopUpdateState();
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
@@ -98,6 +99,10 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const displayedAppVersion = resolveDisplayedAppVersion({
+    desktopUpdateState,
+    isDesktopRuntime: isElectron,
+  });
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -573,7 +578,9 @@ function SettingsRouteView() {
                     Current version of the application.
                   </p>
                 </div>
-                <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
+                <code className="text-xs font-medium text-muted-foreground">
+                  {displayedAppVersion}
+                </code>
               </div>
             </section>
           </div>
