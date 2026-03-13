@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_TIMESTAMP_FORMAT,
@@ -6,34 +6,6 @@ import {
   normalizeCustomModelSlugs,
   resolveAppModelSelection,
 } from "./appSettings";
-
-function createStorage() {
-  const values = new Map<string, string>();
-  return {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      values.set(key, value);
-    },
-    removeItem: (key: string) => {
-      values.delete(key);
-    },
-    clear: () => {
-      values.clear();
-    },
-  };
-}
-
-beforeEach(() => {
-  const storage = createStorage();
-  vi.stubGlobal("localStorage", storage);
-  vi.stubGlobal("window", {
-    localStorage: storage,
-  });
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
 
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {
