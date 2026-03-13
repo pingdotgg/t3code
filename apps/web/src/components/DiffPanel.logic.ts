@@ -80,7 +80,7 @@ function toNormalizedLineRange(range: SelectedLineRange): SelectedLineRange {
     start: range.end,
     end: range.start,
     ...((range.endSide ?? range.side) ? { side: range.endSide ?? range.side } : {}),
-    ...(range.side ? { endSide: range.side } : {}),
+    ...(range.endSide ? { endSide: range.side } : {}),
   };
 }
 
@@ -92,7 +92,7 @@ function toLineRange(range: SelectedLineRange): { start: number; end: number } {
   };
 }
 
-function areSelectedLineRangesEqual(
+export function areSelectedLineRangesEqual(
   left: SelectedLineRange | null,
   right: SelectedLineRange | null,
 ): boolean {

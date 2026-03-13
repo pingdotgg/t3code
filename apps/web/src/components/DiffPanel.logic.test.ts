@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FileDiffMetadata } from "@pierre/diffs/react";
-import { buildFileKeyByPathIndex } from "./DiffPanel.logic";
+import { areSelectedLineRangesEqual, buildFileKeyByPathIndex } from "./DiffPanel.logic";
 
 function makeFileDiff(
   input: Partial<Pick<FileDiffMetadata, "name" | "prevName" | "cacheKey">>,
@@ -36,5 +36,16 @@ describe("buildFileKeyByPathIndex", () => {
     const fileKeyByPath = buildFileKeyByPathIndex([unchangedFile]);
 
     expect([...fileKeyByPath.entries()]).toEqual([["src/example.ts", "same-cache-key"]]);
+  });
+});
+
+describe("areSelectedLineRangesEqual", () => {
+  it("treats forward and backward single-side selections as equal", () => {
+    expect(
+      areSelectedLineRangesEqual(
+        { start: 5, end: 10, side: "additions" },
+        { start: 10, end: 5, side: "additions" },
+      ),
+    ).toBe(true);
   });
 });
