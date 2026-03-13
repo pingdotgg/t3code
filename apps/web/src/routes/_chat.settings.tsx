@@ -504,6 +504,49 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Threads</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Choose the default workspace mode for newly created draft threads.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Default to New worktree</p>
+                  <p className="text-xs text-muted-foreground">
+                    New threads start in New worktree mode instead of Local.
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.defaultThreadEnvMode === "worktree"}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      defaultThreadEnvMode: checked ? "worktree" : "local",
+                    })
+                  }
+                  aria-label="Default new threads to New worktree mode"
+                />
+              </div>
+
+              {settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        defaultThreadEnvMode: defaults.defaultThreadEnvMode,
+                      })
+                    }
+                  >
+                    Restore default
+                  </Button>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Responses</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Control how assistant output is rendered during a turn.
