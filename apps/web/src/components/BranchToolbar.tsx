@@ -13,7 +13,6 @@ import {
 } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
-import { Button } from "./ui/button";
 
 const envModeItems = [
   { value: "local", label: "Local" },
