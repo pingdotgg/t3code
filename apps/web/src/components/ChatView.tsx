@@ -1899,7 +1899,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ? (draftThread?.envMode ?? "local")
       : "local";
 
-  const shouldTickNow = isWorking || !latestTurnSettled;
+  const shouldTickNow = !!activeWorkStartedAt && (isWorking || !latestTurnSettled);
 
   useEffect(() => {
     if (!shouldTickNow) return;
