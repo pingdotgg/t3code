@@ -210,6 +210,8 @@ jobs:
             done
           done
 
+          chmod +x release-publish/*.AppImage
+
           if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" != "arm64" ]]; then
             if [[ -f release-publish/latest-mac.yml ]]; then
               mv release-publish/latest-mac.yml "release-publish/latest-mac-${{ matrix.arch }}.yml"
