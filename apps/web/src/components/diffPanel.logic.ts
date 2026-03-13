@@ -1,12 +1,10 @@
-import type { Thread, TurnDiffSummary } from "../types";
+import type { TurnDiffSummary } from "../types";
 
 interface CheckpointDiffAvailabilityInput {
-  activeThread: Thread | undefined;
   selectedTurn: TurnDiffSummary | undefined;
 }
 
 export function getUnavailableCheckpointDiffMessage({
-  activeThread,
   selectedTurn,
 }: CheckpointDiffAvailabilityInput): string | null {
   if (!selectedTurn) {
@@ -18,10 +16,9 @@ export function getUnavailableCheckpointDiffMessage({
     return null;
   }
 
-  const isLatestTurn = activeThread?.latestTurn?.turnId === selectedTurn.turnId;
-  if (isLatestTurn) {
-    return null;
+  if (selectedTurn.status === "missing") {
+    return "Checkpoint is marked as missing and cannot be restored.";
   }
 
-  return "Checkpoint diff is unavailable for this turn.";
+  return "Checkpoint reference is unavailable for this turn.";
 }

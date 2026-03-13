@@ -3,7 +3,7 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@t3tools/contracts";
-import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
+import { AlertCircleIcon, ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
 import {
   type WheelEvent as ReactWheelEvent,
   useCallback,
@@ -27,7 +27,7 @@ import { getUnavailableCheckpointDiffMessage } from "./diffPanel.logic";
 import { useStore } from "../store";
 import { useAppSettings } from "../appSettings";
 import { formatShortTimestamp } from "../timestampFormat";
-import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
@@ -99,14 +99,14 @@ const DIFF_PANEL_UNSAFE_CSS = `
 
 type RenderablePatch =
   | {
-      kind: "files";
-      files: FileDiffMetadata[];
-    }
+    kind: "files";
+    files: FileDiffMetadata[];
+  }
   | {
-      kind: "raw";
-      text: string;
-      reason: string;
-    };
+    kind: "raw";
+    text: string;
+    reason: string;
+  };
 
 function getRenderablePatch(
   patch: string | undefined,
@@ -208,7 +208,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       : (orderedTurnDiffSummaries.find((summary) => summary.turnId === selectedTurnId) ??
         orderedTurnDiffSummaries[0]);
   const unavailableCheckpointDiffMessage = getUnavailableCheckpointDiffMessage({
-    activeThread,
     selectedTurn,
   });
   const selectedCheckpointTurnCount =
@@ -218,14 +217,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     () =>
       typeof selectedCheckpointTurnCount === "number"
         ? {
-            fromTurnCount: Math.max(0, selectedCheckpointTurnCount - 1),
-            toTurnCount: selectedCheckpointTurnCount,
-          }
+          fromTurnCount: Math.max(0, selectedCheckpointTurnCount - 1),
+          toTurnCount: selectedCheckpointTurnCount,
+        }
         : null,
     [selectedCheckpointTurnCount],
   );
   const conversationCheckpointTurnCount = useMemo(() => {
     const turnCounts = orderedTurnDiffSummaries
+      .filter((summary) => summary.status !== "missing" && summary.checkpointRef)
       .map(
         (summary) =>
           summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId],
@@ -241,9 +241,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     () =>
       !selectedTurn && typeof conversationCheckpointTurnCount === "number"
         ? {
-            fromTurnCount: 0,
-            toTurnCount: conversationCheckpointTurnCount,
-          }
+          fromTurnCount: 0,
+          toTurnCount: conversationCheckpointTurnCount,
+        }
         : null,
     [conversationCheckpointTurnCount, selectedTurn],
   );
@@ -256,13 +256,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     }
     return `conversation:${orderedTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
   }, [orderedTurnDiffSummaries, selectedTurn]);
+  const isCheckpointAvailable = !(
+    selectedTurn &&
+    (selectedTurn.status === "missing" || !selectedTurn.checkpointRef)
+  );
   const activeCheckpointDiffQuery = useQuery(
     checkpointDiffQueryOptions({
       threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
-      enabled: isGitRepo && unavailableCheckpointDiffMessage === null,
+      enabled: isGitRepo && unavailableCheckpointDiffMessage === null && isCheckpointAvailable,
     }),
   );
   const selectedTurnCheckpointDiff = selectedTurn
@@ -539,25 +543,77 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             ref={patchViewportRef}
             className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
           >
-            {checkpointDiffError &&
-              !renderablePatch &&
-              unavailableCheckpointDiffMessage === null && (
-                <div className="px-3">
-                  <p className="mb-2 text-[11px] text-red-500/80">{checkpointDiffError}</p>
-                </div>
-              )}
             {!renderablePatch ? (
-              isLoadingCheckpointDiff ? (
-                <DiffPanelLoadingState label="Loading checkpoint diff..." />
-              ) : (
-                <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
-                  <p>
-                    {hasNoNetChanges
-                      ? "No net changes in this selection."
-                      : "No patch available for this selection."}
-                  </p>
-                </div>
-              )
+              <div className="flex h-full items-center justify-center px-6 py-8">
+                {isLoadingCheckpointDiff ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-foreground/70" />
+                    <p className="text-sm text-muted-foreground">Loading checkpoint diff...</p>
+                  </div>
+                ) : checkpointDiffError ? (
+                  <div className="flex max-w-md flex-col items-center gap-3 text-center">
+                    <div className="flex size-12 items-center justify-center rounded-full bg-destructive/10">
+                      <AlertCircleIcon className="size-6 text-destructive" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h3 className="text-sm font-medium text-foreground">
+                        Checkpoint Unavailable
+                      </h3>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {checkpointDiffError}
+                      </p>
+                    </div>
+                  </div>
+                ) : hasNoNetChanges ? (
+                  <div className="flex flex-col items-center gap-3 text-center">
+                    <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+                      <svg
+                        className="size-6 text-muted-foreground"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                        />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-medium text-foreground">No Changes</h3>
+                      <p className="text-xs text-muted-foreground">
+                        No net changes in this selection.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-3 text-center">
+                    <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+                      <svg
+                        className="size-6 text-muted-foreground"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                        />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-medium text-foreground">No Diff Available</h3>
+                      <p className="text-xs text-muted-foreground">
+                        No patch available for this selection.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : renderablePatch.kind === "files" ? (
               <Virtualizer
                 className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
