@@ -30,6 +30,14 @@ export const PROVIDER_OPTIONS: Array<{
   { value: "cursor", label: "Cursor", available: false },
 ];
 
+export function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
+  value: ProviderKind;
+  label: string;
+  available: true;
+} {
+  return option.available;
+}
+
 export function resolveProviderOptions(
   claudeCodeConfigured: boolean,
 ): typeof PROVIDER_OPTIONS {

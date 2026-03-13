@@ -1,7 +1,11 @@
 import { type ModelSlug, type ProviderKind } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { memo, useState } from "react";
-import { type ProviderPickerKind, resolveProviderOptions } from "../../session-logic";
+import {
+  type ProviderPickerKind,
+  isAvailableProviderOption,
+  resolveProviderOptions,
+} from "../../session-logic";
 import { useAppSettings } from "../../appSettings";
 import { ChevronDownIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -20,14 +24,6 @@ import {
 } from "../ui/menu";
 import { ClaudeAI, CursorIcon, Gemini, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { cn } from "~/lib/utils";
-
-function isAvailableProviderOption(option: ReturnType<typeof resolveProviderOptions>[number]): option is {
-  value: ProviderKind;
-  label: string;
-  available: true;
-} {
-  return option.available;
-}
 
 function resolveModelForProviderPicker(
   provider: ProviderKind,

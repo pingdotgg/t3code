@@ -58,6 +58,7 @@ import {
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
+  isAvailableProviderOption,
   resolveProviderOptions,
 } from "../session-logic";
 import { isScrollContainerNearBottom } from "../chat-scroll";
@@ -554,7 +555,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const searchableModelOptions = useMemo(
     () =>
       resolveProviderOptions(claudeCodeConfigured)
-        .filter((option) => option.available)
+        .filter(isAvailableProviderOption)
         .filter((option) => lockedProvider === null || option.value === lockedProvider)
         .flatMap((option) =>
           modelOptionsByProvider[option.value].map(({ slug, name }) => ({
