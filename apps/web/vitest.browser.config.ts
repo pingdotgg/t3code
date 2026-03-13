@@ -15,11 +15,7 @@ export default mergeConfig(
       },
     },
     test: {
-      include: [
-        "src/components/ChatView.browser.tsx",
-        "src/components/KeybindingsToast.browser.tsx",
-        "src/components/Sidebar.browser.tsx",
-      ],
+      include: ["**/*.browser.tsx"],
       browser: {
         enabled: true,
         provider: playwright(),
