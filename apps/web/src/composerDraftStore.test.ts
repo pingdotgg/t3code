@@ -292,8 +292,8 @@ describe("composerDraftStore diff context comments", () => {
     ).toEqual(["comment-1"]);
 
     store.clearDiffContextComments(threadId);
-    expect(store.draftsByThreadId[threadId]).toBeUndefined();
-  });
+    store.clearDiffContextComments(threadId);
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
 });
 
 describe("composerDraftStore project draft thread mapping", () => {
