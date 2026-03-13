@@ -3,7 +3,7 @@ import { Option, Schema } from "effect";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
-const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
+export const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
@@ -19,6 +19,9 @@ const AppSettingsSchema = Schema.Struct({
   ),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
   enableAssistantStreaming: Schema.Boolean.pipe(
+    Schema.withConstructorDefault(() => Option.some(false)),
+  ),
+  newThreadUsesNewWorktree: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
   customCodexModels: Schema.Array(Schema.String).pipe(
@@ -174,7 +177,15 @@ function parsePersistedSettings(value: string | null): AppSettings {
   }
 
   try {
-    return normalizeAppSettings(Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema))(value));
+    const parsed = JSON.parse(value);
+    const persistedSettings =
+      parsed && typeof parsed === "object"
+        ? Schema.decodeSync(AppSettingsSchema)({
+            ...DEFAULT_APP_SETTINGS,
+            ...parsed,
+          })
+        : DEFAULT_APP_SETTINGS;
+    return normalizeAppSettings(persistedSettings);
   } catch {
     return DEFAULT_APP_SETTINGS;
   }

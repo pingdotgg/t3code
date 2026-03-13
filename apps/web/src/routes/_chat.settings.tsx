@@ -306,6 +306,61 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Threads</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Choose how new draft threads start before you send the first message.
+                </p>
+              </div>
+
+              <div className="space-y-3" role="radiogroup" aria-label="New thread default mode">
+                {[
+                  {
+                    value: false,
+                    title: "Local",
+                    description: "Start new threads in the main project working tree.",
+                  },
+                  {
+                    value: true,
+                    title: "New worktree",
+                    description:
+                      "Start new threads in worktree mode so the first send creates a new worktree.",
+                  },
+                ].map((option) => {
+                  const selected = settings.newThreadUsesNewWorktree === option.value;
+                  return (
+                    <button
+                      key={option.title}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                        selected
+                          ? "border-primary/60 bg-primary/8 text-foreground"
+                          : "border-border bg-background text-muted-foreground hover:bg-accent"
+                      }`}
+                      onClick={() =>
+                        updateSettings({
+                          newThreadUsesNewWorktree: option.value,
+                        })
+                      }
+                    >
+                      <span className="flex flex-col">
+                        <span className="text-sm font-medium">{option.title}</span>
+                        <span className="text-xs">{option.description}</span>
+                      </span>
+                      {selected ? (
+                        <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                          Selected
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Models</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Save additional provider model slugs so they appear in the chat model picker and

@@ -1,11 +1,77 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  APP_SETTINGS_STORAGE_KEY,
+  getAppSettingsSnapshot,
   getAppModelOptions,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
   resolveAppModelSelection,
 } from "./appSettings";
+
+function getWindowForTest(): Window & typeof globalThis {
+  const testGlobal = globalThis as typeof globalThis & {
+    window?: Window & typeof globalThis;
+  };
+  if (!testGlobal.window) {
+    testGlobal.window = {} as Window & typeof globalThis;
+  }
+  return testGlobal.window;
+}
+
+function createStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear() {
+      values.clear();
+    },
+    getItem(key) {
+      return values.get(key) ?? null;
+    },
+    key(index) {
+      return [...values.keys()][index] ?? null;
+    },
+    removeItem(key) {
+      values.delete(key);
+    },
+    setItem(key, value) {
+      values.set(key, value);
+    },
+  };
+}
+
+beforeEach(() => {
+  const testWindow = getWindowForTest();
+  Object.defineProperty(testWindow, "localStorage", {
+    configurable: true,
+    value: createStorage(),
+  });
+  testWindow.addEventListener = vi.fn();
+  testWindow.removeEventListener = vi.fn();
+});
+
+describe("getAppSettingsSnapshot", () => {
+  it("includes newThreadUsesNewWorktree in the default settings", () => {
+    expect(getAppSettingsSnapshot().newThreadUsesNewWorktree).toBe(false);
+  });
+
+  it("applies schema defaults when older persisted payloads omit new settings", () => {
+    getWindowForTest().localStorage.setItem(
+      APP_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        confirmThreadDelete: false,
+      }),
+    );
+
+    expect(getAppSettingsSnapshot()).toMatchObject({
+      confirmThreadDelete: false,
+      newThreadUsesNewWorktree: false,
+    });
+  });
+});
 
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {

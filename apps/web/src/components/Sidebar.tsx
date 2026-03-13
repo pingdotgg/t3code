@@ -46,8 +46,9 @@ import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } fr
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { buildNewThreadDraftDefaults } from "../threadDraftDefaults";
 import { readNativeApi } from "../nativeApi";
-import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
@@ -398,68 +399,85 @@ export default function Sidebar() {
     });
   }, []);
 
-  const handleNewThread = useCallback(
-    (
+  const resolveNewThreadDefaults = useCallback(
+    async (
       projectId: ProjectId,
       options?: {
-        branch?: string | null;
-        worktreePath?: string | null;
-        envMode?: DraftThreadEnvMode;
+        projectCwd?: string | null;
+        preferNewWorktree?: boolean;
+        forceLocal?: boolean;
+      },
+    ) => {
+      try {
+        const api = readNativeApi();
+        if (!api) {
+          throw new Error("Native API not found.");
+        }
+        return await buildNewThreadDraftDefaults({
+          api,
+          projectCwd: options?.projectCwd ?? projectCwdById.get(projectId) ?? null,
+          preferNewWorktree: options?.preferNewWorktree ?? appSettings.newThreadUsesNewWorktree,
+          ...(options?.forceLocal !== undefined ? { forceLocal: options.forceLocal } : {}),
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to start new thread",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+        return null;
+      }
+    },
+    [appSettings.newThreadUsesNewWorktree, projectCwdById],
+  );
+
+  const handleNewThread = useCallback(
+    async (
+      projectId: ProjectId,
+      options?: {
+        projectCwd?: string | null;
+        preferNewWorktree?: boolean;
+        forceLocal?: boolean;
       },
     ): Promise<void> => {
-      const hasBranchOption = options?.branch !== undefined;
-      const hasWorktreePathOption = options?.worktreePath !== undefined;
-      const hasEnvModeOption = options?.envMode !== undefined;
+      const draftDefaults = await resolveNewThreadDefaults(projectId, options);
+      if (!draftDefaults) {
+        return;
+      }
+
       const storedDraftThread = getDraftThreadByProjectId(projectId);
       if (storedDraftThread) {
-        return (async () => {
-          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
-            setDraftThreadContext(storedDraftThread.threadId, {
-              ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-              ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-              ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-            });
-          }
-          setProjectDraftThreadId(projectId, storedDraftThread.threadId);
-          if (routeThreadId === storedDraftThread.threadId) {
-            return;
-          }
-          await navigate({
-            to: "/$threadId",
-            params: { threadId: storedDraftThread.threadId },
-          });
-        })();
+        setDraftThreadContext(storedDraftThread.threadId, draftDefaults);
+        setProjectDraftThreadId(projectId, storedDraftThread.threadId);
+        if (routeThreadId === storedDraftThread.threadId) {
+          return;
+        }
+        await navigate({
+          to: "/$threadId",
+          params: { threadId: storedDraftThread.threadId },
+        });
+        return;
       }
       clearProjectDraftThreadId(projectId);
 
       const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
       if (activeDraftThread && routeThreadId && activeDraftThread.projectId === projectId) {
-        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
-          setDraftThreadContext(routeThreadId, {
-            ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-            ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-          });
-        }
+        setDraftThreadContext(routeThreadId, draftDefaults);
         setProjectDraftThreadId(projectId, routeThreadId);
-        return Promise.resolve();
+        return;
       }
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
-      return (async () => {
-        setProjectDraftThreadId(projectId, threadId, {
-          createdAt,
-          branch: options?.branch ?? null,
-          worktreePath: options?.worktreePath ?? null,
-          envMode: options?.envMode ?? "local",
-          runtimeMode: DEFAULT_RUNTIME_MODE,
-        });
+      setProjectDraftThreadId(projectId, threadId, {
+        createdAt,
+        ...draftDefaults,
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+      });
 
-        await navigate({
-          to: "/$threadId",
-          params: { threadId },
-        });
-      })();
+      await navigate({
+        to: "/$threadId",
+        params: { threadId },
+      });
     },
     [
       clearProjectDraftThreadId,
@@ -467,6 +485,7 @@ export default function Sidebar() {
       navigate,
       getDraftThread,
       routeThreadId,
+      resolveNewThreadDefaults,
       setDraftThreadContext,
       setProjectDraftThreadId,
     ],
@@ -526,7 +545,7 @@ export default function Sidebar() {
           defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
           createdAt,
         });
-        await handleNewThread(projectId).catch(() => undefined);
+        await handleNewThread(projectId, { projectCwd: cwd }).catch(() => undefined);
       } catch (error) {
         const description =
           error instanceof Error ? error.message : "An error occurred while adding the project.";
@@ -1053,7 +1072,7 @@ export default function Sidebar() {
           activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
         if (!projectId) return;
         event.preventDefault();
-        void handleNewThread(projectId);
+        void handleNewThread(projectId, { forceLocal: true });
         return;
       }
 
@@ -1061,11 +1080,7 @@ export default function Sidebar() {
       const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
       if (!projectId) return;
       event.preventDefault();
-      void handleNewThread(projectId, {
-        branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
-        worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
-        envMode: activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
-      });
+      void handleNewThread(projectId);
     };
 
     const onMouseDown = (event: globalThis.MouseEvent) => {
@@ -1153,9 +1168,7 @@ export default function Sidebar() {
           ? "text-rose-500 animate-pulse"
           : "text-amber-500 animate-pulse";
   const newThreadShortcutLabel = useMemo(
-    () =>
-      shortcutLabelForCommand(keybindings, "chat.newLocal") ??
-      shortcutLabelForCommand(keybindings, "chat.new"),
+    () => shortcutLabelForCommand(keybindings, "chat.new"),
     [keybindings],
   );
 

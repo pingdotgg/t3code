@@ -353,14 +353,14 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
   };
 }
 
-function resolveWsRpc(tag: string): unknown {
-  if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
+function resolveWsRpc(request: WsRequestEnvelope["body"]): unknown {
+  if (request._tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
   }
-  if (tag === WS_METHODS.serverGetConfig) {
+  if (request._tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
   }
-  if (tag === WS_METHODS.gitListBranches) {
+  if (request._tag === WS_METHODS.gitListBranches) {
     return {
       isRepo: true,
       hasOriginRemote: true,
@@ -374,7 +374,7 @@ function resolveWsRpc(tag: string): unknown {
       ],
     };
   }
-  if (tag === WS_METHODS.gitStatus) {
+  if (request._tag === WS_METHODS.gitStatus) {
     return {
       branch: "main",
       hasWorkingTreeChanges: false,
@@ -389,7 +389,18 @@ function resolveWsRpc(tag: string): unknown {
       pr: null,
     };
   }
-  if (tag === WS_METHODS.projectsSearchEntries) {
+  if (request._tag === WS_METHODS.gitCreateWorktree) {
+    return {
+      worktree: {
+        branch: typeof request.newBranch === "string" ? request.newBranch : "t3code/browser-test",
+        path:
+          typeof request.path === "string"
+            ? request.path
+            : "/repo/project/.t3/worktrees/browser-test",
+      },
+    };
+  }
+  if (request._tag === WS_METHODS.projectsSearchEntries) {
     return {
       entries: [],
       truncated: false,
@@ -417,13 +428,12 @@ const worker = setupWorker(
       } catch {
         return;
       }
-      const method = request.body?._tag;
-      if (typeof method !== "string") return;
+      if (typeof request.body?._tag !== "string") return;
       wsRequests.push(request.body);
       client.send(
         JSON.stringify({
           id: request.id,
-          result: resolveWsRpc(method),
+          result: resolveWsRpc(request.body),
         }),
       );
     });
@@ -523,6 +533,17 @@ async function waitForInteractionModeButton(
         (button) => button.textContent?.trim() === expectedLabel,
       ) as HTMLButtonElement | null,
     `Unable to find ${expectedLabel} interaction mode button.`,
+  );
+}
+
+function findDispatchCommandRequest(commandType: string) {
+  return wsRequests.find(
+    (request) =>
+      request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+      typeof request.command === "object" &&
+      request.command !== null &&
+      "type" in request.command &&
+      request.command.type === commandType,
   );
 }
 
@@ -1043,6 +1064,93 @@ describe("ChatView timeline estimator parity (full app)", () => {
         .element(page.getByText("Send a message to start the conversation."))
         .toBeInTheDocument();
       await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("creates the worktree on first send for a pending worktree draft", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const composerEditor = page.getByTestId("composer-editor");
+      await composerEditor.fill("Ship the change");
+      await page.getByRole("button", { name: "Send message" }).click();
+
+      let worktreeNewBranch: string | null = null;
+      await vi.waitFor(
+        () => {
+          const worktreeRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.gitCreateWorktree,
+          );
+          expect(worktreeRequest).toMatchObject({
+            _tag: WS_METHODS.gitCreateWorktree,
+            cwd: "/repo/project",
+            branch: "main",
+          });
+          worktreeNewBranch =
+            worktreeRequest && typeof worktreeRequest.newBranch === "string"
+              ? worktreeRequest.newBranch
+              : null;
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await vi.waitFor(
+        () => {
+          const threadCreateRequest = findDispatchCommandRequest("thread.create");
+          expect(threadCreateRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            command: {
+              type: "thread.create",
+              threadId: THREAD_ID,
+              projectId: PROJECT_ID,
+              worktreePath: "/repo/project/.t3/worktrees/browser-test",
+            },
+          });
+          expect(
+            threadCreateRequest &&
+              typeof threadCreateRequest.command === "object" &&
+              threadCreateRequest.command !== null &&
+              "branch" in threadCreateRequest.command
+              ? threadCreateRequest.command.branch
+              : null,
+          ).toBe(worktreeNewBranch ?? "t3code/browser-test");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(
+        wsRequests.findIndex((request) => request._tag === WS_METHODS.gitCreateWorktree),
+      ).toBeLessThan(
+        wsRequests.findIndex(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            typeof request.command === "object" &&
+            request.command !== null &&
+            "type" in request.command &&
+            request.command.type === "thread.create",
+        ),
+      );
     } finally {
       await mounted.cleanup();
     }
