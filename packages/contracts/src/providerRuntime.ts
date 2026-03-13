@@ -106,6 +106,10 @@ export const TOOL_LIFECYCLE_ITEM_TYPES = [
 export const ToolLifecycleItemType = Schema.Literals(TOOL_LIFECYCLE_ITEM_TYPES);
 export type ToolLifecycleItemType = typeof ToolLifecycleItemType.Type;
 
+export function isToolLifecycleItemType(value: string): value is ToolLifecycleItemType {
+  return TOOL_LIFECYCLE_ITEM_TYPES.includes(value as ToolLifecycleItemType);
+}
+
 export const CanonicalItemType = Schema.Literals([
   "user_message",
   "assistant_message",

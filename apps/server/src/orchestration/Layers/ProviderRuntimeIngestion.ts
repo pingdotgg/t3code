@@ -5,9 +5,8 @@ import {
   MessageId,
   type OrchestrationEvent,
   CheckpointRef,
-  TOOL_LIFECYCLE_ITEM_TYPES,
+  isToolLifecycleItemType,
   ThreadId,
-  type ToolLifecycleItemType,
   TurnId,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
@@ -173,10 +172,6 @@ function requestKindFromCanonicalRequestType(
     default:
       return undefined;
   }
-}
-
-function isToolLifecycleItemType(itemType: string): itemType is ToolLifecycleItemType {
-  return TOOL_LIFECYCLE_ITEM_TYPES.includes(itemType as ToolLifecycleItemType);
 }
 
 function runtimeEventToActivities(

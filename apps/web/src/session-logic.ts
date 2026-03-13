@@ -1,6 +1,6 @@
 import {
   ApprovalRequestId,
-  TOOL_LIFECYCLE_ITEM_TYPES,
+  isToolLifecycleItemType,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
@@ -522,11 +522,8 @@ function stripTrailingExitCode(value: string): {
 function extractWorkLogItemType(
   payload: Record<string, unknown> | null,
 ): WorkLogEntry["itemType"] | undefined {
-  if (typeof payload?.itemType === "string") {
-    const itemType = payload.itemType as ToolLifecycleItemType;
-    if (TOOL_LIFECYCLE_ITEM_TYPES.includes(itemType)) {
-      return itemType;
-    }
+  if (typeof payload?.itemType === "string" && isToolLifecycleItemType(payload.itemType)) {
+    return payload.itemType;
   }
   return undefined;
 }
