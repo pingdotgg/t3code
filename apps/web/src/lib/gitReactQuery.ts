@@ -157,7 +157,6 @@ export function gitRunStackedActionMutationOptions(input: {
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(targetBranch ? { targetBranch } : {}),
-        ...(targetBranch ? { targetBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
       });
     },
