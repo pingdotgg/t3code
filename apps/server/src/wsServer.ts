@@ -424,7 +424,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     void Effect.runPromise(
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
-        if (tryHandleProjectFaviconRequest(url, res)) {
+        if (yield* tryHandleProjectFaviconRequest(url, res)) {
           return;
         }
 
@@ -566,7 +566,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           return;
         }
         respond(200, { "Content-Type": contentType }, data);
-      }),
+      }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem)),
     ).catch(() => {
       if (!res.headersSent) {
         respond(500, { "Content-Type": "text/plain" }, "Internal Server Error");
