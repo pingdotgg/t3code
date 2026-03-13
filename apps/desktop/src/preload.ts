@@ -51,8 +51,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   setTrayEnabled: (enabled: boolean) => ipcRenderer.invoke(SET_TRAY_ENABLED_CHANNEL, enabled),
   getTrayState: () => ipcRenderer.invoke(GET_TRAY_STATE_CHANNEL),
-  setTrayState: (state: DesktopTrayState) =>
-    ipcRenderer.invoke(SET_TRAY_STATE_CHANNEL, state),
+  setTrayState: (state: DesktopTrayState) => ipcRenderer.invoke(SET_TRAY_STATE_CHANNEL, state),
   onTrayMessage: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, message: unknown) => {
       if (typeof message !== "object" || message === null) return;

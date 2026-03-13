@@ -15,20 +15,29 @@ export function useTrayState(): TrayState {
   const [localTrayState, setLocalTrayState] = useState<DesktopTrayState>(EMPTY_TRAY_STATE);
 
   useEffect(() => {
-    void bridge.getTrayState().then((state) => {
-      setLocalTrayState(state);
-    }).catch(() => {
-      // Do nothing
-    });
+    void bridge
+      .getTrayState()
+      .then((state) => {
+        setLocalTrayState(state);
+      })
+      .catch(() => {
+        // Do nothing
+      });
   }, [setLocalTrayState]);
 
-  const setTrayStateOverBridge = useCallback((state: DesktopTrayState) => {
-    bridge.setTrayState(state).then(() => {
-      setLocalTrayState(state);
-    }).catch(() => {
-      // Do nothing
-    });
-  }, [setLocalTrayState]);
+  const setTrayStateOverBridge = useCallback(
+    (state: DesktopTrayState) => {
+      bridge
+        .setTrayState(state)
+        .then(() => {
+          setLocalTrayState(state);
+        })
+        .catch(() => {
+          // Do nothing
+        });
+    },
+    [setLocalTrayState],
+  );
 
   return [localTrayState, setTrayStateOverBridge];
 }
