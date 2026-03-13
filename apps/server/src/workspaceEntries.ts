@@ -13,6 +13,7 @@ const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_SCAN_READDIR_CONCURRENCY = 32;
+const GIT_SUBMODULE_SCAN_CONCURRENCY = 8;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
@@ -215,6 +216,18 @@ function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
   return parts.filter((value) => value.length > 0);
 }
 
+function splitLineSeparatedPaths(input: string, truncated: boolean): string[] {
+  const parts = input.split(/\r?\n/);
+  if (parts.length === 0) return [];
+
+  // If output was truncated, the final token can be partial.
+  if (truncated && parts[parts.length - 1]?.length) {
+    parts.pop();
+  }
+
+  return parts.filter((value) => value.length > 0);
+}
+
 function directoryAncestorsOf(relativePath: string): string[] {
   const segments = relativePath.split("/").filter((segment) => segment.length > 0);
   if (segments.length <= 1) return [];
@@ -335,7 +348,42 @@ async function filterGitIgnoredPaths(cwd: string, relativePaths: string[]): Prom
   return relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
 }
 
-async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex | null> {
+interface GitWorkspaceFileListing {
+  filePaths: string[];
+  truncated: boolean;
+}
+
+async function listInitializedGitSubmodulePaths(cwd: string): Promise<string[]> {
+  const resolvedCwd = await fs.realpath(cwd).catch(() => cwd);
+  const listedSubmodules = await runProcess("git", ["submodule", "foreach", "--quiet", "pwd"], {
+    cwd,
+    allowNonZeroExit: true,
+    timeoutMs: 20_000,
+    maxBufferBytes: 4 * 1024 * 1024,
+    outputMode: "truncate",
+  }).catch(() => null);
+
+  if (!listedSubmodules || listedSubmodules.code !== 0) {
+    return [];
+  }
+
+  return splitLineSeparatedPaths(listedSubmodules.stdout, Boolean(listedSubmodules.stdoutTruncated))
+    .map((absolutePath) => toPosixPath(path.relative(resolvedCwd, absolutePath)))
+    .filter(
+      (relativePath) =>
+        relativePath.length > 0 &&
+        !relativePath.startsWith("../") &&
+        relativePath !== ".." &&
+        !path.isAbsolute(relativePath) &&
+        !isPathInIgnoredDirectory(relativePath),
+    );
+}
+
+function prefixWorkspaceFilePath(prefix: string, relativePath: string): string {
+  return `${prefix}/${relativePath}`;
+}
+
+async function listGitWorkspaceFilePaths(cwd: string): Promise<GitWorkspaceFileListing | null> {
   if (!(await isInsideGitWorkTree(cwd))) {
     return null;
   }
@@ -355,16 +403,61 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
     return null;
   }
 
+  const submodulePaths = await listInitializedGitSubmodulePaths(cwd);
+  const submodulePathSet = new Set(submodulePaths);
   const listedPaths = splitNullSeparatedPaths(
     listedFiles.stdout,
     Boolean(listedFiles.stdoutTruncated),
   )
     .map((entry) => toPosixPath(entry))
-    .filter((entry) => entry.length > 0 && !isPathInIgnoredDirectory(entry));
+    .filter(
+      (entry) =>
+        entry.length > 0 && !isPathInIgnoredDirectory(entry) && !submodulePathSet.has(entry),
+    );
   const filePaths = await filterGitIgnoredPaths(cwd, listedPaths);
+  let truncated = Boolean(listedFiles.stdoutTruncated);
+
+  const submoduleListings = await mapWithConcurrency(
+    submodulePaths,
+    GIT_SUBMODULE_SCAN_CONCURRENCY,
+    async (submodulePath) => {
+      const submoduleCwd = path.join(cwd, submodulePath);
+      const submoduleListing = await listGitWorkspaceFilePaths(submoduleCwd);
+      if (!submoduleListing) {
+        return null;
+      }
+
+      return {
+        filePaths: submoduleListing.filePaths.map((relativePath) =>
+          prefixWorkspaceFilePath(submodulePath, relativePath),
+        ),
+        truncated: submoduleListing.truncated,
+      };
+    },
+  );
+
+  for (const submoduleListing of submoduleListings) {
+    if (!submoduleListing) {
+      continue;
+    }
+    filePaths.push(...submoduleListing.filePaths);
+    truncated ||= submoduleListing.truncated;
+  }
+
+  return {
+    filePaths,
+    truncated,
+  };
+}
+
+async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex | null> {
+  const gitFileListing = await listGitWorkspaceFilePaths(cwd);
+  if (!gitFileListing) {
+    return null;
+  }
 
   const directorySet = new Set<string>();
-  for (const filePath of filePaths) {
+  for (const filePath of gitFileListing.filePaths) {
     for (const directoryPath of directoryAncestorsOf(filePath)) {
       if (!isPathInIgnoredDirectory(directoryPath)) {
         directorySet.add(directoryPath);
@@ -382,7 +475,7 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
       }),
     )
     .map(toSearchableWorkspaceEntry);
-  const fileEntries = [...new Set(filePaths)]
+  const fileEntries = [...new Set(gitFileListing.filePaths)]
     .toSorted((left, right) => left.localeCompare(right))
     .map(
       (filePath): ProjectEntry => ({
@@ -397,7 +490,7 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
   return {
     scannedAt: Date.now(),
     entries: entries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES),
-    truncated: Boolean(listedFiles.stdoutTruncated) || entries.length > WORKSPACE_INDEX_MAX_ENTRIES,
+    truncated: gitFileListing.truncated || entries.length > WORKSPACE_INDEX_MAX_ENTRIES,
   };
 }
 

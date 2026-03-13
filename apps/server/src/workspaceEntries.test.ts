@@ -22,10 +22,11 @@ function writeFile(cwd: string, relativePath: string, contents = ""): void {
   fs.writeFileSync(absolutePath, contents, "utf8");
 }
 
-function runGit(cwd: string, args: string[]): void {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+function runGit(cwd: string, args: string[], options?: { config?: string[] }): void {
+  const gitArgs = [...(options?.config ?? []).flatMap((entry) => ["-c", entry]), ...args];
+  const result = spawnSync("git", gitArgs, { cwd, encoding: "utf8" });
   if (result.status !== 0) {
-    throw new Error(result.stderr || `git ${args.join(" ")} failed`);
+    throw new Error(result.stderr || `git ${gitArgs.join(" ")} failed`);
   }
 }
 
@@ -142,6 +143,48 @@ describe("searchWorkspaceEntries", () => {
     assert.include(paths, "src");
     assert.include(paths, "src/keep.ts");
     assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".convex/")));
+  });
+
+  it("includes files inside initialized git submodules", async () => {
+    const submoduleOrigin = makeTempDir("t3code-workspace-submodule-origin-");
+    runGit(submoduleOrigin, ["init"]);
+    runGit(submoduleOrigin, ["config", "user.email", "test@example.com"]);
+    runGit(submoduleOrigin, ["config", "user.name", "Test User"]);
+    writeFile(submoduleOrigin, "src/submodule-file.ts", "export {};");
+    writeFile(submoduleOrigin, "README.md", "# submodule\n");
+    runGit(submoduleOrigin, ["add", "."]);
+    runGit(submoduleOrigin, ["commit", "-m", "Initial submodule"]);
+
+    const cwd = makeTempDir("t3code-workspace-submodule-root-");
+    runGit(cwd, ["init"]);
+    runGit(cwd, ["config", "user.email", "test@example.com"]);
+    runGit(cwd, ["config", "user.name", "Test User"]);
+    writeFile(cwd, "src/root.ts", "export {};");
+    runGit(cwd, ["add", "src/root.ts"]);
+    runGit(cwd, ["commit", "-m", "Initial root"]);
+    runGit(cwd, ["submodule", "add", "-q", submoduleOrigin, "vendor/submodule"], {
+      config: ["protocol.file.allow=always"],
+    });
+    writeFile(cwd, "vendor/submodule/untracked.ts", "export {};");
+
+    const result = await searchWorkspaceEntries({ cwd, query: "", limit: 100 });
+    const paths = result.entries.map((entry) => entry.path);
+    const submoduleRootEntry = result.entries.find((entry) => entry.path === "vendor/submodule");
+
+    assert.include(paths, "vendor");
+    assert.include(paths, "vendor/submodule");
+    assert.include(paths, "vendor/submodule/README.md");
+    assert.include(paths, "vendor/submodule/src");
+    assert.include(paths, "vendor/submodule/src/submodule-file.ts");
+    assert.include(paths, "vendor/submodule/untracked.ts");
+    assert.deepInclude(submoduleRootEntry, {
+      path: "vendor/submodule",
+      kind: "directory",
+      parentPath: "vendor",
+    });
+    assert.isFalse(
+      result.entries.some((entry) => entry.path === "vendor/submodule" && entry.kind === "file"),
+    );
   });
 
   it("deduplicates concurrent index builds for the same cwd", async () => {
