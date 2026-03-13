@@ -15,9 +15,9 @@ import {
   CheckIcon,
   CircleAlertIcon,
   EyeIcon,
+  GlobeIcon,
   HammerIcon,
   type LucideIcon,
-  SearchIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -742,7 +742,7 @@ function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
   if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
     return SquarePenIcon;
   }
-  if (workEntry.itemType === "web_search") return SearchIcon;
+  if (workEntry.itemType === "web_search") return GlobeIcon;
   if (workEntry.itemType === "image_view") return EyeIcon;
 
   switch (workEntry.itemType) {
