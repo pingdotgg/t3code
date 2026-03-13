@@ -11,7 +11,7 @@ import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import { extractTrailingDiffContextComments } from "../../lib/diffContextComments";
 import ChatMarkdown from "../ChatMarkdown";
-import { Undo2Icon } from "lucide-react";
+import { MessageSquareIcon, Undo2Icon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { clamp } from "effect/Number";
@@ -20,7 +20,6 @@ import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImage
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
-import { DiffContextCommentsAttachment } from "./DiffContextCommentsAttachment";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { computeMessageDurationStart } from "./MessagesTimeline.logic";
 import { type TimestampFormat } from "../../appSettings";
@@ -436,11 +435,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <DiffContextCommentsAttachment
-                            commentCount={extractedDiffComments.commentCount}
-                            previewTitle={extractedDiffComments.previewTitle}
-                            className="gap-1.5 rounded-full border-border/50 bg-background/35 px-1.5 py-0.5 text-muted-foreground/65 shadow-none"
-                          />
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-muted-foreground/50"
+                            aria-label={`${extractedDiffComments.commentCount} diff context comment${
+                              extractedDiffComments.commentCount === 1 ? "" : "s"
+                            }`}
+                            title={extractedDiffComments.previewTitle ?? undefined}
+                          >
+                            <MessageSquareIcon className="size-3" />
+                            <span className="text-[10px] font-medium">
+                              {extractedDiffComments.commentCount}
+                            </span>
+                          </button>
                         }
                       />
                       <TooltipPopup
