@@ -1,9 +1,11 @@
 import {
   ApprovalRequestId,
+  TOOL_LIFECYCLE_ITEM_TYPES,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   type ProviderKind,
+  type ToolLifecycleItemType,
   type UserInputQuestion,
   type TurnId,
 } from "@t3tools/contracts";
@@ -37,14 +39,7 @@ export interface WorkLogEntry {
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
-  itemType?:
-    | "command_execution"
-    | "file_change"
-    | "mcp_tool_call"
-    | "dynamic_tool_call"
-    | "collab_agent_tool_call"
-    | "web_search"
-    | "image_view";
+  itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
 }
 
@@ -527,18 +522,13 @@ function stripTrailingExitCode(value: string): {
 function extractWorkLogItemType(
   payload: Record<string, unknown> | null,
 ): WorkLogEntry["itemType"] | undefined {
-  switch (payload?.itemType) {
-    case "command_execution":
-    case "file_change":
-    case "mcp_tool_call":
-    case "dynamic_tool_call":
-    case "collab_agent_tool_call":
-    case "web_search":
-    case "image_view":
-      return payload.itemType;
-    default:
-      return undefined;
+  if (typeof payload?.itemType === "string") {
+    const itemType = payload.itemType as ToolLifecycleItemType;
+    if (TOOL_LIFECYCLE_ITEM_TYPES.includes(itemType)) {
+      return itemType;
+    }
   }
+  return undefined;
 }
 
 function extractWorkLogRequestKind(

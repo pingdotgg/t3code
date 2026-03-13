@@ -51,7 +51,6 @@ interface MessagesTimelineProps {
   completionSummary: string | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   nowIso: string;
-  enableCodexToolCallUi: boolean;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -76,7 +75,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   completionSummary,
   turnDiffSummaryByAssistantMessageId,
   nowIso,
-  enableCodexToolCallUi,
   expandedWorkGroups,
   onToggleWorkGroup,
   onOpenTurnDiff,
@@ -327,57 +325,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 </div>
               )}
               <div className="space-y-0.5">
-                {enableCodexToolCallUi
-                  ? visibleEntries.map((workEntry) => (
-                      <SimpleWorkEntryRow key={`work-row:${workEntry.id}`} workEntry={workEntry} />
-                    ))
-                  : visibleEntries.map((workEntry) => (
-                      <div
-                        key={`work-row:${workEntry.id}`}
-                        className="flex items-start gap-2 py-0.5"
-                      >
-                        <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                        <div className="min-w-0 flex-1 py-[2px]">
-                          <p
-                            className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
-                          >
-                            {workEntry.label}
-                          </p>
-                          {workEntry.command && (
-                            <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
-                              {workEntry.command}
-                            </pre>
-                          )}
-                          {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {workEntry.changedFiles.slice(0, 6).map((filePath) => (
-                                <span
-                                  key={`${workEntry.id}:${filePath}`}
-                                  className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
-                                  title={filePath}
-                                >
-                                  {filePath}
-                                </span>
-                              ))}
-                              {workEntry.changedFiles.length > 6 && (
-                                <span className="px-1 text-[10px] text-muted-foreground/65">
-                                  +{workEntry.changedFiles.length - 6} more
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          {workEntry.detail &&
-                            (!workEntry.command || workEntry.detail !== workEntry.command) && (
-                              <p
-                                className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
-                                title={workEntry.detail}
-                              >
-                                {workEntry.detail}
-                              </p>
-                            )}
-                        </div>
-                      </div>
-                    ))}
+                {visibleEntries.map((workEntry) => (
+                  <SimpleWorkEntryRow key={`work-row:${workEntry.id}`} workEntry={workEntry} />
+                ))}
               </div>
             </div>
           );
@@ -686,7 +636,10 @@ function formatMessageMeta(
   return `${formatTimestamp(createdAt, timestampFormat)} • ${duration}`;
 }
 
-function workToneIcon(tone: TimelineWorkEntry["tone"]): { icon: LucideIcon; className: string } {
+function workToneIcon(tone: TimelineWorkEntry["tone"]): {
+  icon: LucideIcon;
+  className: string;
+} {
   if (tone === "error") {
     return {
       icon: CircleAlertIcon,

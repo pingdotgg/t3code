@@ -400,7 +400,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:02.000Z",
-        summary: "Ran command complete",
+        summary: "Ran command",
         tone: "tool",
         kind: "tool.completed",
       }),
@@ -437,7 +437,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "command-tool",
         kind: "tool.completed",
-        summary: "Ran command complete",
+        summary: "Ran command",
         payload: {
           itemType: "command_execution",
           data: {
@@ -458,7 +458,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "tool-with-metadata",
         kind: "tool.completed",
-        summary: "bash complete",
+        summary: "bash",
         payload: {
           itemType: "command_execution",
           title: "bash",
@@ -491,7 +491,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "file-tool",
         kind: "tool.completed",
-        summary: "File change complete",
+        summary: "File change",
         payload: {
           itemType: "file_change",
           data: {
