@@ -3,6 +3,7 @@ import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
 import { GitHubIcon } from "./Icons";
+import { useAppSettings } from "~/appSettings";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
@@ -154,6 +155,7 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
 }
 
 export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+  const { settings } = useAppSettings();
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -218,6 +220,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
     : null;
+  const commitMessageInstructions = settings.commitMessageInstructions.trim();
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
         action: pendingDefaultBranchAction.action,
@@ -349,6 +352,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       const promise = runImmediateGitActionMutation.mutateAsync({
         action,
         ...(commitMessage ? { commitMessage } : {}),
+        ...(commitMessageInstructions ? { commitMessageInstructions } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
       });
@@ -440,13 +444,13 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         });
       }
     },
-
     [
       isDefaultBranch,
       runImmediateGitActionMutation,
       setPendingDefaultBranchAction,
       threadToastData,
       gitStatusForActions,
+      commitMessageInstructions,
     ],
   );
 

@@ -314,6 +314,15 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
   const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = (input) => {
     const wantsBranch = input.includeBranch === true;
+    const commitMessageInstructions = input.commitMessageInstructions?.trim() ?? "";
+    const commitMessageInstructionRules =
+      commitMessageInstructions.length > 0
+        ? commitMessageInstructions
+            .split(/\r?\n/g)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+            .map((line) => `- ${line}`)
+        : [];
 
     const prompt = [
       "You write concise git commit messages.",
@@ -327,6 +336,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         ? ["- branch must be a short semantic git branch fragment for this change"]
         : []),
       "- capture the primary user-visible or developer-visible change",
+      ...commitMessageInstructionRules,
       "",
       `Branch: ${input.branch ?? "(detached)"}`,
       "",

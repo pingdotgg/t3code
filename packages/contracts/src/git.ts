@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
+export const GIT_COMMIT_MESSAGE_INSTRUCTIONS_MAX_LENGTH = 2_000;
 
 // Domain Types
 
@@ -60,6 +61,11 @@ export const GitRunStackedActionInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
+  commitMessageInstructions: Schema.optional(
+    TrimmedNonEmptyStringSchema.check(
+      Schema.isMaxLength(GIT_COMMIT_MESSAGE_INSTRUCTIONS_MAX_LENGTH),
+    ),
+  ),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(
     Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),

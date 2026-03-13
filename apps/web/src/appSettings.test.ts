@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_COMMIT_MESSAGE_INSTRUCTIONS_LENGTH,
   DEFAULT_TIMESTAMP_FORMAT,
   getAppModelOptions,
   normalizeCustomModelSlugs,
@@ -62,5 +63,11 @@ describe("resolveAppModelSelection", () => {
 describe("timestamp format defaults", () => {
   it("defaults timestamp format to locale", () => {
     expect(DEFAULT_TIMESTAMP_FORMAT).toBe("locale");
+  });
+});
+
+describe("commit message instruction defaults", () => {
+  it("exports the supported instruction length limit", () => {
+    expect(MAX_COMMIT_MESSAGE_INSTRUCTIONS_LENGTH).toBe(2_000);
   });
 });

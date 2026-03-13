@@ -46,6 +46,7 @@ interface FakeGitTextGeneration {
     branch: string | null;
     stagedSummary: string;
     stagedPatch: string;
+    commitMessageInstructions?: string;
     includeBranch?: boolean;
   }) => Effect.Effect<
     { subject: string; body: string; branch?: string | undefined },
@@ -450,6 +451,7 @@ function runStackedAction(
     cwd: string;
     action: "commit" | "commit_push" | "commit_push_pr";
     commitMessage?: string;
+    commitMessageInstructions?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
   },
@@ -765,6 +767,38 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           Effect.map((result) => result.stdout.trim()),
         ),
       ).toContain("- details from user");
+    }),
+  );
+
+  it.effect("forwards commit message instructions for generated commits", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\ninstructions\n");
+      let receivedInstructions: string | undefined;
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              receivedInstructions = input.commitMessageInstructions;
+              return {
+                subject: "Implement stacked git actions",
+                body: "",
+                ...(input.includeBranch ? { branch: "feature/implement-stacked-git-actions" } : {}),
+              };
+            }),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessageInstructions: "Use Conventional Commits.",
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(receivedInstructions).toBe("Use Conventional Commits.");
     }),
   );
 

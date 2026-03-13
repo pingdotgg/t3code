@@ -1,12 +1,13 @@
 import { useCallback } from "react";
 import { Option, Schema } from "effect";
-import { type ProviderKind } from "@t3tools/contracts";
+import { GIT_COMMIT_MESSAGE_INSTRUCTIONS_MAX_LENGTH, type ProviderKind } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+export const MAX_COMMIT_MESSAGE_INSTRUCTIONS_LENGTH = GIT_COMMIT_MESSAGE_INSTRUCTIONS_MAX_LENGTH;
 export const TIMESTAMP_FORMAT_OPTIONS = ["locale", "12-hour", "24-hour"] as const;
 export type TimestampFormat = (typeof TIMESTAMP_FORMAT_OPTIONS)[number];
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
@@ -25,6 +26,9 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some("local")),
   ),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
+  commitMessageInstructions: Schema.String.check(
+    Schema.isMaxLength(MAX_COMMIT_MESSAGE_INSTRUCTIONS_LENGTH),
+  ).pipe(Schema.withConstructorDefault(() => Option.some(""))),
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),

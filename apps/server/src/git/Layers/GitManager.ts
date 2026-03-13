@@ -636,6 +636,7 @@ export const makeGitManager = Effect.gen(function* () {
     cwd: string;
     branch: string | null;
     commitMessage?: string;
+    commitMessageInstructions?: string;
     /** When true, also produce a semantic feature branch name. */
     includeBranch?: boolean;
     filePaths?: readonly string[];
@@ -664,6 +665,9 @@ export const makeGitManager = Effect.gen(function* () {
           branch: input.branch,
           stagedSummary: limitContext(context.stagedSummary, 8_000),
           stagedPatch: limitContext(context.stagedPatch, 50_000),
+          ...(input.commitMessageInstructions
+            ? { commitMessageInstructions: input.commitMessageInstructions }
+            : {}),
           ...(input.includeBranch ? { includeBranch: true } : {}),
         })
         .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
@@ -680,6 +684,7 @@ export const makeGitManager = Effect.gen(function* () {
     cwd: string,
     branch: string | null,
     commitMessage?: string,
+    commitMessageInstructions?: string,
     preResolvedSuggestion?: CommitAndBranchSuggestion,
     filePaths?: readonly string[],
   ) =>
@@ -690,6 +695,7 @@ export const makeGitManager = Effect.gen(function* () {
           cwd,
           branch,
           ...(commitMessage ? { commitMessage } : {}),
+          ...(commitMessageInstructions ? { commitMessageInstructions } : {}),
           ...(filePaths ? { filePaths } : {}),
         }));
       if (!suggestion) {
@@ -971,6 +977,7 @@ export const makeGitManager = Effect.gen(function* () {
     cwd: string,
     branch: string | null,
     commitMessage?: string,
+    commitMessageInstructions?: string,
     filePaths?: readonly string[],
   ) =>
     Effect.gen(function* () {
@@ -978,6 +985,7 @@ export const makeGitManager = Effect.gen(function* () {
         cwd,
         branch,
         ...(commitMessage ? { commitMessage } : {}),
+        ...(commitMessageInstructions ? { commitMessageInstructions } : {}),
         ...(filePaths ? { filePaths } : {}),
         includeBranch: true,
       });
@@ -1027,6 +1035,7 @@ export const makeGitManager = Effect.gen(function* () {
           input.cwd,
           initialStatus.branch,
           input.commitMessage,
+          input.commitMessageInstructions,
           input.filePaths,
         );
         branchStep = result.branchStep;
@@ -1042,6 +1051,7 @@ export const makeGitManager = Effect.gen(function* () {
         input.cwd,
         currentBranch,
         commitMessageForStep,
+        input.commitMessageInstructions,
         preResolvedCommitSuggestion,
         input.filePaths,
       );

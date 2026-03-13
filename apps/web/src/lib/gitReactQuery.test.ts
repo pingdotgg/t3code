@@ -1,11 +1,17 @@
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { NativeApi } from "@t3tools/contracts";
 import {
   gitMutationKeys,
   gitPreparePullRequestThreadMutationOptions,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
 } from "./gitReactQuery";
+import * as nativeApi from "../nativeApi";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("gitMutationKeys", () => {
   it("scopes stacked action keys by cwd", () => {
@@ -44,5 +50,52 @@ describe("git mutation options", () => {
       queryClient,
     });
     expect(options.mutationKey).toEqual(gitMutationKeys.preparePullRequestThread("/repo/a"));
+  });
+
+  it("forwards commit message instructions for stacked actions", async () => {
+    const runStackedAction = vi.fn().mockResolvedValue({});
+    vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
+      git: { runStackedAction },
+    } as unknown as NativeApi);
+
+    const options = gitRunStackedActionMutationOptions({ cwd: "/repo/a", queryClient });
+    const mutationFn = options.mutationFn;
+    expect(mutationFn).toBeDefined();
+    await mutationFn!(
+      {
+        action: "commit",
+        commitMessageInstructions: "  Use Conventional Commits  ",
+      },
+      {} as never,
+    );
+
+    expect(runStackedAction).toHaveBeenCalledWith({
+      cwd: "/repo/a",
+      action: "commit",
+      commitMessageInstructions: "Use Conventional Commits",
+    });
+  });
+
+  it("omits blank commit message instructions for stacked actions", async () => {
+    const runStackedAction = vi.fn().mockResolvedValue({});
+    vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
+      git: { runStackedAction },
+    } as unknown as NativeApi);
+
+    const options = gitRunStackedActionMutationOptions({ cwd: "/repo/a", queryClient });
+    const mutationFn = options.mutationFn;
+    expect(mutationFn).toBeDefined();
+    await mutationFn!(
+      {
+        action: "commit",
+        commitMessageInstructions: "   ",
+      },
+      {} as never,
+    );
+
+    expect(runStackedAction).toHaveBeenCalledWith({
+      cwd: "/repo/a",
+      action: "commit",
+    });
   });
 });

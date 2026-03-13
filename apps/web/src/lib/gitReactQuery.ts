@@ -118,20 +118,26 @@ export function gitRunStackedActionMutationOptions(input: {
     mutationFn: async ({
       action,
       commitMessage,
+      commitMessageInstructions,
       featureBranch,
       filePaths,
     }: {
       action: GitStackedAction;
       commitMessage?: string;
+      commitMessageInstructions?: string;
       featureBranch?: boolean;
       filePaths?: string[];
     }) => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Git action is unavailable.");
+      const trimmedCommitMessageInstructions = commitMessageInstructions?.trim();
       return api.git.runStackedAction({
         cwd: input.cwd,
         action,
         ...(commitMessage ? { commitMessage } : {}),
+        ...(trimmedCommitMessageInstructions
+          ? { commitMessageInstructions: trimmedCommitMessageInstructions }
+          : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
       });

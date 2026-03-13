@@ -244,6 +244,58 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     ),
   );
 
+  it.effect("includes additional commit message instructions when provided", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "Add important change",
+          body: "",
+        }),
+        stdinMustContain: "- Use Conventional Commits. Mention ticket IDs when present.",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/codex-effect",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          commitMessageInstructions: "Use Conventional Commits. Mention ticket IDs when present.",
+        });
+
+        expect(generated.subject).toBe("Add important change");
+      }),
+    ),
+  );
+
+  it.effect("includes custom commit message rules alongside branch generation", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "Add important change",
+          body: "",
+          branch: "feature/add-important-change",
+        }),
+        stdinMustContain: "- Use Conventional Commits.",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/codex-effect",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          commitMessageInstructions: "Use Conventional Commits.",
+          includeBranch: true,
+        });
+
+        expect(generated.branch).toBe("feature/add-important-change");
+      }),
+    ),
+  );
+
   it.effect("generates PR content and trims markdown body", () =>
     withFakeCodexEnv(
       {

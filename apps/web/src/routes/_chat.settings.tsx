@@ -3,7 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
-import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
+import {
+  MAX_COMMIT_MESSAGE_INSTRUCTIONS_LENGTH,
+  MAX_CUSTOM_MODEL_LENGTH,
+  useAppSettings,
+} from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
@@ -19,6 +23,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
+import { Textarea } from "../components/ui/textarea";
 import { APP_VERSION } from "../branding";
 import { SidebarInset } from "~/components/ui/sidebar";
 
@@ -658,6 +663,48 @@ function SettingsRouteView() {
                     onClick={() =>
                       updateSettings({
                         confirmThreadDelete: defaults.confirmThreadDelete,
+                      })
+                    }
+                  >
+                    Restore default
+                  </Button>
+                </div>
+              ) : null}
+            </section>
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Agent Instructions</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Configure custom instructions for built-in agent tasks.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-background px-3 py-3">
+                <div className="mb-3">
+                  <p className="text-sm font-medium text-foreground">Commit message preferences</p>
+                </div>
+
+                <Textarea
+                  value={settings.commitMessageInstructions}
+                  onChange={(event) =>
+                    updateSettings({
+                      commitMessageInstructions: event.target.value,
+                    })
+                  }
+                  maxLength={MAX_COMMIT_MESSAGE_INSTRUCTIONS_LENGTH}
+                  placeholder="Use Conventional Commits."
+                  aria-label="Commit message agent instructions"
+                />
+              </div>
+
+              {settings.commitMessageInstructions !== defaults.commitMessageInstructions ? (
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        commitMessageInstructions: defaults.commitMessageInstructions,
                       })
                     }
                   >
