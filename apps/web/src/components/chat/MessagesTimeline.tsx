@@ -389,7 +389,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {visibleUserText && <MessageCopyButton text={visibleUserText} />}
+                    {row.message.text && <MessageCopyButton text={row.message.text} />}
                     {canRevertAgentWork && (
                       <Button
                         type="button"
