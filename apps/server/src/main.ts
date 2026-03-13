@@ -6,8 +6,19 @@
  *
  * @module CliConfig
  */
-import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import {
+  Config,
+  Data,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  References,
+  Schema,
+  ServiceMap,
+} from "effect";
+import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import { NetService } from "@t3tools/shared/Net";
 import {
   DEFAULT_PORT,
@@ -241,7 +252,7 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
 });
 
-const makeServerProgram = (input: CliInput) =>
+const makeServerProgramBody = (input: CliInput) =>
   Effect.gen(function* () {
     const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
@@ -303,6 +314,18 @@ const makeServerProgram = (input: CliInput) =>
 
     return yield* stopSignal;
   }).pipe(Effect.provide(LayerLive(input)));
+
+const makeServerProgram = (input: CliInput) =>
+  Effect.gen(function* () {
+    const configuredLogLevel = yield* GlobalFlag.LogLevel;
+    const program = makeServerProgramBody(input);
+
+    if (resolveRemoteFlag(input) && Option.isNone(configuredLogLevel)) {
+      return yield* program.pipe(Effect.provideService(References.MinimumLogLevel, "Warn"));
+    }
+
+    return yield* program;
+  });
 
 /**
  * These flags mirrors the environment variables and the config shape.
