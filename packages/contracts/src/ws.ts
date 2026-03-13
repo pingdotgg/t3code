@@ -47,6 +47,7 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  checkProjectDirectories: "projects.checkDirectories",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -111,6 +112,9 @@ const WebSocketRequestBody = Schema.Union([
   // Project Search
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
+  tagRequestBody(WS_METHODS.checkProjectDirectories, Schema.Struct({
+    cwds: Schema.Array(Schema.String),
+  })),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),

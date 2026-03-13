@@ -175,6 +175,8 @@ export function createWsNativeApi(): NativeApi {
           callback(message.data),
         ),
     },
+    request: <T = unknown>(method: string, params?: unknown) =>
+      transport.request<T>(method, params),
   };
 
   instance = { api, transport };

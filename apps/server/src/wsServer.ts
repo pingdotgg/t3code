@@ -776,6 +776,20 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return { relativePath: target.relativePath };
       }
 
+      case WS_METHODS.checkProjectDirectories: {
+        const { cwds } = request.body;
+        const missing: string[] = [];
+        for (const cwd of cwds) {
+          const stat = yield* fileSystem
+            .stat(cwd)
+            .pipe(Effect.catch(() => Effect.succeed(null)));
+          if (!stat || stat.type !== "Directory") {
+            missing.push(cwd);
+          }
+        }
+        return { missing };
+      }
+
       case WS_METHODS.shellOpenInEditor: {
         const body = stripRequestTag(request.body);
         return yield* openInEditor(body);
