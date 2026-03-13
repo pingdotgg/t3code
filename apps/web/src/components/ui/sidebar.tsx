@@ -18,7 +18,11 @@ import {
 import { Skeleton } from "~/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useIsMobile } from "~/hooks/useMediaQuery";
-import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "~/hooks/useLocalStorage";
 import { Schema } from "effect";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
@@ -542,13 +546,41 @@ function SidebarRail({
     if (!rail) return;
     const wrapper = rail.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
     if (!wrapper) return;
+    const defaultSidebarWidth = wrapper.style.getPropertyValue("--sidebar-width");
 
-    const storedWidth = getLocalStorageItem(resolvedResizable.storageKey, Schema.Finite);
-    if (storedWidth === null) return;
-    const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
-    wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
-    resolvedResizable.onResize?.(clampedWidth);
-  }, [resolvedResizable]);
+    const applyStoredWidth = () => {
+      const storedWidth = getLocalStorageItem(resolvedResizable.storageKey!, Schema.Finite);
+      if (storedWidth === null) return;
+      const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
+      const sidebarContainer = rail
+        .closest<HTMLElement>("[data-slot='sidebar']")
+        ?.querySelector<HTMLElement>("[data-slot='sidebar-container']");
+      const accepted =
+        !sidebarContainer ||
+        !resolvedResizable.shouldAcceptWidth ||
+        resolvedResizable.shouldAcceptWidth({
+          currentWidth: sidebarContainer.getBoundingClientRect().width,
+          nextWidth: clampedWidth,
+          rail,
+          side: sidebarInstance?.side ?? "left",
+          sidebarRoot: rail.closest<HTMLElement>("[data-slot='sidebar']")!,
+          wrapper,
+        });
+      if (accepted) {
+        wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
+        resolvedResizable.onResize?.(clampedWidth);
+      } else {
+        wrapper.style.setProperty("--sidebar-width", defaultSidebarWidth);
+        removeLocalStorageItem(resolvedResizable.storageKey!);
+      }
+    };
+
+    applyStoredWidth();
+    window.addEventListener("resize", applyStoredWidth);
+    return () => {
+      window.removeEventListener("resize", applyStoredWidth);
+    };
+  }, [resolvedResizable, sidebarInstance?.side]);
 
   React.useEffect(() => {
     return () => {
