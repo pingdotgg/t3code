@@ -12,6 +12,7 @@ export type TimestampFormat = (typeof TIMESTAMP_FORMAT_OPTIONS)[number];
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  claudeCode: new Set(getModelOptions("claudeCode").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
@@ -19,6 +20,18 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeCodeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeCodeProvider: Schema.Literals(["anthropic", "bedrock"]).pipe(
+    Schema.withConstructorDefault(() => Option.some("anthropic")),
+  ),
+  claudeCodeAwsRegion: Schema.String.check(Schema.isMaxLength(64)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeCodeAwsProfile: Schema.String.check(Schema.isMaxLength(256)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   defaultThreadEnvMode: Schema.Literals(["local", "worktree"]).pipe(
@@ -32,6 +45,9 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TIMESTAMP_FORMAT)),
   ),
   customCodexModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  customClaudeCodeModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });

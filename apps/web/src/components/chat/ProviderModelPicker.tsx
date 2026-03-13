@@ -1,7 +1,8 @@
 import { type ModelSlug, type ProviderKind } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { memo, useState } from "react";
-import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
+import { type ProviderPickerKind, resolveProviderOptions } from "../../session-logic";
+import { useAppSettings } from "../../appSettings";
 import { ChevronDownIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -20,12 +21,12 @@ import {
 import { ClaudeAI, CursorIcon, Gemini, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 
-function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
+function isAvailableProviderOption(option: ReturnType<typeof resolveProviderOptions>[number]): option is {
   value: ProviderKind;
   label: string;
   available: true;
 } {
-  return option.available && option.value !== "claudeCode";
+  return option.available;
 }
 
 function resolveModelForProviderPicker(
@@ -67,8 +68,7 @@ const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   cursor: CursorIcon,
 };
 
-export const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
-const UNAVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter((option) => !option.available);
+// Derived at runtime from settings — see ProviderModelPicker component below.
 const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
   { id: "gemini", label: "Gemini", icon: Gemini },
@@ -84,6 +84,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const { settings } = useAppSettings();
+  const claudeCodeConfigured =
+    settings.claudeCodeBinaryPath.trim() !== "" ||
+    settings.claudeCodeProvider === "bedrock";
+  const providerOptions = resolveProviderOptions(claudeCodeConfigured);
+  const availableProviderOptions = providerOptions.filter(isAvailableProviderOption);
+  const unavailableProviderOptions = providerOptions.filter((option) => !option.available);
   const selectedProviderOptions = props.modelOptionsByProvider[props.provider];
   const selectedModelLabel =
     selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
@@ -122,7 +129,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         </span>
       </MenuTrigger>
       <MenuPopup align="start">
-        {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
+        {availableProviderOptions.map((option) => {
           const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
           const isDisabledByProviderLock =
             props.lockedProvider !== null && props.lockedProvider !== option.value;
@@ -168,8 +175,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </MenuSub>
           );
         })}
-        {UNAVAILABLE_PROVIDER_OPTIONS.length > 0 && <MenuDivider />}
-        {UNAVAILABLE_PROVIDER_OPTIONS.map((option) => {
+        {unavailableProviderOptions.length > 0 && <MenuDivider />}
+        {unavailableProviderOptions.map((option) => {
           const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
           return (
             <MenuItem key={option.value} disabled>
@@ -182,12 +189,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               />
               <span>{option.label}</span>
               <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
-                Coming soon
+                {option.value === "claudeCode" ? "Configure in Settings" : "Coming soon"}
               </span>
             </MenuItem>
           );
         })}
-        {UNAVAILABLE_PROVIDER_OPTIONS.length === 0 && <MenuDivider />}
+        {unavailableProviderOptions.length === 0 && <MenuDivider />}
         {COMING_SOON_PROVIDER_OPTIONS.map((option) => {
           const OptionIcon = option.icon;
           return (

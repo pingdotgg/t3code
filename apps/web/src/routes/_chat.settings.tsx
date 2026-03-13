@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
-import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
+import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings, type AppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
@@ -54,6 +54,13 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
+  {
+    provider: "claudeCode",
+    title: "Claude Code",
+    description: "Save additional Claude Code model slugs for the picker and `/model` command.",
+    placeholder: "your-claude-model-slug",
+    example: "claude-opus-4-6-preview",
+  },
 ] as const;
 
 const TIMESTAMP_FORMAT_LABELS = {
@@ -67,6 +74,8 @@ function getCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "claudeCode":
+      return settings.customClaudeCodeModels;
     case "codex":
     default:
       return settings.customCodexModels;
@@ -78,14 +87,18 @@ function getDefaultCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "claudeCode":
+      return defaults.customClaudeCodeModels;
     case "codex":
     default:
       return defaults.customCodexModels;
   }
 }
 
-function patchCustomModels(provider: ProviderKind, models: string[]) {
+function patchCustomModels(provider: ProviderKind, models: string[]): Partial<AppSettings> {
   switch (provider) {
+    case "claudeCode":
+      return { customClaudeCodeModels: models };
     case "codex":
     default:
       return { customCodexModels: models };
@@ -102,6 +115,7 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    claudeCode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -364,6 +378,145 @@ function SettingsRouteView() {
                     }
                   >
                     Reset codex overrides
+                  </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Claude Code</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Configure the Claude Code CLI. Once set, Claude Code will appear as an available
+                  provider in the chat model picker.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="claude-code-binary-path" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">
+                    Claude Code binary path
+                  </span>
+                  <Input
+                    id="claude-code-binary-path"
+                    value={settings.claudeCodeBinaryPath}
+                    onChange={(event) =>
+                      updateSettings({ claudeCodeBinaryPath: event.target.value })
+                    }
+                    placeholder="claude"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Leave blank to use <code>claude</code> from your PATH.
+                  </span>
+                </label>
+
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-foreground">API provider</span>
+                  <p className="text-xs text-muted-foreground">
+                    Choose how Claude Code authenticates. Select <strong>Anthropic</strong> to use
+                    your Claude Code subscription, or <strong>AWS Bedrock</strong> to route requests
+                    through your AWS account using the{" "}
+                    <code>CLAUDE_CODE_USE_BEDROCK</code> environment variable.
+                  </p>
+                  <div className="space-y-2" role="radiogroup" aria-label="Claude Code API provider">
+                    {(
+                      [
+                        {
+                          value: "anthropic",
+                          label: "Anthropic",
+                          description: "Use your Claude Code subscription via the Anthropic API.",
+                        },
+                        {
+                          value: "bedrock",
+                          label: "AWS Bedrock",
+                          description:
+                            "Route requests through your AWS account. Requires AWS credentials and Bedrock model access.",
+                        },
+                      ] as const
+                    ).map((option) => {
+                      const selected = settings.claudeCodeProvider === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                            selected
+                              ? "border-primary/60 bg-primary/8 text-foreground"
+                              : "border-border bg-background text-muted-foreground hover:bg-accent"
+                          }`}
+                          onClick={() => updateSettings({ claudeCodeProvider: option.value })}
+                        >
+                          <span className="flex flex-col">
+                            <span className="text-sm font-medium">{option.label}</span>
+                            <span className="text-xs">{option.description}</span>
+                          </span>
+                          {selected ? (
+                            <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                              Selected
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {settings.claudeCodeProvider === "bedrock" && (
+                  <div className="space-y-4 rounded-xl border border-border bg-background/50 p-4">
+                    <label htmlFor="claude-code-aws-region" className="block space-y-1">
+                      <span className="text-xs font-medium text-foreground">AWS region</span>
+                      <Input
+                        id="claude-code-aws-region"
+                        value={settings.claudeCodeAwsRegion}
+                        onChange={(event) =>
+                          updateSettings({ claudeCodeAwsRegion: event.target.value })
+                        }
+                        placeholder="us-east-1"
+                        spellCheck={false}
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        The AWS region where your Bedrock models are available.
+                      </span>
+                    </label>
+
+                    <label htmlFor="claude-code-aws-profile" className="block space-y-1">
+                      <span className="text-xs font-medium text-foreground">
+                        AWS profile <span className="font-normal text-muted-foreground">(optional)</span>
+                      </span>
+                      <Input
+                        id="claude-code-aws-profile"
+                        value={settings.claudeCodeAwsProfile}
+                        onChange={(event) =>
+                          updateSettings({ claudeCodeAwsProfile: event.target.value })
+                        }
+                        placeholder="default"
+                        spellCheck={false}
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        Named AWS profile from <code>~/.aws/credentials</code>. Leave blank to use
+                        the default credential chain.
+                      </span>
+                    </label>
+                  </div>
+                )}
+
+                <div className="flex justify-end">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        claudeCodeBinaryPath: defaults.claudeCodeBinaryPath,
+                        claudeCodeProvider: defaults.claudeCodeProvider,
+                        claudeCodeAwsRegion: defaults.claudeCodeAwsRegion,
+                        claudeCodeAwsProfile: defaults.claudeCodeAwsProfile,
+                      })
+                    }
+                  >
+                    Reset Claude Code overrides
                   </Button>
                 </div>
               </div>

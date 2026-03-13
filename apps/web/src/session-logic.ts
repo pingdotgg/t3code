@@ -18,7 +18,7 @@ import type {
   TurnDiffSummary,
 } from "./types";
 
-export type ProviderPickerKind = ProviderKind | "claudeCode" | "cursor";
+export type ProviderPickerKind = ProviderKind | "cursor";
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderPickerKind;
@@ -29,6 +29,16 @@ export const PROVIDER_OPTIONS: Array<{
   { value: "claudeCode", label: "Claude Code", available: false },
   { value: "cursor", label: "Cursor", available: false },
 ];
+
+export function resolveProviderOptions(
+  claudeCodeConfigured: boolean,
+): typeof PROVIDER_OPTIONS {
+  return PROVIDER_OPTIONS.map((option) =>
+    option.value === "claudeCode"
+      ? { ...option, available: claudeCodeConfigured }
+      : option,
+  );
+}
 
 export interface WorkLogEntry {
   id: string;
