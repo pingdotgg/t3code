@@ -1070,6 +1070,48 @@ describe("ProviderRuntimeIngestion", () => {
     expect(resolvedPayload?.requestType).toBe("command_execution_approval");
   });
 
+  it("normalizes Codex token_count last_token_usage payload into context usage activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-thread-token-usage-codex-shape"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        usage: {
+          last_token_usage: {
+            total_tokens: 51800,
+          },
+          model_context_window: 258400,
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-thread-token-usage-codex-shape" &&
+          activity.kind === "thread.context.usage.updated",
+      ),
+    );
+
+    const usageActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.id === "evt-thread-token-usage-codex-shape",
+    );
+    const usagePayload =
+      usageActivity?.payload && typeof usageActivity.payload === "object"
+        ? (usageActivity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(usagePayload?.usedTokens).toBe(51800);
+    expect(usagePayload?.maxTokens).toBe(258400);
+    expect(usagePayload?.percentUsed).toBeCloseTo((51800 / 258400) * 100, 6);
+  });
+
   it("maps runtime.error into errored session state", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

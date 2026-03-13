@@ -53,6 +53,7 @@ import {
   deriveTimelineEntries,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveThreadContextUsageSnapshot,
   findLatestProposedPlan,
   deriveWorkLogEntries,
   hasToolActivityForTurn,
@@ -139,6 +140,7 @@ import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommand
 import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalActions";
 import { CodexTraitsPicker } from "./chat/CodexTraitsPicker";
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
+import { ComposerContextUsageIndicator } from "./chat/ComposerContextUsageIndicator";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
@@ -581,6 +583,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => derivePendingUserInputs(threadActivities),
     [threadActivities],
   );
+  const threadContextUsageSnapshot = useMemo(
+    () => deriveThreadContextUsageSnapshot(threadActivities, nowIso),
+    [nowIso, threadActivities],
+  );
+  useEffect(() => {
+    setNowTick(Date.now());
+  }, [threadActivities]);
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(
     () =>
@@ -1889,14 +1898,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       : "local";
 
   useEffect(() => {
-    if (phase !== "running") return;
+    if (phase !== "running" && !threadContextUsageSnapshot.recentlyCompacted) return;
     const timer = window.setInterval(() => {
       setNowTick(Date.now());
     }, 1000);
     return () => {
       window.clearInterval(timer);
     };
-  }, [phase]);
+  }, [phase, threadContextUsageSnapshot.recentlyCompacted]);
 
   const beginSendPhase = useCallback((nextPhase: Exclude<SendPhase, "idle">) => {
     setSendStartedAt((current) => current ?? new Date().toISOString());
@@ -3510,6 +3519,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           selectedProvider={selectedProvider}
                           selectedCodexFastModeEnabled={selectedCodexFastModeEnabled}
                           reasoningOptions={reasoningOptions}
+                          contextUsageSnapshot={threadContextUsageSnapshot}
                           onEffortSelect={onEffortSelect}
                           onCodexFastModeChange={onCodexFastModeChange}
                           onToggleInteractionMode={toggleInteractionMode}
@@ -3608,6 +3618,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               </Button>
                             </>
                           ) : null}
+
+                          <Separator
+                            orientation="vertical"
+                            className="mx-0.5 hidden h-4 sm:block"
+                          />
+                          <ComposerContextUsageIndicator snapshot={threadContextUsageSnapshot} />
                         </>
                       )}
                     </div>

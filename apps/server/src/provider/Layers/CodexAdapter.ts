@@ -700,15 +700,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/tokenUsage/updated") {
-    return [
-      {
-        type: "thread.token-usage.updated",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          usage: event.payload ?? {},
-        },
-      },
-    ];
+    return [];
   }
 
   if (event.method === "turn/started") {
@@ -940,6 +932,23 @@ function mapToRuntimeEvents(
           answers: toCanonicalUserInputAnswers(
             asObject(event.payload)?.answers as ProviderUserInputAnswers | undefined,
           ),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "codex/event/token_count") {
+    const msg = codexEventMessage(payload);
+    const info = asObject(msg?.info);
+    if (!info) {
+      return [];
+    }
+    return [
+      {
+        ...codexEventBase(event, canonicalThreadId),
+        type: "thread.token-usage.updated",
+        payload: {
+          usage: info,
         },
       },
     ];

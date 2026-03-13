@@ -407,6 +407,53 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "maps codex/event/token_count into thread.token-usage.updated using last_token_usage info",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+        lifecycleManager.emit("event", {
+          id: asEventId("evt-token-count"),
+          kind: "notification",
+          provider: "codex",
+          threadId: asThreadId("thread-1"),
+          createdAt: new Date().toISOString(),
+          method: "codex/event/token_count",
+          payload: {
+            id: "evt-token-count",
+            msg: {
+              type: "token_count",
+              info: {
+                last_token_usage: {
+                  total_tokens: 87429,
+                },
+                model_context_window: 258400,
+              },
+            },
+          },
+        } satisfies ProviderEvent);
+
+        const firstEvent = yield* Fiber.join(firstEventFiber);
+
+        assert.equal(firstEvent._tag, "Some");
+        if (firstEvent._tag !== "Some") {
+          return;
+        }
+        assert.equal(firstEvent.value.type, "thread.token-usage.updated");
+        if (firstEvent.value.type !== "thread.token-usage.updated") {
+          return;
+        }
+        assert.deepEqual(firstEvent.value.payload.usage, {
+          last_token_usage: {
+            total_tokens: 87429,
+          },
+          model_context_window: 258400,
+        });
+      }),
+  );
+
   it.effect("maps retryable Codex error notifications to runtime.warning", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

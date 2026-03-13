@@ -7,11 +7,13 @@ import {
   PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePendingUserInputs,
+  deriveThreadContextUsageSnapshot,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
   hasToolActivityForTurn,
   isLatestTurnSettled,
+  THREAD_CONTEXT_COMPACTION_RECENT_WINDOW_MS,
 } from "./session-logic";
 
 function makeActivity(overrides: {
@@ -219,6 +221,114 @@ describe("derivePendingUserInputs", () => {
         ],
       },
     ]);
+  });
+});
+
+describe("deriveThreadContextUsageSnapshot", () => {
+  it("uses the newest context usage activity values and nulls percent when max is unknown", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "context-usage-older",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "thread.context.usage.updated",
+        summary: "Context usage updated",
+        tone: "info",
+        payload: {
+          usedTokens: 100_000,
+          maxTokens: 200_000,
+          percentUsed: 50,
+          sourceUsage: { older: true },
+        },
+      }),
+      makeActivity({
+        id: "context-usage-newer",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "thread.context.usage.updated",
+        summary: "Context usage updated",
+        tone: "info",
+        payload: {
+          usedTokens: 87_000,
+          maxTokens: null,
+          percentUsed: 70,
+          sourceUsage: { newer: true },
+        },
+      }),
+    ];
+
+    expect(deriveThreadContextUsageSnapshot(activities, "2026-02-23T00:00:05.000Z")).toMatchObject({
+      usedTokens: 87_000,
+      maxTokens: null,
+      percentUsed: null,
+      sourceUsage: { newer: true },
+      updatedAt: "2026-02-23T00:00:02.000Z",
+      compactedAt: null,
+      recentlyCompacted: false,
+    });
+  });
+
+  it("marks compaction recency only within the recency window", () => {
+    const compactedAt = "2026-02-23T00:00:00.000Z";
+    const withinWindowIso = "2026-02-23T00:01:00.000Z";
+    const outsideWindowIso = new Date(
+      Date.parse(compactedAt) + THREAD_CONTEXT_COMPACTION_RECENT_WINDOW_MS + 1,
+    ).toISOString();
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "context-compacted",
+        createdAt: compactedAt,
+        kind: "thread.context.compacted",
+        summary: "Context compacted",
+        tone: "info",
+        payload: {
+          state: "compacted",
+        },
+      }),
+    ];
+
+    expect(deriveThreadContextUsageSnapshot(activities, withinWindowIso).recentlyCompacted).toBe(
+      true,
+    );
+    expect(deriveThreadContextUsageSnapshot(activities, outsideWindowIso).recentlyCompacted).toBe(
+      false,
+    );
+  });
+
+  it("clears stale usage when compaction is newer than the latest usage update", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "context-usage",
+        createdAt: "2026-02-23T00:00:00.000Z",
+        kind: "thread.context.usage.updated",
+        summary: "Context usage updated",
+        tone: "info",
+        payload: {
+          usedTokens: 120_000,
+          maxTokens: 258_400,
+          percentUsed: (120_000 / 258_400) * 100,
+          sourceUsage: { last_token_usage: { total_tokens: 120_000 } },
+        },
+      }),
+      makeActivity({
+        id: "context-compacted",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "thread.context.compacted",
+        summary: "Context compacted",
+        tone: "info",
+        payload: {
+          state: "compacted",
+        },
+      }),
+    ];
+
+    expect(deriveThreadContextUsageSnapshot(activities, "2026-02-23T00:00:30.000Z")).toMatchObject({
+      usedTokens: null,
+      maxTokens: null,
+      percentUsed: null,
+      sourceUsage: null,
+      updatedAt: null,
+      compactedAt: "2026-02-23T00:00:01.000Z",
+      recentlyCompacted: true,
+    });
   });
 });
 

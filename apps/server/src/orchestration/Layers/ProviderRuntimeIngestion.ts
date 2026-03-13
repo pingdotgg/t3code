@@ -98,6 +98,57 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function asNonNegativeNumber(value: unknown): number | undefined {
+  const parsed =
+    typeof value === "number" && Number.isFinite(value)
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value.trim())
+        : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return undefined;
+  }
+  return parsed;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizeThreadTokenUsagePayload(usage: unknown): {
+  usedTokens: number | null;
+  maxTokens: number | null;
+  percentUsed: number | null;
+  sourceUsage: unknown;
+} {
+  const usageRecord = asRecord(usage);
+  const lastTokenUsage = usageRecord
+    ? (asRecord(usageRecord.last_token_usage) ?? asRecord(usageRecord.lastTokenUsage))
+    : undefined;
+  // Codex token_count info shape:
+  // usage: { last_token_usage: { total_tokens }, model_context_window }
+  const usedTokens = asNonNegativeNumber(
+    lastTokenUsage?.total_tokens ?? lastTokenUsage?.totalTokens,
+  );
+  const maxTokens = asNonNegativeNumber(
+    usageRecord?.model_context_window ?? usageRecord?.modelContextWindow,
+  );
+  const percentUsedFromUsage =
+    usedTokens !== undefined && maxTokens !== undefined && maxTokens > 0
+      ? Math.min((usedTokens / maxTokens) * 100, 100)
+      : undefined;
+
+  return {
+    usedTokens: usedTokens ?? null,
+    maxTokens: maxTokens ?? null,
+    percentUsed: percentUsedFromUsage ?? null,
+    sourceUsage: usage,
+  };
+}
+
 function runtimePayloadRecord(event: ProviderRuntimeEvent): Record<string, unknown> | undefined {
   const payload = (event as { payload?: unknown }).payload;
   if (!payload || typeof payload !== "object") {
@@ -184,6 +235,43 @@ function runtimeEventToActivities(
       : {};
   })();
   switch (event.type) {
+    case "thread.token-usage.updated": {
+      const normalizedUsage = normalizeThreadTokenUsagePayload(event.payload.usage);
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "thread.context.usage.updated",
+          summary: "Context usage updated",
+          payload: normalizedUsage,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "thread.state.changed": {
+      if (event.payload.state !== "compacted") {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "thread.context.compacted",
+          summary: "Context compacted",
+          payload: {
+            state: event.payload.state,
+            ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];
