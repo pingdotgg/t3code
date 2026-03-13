@@ -55,7 +55,7 @@ export const ChatHeader = memo(function ChatHeader({
 }: ChatHeaderProps) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
+      <div className="flex min-w-0 flex-initial shrink items-center gap-2 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         <h2
           className="min-w-0 shrink truncate text-sm font-medium text-foreground"
@@ -74,7 +74,7 @@ export const ChatHeader = memo(function ChatHeader({
           </Badge>
         )}
       </div>
-      <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 @sm/header-actions:gap-3">
+      <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 overflow-hidden @sm/header-actions:gap-3">
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

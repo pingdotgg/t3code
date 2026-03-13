@@ -344,7 +344,7 @@ describe("when: working tree has local changes", () => {
     assert.deepInclude(quick, {
       kind: "run_action",
       action: "commit_push_pr",
-      label: "Commit, push & PR",
+      label: "Commit, push & create PR",
     });
   });
 
@@ -455,7 +455,7 @@ describe("when: working tree has local changes and branch is behind upstream", (
     assert.deepInclude(quick, {
       kind: "run_action",
       action: "commit_push_pr",
-      label: "Commit, push & PR",
+      label: "Commit, push & create PR",
     });
   });
 
