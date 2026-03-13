@@ -52,8 +52,8 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "oxfmt": "^0.35.0",
-    "oxlint": "^1.50.0",
+    "oxfmt": "^0.40.0",
+    "oxlint": "^1.55.0",
     "turbo": "^2.3.3",
     "vitest": "catalog:"
   },
