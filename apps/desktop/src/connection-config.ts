@@ -15,7 +15,6 @@ export class DesktopConnectionConfigError extends Error {
 }
 
 const CONNECTION_CONFIG_FILENAME = "desktop-connection.json";
-const DEFAULT_REMOTE_PORT = "3773";
 
 export function getDefaultDesktopConnectionSettings(): DesktopConnectionSettings {
   return {
@@ -76,124 +75,6 @@ export function validateDesktopConnectionSettings(
     ...settings,
     remoteUrl: remoteUrl.toString(),
   };
-}
-
-function withDefaultHttpScheme(value: string): string {
-  if (/^[a-z]+:\/\//i.test(value)) {
-    return value;
-  }
-  return `http://${value}`;
-}
-
-export function normalizeTailscaleUrl(value: string): string {
-  const raw = value.trim();
-  if (raw.length === 0) {
-    throw new DesktopConnectionConfigError("Tailscale host is required.");
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(withDefaultHttpScheme(raw));
-  } catch {
-    throw new DesktopConnectionConfigError(
-      "Tailscale host must be a valid host, host:port, or http(s) URL.",
-    );
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new DesktopConnectionConfigError("Tailscale host must use http:// or https://.");
-  }
-  if (!parsed.hostname) {
-    throw new DesktopConnectionConfigError("Tailscale host must include a host.");
-  }
-  if (parsed.port.length === 0 && parsed.protocol === "http:") {
-    parsed.port = DEFAULT_REMOTE_PORT;
-  }
-
-  return parsed.toString();
-}
-
-function readFlagValue(argv: readonly string[], index: number, argument: string): string | undefined {
-  const equalsIndex = argument.indexOf("=");
-  if (equalsIndex >= 0) {
-    const inlineValue = argument.slice(equalsIndex + 1).trim();
-    return inlineValue.length > 0 ? inlineValue : "";
-  }
-  return argv[index + 1];
-}
-
-export function resolveDesktopConnectionSettingsFromArgs(
-  argv: readonly string[],
-): DesktopConnectionSettings | null {
-  let forceLocal = false;
-  let remoteUrl: string | null = null;
-  let remoteAuthToken: string | null = null;
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (!argument || !argument.startsWith("--")) {
-      continue;
-    }
-
-    if (argument === "--local") {
-      forceLocal = true;
-      continue;
-    }
-
-    if (argument === "--tailscale" || argument.startsWith("--tailscale=")) {
-      const value = readFlagValue(argv, index, argument);
-      if (value === undefined) {
-        throw new DesktopConnectionConfigError("Missing value for --tailscale.");
-      }
-      remoteUrl = normalizeTailscaleUrl(value);
-      if (!argument.includes("=")) {
-        index += 1;
-      }
-      continue;
-    }
-
-    if (argument === "--remote-url" || argument.startsWith("--remote-url=")) {
-      const value = readFlagValue(argv, index, argument);
-      if (value === undefined) {
-        throw new DesktopConnectionConfigError("Missing value for --remote-url.");
-      }
-      remoteUrl = value;
-      if (!argument.includes("=")) {
-        index += 1;
-      }
-      continue;
-    }
-
-    if (
-      argument === "--token" ||
-      argument.startsWith("--token=") ||
-      argument === "--remote-auth-token" ||
-      argument.startsWith("--remote-auth-token=")
-    ) {
-      const value = readFlagValue(argv, index, argument);
-      if (value === undefined) {
-        throw new DesktopConnectionConfigError(`Missing value for ${argument.split("=")[0]}.`);
-      }
-      remoteAuthToken = value;
-      if (!argument.includes("=")) {
-        index += 1;
-      }
-    }
-  }
-
-  if (forceLocal) {
-    return getDefaultDesktopConnectionSettings();
-  }
-
-  if (remoteUrl === null && remoteAuthToken === null) {
-    return null;
-  }
-
-  return validateDesktopConnectionSettings({
-    mode: "remote",
-    remoteUrl: remoteUrl ?? "",
-    remoteAuthToken: (remoteAuthToken ?? "").trim(),
-  });
 }
 
 export function buildDesktopRemoteWsUrl(settings: DesktopConnectionSettings): string {

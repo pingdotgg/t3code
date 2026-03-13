@@ -26,7 +26,6 @@ await waitOn({
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
-const passthroughArgs = process.argv.slice(2);
 
 let shuttingDown = false;
 let restartTimer = null;
@@ -58,7 +57,7 @@ function startApp() {
 
   const app = spawn(
     resolveElectronPath(),
-    [`--t3code-dev-root=${desktopDir}`, "dist-electron/main.js", ...passthroughArgs],
+    [`--t3code-dev-root=${desktopDir}`, "dist-electron/main.js"],
     {
       cwd: desktopDir,
       env: {

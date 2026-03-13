@@ -4,9 +4,8 @@ import { desktopDir, resolveElectronPath } from "./electron-launcher.mjs";
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
-const passthroughArgs = process.argv.slice(2);
 
-const child = spawn(resolveElectronPath(), ["dist-electron/main.js", ...passthroughArgs], {
+const child = spawn(resolveElectronPath(), ["dist-electron/main.js"], {
   stdio: "inherit",
   cwd: desktopDir,
   env: childEnv,

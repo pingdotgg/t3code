@@ -49,7 +49,6 @@ import {
   getDefaultDesktopConnectionSettings,
   getDesktopConnectionInfo,
   readDesktopConnectionSettings,
-  resolveDesktopConnectionSettingsFromArgs,
   resolveDesktopConnectionConfigPath,
   writeDesktopConnectionSettings,
 } from "./connection-config";
@@ -706,10 +705,6 @@ function resolveDesktopConnectionSettingsPath(): string {
 }
 
 function loadDesktopConnectionSettings(): DesktopConnectionSettings {
-  const launchOverride = resolveDesktopConnectionSettingsFromArgs(process.argv.slice(1));
-  if (launchOverride) {
-    return saveDesktopConnectionSettings(launchOverride);
-  }
   return readDesktopConnectionSettings(resolveDesktopConnectionSettingsPath());
 }
 

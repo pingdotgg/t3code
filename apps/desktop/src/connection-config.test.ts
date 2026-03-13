@@ -9,9 +9,7 @@ import {
   buildDesktopRemoteWsUrl,
   getDefaultDesktopConnectionSettings,
   readDesktopConnectionSettings,
-  resolveDesktopConnectionSettingsFromArgs,
   resolveDesktopConnectionConfigPath,
-  normalizeTailscaleUrl,
   validateDesktopConnectionSettings,
   writeDesktopConnectionSettings,
 } from "./connection-config";
@@ -93,52 +91,5 @@ describe("connection-config", () => {
       remoteAuthToken: "abc123",
     });
     expect(readDesktopConnectionSettings(configPath)).toEqual(saved);
-  });
-
-  it("normalizes a tailscale host shorthand to the default remote url", () => {
-    expect(normalizeTailscaleUrl("100.64.0.10")).toBe("http://100.64.0.10:3773/");
-  });
-
-  it("resolves a remembered remote connection from tailscale launch args", () => {
-    expect(
-      resolveDesktopConnectionSettingsFromArgs(["--tailscale", "100.64.0.10", "--token", "abc123"]),
-    ).toEqual({
-      mode: "remote",
-      remoteUrl: "http://100.64.0.10:3773/",
-      remoteAuthToken: "abc123",
-    });
-  });
-
-  it("supports explicit remote urls from launch args", () => {
-    expect(
-      resolveDesktopConnectionSettingsFromArgs([
-        "--remote-url=https://example.com/t3",
-        "--remote-auth-token=xyz",
-      ]),
-    ).toEqual({
-      mode: "remote",
-      remoteUrl: "https://example.com/t3",
-      remoteAuthToken: "xyz",
-    });
-  });
-
-  it("switches back to local mode from launch args", () => {
-    expect(resolveDesktopConnectionSettingsFromArgs(["--local"])).toEqual(
-      getDefaultDesktopConnectionSettings(),
-    );
-  });
-
-  it("rejects incomplete tailscale launch args", () => {
-    expect(resolveDesktopConnectionSettingsFromArgs(["--tailscale", "100.64.0.10"])).toEqual({
-      mode: "remote",
-      remoteUrl: "http://100.64.0.10:3773/",
-      remoteAuthToken: "",
-    });
-  });
-
-  it("rejects a token without a remote url", () => {
-    expect(() => resolveDesktopConnectionSettingsFromArgs(["--token", "abc123"])).toThrow(
-      DesktopConnectionConfigError,
-    );
   });
 });
