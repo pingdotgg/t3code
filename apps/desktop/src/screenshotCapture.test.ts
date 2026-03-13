@@ -329,4 +329,68 @@ describe("captureDesktopScreenshot", () => {
     expect(screenshot?.sizeBytes).toBe(screenshotBytes.byteLength);
     expect(elapsedMilliseconds).toBeLessThan(500);
   });
+
+  it("waits for a complete Omarchy screenshot file before returning", async () => {
+    const tempHome = await FS.mkdtemp(Path.join(OS.tmpdir(), "capture-home-"));
+    const screenshotDirectory = Path.join(tempHome, "Shots");
+    const runtimeDirectory = Path.join(tempHome, "runtime");
+    const hyprlandInstanceSignature = "test-hypr-instance";
+    tempDirectories.push(tempHome);
+    await FS.mkdir(screenshotDirectory, { recursive: true });
+    await FS.mkdir(Path.join(runtimeDirectory, "hypr", hyprlandInstanceSignature), {
+      recursive: true,
+    });
+    await FS.writeFile(
+      Path.join(runtimeDirectory, "hypr", hyprlandInstanceSignature, ".socket.sock"),
+      "",
+    );
+
+    const commandPath = Path.join(
+      tempHome,
+      ".local",
+      "share",
+      "omarchy",
+      "bin",
+      "omarchy-cmd-screenshot",
+    );
+    await makeExecutable(commandPath);
+
+    mockedHomedir.mockReturnValue(tempHome);
+    process.env.OMARCHY_SCREENSHOT_DIR = screenshotDirectory;
+    process.env.XDG_RUNTIME_DIR = runtimeDirectory;
+    readImageMock.mockReturnValue(emptyClipboardImage());
+
+    const screenshotBytes = pngBytes();
+    const partialScreenshotBytes = screenshotBytes.subarray(0, screenshotBytes.byteLength - 8);
+    spawnMock.mockImplementation(() =>
+      createSpawnedChild({
+        closeAfterMs: 750,
+        onStart: () => {
+          setTimeout(() => {
+            void FS.writeFile(
+              Path.join(screenshotDirectory, "omarchy-partial.png"),
+              partialScreenshotBytes,
+            );
+          }, 50);
+          setTimeout(() => {
+            void FS.writeFile(
+              Path.join(screenshotDirectory, "omarchy-partial.png"),
+              screenshotBytes,
+            );
+          }, 175);
+        },
+      }),
+    );
+
+    const { captureDesktopScreenshot } = await import("./screenshotCapture");
+    const captureStartedAt = Date.now();
+    const screenshot = await captureDesktopScreenshot();
+    const elapsedMilliseconds = Date.now() - captureStartedAt;
+
+    expect(screenshot?.name).toBe("omarchy-partial.png");
+    expect(screenshot?.sizeBytes).toBe(screenshotBytes.byteLength);
+    expect(screenshot?.dataUrl).toContain(screenshotBytes.toString("base64"));
+    expect(elapsedMilliseconds).toBeGreaterThanOrEqual(125);
+    expect(elapsedMilliseconds).toBeLessThan(650);
+  });
 });

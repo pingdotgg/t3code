@@ -36,12 +36,52 @@ type ScreenshotFileStat = {
   sizeBytes: number;
 };
 
+type OmarchyCaptureArtifactReadResult =
+  | { status: "ready"; artifact: DesktopScreenshotCapture }
+  | { status: "pending" }
+  | { status: "invalid-file"; fileName: string };
+
+const PNG_SIGNATURE_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PNG_CHUNK_OVERHEAD_BYTES = 12;
+
 function nowTimestampSegment(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
 function screenshotFileName(): string {
   return `screenshot-${nowTimestampSegment()}.png`;
+}
+
+function isValidPngImageBytes(imageBytes: Buffer): boolean {
+  if (
+    imageBytes.byteLength < PNG_SIGNATURE_BYTES.byteLength + PNG_CHUNK_OVERHEAD_BYTES ||
+    !imageBytes.subarray(0, PNG_SIGNATURE_BYTES.byteLength).equals(PNG_SIGNATURE_BYTES)
+  ) {
+    return false;
+  }
+
+  let offset = PNG_SIGNATURE_BYTES.byteLength;
+  let sawHeaderChunk = false;
+  while (offset + PNG_CHUNK_OVERHEAD_BYTES <= imageBytes.byteLength) {
+    const chunkLength = imageBytes.readUInt32BE(offset);
+    const chunkType = imageBytes.subarray(offset + 4, offset + 8).toString("ascii");
+    const nextOffset = offset + PNG_CHUNK_OVERHEAD_BYTES + chunkLength;
+    if (nextOffset > imageBytes.byteLength) {
+      return false;
+    }
+    if (!sawHeaderChunk) {
+      if (chunkType !== "IHDR") {
+        return false;
+      }
+      sawHeaderChunk = true;
+    }
+    if (chunkType === "IEND") {
+      return true;
+    }
+    offset = nextOffset;
+  }
+
+  return false;
 }
 
 function expandUserPath(pathValue: string): string {
@@ -221,7 +261,14 @@ async function resolveOmarchyScreenshotCommand(): Promise<string | null> {
   return (await commandExists("omarchy-cmd-screenshot")) ? "omarchy-cmd-screenshot" : null;
 }
 
-function buildScreenshotCapture(imageBytes: Buffer, fileName: string): DesktopScreenshotCapture {
+function tryBuildScreenshotCapture(
+  imageBytes: Buffer,
+  fileName: string,
+): DesktopScreenshotCapture | null {
+  if (!isValidPngImageBytes(imageBytes)) {
+    return null;
+  }
+
   return {
     name: fileName,
     mimeType: SCREENSHOT_MIME_TYPE,
@@ -316,7 +363,7 @@ function readClipboardPng(): Buffer | null {
       return null;
     }
     const pngBytes = image.toPNG();
-    return pngBytes.byteLength > 0 ? pngBytes : null;
+    return pngBytes.byteLength > 0 && isValidPngImageBytes(pngBytes) ? pngBytes : null;
   } catch {
     return null;
   }
@@ -326,19 +373,25 @@ async function readOmarchyCaptureArtifact(
   outputDirectory: string,
   filesBeforeCapture: ReadonlyArray<ScreenshotFileStat>,
   clipboardBeforeCapture: Buffer | null,
-): Promise<DesktopScreenshotCapture | null> {
+): Promise<OmarchyCaptureArtifactReadResult> {
   const filesAfterCapture = await listScreenshotFiles(outputDirectory);
   const outputFilePath = changedScreenshotFile(filesBeforeCapture, filesAfterCapture);
   if (outputFilePath) {
     const imageBytes = await FS.readFile(outputFilePath);
     if (imageBytes.byteLength === 0) {
-      return null;
+      return { status: "pending" };
     }
 
-    return buildScreenshotCapture(
+    const artifact = tryBuildScreenshotCapture(
       imageBytes,
       Path.basename(outputFilePath) || screenshotFileName(),
     );
+    return artifact
+      ? { status: "ready", artifact }
+      : {
+          status: "invalid-file",
+          fileName: Path.basename(outputFilePath) || screenshotFileName(),
+        };
   }
 
   const clipboardAfterCapture = readClipboardPng();
@@ -346,10 +399,13 @@ async function readOmarchyCaptureArtifact(
     clipboardAfterCapture &&
     (clipboardBeforeCapture == null || !clipboardAfterCapture.equals(clipboardBeforeCapture))
   ) {
-    return buildScreenshotCapture(clipboardAfterCapture, screenshotFileName());
+    return {
+      status: "ready",
+      artifact: tryBuildScreenshotCapture(clipboardAfterCapture, screenshotFileName())!,
+    };
   }
 
-  return null;
+  return { status: "pending" };
 }
 
 async function captureWithOmarchy(command: string): Promise<DesktopScreenshotCapture | null> {
@@ -443,13 +499,22 @@ async function captureWithOmarchy(command: string): Promise<DesktopScreenshotCap
 
       checkingArtifact = true;
       try {
-        const artifact = await readOmarchyCaptureArtifact(
+        const artifactResult = await readOmarchyCaptureArtifact(
           outputDirectory,
           filesBeforeCapture,
           clipboardBeforeCapture,
         );
-        if (artifact) {
-          settleResolve(artifact);
+        if (artifactResult.status === "ready") {
+          settleResolve(artifactResult.artifact);
+          return;
+        }
+
+        if (artifactResult.status === "invalid-file" && closeResult !== null) {
+          settleReject(
+            new Error(
+              `Captured screenshot file '${artifactResult.fileName}' is not a valid PNG image.`,
+            ),
+          );
           return;
         }
 
@@ -647,7 +712,12 @@ export async function captureDesktopScreenshot(): Promise<DesktopScreenshotCaptu
       throw new Error("Captured screenshot file is empty.");
     }
 
-    return buildScreenshotCapture(imageBytes, screenshotFileName());
+    const screenshot = tryBuildScreenshotCapture(imageBytes, screenshotFileName());
+    if (!screenshot) {
+      throw new Error("Captured screenshot file is not a valid PNG image.");
+    }
+
+    return screenshot;
   } finally {
     await FS.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
