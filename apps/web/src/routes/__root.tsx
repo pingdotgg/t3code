@@ -27,6 +27,7 @@ import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { isElectron } from "../env";
 import { useThreadSelectionStore } from "~/threadSelectionStore";
+import { useTrayState } from "~/hooks/useTrayState";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -370,12 +371,16 @@ function DesktopTrayBootstrap() {
   }, [settings.showTrayIcon]);
 
   const threads = useStore((store) => store.threads);
+
+  const [trayState, setTrayState] = useTrayState();
+
   useEffect(() => {
     if (!isElectron) return;
     const bridge = window.desktopBridge;
     if (!bridge) return;
     if (!settings.showTrayIcon) return;
-    bridge.updateTrayState({
+    setTrayState({
+      ...trayState,
       threads: threads.map((thread) => {
         const lastVisitedAt = thread.lastVisitedAt ? Date.parse(thread.lastVisitedAt) : NaN;
         const latestTurnCompletedAt = thread.latestTurn?.completedAt
@@ -390,7 +395,7 @@ function DesktopTrayBootstrap() {
         };
       }),
     });
-  }, [threads, settings.showTrayIcon]);
+  }, [threads, settings.showTrayIcon, setTrayState]);
 
   return null;
 }

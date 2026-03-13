@@ -168,30 +168,8 @@ async function getTrayState(): Promise<DesktopTrayState> {
   return trayState;
 }
 
-function isSameThread(
-  a: DesktopTrayState["threads"][number],
-  b: DesktopTrayState["threads"][number],
-): boolean {
-  return a.id === b.id;
-}
-
-// TODO: This probably doesn't have the best performance!
-function mergeThreads(threads: DesktopTrayState["threads"]): DesktopTrayState["threads"] {
-  return threads.reduce<DesktopTrayState["threads"]>((acc, thread) => {
-    const existingThread = acc.find((t) => isSameThread(t, thread));
-    if (existingThread) {
-      return acc.map((t) => (isSameThread(t, thread) ? { ...t, ...thread } : t));
-    }
-    return [...acc, thread];
-  }, []);
-}
-
-async function updateTrayState(state: Partial<DesktopTrayState>): Promise<void> {
-  trayState = {
-    ...trayState,
-    ...state,
-    threads: mergeThreads([...trayState.threads, ...(state.threads ?? [])]),
-  };
+async function setTrayState(state: DesktopTrayState): Promise<void> {
+  trayState = state;
   updateTray();
 }
 
@@ -204,9 +182,9 @@ function setupTrayIpcHandlers(): void {
   ipcMain.handle(GET_TRAY_STATE_CHANNEL, async (_event) => {
     return await getTrayState();
   });
-  const UPDATE_TRAY_STATE_CHANNEL = "desktop:update-tray-state";
-  ipcMain.handle(UPDATE_TRAY_STATE_CHANNEL, async (_event, state: DesktopTrayState) => {
-    await updateTrayState(state);
+  const SET_TRAY_STATE_CHANNEL = "desktop:set-tray-state";
+  ipcMain.handle(SET_TRAY_STATE_CHANNEL, async (_event, state: DesktopTrayState) => {
+    await setTrayState(state);
   });
 }
 

@@ -128,7 +128,7 @@ export interface DesktopBridge {
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   setTrayEnabled: (enabled: boolean) => Promise<void>;
   getTrayState: () => Promise<DesktopTrayState>;
-  updateTrayState: (state: Partial<DesktopTrayState>) => Promise<void>;
+  setTrayState: (state: DesktopTrayState) => Promise<void>;
   onTrayMessage: (listener: (message: DesktopTrayMessage) => void) => () => void;
 }
 
