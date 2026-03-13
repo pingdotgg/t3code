@@ -38,15 +38,6 @@ body:
       required: true
 
   - type: textarea
-    id: summary
-    attributes:
-      label: Summary
-      description: What broke? Include the first visible symptom.
-      placeholder: Sending a follow-up prompt after reconnecting leaves the thread stuck in "starting".
-    validations:
-      required: true
-
-  - type: textarea
     id: steps
     attributes:
       label: Steps to reproduce
