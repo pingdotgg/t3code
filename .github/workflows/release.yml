@@ -85,16 +85,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: macOS arm64
+          - label: macOS universal
             runner: macos-14
             platform: mac
             target: dmg
-            arch: arm64
-          - label: macOS x64
-            runner: macos-15-intel
-            platform: mac
-            target: dmg
-            arch: x64
+            arch: universal
           - label: Linux x64
             runner: ubuntu-24.04
             platform: linux
@@ -210,12 +205,6 @@ jobs:
             done
           done
 
-          if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" != "arm64" ]]; then
-            if [[ -f release-publish/latest-mac.yml ]]; then
-              mv release-publish/latest-mac.yml "release-publish/latest-mac-${{ matrix.arch }}.yml"
-            fi
-          fi
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -277,13 +266,6 @@ jobs:
           pattern: desktop-*
           merge-multiple: true
           path: release-assets
-
-      - name: Merge macOS updater manifests
-        run: |
-          node scripts/merge-mac-update-manifests.ts \
-            release-assets/latest-mac.yml \
-            release-assets/latest-mac-x64.yml
-          rm -f release-assets/latest-mac-x64.yml
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
