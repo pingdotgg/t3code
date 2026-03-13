@@ -1,29 +1,14 @@
-import { type ProviderKind, type ThreadId } from "@t3tools/contracts";
+import { ProjectId, type ProviderKind, type ThreadId } from "@t3tools/contracts";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { getAppModelOptions } from "../appSettings";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import { Schema } from "effect";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const WORKTREE_BRANCH_PREFIX = "t3code";
 
-export function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
-  const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
-  if (!stored) return {};
-
-  try {
-    const parsed: unknown = JSON.parse(stored);
-    if (!parsed || typeof parsed !== "object") return {};
-    return Object.fromEntries(
-      Object.entries(parsed).filter(
-        (entry): entry is [string, string] =>
-          typeof entry[0] === "string" && typeof entry[1] === "string",
-      ),
-    );
-  } catch {
-    return {};
-  }
-}
+export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
 export function buildLocalDraftThread(
   threadId: ThreadId,

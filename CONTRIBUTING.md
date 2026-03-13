@@ -8,7 +8,7 @@ You can still open an issue or PR, but please do so knowing there is a high chan
 
 If that sounds annoying, that is because it is. This project is still early and we are trying to keep scope, quality, and direction under control.
 
-PRs are automatically labeled with a `vouch:*` trust status.
+PRs are automatically labeled with a `vouch:*` trust status and a `size:*` diff size based on changed lines.
 
 If you are an external contributor, expect `vouch:unvouched` until we explicitly add you to [.github/VOUCHED.td](.github/VOUCHED.td).
 

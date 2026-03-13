@@ -42,18 +42,20 @@
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",
+    "@rolldown/plugin-babel": "^0.2.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/router-plugin": "^1.161.0",
+    "@types/babel__core": "^7.20.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^5.1.4",
+    "@vitejs/plugin-react": "^6.0.0",
     "@vitest/browser-playwright": "^4.0.18",
     "babel-plugin-react-compiler": "^19.0.0-beta-e552027-20250112",
     "msw": "^2.12.10",
     "playwright": "^1.58.2",
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:",
-    "vite": "^8.0.0-beta.12",
+    "vite": "^8.0.0",
     "vitest": "catalog:",
     "vitest-browser-react": "^2.0.5"
   }

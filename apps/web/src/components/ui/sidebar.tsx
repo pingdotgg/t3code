@@ -17,7 +17,9 @@ import {
 } from "~/components/ui/sheet";
 import { Skeleton } from "~/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { useIsMobile } from "~/hooks/useMediaQuery";
+import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
+import { Schema } from "effect";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -96,7 +98,7 @@ function SidebarProvider({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const isMobile = useMediaQuery("(max-width: 767px)");
+  const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = React.useState(false);
 
   // This is the internal state of the sidebar.
@@ -371,7 +373,7 @@ function SidebarRail({
         element.style.removeProperty("transition-duration");
       });
       if (resolvedResizable?.storageKey && typeof window !== "undefined") {
-        window.localStorage.setItem(resolvedResizable.storageKey, String(resizeState.width));
+        setLocalStorageItem(resolvedResizable.storageKey, resizeState.width, Schema.Finite);
       }
       resolvedResizable?.onResize?.(resizeState.width);
       resizeStateRef.current = null;
@@ -541,8 +543,8 @@ function SidebarRail({
     const wrapper = rail.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
     if (!wrapper) return;
 
-    const storedWidth = Number(window.localStorage.getItem(resolvedResizable.storageKey));
-    if (!Number.isFinite(storedWidth)) return;
+    const storedWidth = getLocalStorageItem(resolvedResizable.storageKey, Schema.Finite);
+    if (storedWidth === null) return;
     const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
     wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
     resolvedResizable.onResize?.(clampedWidth);

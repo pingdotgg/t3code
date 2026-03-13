@@ -11,7 +11,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
-  MAX_THREAD_TERMINAL_COUNT,
+  MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
 } from "./types";
 
@@ -28,10 +28,7 @@ interface ThreadTerminalState {
 const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {
-  const ids = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))].slice(
-    0,
-    MAX_THREAD_TERMINAL_COUNT,
-  );
+  const ids = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
   return ids.length > 0 ? ids : [DEFAULT_THREAD_TERMINAL_ID];
 }
 
@@ -243,10 +240,6 @@ function upsertTerminalIntoGroups(
   }
 
   const isNewTerminal = !normalized.terminalIds.includes(terminalId);
-  if (isNewTerminal && normalized.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT) {
-    return normalized;
-  }
-
   const terminalIds = isNewTerminal
     ? [...normalized.terminalIds, terminalId]
     : normalized.terminalIds;
@@ -294,6 +287,14 @@ function upsertTerminalIntoGroups(
 
   const destinationGroup = terminalGroups[activeGroupIndex];
   if (!destinationGroup) {
+    return normalized;
+  }
+
+  if (
+    isNewTerminal &&
+    !destinationGroup.terminalIds.includes(terminalId) &&
+    destinationGroup.terminalIds.length >= MAX_TERMINALS_PER_GROUP
+  ) {
     return normalized;
   }
 
