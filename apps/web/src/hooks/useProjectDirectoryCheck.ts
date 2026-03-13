@@ -1,28 +1,31 @@
 import { useCallback, useEffect, useRef } from "react";
 import { WS_METHODS } from "@t3tools/contracts";
+import { useShallow } from "zustand/react/shallow";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
 
 const CHECK_DEBOUNCE_MS = 500;
+const EMPTY_SET: ReadonlySet<string> = new Set();
 
 export function useProjectDirectoryCheck(): void {
-  const projects = useStore((s) => s.projects);
+  const projectCwds = useStore(
+    useShallow((s) => s.projects.map((p) => p.cwd)),
+  );
   const setMissingProjectCwds = useStore((s) => s.setMissingProjectCwds);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const checkDirectories = useCallback(async () => {
     const api = readNativeApi();
-    if (!api || projects.length === 0) return;
+    if (!api || projectCwds.length === 0) return;
 
-    const cwds = projects.map((p) => p.cwd);
     try {
-      const result = await api.request(WS_METHODS.checkProjectDirectories, { cwds });
+      const result = await api.request(WS_METHODS.checkProjectDirectories, { cwds: projectCwds });
       const missing: string[] = (result as { missing: string[] }).missing ?? [];
-      setMissingProjectCwds(new Set(missing));
+      setMissingProjectCwds(missing.length === 0 ? EMPTY_SET : new Set(missing));
     } catch {
       // If the check itself fails, don't block the UI
     }
-  }, [projects, setMissingProjectCwds]);
+  }, [projectCwds, setMissingProjectCwds]);
 
   // Check on mount and when projects change
   useEffect(() => {

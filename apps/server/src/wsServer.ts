@@ -778,16 +778,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.checkProjectDirectories: {
         const { cwds } = request.body;
-        const missing: string[] = [];
-        for (const cwd of cwds) {
-          const stat = yield* fileSystem
-            .stat(cwd)
-            .pipe(Effect.catch(() => Effect.succeed(null)));
-          if (!stat || stat.type !== "Directory") {
-            missing.push(cwd);
-          }
-        }
-        return { missing };
+        const results = yield* Effect.forEach(cwds, (cwd) =>
+          fileSystem.stat(cwd).pipe(
+            Effect.map((stat) => (stat.type !== "Directory" ? cwd : null)),
+            Effect.catch(() => Effect.succeed(cwd)),
+          ),
+          { concurrency: "unbounded" },
+        );
+        return { missing: results.filter((r): r is string => r !== null) };
       }
 
       case WS_METHODS.shellOpenInEditor: {
