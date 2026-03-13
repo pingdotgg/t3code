@@ -72,6 +72,18 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
                   runtimePayload: value.runtimePayload,
                 }),
               ),
+              Effect.catch(() =>
+                // Unknown providers should not poison startup; drop the binding and move on.
+                repository
+                  .deleteByThreadId({ threadId: value.threadId })
+                  .pipe(
+                    Effect.mapError(
+                      toPersistenceError("ProviderSessionDirectory.getBinding:cleanup"),
+                    ),
+                    Effect.ignore,
+                    Effect.as(Option.none<ProviderRuntimeBinding>()),
+                  ),
+              ),
             ),
         }),
       ),

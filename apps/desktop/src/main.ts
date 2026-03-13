@@ -47,6 +47,7 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 fixPath();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
+const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
@@ -1084,6 +1085,11 @@ function registerIpcHandlers(): void {
         });
     if (result.canceled) return null;
     return result.filePaths[0] ?? null;
+  });
+
+  ipcMain.removeAllListeners(GET_WS_URL_CHANNEL);
+  ipcMain.on(GET_WS_URL_CHANNEL, (event) => {
+    event.returnValue = backendWsUrl || null;
   });
 
   ipcMain.removeHandler(CONFIRM_CHANNEL);
