@@ -645,9 +645,10 @@ export const makeGitManager = Effect.gen(function* () {
     commitMessage?: string;
     /** When true, also produce a semantic feature branch name. */
     includeBranch?: boolean;
+    filePaths?: readonly string[];
   }) =>
     Effect.gen(function* () {
-      const context = yield* gitCore.prepareCommitContext(input.cwd);
+      const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths);
       if (!context) {
         return null;
       }
@@ -687,6 +688,7 @@ export const makeGitManager = Effect.gen(function* () {
     branch: string | null,
     commitMessage?: string,
     preResolvedSuggestion?: CommitAndBranchSuggestion,
+    filePaths?: readonly string[],
   ) =>
     Effect.gen(function* () {
       const suggestion =
@@ -695,6 +697,7 @@ export const makeGitManager = Effect.gen(function* () {
           cwd,
           branch,
           ...(commitMessage ? { commitMessage } : {}),
+          ...(filePaths ? { filePaths } : {}),
         }));
       if (!suggestion) {
         return { status: "skipped_no_changes" as const };
@@ -713,6 +716,7 @@ export const makeGitManager = Effect.gen(function* () {
     branch: string | null;
     commitMessage?: string;
     preResolvedCommitSuggestion?: CommitAndBranchSuggestion;
+    filePaths?: readonly string[];
     wantsPush: boolean;
   }) =>
     Effect.gen(function* () {
@@ -721,6 +725,7 @@ export const makeGitManager = Effect.gen(function* () {
         input.branch,
         input.commitMessage,
         input.preResolvedCommitSuggestion,
+        input.filePaths,
       );
 
       const push = input.wantsPush
@@ -994,12 +999,18 @@ export const makeGitManager = Effect.gen(function* () {
     },
   );
 
-  const runFeatureBranchStep = (cwd: string, branch: string | null, commitMessage?: string) =>
+  const runFeatureBranchStep = (
+    cwd: string,
+    branch: string | null,
+    commitMessage?: string,
+    filePaths?: readonly string[],
+  ) =>
     Effect.gen(function* () {
       const suggestion = yield* resolveCommitAndBranchSuggestion({
         cwd,
         branch,
         ...(commitMessage ? { commitMessage } : {}),
+        ...(filePaths ? { filePaths } : {}),
         includeBranch: true,
       });
       if (!suggestion) {
@@ -1029,6 +1040,7 @@ export const makeGitManager = Effect.gen(function* () {
     input: {
       featureBranch?: boolean;
       commitMessage?: string;
+      filePaths?: readonly string[];
     },
   ) =>
     Effect.gen(function* () {
@@ -1040,7 +1052,12 @@ export const makeGitManager = Effect.gen(function* () {
         };
       }
 
-      const result = yield* runFeatureBranchStep(cwd, initialBranch, input.commitMessage);
+      const result = yield* runFeatureBranchStep(
+        cwd,
+        initialBranch,
+        input.commitMessage,
+        input.filePaths,
+      );
       return {
         branchStep: result.branchStep,
         currentBranch: result.branchStep.name,
@@ -1054,12 +1071,14 @@ export const makeGitManager = Effect.gen(function* () {
     sourceBranch: string,
     targetBranch: string,
     commitMessage?: string,
+    filePaths?: readonly string[],
   ) =>
     Effect.gen(function* () {
       const sourceCommitAndPush = yield* runCommitPushStep({
         cwd,
         branch: sourceBranch,
         ...(commitMessage ? { commitMessage } : {}),
+        ...(filePaths ? { filePaths } : {}),
         wantsPush: true,
       });
 
@@ -1146,6 +1165,7 @@ export const makeGitManager = Effect.gen(function* () {
           initialStatus.branch,
           input.targetBranch,
           input.commitMessage,
+          input.filePaths,
         );
 
         return {
@@ -1164,6 +1184,7 @@ export const makeGitManager = Effect.gen(function* () {
         {
           ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+          ...(input.filePaths ? { filePaths: input.filePaths } : {}),
         },
       );
 
@@ -1178,6 +1199,7 @@ export const makeGitManager = Effect.gen(function* () {
               preResolvedCommitSuggestion: preparedCommitExecution.preResolvedCommitSuggestion,
             }
           : {}),
+        ...(input.filePaths ? { filePaths: input.filePaths } : {}),
         wantsPush,
       });
 

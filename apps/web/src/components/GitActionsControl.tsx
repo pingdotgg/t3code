@@ -4,19 +4,22 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
-  open: boolean;
-  onToggle: () => void;
+  activeThreadId?: string;
+  open?: boolean;
+  onToggle?: () => void;
 }
 
 export default function GitActionsControl({ gitCwd, open, onToggle }: GitActionsControlProps) {
+  const pressed = open ?? false;
+
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Toggle
             className="shrink-0"
-            pressed={open}
-            onPressedChange={() => onToggle()}
+            pressed={pressed}
+            onPressedChange={() => onToggle?.()}
             aria-label="Toggle GitHub panel"
             variant="outline"
             size="xs"
@@ -26,7 +29,9 @@ export default function GitActionsControl({ gitCwd, open, onToggle }: GitActions
           </Toggle>
         }
       />
-      <TooltipPopup side="bottom">{open ? "Close GitHub panel" : "Open GitHub panel"}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {pressed ? "Close GitHub panel" : "Open GitHub panel"}
+      </TooltipPopup>
     </Tooltip>
   );
 }

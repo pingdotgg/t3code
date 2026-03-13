@@ -1,10 +1,10 @@
 import { TurnId } from "@t3tools/contracts";
 
 export interface DiffRouteSearch {
-  diff?: "1";
-  diffTurnId?: TurnId;
-  diffFilePath?: string;
-  github?: "1";
+  diff?: "1" | undefined;
+  diffTurnId?: TurnId | undefined;
+  diffFilePath?: string | undefined;
+  github?: "1" | undefined;
 }
 
 function isPanelOpenValue(value: unknown): boolean {
