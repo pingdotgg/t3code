@@ -765,6 +765,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
 
+  const missingProjectCwds = useStore((s) => s.missingProjectCwds);
+  const isProjectDirectoryMissing = activeProject
+    ? missingProjectCwds.has(activeProject.cwd)
+    : false;
+
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
       if (!canCheckoutPullRequestIntoThread) {
@@ -2552,7 +2557,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (!api || !activeThread || isSendBusy || isConnecting || isProjectDirectoryMissing || sendInFlightRef.current) return;
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -3578,8 +3583,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
       <ThreadErrorBanner
-        error={activeThread.error}
-        onDismiss={() => setThreadError(activeThread.id, null)}
+        error={
+          isProjectDirectoryMissing
+            ? `Project directory does not exist: ${activeProject?.cwd ?? "unknown"}. The folder may have been moved or deleted.`
+            : activeThread.error
+        }
+        {...(isProjectDirectoryMissing
+          ? {}
+          : { onDismiss: () => setThreadError(activeThread.id, null) })}
       />
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
@@ -3773,10 +3784,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     onCommandKeyDown={onComposerCommandKey}
                     onPaste={onComposerPaste}
                     placeholder={
-                      isComposerApprovalState
-                        ? (activePendingApproval?.detail ??
-                          "Resolve this approval request to continue")
-                        : activePendingProgress
+                      isProjectDirectoryMissing
+                        ? "Project directory is missing. Restore the folder to continue."
+                        : isComposerApprovalState
+                          ? (activePendingApproval?.detail ??
+                            "Resolve this approval request to continue")
+                          : activePendingProgress
                           ? "Type your own answer, or leave this blank to use the selected option"
                           : showPlanFollowUpPrompt && activeProposedPlan
                             ? "Add feedback to refine the plan, or leave this blank to implement it"
@@ -3784,7 +3797,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               ? "Ask for follow-up changes or attach images"
                               : "Ask anything, @tag files/folders, or use / to show available commands"
                     }
-                    disabled={isConnecting || isComposerApprovalState}
+                    disabled={isConnecting || isComposerApprovalState || isProjectDirectoryMissing}
                   />
                 </div>
 
