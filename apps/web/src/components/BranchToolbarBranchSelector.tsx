@@ -387,7 +387,6 @@ export function BranchToolbarBranchSelector({
         key={itemValue}
         index={index}
         value={itemValue}
-        className={itemValue === resolvedActiveBranch ? "bg-accent text-foreground" : undefined}
         style={style}
         onClick={() => selectBranch(branch)}
       >
