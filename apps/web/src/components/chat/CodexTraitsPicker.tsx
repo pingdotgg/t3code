@@ -1,7 +1,7 @@
 import { type CodexReasoningEffort } from "@t3tools/contracts";
-import { getDefaultReasoningEffort } from "@t3tools/shared/model";
 import { memo, useState } from "react";
 import { ChevronDownIcon } from "lucide-react";
+import { CODEX_REASONING_EFFORT_LABELS } from "../../codexReasoningEffort";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -15,21 +15,15 @@ import {
 
 export const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
   effort: CodexReasoningEffort;
+  defaultEffort: CodexReasoningEffort;
   fastModeEnabled: boolean;
   options: ReadonlyArray<CodexReasoningEffort>;
   onEffortChange: (effort: CodexReasoningEffort) => void;
   onFastModeChange: (enabled: boolean) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const defaultReasoningEffort = getDefaultReasoningEffort("codex");
-  const reasoningLabelByOption: Record<CodexReasoningEffort, string> = {
-    low: "Low",
-    medium: "Medium",
-    high: "High",
-    xhigh: "Extra High",
-  };
   const triggerLabel = [
-    reasoningLabelByOption[props.effort],
+    CODEX_REASONING_EFFORT_LABELS[props.effort],
     ...(props.fastModeEnabled ? ["Fast"] : []),
   ]
     .filter(Boolean)
@@ -68,8 +62,8 @@ export const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
           >
             {props.options.map((effort) => (
               <MenuRadioItem key={effort} value={effort}>
-                {reasoningLabelByOption[effort]}
-                {effort === defaultReasoningEffort ? " (default)" : ""}
+                {CODEX_REASONING_EFFORT_LABELS[effort]}
+                {effort === props.defaultEffort ? " (default)" : ""}
               </MenuRadioItem>
             ))}
           </MenuRadioGroup>

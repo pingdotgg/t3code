@@ -4,9 +4,9 @@ import {
   RuntimeMode,
   ProviderInteractionMode,
 } from "@t3tools/contracts";
-import { getDefaultReasoningEffort } from "@t3tools/shared/model";
 import { memo } from "react";
 import { EllipsisIcon, ListTodoIcon } from "lucide-react";
+import { CODEX_REASONING_EFFORT_LABELS } from "../../codexReasoningEffort";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -21,6 +21,7 @@ import {
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
+  defaultEffort: CodexReasoningEffort;
   interactionMode: ProviderInteractionMode;
   planSidebarOpen: boolean;
   runtimeMode: RuntimeMode;
@@ -34,14 +35,6 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   onTogglePlanSidebar: () => void;
   onToggleRuntimeMode: () => void;
 }) {
-  const defaultReasoningEffort = getDefaultReasoningEffort("codex");
-  const reasoningLabelByOption: Record<CodexReasoningEffort, string> = {
-    low: "Low",
-    medium: "Medium",
-    high: "High",
-    xhigh: "Extra High",
-  };
-
   return (
     <Menu>
       <MenuTrigger
@@ -72,8 +65,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
               >
                 {props.reasoningOptions.map((effort) => (
                   <MenuRadioItem key={effort} value={effort}>
-                    {reasoningLabelByOption[effort]}
-                    {effort === defaultReasoningEffort ? " (default)" : ""}
+                    {CODEX_REASONING_EFFORT_LABELS[effort]}
+                    {effort === props.defaultEffort ? " (default)" : ""}
                   </MenuRadioItem>
                 ))}
               </MenuRadioGroup>

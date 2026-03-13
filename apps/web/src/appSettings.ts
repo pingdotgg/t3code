@@ -1,7 +1,16 @@
 import { useCallback } from "react";
 import { Option, Schema } from "effect";
-import { type ProviderKind } from "@t3tools/contracts";
-import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  CODEX_REASONING_EFFORT_OPTIONS,
+  type CodexReasoningEffort,
+  type ProviderKind,
+} from "@t3tools/contracts";
+import {
+  getDefaultModel,
+  getDefaultReasoningEffort,
+  getModelOptions,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
@@ -10,6 +19,9 @@ export const MAX_CUSTOM_MODEL_LENGTH = 256;
 export const TIMESTAMP_FORMAT_OPTIONS = ["locale", "12-hour", "24-hour"] as const;
 export type TimestampFormat = (typeof TIMESTAMP_FORMAT_OPTIONS)[number];
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
+export const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort =
+  getDefaultReasoningEffort("codex");
+export const DEFAULT_CODEX_FAST_MODE = false;
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
 };
@@ -30,6 +42,14 @@ const AppSettingsSchema = Schema.Struct({
   ),
   timestampFormat: Schema.Literals(["locale", "12-hour", "24-hour"]).pipe(
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  // Kept under the existing storage key so local settings survive the move from
+  // an explicit settings control to composer-driven last-used persistence.
+  defaultCodexReasoningEffort: Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS).pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_CODEX_REASONING_EFFORT)),
+  ),
+  lastUsedCodexFastMode: Schema.Boolean.pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_CODEX_FAST_MODE)),
   ),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),

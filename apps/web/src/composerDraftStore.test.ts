@@ -355,10 +355,18 @@ describe("composerDraftStore codex fast mode", () => {
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.codexFastMode).toBe(true);
   });
 
-  it("clears codex fast mode when reset to the default", () => {
+  it("stores explicit fast mode off in the draft", () => {
     const store = useComposerDraftStore.getState();
     store.setCodexFastMode(threadId, true);
     store.setCodexFastMode(threadId, false);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.codexFastMode).toBe(false);
+  });
+
+  it("clears codex fast mode when reset to follow the global preference", () => {
+    const store = useComposerDraftStore.getState();
+    store.setCodexFastMode(threadId, true);
+    store.setCodexFastMode(threadId, null);
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });
@@ -453,6 +461,35 @@ describe("composerDraftStore runtime and interaction settings", () => {
     store.setInteractionMode(threadId, "plan");
     store.setRuntimeMode(threadId, null);
     store.setInteractionMode(threadId, null);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+});
+
+describe("composerDraftStore effort settings", () => {
+  const threadId = ThreadId.makeUnsafe("thread-effort");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("stores explicit reasoning levels including high", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setEffort(threadId, "high");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.effort).toBe("high");
+  });
+
+  it("removes settings-only drafts when effort is cleared", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setEffort(threadId, "medium");
+    store.setEffort(threadId, null);
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });

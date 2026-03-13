@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_CODEX_FAST_MODE,
+  DEFAULT_CODEX_REASONING_EFFORT,
   DEFAULT_TIMESTAMP_FORMAT,
   getAppModelOptions,
   normalizeCustomModelSlugs,
@@ -62,5 +64,17 @@ describe("resolveAppModelSelection", () => {
 describe("timestamp format defaults", () => {
   it("defaults timestamp format to locale", () => {
     expect(DEFAULT_TIMESTAMP_FORMAT).toBe("locale");
+  });
+});
+
+describe("reasoning defaults", () => {
+  it("defaults Codex reasoning to the built-in high level", () => {
+    expect(DEFAULT_CODEX_REASONING_EFFORT).toBe("high");
+  });
+});
+
+describe("fast mode defaults", () => {
+  it("defaults Codex fast mode to off", () => {
+    expect(DEFAULT_CODEX_FAST_MODE).toBe(false);
   });
 });

@@ -196,7 +196,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
-  const { settings } = useAppSettings();
+  const { settings, updateSettings } = useAppSettings();
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
   const rawSearch = useSearch({
@@ -513,9 +513,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [baseThreadModel, composerDraft.model, customModelsForSelectedProvider, selectedProvider]);
   const reasoningOptions = getReasoningEffortOptions(selectedProvider);
   const supportsReasoningEffort = reasoningOptions.length > 0;
-  const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
+  const defaultCodexReasoningEffort = settings.defaultCodexReasoningEffort;
+  const selectedEffort =
+    composerDraft.effort ??
+    (selectedProvider === "codex"
+      ? defaultCodexReasoningEffort
+      : getDefaultReasoningEffort(selectedProvider));
   const selectedCodexFastModeEnabled =
-    selectedProvider === "codex" ? composerDraft.codexFastMode : false;
+    selectedProvider === "codex"
+      ? (composerDraft.codexFastMode ?? settings.lastUsedCodexFastMode)
+      : false;
   const selectedModelOptionsForDispatch = useMemo(() => {
     if (selectedProvider !== "codex") {
       return undefined;
@@ -2895,17 +2902,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const onEffortSelect = useCallback(
     (effort: CodexReasoningEffort) => {
-      setComposerDraftEffort(threadId, effort);
+      updateSettings({
+        defaultCodexReasoningEffort: effort,
+      });
+      // Composer selections now define the global last-used preference, so the
+      // thread should fall back to that shared setting instead of pinning an override.
+      setComposerDraftEffort(threadId, null);
       scheduleComposerFocus();
     },
-    [scheduleComposerFocus, setComposerDraftEffort, threadId],
+    [scheduleComposerFocus, setComposerDraftEffort, threadId, updateSettings],
   );
   const onCodexFastModeChange = useCallback(
     (enabled: boolean) => {
-      setComposerDraftCodexFastMode(threadId, enabled);
+      updateSettings({
+        lastUsedCodexFastMode: enabled,
+      });
+      // Keep the thread following the global last-used setting after the user
+      // changes it from the composer.
+      setComposerDraftCodexFastMode(threadId, null);
       scheduleComposerFocus();
     },
-    [scheduleComposerFocus, setComposerDraftCodexFastMode, threadId],
+    [scheduleComposerFocus, setComposerDraftCodexFastMode, threadId, updateSettings],
   );
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
@@ -3503,6 +3520,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       {isComposerFooterCompact ? (
                         <CompactComposerControlsMenu
                           activePlan={Boolean(activePlan || activeProposedPlan || planSidebarOpen)}
+                          defaultEffort={defaultCodexReasoningEffort}
                           interactionMode={interactionMode}
                           planSidebarOpen={planSidebarOpen}
                           runtimeMode={runtimeMode}
@@ -3525,6 +3543,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 className="mx-0.5 hidden h-4 sm:block"
                               />
                               <CodexTraitsPicker
+                                defaultEffort={defaultCodexReasoningEffort}
                                 effort={selectedEffort}
                                 fastModeEnabled={selectedCodexFastModeEnabled}
                                 options={reasoningOptions}
