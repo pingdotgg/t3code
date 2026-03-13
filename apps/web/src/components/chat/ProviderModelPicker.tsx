@@ -86,8 +86,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { settings } = useAppSettings();
   const claudeCodeConfigured =
-    settings.claudeCodeBinaryPath.trim() !== "" ||
-    settings.claudeCodeProvider === "bedrock";
+    settings.claudeCodeBinaryPath.trim() !== "" || settings.claudeCodeUseBedrock;
   const providerOptions = resolveProviderOptions(claudeCodeConfigured);
   const availableProviderOptions = providerOptions.filter(isAvailableProviderOption);
   const unavailableProviderOptions = providerOptions.filter((option) => !option.available);

@@ -25,8 +25,8 @@ const AppSettingsSchema = Schema.Struct({
   claudeCodeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
-  claudeCodeProvider: Schema.Literals(["anthropic", "bedrock"]).pipe(
-    Schema.withConstructorDefault(() => Option.some("anthropic")),
+  claudeCodeUseBedrock: Schema.Boolean.pipe(
+    Schema.withConstructorDefault(() => Option.some(false)),
   ),
   claudeCodeAwsRegion: Schema.String.check(Schema.isMaxLength(64)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),

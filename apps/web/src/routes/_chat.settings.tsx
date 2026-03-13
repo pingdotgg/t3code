@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
-import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings, type AppSettings } from "../appSettings";
+import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
@@ -95,7 +95,7 @@ function getDefaultCustomModelsForProvider(
   }
 }
 
-function patchCustomModels(provider: ProviderKind, models: string[]): Partial<AppSettings> {
+function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
     case "claudeCode":
       return { customClaudeCodeModels: models };
@@ -387,8 +387,8 @@ function SettingsRouteView() {
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Claude Code</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Configure the Claude Code CLI. Once set, Claude Code will appear as an available
-                  provider in the chat model picker.
+                  Configure Claude Code for use with AWS Bedrock. Once enabled, Claude Code will
+                  appear as an available provider in the chat model picker.
                 </p>
               </div>
 
@@ -411,60 +411,25 @@ function SettingsRouteView() {
                   </span>
                 </label>
 
-                <div className="space-y-2">
-                  <span className="text-xs font-medium text-foreground">API provider</span>
-                  <p className="text-xs text-muted-foreground">
-                    Choose how Claude Code authenticates. Select <strong>Anthropic</strong> to use
-                    your Claude Code subscription, or <strong>AWS Bedrock</strong> to route requests
-                    through your AWS account using the{" "}
-                    <code>CLAUDE_CODE_USE_BEDROCK</code> environment variable.
-                  </p>
-                  <div className="space-y-2" role="radiogroup" aria-label="Claude Code API provider">
-                    {(
-                      [
-                        {
-                          value: "anthropic",
-                          label: "Anthropic",
-                          description: "Use your Claude Code subscription via the Anthropic API.",
-                        },
-                        {
-                          value: "bedrock",
-                          label: "AWS Bedrock",
-                          description:
-                            "Route requests through your AWS account. Requires AWS credentials and Bedrock model access.",
-                        },
-                      ] as const
-                    ).map((option) => {
-                      const selected = settings.claudeCodeProvider === option.value;
-                      return (
-                        <button
-                          key={option.value}
-                          type="button"
-                          role="radio"
-                          aria-checked={selected}
-                          className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
-                            selected
-                              ? "border-primary/60 bg-primary/8 text-foreground"
-                              : "border-border bg-background text-muted-foreground hover:bg-accent"
-                          }`}
-                          onClick={() => updateSettings({ claudeCodeProvider: option.value })}
-                        >
-                          <span className="flex flex-col">
-                            <span className="text-sm font-medium">{option.label}</span>
-                            <span className="text-xs">{option.description}</span>
-                          </span>
-                          {selected ? (
-                            <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-                              Selected
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Use AWS Bedrock</p>
+                    <p className="text-xs text-muted-foreground">
+                      Route Claude Code requests through your AWS account via{" "}
+                      <code>CLAUDE_CODE_USE_BEDROCK</code>. Requires AWS credentials and Bedrock
+                      model access.
+                    </p>
                   </div>
+                  <Switch
+                    checked={settings.claudeCodeUseBedrock}
+                    onCheckedChange={(checked) =>
+                      updateSettings({ claudeCodeUseBedrock: Boolean(checked) })
+                    }
+                    aria-label="Use AWS Bedrock for Claude Code"
+                  />
                 </div>
 
-                {settings.claudeCodeProvider === "bedrock" && (
+                {settings.claudeCodeUseBedrock && (
                   <div className="space-y-4 rounded-xl border border-border bg-background/50 p-4">
                     <label htmlFor="claude-code-aws-region" className="block space-y-1">
                       <span className="text-xs font-medium text-foreground">AWS region</span>
@@ -484,7 +449,8 @@ function SettingsRouteView() {
 
                     <label htmlFor="claude-code-aws-profile" className="block space-y-1">
                       <span className="text-xs font-medium text-foreground">
-                        AWS profile <span className="font-normal text-muted-foreground">(optional)</span>
+                        AWS profile{" "}
+                        <span className="font-normal text-muted-foreground">(optional)</span>
                       </span>
                       <Input
                         id="claude-code-aws-profile"
@@ -510,7 +476,7 @@ function SettingsRouteView() {
                     onClick={() =>
                       updateSettings({
                         claudeCodeBinaryPath: defaults.claudeCodeBinaryPath,
-                        claudeCodeProvider: defaults.claudeCodeProvider,
+                        claudeCodeUseBedrock: defaults.claudeCodeUseBedrock,
                         claudeCodeAwsRegion: defaults.claudeCodeAwsRegion,
                         claudeCodeAwsProfile: defaults.claudeCodeAwsProfile,
                       })

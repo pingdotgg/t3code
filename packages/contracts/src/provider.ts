@@ -53,7 +53,6 @@ const CodexProviderStartOptions = Schema.Struct({
 });
 const ClaudeCodeProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  apiProvider: Schema.optional(Schema.Literals(["anthropic", "bedrock"])),
   awsRegion: Schema.optional(TrimmedNonEmptyStringSchema),
   awsProfile: Schema.optional(TrimmedNonEmptyStringSchema),
 });
