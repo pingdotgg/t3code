@@ -84,6 +84,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -434,7 +435,9 @@ export default function Sidebar() {
           defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
           createdAt,
         });
-        await handleNewThread(projectId).catch(() => undefined);
+        await handleNewThread(projectId, {
+          envMode: appSettings.defaultThreadEnvMode,
+        }).catch(() => undefined);
       } catch (error) {
         const description =
           error instanceof Error ? error.message : "An error occurred while adding the project.";
@@ -458,6 +461,7 @@ export default function Sidebar() {
       isAddingProject,
       projects,
       shouldBrowseForProjectImmediately,
+      appSettings.defaultThreadEnvMode,
     ],
   );
 
@@ -1352,7 +1356,11 @@ export default function Sidebar() {
                                     onClick={(event) => {
                                       event.preventDefault();
                                       event.stopPropagation();
-                                      void handleNewThread(project.id);
+                                      void handleNewThread(project.id, {
+                                        envMode: resolveSidebarNewThreadEnvMode({
+                                          defaultEnvMode: appSettings.defaultThreadEnvMode,
+                                        }),
+                                      });
                                     }}
                                   >
                                     <SquarePenIcon className="size-3.5" />
