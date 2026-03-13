@@ -58,7 +58,7 @@
     "vitest": "catalog:"
   },
   "overrides": {
-    "vite": "^8.0.0-beta.12"
+    "vite": "^8.0.0"
   },
   "engines": {
     "bun": "^1.3.9",
