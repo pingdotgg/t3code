@@ -4,6 +4,12 @@ import { Suspense, lazy, type ReactNode, useCallback, useEffect, useState } from
 
 import ChatView from "../components/ChatView";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
+import {
+  DiffPanelHeaderSkeleton,
+  DiffPanelLoadingState,
+  DiffPanelShell,
+  type DiffPanelMode,
+} from "../components/DiffPanelShell";
 import { useComposerDraftStore } from "../composerDraftStore";
 import {
   type DiffRouteSearch,
@@ -48,26 +54,18 @@ const DiffPanelSheet = (props: {
   );
 };
 
-const DiffLoadingFallback = (props: { inline: boolean }) => {
-  if (props.inline) {
-    return (
-      <div className="flex h-full min-h-0 items-center justify-center px-4 text-center text-xs text-muted-foreground/70">
-        Loading diff viewer...
-      </div>
-    );
-  }
-
+const DiffLoadingFallback = (props: { mode: DiffPanelMode }) => {
   return (
-    <aside className="flex h-full w-[560px] shrink-0 items-center justify-center border-l border-border bg-card px-4 text-center text-xs text-muted-foreground/70">
-      Loading diff viewer...
-    </aside>
+    <DiffPanelShell mode={props.mode} header={<DiffPanelHeaderSkeleton />}>
+      <DiffPanelLoadingState label="Loading diff viewer..." />
+    </DiffPanelShell>
   );
 };
 
-const LazyDiffPanel = (props: { inline: boolean; mode: "sheet" | "sidebar" }) => {
+const LazyDiffPanel = (props: { mode: DiffPanelMode }) => {
   return (
     <DiffWorkerPoolProvider>
-      <Suspense fallback={<DiffLoadingFallback inline={props.inline} />}>
+      <Suspense fallback={<DiffLoadingFallback mode={props.mode} />}>
         <DiffPanel mode={props.mode} />
       </Suspense>
     </DiffWorkerPoolProvider>
@@ -155,7 +153,7 @@ const DiffPanelInlineSidebar = (props: {
           storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >
-        {renderDiffContent ? <LazyDiffPanel inline mode="sidebar" /> : null}
+        {renderDiffContent ? <LazyDiffPanel mode="sidebar" /> : null}
         <SidebarRail />
       </Sidebar>
     </SidebarProvider>
@@ -242,7 +240,7 @@ function ChatThreadRouteView() {
         <ChatView key={threadId} threadId={threadId} />
       </SidebarInset>
       <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
-        {shouldRenderDiffContent ? <LazyDiffPanel inline={false} mode="sheet" /> : null}
+        {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
       </DiffPanelSheet>
     </>
   );
