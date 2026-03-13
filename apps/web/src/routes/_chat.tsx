@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import ThreadSidebar from "../components/Sidebar";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -12,6 +11,8 @@ import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
+import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
+import { useAppSettings } from "~/appSettings";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 
@@ -27,6 +28,7 @@ function ChatRouteGlobalShortcuts() {
       ? selectThreadTerminalState(state.terminalStateByThreadId, routeThreadId).terminalOpen
       : false,
   );
+  const { settings: appSettings } = useAppSettings();
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -51,7 +53,11 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.newLocal") {
         event.preventDefault();
         event.stopPropagation();
-        void handleNewThread(projectId);
+        void handleNewThread(projectId, {
+          envMode: resolveSidebarNewThreadEnvMode({
+            defaultEnvMode: appSettings.defaultThreadEnvMode,
+          }),
+        });
         return;
       }
 
@@ -78,6 +84,7 @@ function ChatRouteGlobalShortcuts() {
     projects,
     selectedThreadIdsSize,
     terminalOpen,
+    appSettings.defaultThreadEnvMode,
   ]);
 
   return null;
@@ -112,9 +119,7 @@ function ChatRouteLayout() {
       >
         <ThreadSidebar />
       </Sidebar>
-      <DiffWorkerPoolProvider>
-        <Outlet />
-      </DiffWorkerPoolProvider>
+      <Outlet />
     </SidebarProvider>
   );
 }

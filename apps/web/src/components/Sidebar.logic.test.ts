@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasUnseenCompletion,
+  resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -60,6 +61,25 @@ describe("shouldClearThreadSelectionOnMouseDown", () => {
     } as unknown as HTMLElement;
 
     expect(shouldClearThreadSelectionOnMouseDown(unrelated)).toBe(true);
+  });
+});
+
+describe("resolveSidebarNewThreadEnvMode", () => {
+  it("uses the app default when the caller does not request a specific mode", () => {
+    expect(
+      resolveSidebarNewThreadEnvMode({
+        defaultEnvMode: "worktree",
+      }),
+    ).toBe("worktree");
+  });
+
+  it("preserves an explicit requested mode over the app default", () => {
+    expect(
+      resolveSidebarNewThreadEnvMode({
+        requestedEnvMode: "local",
+        defaultEnvMode: "worktree",
+      }),
+    ).toBe("local");
   });
 });
 
