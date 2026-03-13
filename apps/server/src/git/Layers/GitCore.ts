@@ -766,9 +766,21 @@ const makeGitCore = Effect.gen(function* () {
       })),
     );
 
-  const prepareCommitContext: GitCoreShape["prepareCommitContext"] = (cwd) =>
+  const prepareCommitContext: GitCoreShape["prepareCommitContext"] = (cwd, filePaths) =>
     Effect.gen(function* () {
-      yield* runGit("GitCore.prepareCommitContext.addAll", cwd, ["add", "-A"]);
+      if (filePaths && filePaths.length > 0) {
+        yield* runGit("GitCore.prepareCommitContext.reset", cwd, ["reset"]).pipe(
+          Effect.catch(() => Effect.void),
+        );
+        yield* runGit("GitCore.prepareCommitContext.addSelected", cwd, [
+          "add",
+          "-A",
+          "--",
+          ...filePaths,
+        ]);
+      } else {
+        yield* runGit("GitCore.prepareCommitContext.addAll", cwd, ["add", "-A"]);
+      }
 
       const stagedSummary = yield* runGitStdout("GitCore.prepareCommitContext.stagedSummary", cwd, [
         "diff",

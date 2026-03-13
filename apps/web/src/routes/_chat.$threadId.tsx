@@ -14,6 +14,13 @@ import {
 } from "react";
 
 import ChatView from "../components/ChatView";
+import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
+import {
+  DiffPanelHeaderSkeleton,
+  DiffPanelLoadingState,
+  DiffPanelShell,
+  type DiffPanelMode,
+} from "../components/DiffPanelShell";
 import {
   createBrowserTab,
   getBrowserTabLabel,
@@ -108,19 +115,33 @@ const RightPanelSheet = (props: {
   );
 };
 
-const RightPanelLoadingFallback = (props: { inline: boolean; label: string }) => {
+const DiffLoadingFallback = (props: { inline: boolean; mode: DiffPanelMode }) => {
   if (props.inline) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center px-4 text-center text-xs text-muted-foreground/70">
-        {props.label}
+      <div className="flex h-full min-h-0">
+        <DiffPanelShell mode={props.mode} header={<DiffPanelHeaderSkeleton />}>
+          <DiffPanelLoadingState label="Loading diff viewer..." />
+        </DiffPanelShell>
       </div>
     );
   }
 
   return (
-    <aside className="flex h-full w-[560px] shrink-0 items-center justify-center border-l border-border bg-card px-4 text-center text-xs text-muted-foreground/70">
-      {props.label}
+    <aside className="flex h-full w-[560px] shrink-0 border-l border-border bg-card">
+      <DiffPanelShell mode={props.mode} header={<DiffPanelHeaderSkeleton />}>
+        <DiffPanelLoadingState label="Loading diff viewer..." />
+      </DiffPanelShell>
     </aside>
+  );
+};
+
+const LazyDiffPanel = (props: { mode: DiffPanelMode; inline: boolean }) => {
+  return (
+    <DiffWorkerPoolProvider>
+      <Suspense fallback={<DiffLoadingFallback inline={props.inline} mode={props.mode} />}>
+        <DiffPanel mode={props.mode} />
+      </Suspense>
+    </DiffWorkerPoolProvider>
   );
 };
 
@@ -244,6 +265,7 @@ function ChatThreadRouteView() {
     () => browserThreadState.tabs.find((tab) => tab.id === browserThreadState.activeTabId) ?? null,
     [browserThreadState.activeTabId, browserThreadState.tabs],
   );
+  const [hasOpenedDiff, setHasOpenedDiff] = useState(selectedPanel === "diff");
 
   useEffect(() => {
     if (forcedSelectedPanel !== "diff") {
@@ -270,6 +292,12 @@ function ChatThreadRouteView() {
       state.inputValue === nextInputValue ? state : { ...state, inputValue: nextInputValue },
     );
   }, [activeBrowserTab?.id, activeBrowserTab?.url, threadId, updateThreadBrowserState]);
+
+  useEffect(() => {
+    if (selectedPanel === "diff") {
+      setHasOpenedDiff(true);
+    }
+  }, [selectedPanel]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -649,6 +677,7 @@ function ChatThreadRouteView() {
     return null;
   }
 
+  const shouldRenderDiffContent = selectedPanel === "diff" || hasOpenedDiff;
   const rightPanelContent =
     selectedPanel === null ? null : selectedPanel === "browser" ? (
       <BrowserPanel
@@ -697,9 +726,7 @@ function ChatThreadRouteView() {
         viewportRef={browserViewportRef}
       />
     ) : (
-      <Suspense fallback={<RightPanelLoadingFallback inline label="Loading diff viewer..." />}>
-        <DiffPanel mode="sidebar" />
-      </Suspense>
+      <LazyDiffPanel mode="sidebar" inline />
     );
 
   if (!shouldUseDiffSheet) {
@@ -785,13 +812,9 @@ function ChatThreadRouteView() {
             onOpenExternal={openActiveTabExternally}
             viewportRef={browserViewportRef}
           />
-        ) : (
-          <Suspense
-            fallback={<RightPanelLoadingFallback inline={false} label="Loading diff viewer..." />}
-          >
-            <DiffPanel mode="sheet" />
-          </Suspense>
-        )}
+        ) : shouldRenderDiffContent ? (
+          <LazyDiffPanel mode="sheet" inline={false} />
+        ) : null}
       </RightPanelSheet>
     </>
   );

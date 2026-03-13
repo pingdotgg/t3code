@@ -29,6 +29,7 @@ const selectTriggerVariants = cva(
         default: "min-h-9 px-[calc(--spacing(3)-1px)] sm:min-h-8",
         lg: "min-h-10 px-[calc(--spacing(3)-1px)] sm:min-h-9",
         sm: "min-h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] sm:min-h-7",
+        xs: "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-sm before:rounded-[calc(var(--radius-md)-1px)] sm:h-6 sm:text-xs [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5",
       },
     },
   },
