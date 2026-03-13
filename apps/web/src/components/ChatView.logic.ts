@@ -1,9 +1,15 @@
-import { ProjectId, type ProviderKind, type ThreadId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type CodexReasoningEffort,
+  type ProviderKind,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { getAppModelOptions } from "../appSettings";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
+import { getDefaultReasoningEffort } from "@t3tools/shared/model";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const WORKTREE_BRANCH_PREFIX = "t3code";
@@ -122,4 +128,18 @@ export function getCustomModelOptionsByProvider(settings: {
   return {
     codex: getAppModelOptions("codex", settings.customCodexModels),
   };
+}
+
+export function resolveComposerReasoningEffort(input: {
+  composerDraftEffort: CodexReasoningEffort | null;
+  provider: ProviderKind;
+  defaultCodexReasoningEffort: CodexReasoningEffort;
+}): CodexReasoningEffort | null {
+  if (input.composerDraftEffort) {
+    return input.composerDraftEffort;
+  }
+  if (input.provider === "codex") {
+    return input.defaultCodexReasoningEffort;
+  }
+  return getDefaultReasoningEffort(input.provider);
 }

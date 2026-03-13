@@ -44,7 +44,7 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TIMESTAMP_FORMAT)),
   ),
   // Kept under the existing storage key so local settings survive the move from
-  // an explicit settings control to composer-driven last-used persistence.
+  // an explicit default control to composer-driven last-used persistence.
   defaultCodexReasoningEffort: Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS).pipe(
     Schema.withConstructorDefault(() => Option.some(DEFAULT_CODEX_REASONING_EFFORT)),
   ),

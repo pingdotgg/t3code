@@ -154,6 +154,7 @@ import {
   LastInvokedScriptByProjectSchema,
   PullRequestDialogState,
   readFileAsDataUrl,
+  resolveComposerReasoningEffort,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   SendPhase,
@@ -513,16 +514,47 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [baseThreadModel, composerDraft.model, customModelsForSelectedProvider, selectedProvider]);
   const reasoningOptions = getReasoningEffortOptions(selectedProvider);
   const supportsReasoningEffort = reasoningOptions.length > 0;
-  const defaultCodexReasoningEffort = settings.defaultCodexReasoningEffort;
-  const selectedEffort =
-    composerDraft.effort ??
-    (selectedProvider === "codex"
-      ? defaultCodexReasoningEffort
-      : getDefaultReasoningEffort(selectedProvider));
+  const defaultReasoningEffort = getDefaultReasoningEffort(selectedProvider);
+  const selectedEffort = resolveComposerReasoningEffort({
+    composerDraftEffort: composerDraft.effort,
+    provider: selectedProvider,
+    defaultCodexReasoningEffort: settings.defaultCodexReasoningEffort,
+  });
   const selectedCodexFastModeEnabled =
     selectedProvider === "codex"
       ? (composerDraft.codexFastMode ?? settings.lastUsedCodexFastMode)
       : false;
+
+  useEffect(() => {
+    if (selectedProvider !== "codex") {
+      return;
+    }
+    if (composerDraft.effort !== null) {
+      return;
+    }
+    setComposerDraftEffort(threadId, settings.defaultCodexReasoningEffort);
+  }, [
+    composerDraft.effort,
+    selectedProvider,
+    setComposerDraftEffort,
+    settings.defaultCodexReasoningEffort,
+    threadId,
+  ]);
+  useEffect(() => {
+    if (selectedProvider !== "codex") {
+      return;
+    }
+    if (composerDraft.codexFastMode !== null) {
+      return;
+    }
+    setComposerDraftCodexFastMode(threadId, settings.lastUsedCodexFastMode);
+  }, [
+    composerDraft.codexFastMode,
+    selectedProvider,
+    setComposerDraftCodexFastMode,
+    settings.lastUsedCodexFastMode,
+    threadId,
+  ]);
   const selectedModelOptionsForDispatch = useMemo(() => {
     if (selectedProvider !== "codex") {
       return undefined;
@@ -2905,9 +2937,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       updateSettings({
         defaultCodexReasoningEffort: effort,
       });
-      // Composer selections now define the global last-used preference, so the
-      // thread should fall back to that shared setting instead of pinning an override.
-      setComposerDraftEffort(threadId, null);
+      // Persist the thread-level selection while also updating the global
+      // fallback used for new threads.
+      setComposerDraftEffort(threadId, effort);
       scheduleComposerFocus();
     },
     [scheduleComposerFocus, setComposerDraftEffort, threadId, updateSettings],
@@ -2917,9 +2949,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       updateSettings({
         lastUsedCodexFastMode: enabled,
       });
-      // Keep the thread following the global last-used setting after the user
-      // changes it from the composer.
-      setComposerDraftCodexFastMode(threadId, null);
+      // Persist the thread-level selection while also updating the global
+      // fallback used for new threads.
+      setComposerDraftCodexFastMode(threadId, enabled);
       scheduleComposerFocus();
     },
     [scheduleComposerFocus, setComposerDraftCodexFastMode, threadId, updateSettings],
@@ -3520,7 +3552,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       {isComposerFooterCompact ? (
                         <CompactComposerControlsMenu
                           activePlan={Boolean(activePlan || activeProposedPlan || planSidebarOpen)}
-                          defaultEffort={defaultCodexReasoningEffort}
+                          defaultEffort={defaultReasoningEffort}
                           interactionMode={interactionMode}
                           planSidebarOpen={planSidebarOpen}
                           runtimeMode={runtimeMode}
@@ -3543,7 +3575,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 className="mx-0.5 hidden h-4 sm:block"
                               />
                               <CodexTraitsPicker
-                                defaultEffort={defaultCodexReasoningEffort}
+                                defaultEffort={defaultReasoningEffort}
                                 effort={selectedEffort}
                                 fastModeEnabled={selectedCodexFastModeEnabled}
                                 options={reasoningOptions}
