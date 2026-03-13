@@ -147,14 +147,26 @@ export const WebSocketRequest = Schema.Struct({
 });
 export type WebSocketRequest = typeof WebSocketRequest.Type;
 
+export const WS_ERROR_CODES = {
+  invalidRequest: "INVALID_REQUEST",
+  projectDirNotExist: "PROJECT_DIR_NOT_EXIST",
+  projectPathNotDirectory: "PROJECT_PATH_NOT_DIRECTORY",
+  routeRequest: "ROUTE_REQUEST_ERROR",
+  unknown: "UNKNOWN",
+} as const;
+export type WsErrorCode = (typeof WS_ERROR_CODES)[keyof typeof WS_ERROR_CODES];
+
+export const WsError = Schema.Struct({
+  code: Schema.String,
+  message: Schema.String,
+  path: Schema.optional(Schema.String),
+});
+export type WsError = typeof WsError.Type;
+
 export const WebSocketResponse = Schema.Struct({
   id: TrimmedNonEmptyString,
   result: Schema.optional(Schema.Unknown),
-  error: Schema.optional(
-    Schema.Struct({
-      message: Schema.String,
-    }),
-  ),
+  error: Schema.optional(WsError),
 });
 export type WebSocketResponse = typeof WebSocketResponse.Type;
 

@@ -1215,7 +1215,7 @@ export default function Sidebar() {
           </div>
 
           {shouldShowProjectPathEntry && (
-            <div className="mb-2 px-1">
+            <div className="mb-2 min-w-0 px-1 overflow-hidden">
               {isElectron && (
                 <button
                   type="button"
@@ -1227,7 +1227,7 @@ export default function Sidebar() {
                   {isPickingFolder ? "Picking folder..." : "Browse for folder"}
                 </button>
               )}
-              <div className="flex gap-1.5">
+              <div className="flex min-w-0 gap-1.5">
                 <input
                   ref={addProjectInputRef}
                   className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
@@ -1260,7 +1260,7 @@ export default function Sidebar() {
                 </button>
               </div>
               {addProjectError && (
-                <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
+                <p className="mt-1 min-w-0 break-words px-0.5 text-[11px] leading-tight text-red-400">
                   {addProjectError}
                 </p>
               )}
