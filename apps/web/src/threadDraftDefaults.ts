@@ -34,9 +34,15 @@ export async function buildNewThreadDraftDefaults(input: {
     };
   }
 
-  const status = await input.api.git.status({ cwd: input.projectCwd });
+  let status: { branch: string | null } | null = null;
+  try {
+    status = await input.api.git.status({ cwd: input.projectCwd });
+  } catch {
+    status = null;
+  }
+
   return {
-    branch: status.branch ?? null,
+    branch: status?.branch ?? null,
     worktreePath: null,
     envMode: "worktree",
   };

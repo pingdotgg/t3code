@@ -267,7 +267,6 @@ export default function Sidebar() {
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
-  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
@@ -440,14 +439,8 @@ export default function Sidebar() {
         forceLocal?: boolean;
       },
     ): Promise<void> => {
-      const draftDefaults = await resolveNewThreadDefaults(projectId, options);
-      if (!draftDefaults) {
-        return;
-      }
-
       const storedDraftThread = getDraftThreadByProjectId(projectId);
       if (storedDraftThread) {
-        setDraftThreadContext(storedDraftThread.threadId, draftDefaults);
         setProjectDraftThreadId(projectId, storedDraftThread.threadId);
         if (routeThreadId === storedDraftThread.threadId) {
           return;
@@ -462,10 +455,15 @@ export default function Sidebar() {
 
       const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
       if (activeDraftThread && routeThreadId && activeDraftThread.projectId === projectId) {
-        setDraftThreadContext(routeThreadId, draftDefaults);
         setProjectDraftThreadId(projectId, routeThreadId);
         return;
       }
+
+      const draftDefaults = await resolveNewThreadDefaults(projectId, options);
+      if (!draftDefaults) {
+        return;
+      }
+
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       setProjectDraftThreadId(projectId, threadId, {
@@ -486,7 +484,6 @@ export default function Sidebar() {
       getDraftThread,
       routeThreadId,
       resolveNewThreadDefaults,
-      setDraftThreadContext,
       setProjectDraftThreadId,
     ],
   );

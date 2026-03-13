@@ -1069,6 +1069,50 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("reopens an existing draft thread without resetting its branch or mode", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/existing-draft",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${THREAD_ID}`,
+        "Existing draft thread should remain selected when reopening it.",
+      );
+
+      expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).toMatchObject({
+        projectId: PROJECT_ID,
+        branch: "feature/existing-draft",
+        worktreePath: null,
+        envMode: "worktree",
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("creates the worktree on first send for a pending worktree draft", async () => {
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {

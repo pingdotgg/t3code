@@ -81,4 +81,22 @@ describe("buildNewThreadDraftDefaults", () => {
       envMode: "worktree",
     });
   });
+
+  it("keeps worktree mode when git status fails", async () => {
+    const status = vi.fn(async (_input: { cwd: string }) => {
+      throw new Error("git status failed");
+    });
+
+    await expect(
+      buildNewThreadDraftDefaults({
+        api: makeApi(status),
+        projectCwd: "/repo/project",
+        preferNewWorktree: true,
+      }),
+    ).resolves.toEqual({
+      branch: null,
+      worktreePath: null,
+      envMode: "worktree",
+    });
+  });
 });
