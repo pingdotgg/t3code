@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { memo } from "react";
 import { EllipsisIcon, ListTodoIcon } from "lucide-react";
-import { CODEX_REASONING_EFFORT_LABELS } from "../../codexReasoningEffort";
+import { CODEX_REASONING_EFFORT_LABELS } from "@t3tools/contracts";
 import { Button } from "../ui/button";
 import {
   Menu,

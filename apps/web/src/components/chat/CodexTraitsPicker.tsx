@@ -1,7 +1,7 @@
 import { type CodexReasoningEffort } from "@t3tools/contracts";
 import { memo, useState } from "react";
 import { ChevronDownIcon } from "lucide-react";
-import { CODEX_REASONING_EFFORT_LABELS } from "../../codexReasoningEffort";
+import { CODEX_REASONING_EFFORT_LABELS } from "@t3tools/contracts";
 import { Button } from "../ui/button";
 import {
   Menu,
