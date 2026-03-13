@@ -2,9 +2,9 @@ import { useCallback } from "react";
 import { useAppSettings } from "~/appSettings";
 import { isElectron } from "~/env";
 
-type TrayState = [boolean, (enabled: boolean) => void];
+type TrayEnabledState = [boolean, (enabled: boolean) => void];
 
-export function useTray(): TrayState {
+export function useTrayEnabled(): TrayEnabledState {
   if (!isElectron) return [false, () => {}];
   const bridge = window.desktopBridge;
   if (!bridge) return [false, () => {}];

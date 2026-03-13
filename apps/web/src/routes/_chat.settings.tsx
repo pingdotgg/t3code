@@ -21,7 +21,7 @@ import {
 import { Switch } from "../components/ui/switch";
 import { APP_VERSION } from "../branding";
 import { SidebarInset } from "~/components/ui/sidebar";
-import { useTray } from "~/hooks/useTray";
+import { useTrayEnabled } from "~/hooks/useTrayEnabled";
 
 const THEME_OPTIONS = [
   {
@@ -108,7 +108,7 @@ function SettingsRouteView() {
     Partial<Record<ProviderKind, string | null>>
   >({});
 
-  const [isTrayEnabled, setTrayEnabled] = useTray();
+  const [isTrayEnabled, setTrayEnabled] = useTrayEnabled();
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
