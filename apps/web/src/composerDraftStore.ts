@@ -343,7 +343,7 @@ function normalizeDiffContextCommentDraft(value: unknown): DiffContextCommentDra
     id.length === 0 ||
     typeof threadId !== "string" ||
     threadId.length === 0 ||
-    !(turnId === null || typeof turnId === "string") ||
+    !(turnId === null || (typeof turnId === "string" && turnId.length > 0)) ||
     typeof filePath !== "string" ||
     filePath.length === 0 ||
     typeof lineStart !== "number" ||
