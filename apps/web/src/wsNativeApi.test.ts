@@ -1,6 +1,5 @@
 import {
   CommandId,
-  type ContextMenuItem,
   EventId,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
@@ -18,13 +17,6 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
-const showContextMenuFallbackMock =
-  vi.fn<
-    <T extends string>(
-      items: readonly ContextMenuItem<T>[],
-      position?: { x: number; y: number },
-    ) => Promise<T | null>
-  >();
 const channelListeners = new Map<string, Set<(message: WsPush) => void>>();
 const latestPushByChannel = new Map<string, WsPush>();
 const subscribeMock = vi.fn<
@@ -61,10 +53,6 @@ vi.mock("./wsTransport", () => {
   };
 });
 
-vi.mock("./contextMenuFallback", () => ({
-  showContextMenuFallback: showContextMenuFallbackMock,
-}));
-
 let nextPushSequence = 1;
 
 function emitPush<C extends WsPushChannel>(channel: C, data: WsPushData<C>): void {
@@ -82,16 +70,6 @@ function emitPush<C extends WsPushChannel>(channel: C, data: WsPushData<C>): voi
   }
 }
 
-function getWindowForTest(): Window & typeof globalThis & { desktopBridge?: unknown } {
-  const testGlobal = globalThis as typeof globalThis & {
-    window?: Window & typeof globalThis & { desktopBridge?: unknown };
-  };
-  if (!testGlobal.window) {
-    testGlobal.window = {} as Window & typeof globalThis & { desktopBridge?: unknown };
-  }
-  return testGlobal.window;
-}
-
 const defaultProviders: ReadonlyArray<ServerProviderStatus> = [
   {
     provider: "codex",
@@ -105,12 +83,10 @@ const defaultProviders: ReadonlyArray<ServerProviderStatus> = [
 beforeEach(() => {
   vi.resetModules();
   requestMock.mockReset();
-  showContextMenuFallbackMock.mockReset();
   subscribeMock.mockClear();
   channelListeners.clear();
   latestPushByChannel.clear();
   nextPushSequence = 1;
-  Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
 });
 
 afterEach(() => {
@@ -334,49 +310,5 @@ describe("wsNativeApi", () => {
       threadId: "thread-1",
       toTurnCount: 1,
     });
-  });
-
-  it("uses fallback context menu even when desktop bridge is available", async () => {
-    showContextMenuFallbackMock.mockResolvedValue("delete");
-    Object.defineProperty(getWindowForTest(), "desktopBridge", {
-      configurable: true,
-      writable: true,
-      value: {},
-    });
-
-    const { createWsNativeApi } = await import("./wsNativeApi");
-    const api = createWsNativeApi();
-    await api.contextMenu.show(
-      [
-        { id: "rename", label: "Rename thread" },
-        { id: "delete", label: "Delete", destructive: true },
-      ],
-      { x: 200, y: 300 },
-    );
-
-    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(
-      [
-        { id: "rename", label: "Rename thread" },
-        { id: "delete", label: "Delete", destructive: true },
-      ],
-      { x: 200, y: 300 },
-    );
-  });
-
-  it("uses fallback context menu when desktop bridge is unavailable", async () => {
-    showContextMenuFallbackMock.mockResolvedValue("delete");
-    Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
-
-    const { createWsNativeApi } = await import("./wsNativeApi");
-    const api = createWsNativeApi();
-    await api.contextMenu.show([{ id: "delete", label: "Delete", destructive: true }], {
-      x: 20,
-      y: 30,
-    });
-
-    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(
-      [{ id: "delete", label: "Delete", destructive: true }],
-      { x: 20, y: 30 },
-    );
   });
 });

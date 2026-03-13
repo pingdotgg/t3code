@@ -1,7 +1,6 @@
 import {
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
-  type ContextMenuItem,
   type NativeApi,
   ServerConfigUpdatedPayload,
   WS_CHANNELS,
@@ -9,7 +8,6 @@ import {
   type WsWelcomePayload,
 } from "@t3tools/contracts";
 
-import { showContextMenuFallback } from "./contextMenuFallback";
 import { WsTransport } from "./wsTransport";
 
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
@@ -145,17 +143,6 @@ export function createWsNativeApi(): NativeApi {
       resolvePullRequest: (input) => transport.request(WS_METHODS.gitResolvePullRequest, input),
       preparePullRequestThread: (input) =>
         transport.request(WS_METHODS.gitPreparePullRequestThread, input),
-    },
-    contextMenu: {
-      show: async <T extends string>(
-        items: readonly ContextMenuItem<T>[],
-        position?: { x: number; y: number },
-      ): Promise<T | null> => {
-        // Use the in-app menu on desktop too. Native Electron menus render an
-        // additional composited surface in the frameless window that clashes
-        // with the app UI and cannot be styled away from the renderer.
-        return showContextMenuFallback(items, position);
-      },
     },
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),

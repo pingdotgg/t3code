@@ -11,6 +11,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { flushSync } from "react-dom";
 import {
   DndContext,
   type DragCancelEvent,
@@ -64,6 +65,13 @@ import {
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent } from "./ui/collapsible";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuPopup,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "./ui/context-menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -118,6 +126,9 @@ interface PrStatusIndicator {
 }
 
 type ThreadPr = GitStatusResult["pr"];
+type ThreadContextMenuMode = "single" | "multi";
+type ThreadContextAction = "rename" | "mark-unread" | "copy-thread-id" | "delete";
+type ProjectContextAction = "delete";
 
 function terminalStatusFromRunningIds(
   runningTerminalIds: string[],
@@ -294,6 +305,10 @@ export default function Sidebar() {
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
+  const [activeThreadContextMenu, setActiveThreadContextMenu] = useState<{
+    threadId: ThreadId;
+    mode: ThreadContextMenuMode;
+  } | null>(null);
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const dragInProgressRef = useRef(false);
@@ -681,38 +696,28 @@ export default function Sidebar() {
       });
     },
   });
-  const handleThreadContextMenu = useCallback(
-    async (threadId: ThreadId, position: { x: number; y: number }) => {
+  const handleThreadContextAction = useCallback(
+    async (threadId: ThreadId, action: ThreadContextAction) => {
       const api = readNativeApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "rename", label: "Rename thread" },
-          { id: "mark-unread", label: "Mark unread" },
-          { id: "copy-thread-id", label: "Copy Thread ID" },
-          { id: "delete", label: "Delete", destructive: true },
-        ],
-        position,
-      );
       const thread = threads.find((t) => t.id === threadId);
       if (!thread) return;
 
-      if (clicked === "rename") {
+      if (action === "rename") {
         setRenamingThreadId(threadId);
         setRenamingTitle(thread.title);
         renamingCommittedRef.current = false;
         return;
       }
 
-      if (clicked === "mark-unread") {
+      if (action === "mark-unread") {
         markThreadUnread(threadId);
         return;
       }
-      if (clicked === "copy-thread-id") {
+      if (action === "copy-thread-id") {
         copyToClipboard(threadId, { threadId });
         return;
       }
-      if (clicked !== "delete") return;
       if (appSettings.confirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
           [
@@ -729,31 +734,21 @@ export default function Sidebar() {
     [appSettings.confirmThreadDelete, copyToClipboard, deleteThread, markThreadUnread, threads],
   );
 
-  const handleMultiSelectContextMenu = useCallback(
-    async (position: { x: number; y: number }) => {
+  const handleMultiSelectContextAction = useCallback(
+    async (action: "mark-unread" | "delete") => {
       const api = readNativeApi();
       if (!api) return;
       const ids = [...selectedThreadIds];
       if (ids.length === 0) return;
       const count = ids.length;
 
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "mark-unread", label: `Mark unread (${count})` },
-          { id: "delete", label: `Delete (${count})`, destructive: true },
-        ],
-        position,
-      );
-
-      if (clicked === "mark-unread") {
+      if (action === "mark-unread") {
         for (const id of ids) {
           markThreadUnread(id);
         }
         clearSelection();
         return;
       }
-
-      if (clicked !== "delete") return;
 
       if (appSettings.confirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
@@ -819,15 +814,11 @@ export default function Sidebar() {
     ],
   );
 
-  const handleProjectContextMenu = useCallback(
-    async (projectId: ProjectId, position: { x: number; y: number }) => {
+  const handleProjectContextAction = useCallback(
+    async (projectId: ProjectId, action: ProjectContextAction) => {
       const api = readNativeApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [{ id: "delete", label: "Remove project", destructive: true }],
-        position,
-      );
-      if (clicked !== "delete") return;
+      if (action !== "delete") return;
 
       const project = projects.find((entry) => entry.id === projectId);
       if (!project) return;
@@ -874,6 +865,27 @@ export default function Sidebar() {
       threads,
     ],
   );
+
+  const prepareThreadContextMenu = useCallback(
+    (event: MouseEvent<HTMLElement>, threadId: ThreadId) => {
+      event.stopPropagation();
+
+      const mode: ThreadContextMenuMode =
+        selectedThreadIds.size > 0 && selectedThreadIds.has(threadId) ? "multi" : "single";
+
+      flushSync(() => {
+        if (mode === "single" && selectedThreadIds.size > 0) {
+          clearSelection();
+        }
+        setActiveThreadContextMenu({ threadId, mode });
+      });
+    },
+    [clearSelection, selectedThreadIds],
+  );
+
+  const clearActiveThreadContextMenu = useCallback((threadId: ThreadId) => {
+    setActiveThreadContextMenu((current) => (current?.threadId === threadId ? null : current));
+  }, []);
 
   const projectDnDSensors = useSensors(
     useSensor(PointerSensor, {
@@ -1314,33 +1326,46 @@ export default function Sidebar() {
                       {(dragHandleProps) => (
                         <Collapsible className="group/collapsible" open={project.expanded}>
                           <div className="group/project-header relative">
-                            <SidebarMenuButton
-                              size="sm"
-                              className="gap-2 px-2 py-1.5 text-left cursor-grab active:cursor-grabbing hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
-                              {...dragHandleProps.attributes}
-                              {...dragHandleProps.listeners}
-                              onPointerDownCapture={handleProjectTitlePointerDownCapture}
-                              onClick={(event) => handleProjectTitleClick(event, project.id)}
-                              onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
-                              onContextMenu={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                void handleProjectContextMenu(project.id, {
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                });
-                              }}
-                            >
-                              <ChevronRightIcon
-                                className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
-                                  project.expanded ? "rotate-90" : ""
-                                }`}
-                              />
-                              <ProjectFavicon cwd={project.cwd} />
-                              <span className="flex-1 truncate text-xs font-medium text-foreground/90">
-                                {project.name}
-                              </span>
-                            </SidebarMenuButton>
+                            <ContextMenu>
+                              <ContextMenuTrigger
+                                render={
+                                  <SidebarMenuButton
+                                    size="sm"
+                                    className="gap-2 px-2 py-1.5 text-left cursor-grab active:cursor-grabbing hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
+                                    {...dragHandleProps.attributes}
+                                    {...dragHandleProps.listeners}
+                                    onPointerDownCapture={handleProjectTitlePointerDownCapture}
+                                    onClick={(event) => handleProjectTitleClick(event, project.id)}
+                                    onKeyDown={(event) =>
+                                      handleProjectTitleKeyDown(event, project.id)
+                                    }
+                                  />
+                                }
+                                onContextMenu={(event) => {
+                                  event.stopPropagation();
+                                }}
+                              >
+                                <ChevronRightIcon
+                                  className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
+                                    project.expanded ? "rotate-90" : ""
+                                  }`}
+                                />
+                                <ProjectFavicon cwd={project.cwd} />
+                                <span className="flex-1 truncate text-xs font-medium text-foreground/90">
+                                  {project.name}
+                                </span>
+                              </ContextMenuTrigger>
+                              <ContextMenuPopup>
+                                <ContextMenuItem
+                                  variant="destructive"
+                                  onClick={() => {
+                                    void handleProjectContextAction(project.id, "delete");
+                                  }}
+                                >
+                                  Remove project
+                                </ContextMenuItem>
+                              </ContextMenuPopup>
+                            </ContextMenu>
                             <Tooltip>
                               <TooltipTrigger
                                 render={
@@ -1381,6 +1406,12 @@ export default function Sidebar() {
                               {visibleThreads.map((thread) => {
                                 const isActive = routeThreadId === thread.id;
                                 const isSelected = selectedThreadIds.has(thread.id);
+                                const threadContextMenuMode =
+                                  activeThreadContextMenu?.threadId === thread.id
+                                    ? activeThreadContextMenu.mode
+                                    : isSelected && selectedThreadIds.size > 0
+                                      ? "multi"
+                                      : "single";
                                 const isHighlighted = isActive || isSelected;
                                 const threadStatus = resolveThreadStatusPill({
                                   thread,
@@ -1403,160 +1434,217 @@ export default function Sidebar() {
                                     className="w-full"
                                     data-thread-item
                                   >
-                                    <SidebarMenuSubButton
-                                      render={<div role="button" tabIndex={0} />}
-                                      size="sm"
-                                      isActive={isActive}
-                                      className={resolveThreadRowClassName({
-                                        isActive,
-                                        isSelected,
-                                      })}
-                                      onClick={(event) => {
-                                        handleThreadClick(
-                                          event,
-                                          thread.id,
-                                          orderedProjectThreadIds,
-                                        );
-                                      }}
-                                      onKeyDown={(event) => {
-                                        if (event.key !== "Enter" && event.key !== " ") return;
-                                        event.preventDefault();
-                                        if (selectedThreadIds.size > 0) {
-                                          clearSelection();
-                                        }
-                                        setSelectionAnchor(thread.id);
-                                        void navigate({
-                                          to: "/$threadId",
-                                          params: { threadId: thread.id },
-                                        });
-                                      }}
-                                      onContextMenu={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                        if (
-                                          selectedThreadIds.size > 0 &&
-                                          selectedThreadIds.has(thread.id)
-                                        ) {
-                                          void handleMultiSelectContextMenu({
-                                            x: event.clientX,
-                                            y: event.clientY,
-                                          });
-                                        } else {
-                                          if (selectedThreadIds.size > 0) {
-                                            clearSelection();
-                                          }
-                                          void handleThreadContextMenu(thread.id, {
-                                            x: event.clientX,
-                                            y: event.clientY,
-                                          });
+                                    <ContextMenu
+                                      onOpenChange={(open) => {
+                                        if (!open) {
+                                          clearActiveThreadContextMenu(thread.id);
                                         }
                                       }}
                                     >
-                                      <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-                                        {prStatus && (
-                                          <Tooltip>
-                                            <TooltipTrigger
-                                              render={
-                                                <button
-                                                  type="button"
-                                                  aria-label={prStatus.tooltip}
-                                                  className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
-                                                  onClick={(event) => {
-                                                    openPrLink(event, prStatus.url);
-                                                  }}
-                                                >
-                                                  <GitPullRequestIcon className="size-3" />
-                                                </button>
-                                              }
-                                            />
-                                            <TooltipPopup side="top">
-                                              {prStatus.tooltip}
-                                            </TooltipPopup>
-                                          </Tooltip>
-                                        )}
-                                        {threadStatus && (
-                                          <span
-                                            className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
-                                          >
-                                            <span
-                                              className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
-                                                threadStatus.pulse ? "animate-pulse" : ""
-                                              }`}
-                                            />
-                                            <span className="hidden md:inline">
-                                              {threadStatus.label}
-                                            </span>
-                                          </span>
-                                        )}
-                                        {renamingThreadId === thread.id ? (
-                                          <input
-                                            ref={(el) => {
-                                              if (el && renamingInputRef.current !== el) {
-                                                renamingInputRef.current = el;
-                                                el.focus();
-                                                el.select();
-                                              }
+                                      <ContextMenuTrigger
+                                        render={
+                                          <SidebarMenuSubButton
+                                            render={<div role="button" tabIndex={0} />}
+                                            size="sm"
+                                            isActive={isActive}
+                                            className={resolveThreadRowClassName({
+                                              isActive,
+                                              isSelected,
+                                            })}
+                                            onClick={(event) => {
+                                              handleThreadClick(
+                                                event,
+                                                thread.id,
+                                                orderedProjectThreadIds,
+                                              );
                                             }}
-                                            className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
-                                            value={renamingTitle}
-                                            onChange={(e) => setRenamingTitle(e.target.value)}
-                                            onKeyDown={(e) => {
-                                              e.stopPropagation();
-                                              if (e.key === "Enter") {
-                                                e.preventDefault();
-                                                renamingCommittedRef.current = true;
-                                                void commitRename(
-                                                  thread.id,
-                                                  renamingTitle,
-                                                  thread.title,
-                                                );
-                                              } else if (e.key === "Escape") {
-                                                e.preventDefault();
-                                                renamingCommittedRef.current = true;
-                                                cancelRename();
+                                            onKeyDown={(event) => {
+                                              if (event.key !== "Enter" && event.key !== " ") {
+                                                return;
                                               }
-                                            }}
-                                            onBlur={() => {
-                                              if (!renamingCommittedRef.current) {
-                                                void commitRename(
-                                                  thread.id,
-                                                  renamingTitle,
-                                                  thread.title,
-                                                );
+                                              event.preventDefault();
+                                              if (selectedThreadIds.size > 0) {
+                                                clearSelection();
                                               }
+                                              setSelectionAnchor(thread.id);
+                                              void navigate({
+                                                to: "/$threadId",
+                                                params: { threadId: thread.id },
+                                              });
                                             }}
-                                            onClick={(e) => e.stopPropagation()}
                                           />
-                                        ) : (
-                                          <span className="min-w-0 flex-1 truncate text-xs">
-                                            {thread.title}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                                        {terminalStatus && (
-                                          <span
-                                            role="img"
-                                            aria-label={terminalStatus.label}
-                                            title={terminalStatus.label}
-                                            className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-                                          >
-                                            <TerminalIcon
-                                              className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
+                                        }
+                                        onContextMenu={(event) => {
+                                          prepareThreadContextMenu(event, thread.id);
+                                        }}
+                                      >
+                                        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                                          {prStatus && (
+                                            <Tooltip>
+                                              <TooltipTrigger
+                                                render={
+                                                  <button
+                                                    type="button"
+                                                    aria-label={prStatus.tooltip}
+                                                    className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                                                    onClick={(event) => {
+                                                      openPrLink(event, prStatus.url);
+                                                    }}
+                                                  >
+                                                    <GitPullRequestIcon className="size-3" />
+                                                  </button>
+                                                }
+                                              />
+                                              <TooltipPopup side="top">
+                                                {prStatus.tooltip}
+                                              </TooltipPopup>
+                                            </Tooltip>
+                                          )}
+                                          {threadStatus && (
+                                            <span
+                                              className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
+                                            >
+                                              <span
+                                                className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
+                                                  threadStatus.pulse ? "animate-pulse" : ""
+                                                }`}
+                                              />
+                                              <span className="hidden md:inline">
+                                                {threadStatus.label}
+                                              </span>
+                                            </span>
+                                          )}
+                                          {renamingThreadId === thread.id ? (
+                                            <input
+                                              ref={(el) => {
+                                                if (el && renamingInputRef.current !== el) {
+                                                  renamingInputRef.current = el;
+                                                  el.focus();
+                                                  el.select();
+                                                }
+                                              }}
+                                              className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
+                                              value={renamingTitle}
+                                              onChange={(e) => setRenamingTitle(e.target.value)}
+                                              onKeyDown={(e) => {
+                                                e.stopPropagation();
+                                                if (e.key === "Enter") {
+                                                  e.preventDefault();
+                                                  renamingCommittedRef.current = true;
+                                                  void commitRename(
+                                                    thread.id,
+                                                    renamingTitle,
+                                                    thread.title,
+                                                  );
+                                                } else if (e.key === "Escape") {
+                                                  e.preventDefault();
+                                                  renamingCommittedRef.current = true;
+                                                  cancelRename();
+                                                }
+                                              }}
+                                              onBlur={() => {
+                                                if (!renamingCommittedRef.current) {
+                                                  void commitRename(
+                                                    thread.id,
+                                                    renamingTitle,
+                                                    thread.title,
+                                                  );
+                                                }
+                                              }}
+                                              onClick={(e) => e.stopPropagation()}
                                             />
+                                          ) : (
+                                            <span className="min-w-0 flex-1 truncate text-xs">
+                                              {thread.title}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                                          {terminalStatus && (
+                                            <span
+                                              role="img"
+                                              aria-label={terminalStatus.label}
+                                              title={terminalStatus.label}
+                                              className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+                                            >
+                                              <TerminalIcon
+                                                className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
+                                              />
+                                            </span>
+                                          )}
+                                          <span
+                                            className={`text-[10px] ${
+                                              isHighlighted
+                                                ? "text-foreground/72 dark:text-foreground/82"
+                                                : "text-muted-foreground/40"
+                                            }`}
+                                          >
+                                            {formatRelativeTime(thread.createdAt)}
                                           </span>
+                                        </div>
+                                      </ContextMenuTrigger>
+                                      <ContextMenuPopup>
+                                        {threadContextMenuMode === "multi" ? (
+                                          <>
+                                            <ContextMenuItem
+                                              onClick={() => {
+                                                void handleMultiSelectContextAction("mark-unread");
+                                              }}
+                                            >
+                                              Mark unread ({selectedThreadIds.size})
+                                            </ContextMenuItem>
+                                            <ContextMenuSeparator />
+                                            <ContextMenuItem
+                                              variant="destructive"
+                                              onClick={() => {
+                                                void handleMultiSelectContextAction("delete");
+                                              }}
+                                            >
+                                              Delete ({selectedThreadIds.size})
+                                            </ContextMenuItem>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <ContextMenuItem
+                                              onClick={() => {
+                                                void handleThreadContextAction(thread.id, "rename");
+                                              }}
+                                            >
+                                              Rename thread
+                                            </ContextMenuItem>
+                                            <ContextMenuItem
+                                              onClick={() => {
+                                                void handleThreadContextAction(
+                                                  thread.id,
+                                                  "mark-unread",
+                                                );
+                                              }}
+                                            >
+                                              Mark unread
+                                            </ContextMenuItem>
+                                            <ContextMenuItem
+                                              onClick={() => {
+                                                void handleThreadContextAction(
+                                                  thread.id,
+                                                  "copy-thread-id",
+                                                );
+                                              }}
+                                            >
+                                              Copy Thread ID
+                                            </ContextMenuItem>
+                                            <ContextMenuSeparator />
+                                            <ContextMenuItem
+                                              variant="destructive"
+                                              onClick={() => {
+                                                void handleThreadContextAction(thread.id, "delete");
+                                              }}
+                                            >
+                                              Delete
+                                            </ContextMenuItem>
+                                          </>
                                         )}
-                                        <span
-                                          className={`text-[10px] ${
-                                            isHighlighted
-                                              ? "text-foreground/72 dark:text-foreground/82"
-                                              : "text-muted-foreground/40"
-                                          }`}
-                                        >
-                                          {formatRelativeTime(thread.createdAt)}
-                                        </span>
-                                      </div>
-                                    </SidebarMenuSubButton>
+                                      </ContextMenuPopup>
+                                    </ContextMenu>
                                   </SidebarMenuSubItem>
                                 );
                               })}
