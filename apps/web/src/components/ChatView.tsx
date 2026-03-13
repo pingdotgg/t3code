@@ -190,17 +190,6 @@ interface ChatViewProps {
   threadId: ThreadId;
 }
 
-function extendReplacementRangeForTrailingSpace(
-  text: string,
-  rangeEnd: number,
-  replacement: string,
-): number {
-  if (!replacement.endsWith(" ")) {
-    return rangeEnd;
-  }
-  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
-}
-
 export default function ChatView({ threadId }: ChatViewProps) {
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
