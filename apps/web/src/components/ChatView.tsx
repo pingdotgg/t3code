@@ -2034,6 +2034,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const addComposerImages = (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
 
+    if (pendingUserInputs.length > 0) {
+      toastManager.add({
+        type: "error",
+        title: "Attach images after answering plan questions.",
+      });
+      return;
+    }
+
     const nextImages: ComposerImageAttachment[] = [];
     let nextImageCount = composerImagesRef.current.length;
     let error: string | null = null;
