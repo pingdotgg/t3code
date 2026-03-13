@@ -1,3 +1,4 @@
+import { WS_CHANNELS } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WsTransport } from "./wsTransport";
@@ -90,18 +91,24 @@ describe("WsTransport", () => {
     socket.open();
 
     const listener = vi.fn();
-    transport.subscribe("providers.event", listener);
+    transport.subscribe(WS_CHANNELS.serverConfigUpdated, listener);
 
     socket.serverMessage(
       JSON.stringify({
         type: "push",
-        channel: "providers.event",
-        data: { status: "ok" },
+        sequence: 1,
+        channel: WS_CHANNELS.serverConfigUpdated,
+        data: { issues: [], providers: [] },
       }),
     );
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith({ status: "ok" });
+    expect(listener).toHaveBeenCalledWith({
+      type: "push",
+      sequence: 1,
+      channel: WS_CHANNELS.serverConfigUpdated,
+      data: { issues: [], providers: [] },
+    });
 
     transport.dispose();
   });
@@ -137,12 +144,13 @@ describe("WsTransport", () => {
     socket.open();
 
     const listener = vi.fn();
-    transport.subscribe("providers.event", listener);
+    transport.subscribe(WS_CHANNELS.serverConfigUpdated, listener);
 
     socket.serverMessage("{ invalid-json");
     socket.serverMessage(
       JSON.stringify({
         type: "push",
+        sequence: 2,
         channel: 42,
         data: { bad: true },
       }),
@@ -150,26 +158,52 @@ describe("WsTransport", () => {
     socket.serverMessage(
       JSON.stringify({
         type: "push",
-        channel: "providers.event",
-        data: { ok: true },
+        sequence: 3,
+        channel: WS_CHANNELS.serverConfigUpdated,
+        data: { issues: [], providers: [] },
       }),
     );
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith({ ok: true });
+    expect(listener).toHaveBeenCalledWith({
+      type: "push",
+      sequence: 3,
+      channel: WS_CHANNELS.serverConfigUpdated,
+      data: { issues: [], providers: [] },
+    });
     expect(warnSpy).toHaveBeenCalledTimes(2);
-    expect(warnSpy).toHaveBeenNthCalledWith(1, "Dropped inbound WebSocket envelope", {
-      reason: "decode-failed",
-      issue:
-        "SchemaError: SyntaxError: Expected property name or '}' in JSON at position 2 (line 1 column 3)",
-      raw: "{ invalid-json",
-    });
-    expect(warnSpy).toHaveBeenNthCalledWith(2, "Dropped inbound WebSocket envelope", {
-      reason: "decode-failed",
-      issue: expect.stringContaining("SchemaError: Expected string, got 42"),
-      raw: '{"type":"push","channel":42,"data":{"bad":true}}',
-    });
+    expect(warnSpy).toHaveBeenNthCalledWith(
+      1,
+      "Dropped inbound WebSocket envelope",
+      "SyntaxError: Expected property name or '}' in JSON at position 2 (line 1 column 3)",
+    );
+    expect(warnSpy).toHaveBeenNthCalledWith(
+      2,
+      "Dropped inbound WebSocket envelope",
+      expect.stringContaining('Expected "server.configUpdated"'),
+    );
 
+    transport.dispose();
+  });
+
+  it("queues requests until the websocket opens", async () => {
+    const transport = new WsTransport("ws://localhost:3020");
+    const socket = getSocket();
+
+    const requestPromise = transport.request("projects.list");
+    expect(socket.sent).toHaveLength(0);
+
+    socket.open();
+    expect(socket.sent).toHaveLength(1);
+    const requestEnvelope = JSON.parse(socket.sent[0] ?? "{}") as { id: string };
+    socket.serverMessage(
+      JSON.stringify({
+        id: requestEnvelope.id,
+        result: { projects: [] },
+      }),
+    );
+
+    await expect(requestPromise).resolves.toEqual({ projects: [] });
     transport.dispose();
   });
 });
