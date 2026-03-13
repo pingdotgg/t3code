@@ -12,6 +12,8 @@ import {
   useState,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { Button } from "~/components/ui/button";
+import { type TerminalContextSelection } from "~/lib/terminalContext";
 import { openInPreferredEditor } from "../editorPreferences";
 import {
   extractTerminalLinks,
@@ -110,9 +112,11 @@ function terminalThemeFromApp(): ITheme {
 interface TerminalViewportProps {
   threadId: ThreadId;
   terminalId: string;
+  terminalLabel: string;
   cwd: string;
   runtimeEnv?: Record<string, string>;
   onSessionExited: () => void;
+  onAddTerminalContext: (selection: TerminalContextSelection) => void;
   focusRequestId: number;
   autoFocus: boolean;
   resizeEpoch: number;
@@ -122,9 +126,11 @@ interface TerminalViewportProps {
 function TerminalViewport({
   threadId,
   terminalId,
+  terminalLabel,
   cwd,
   runtimeEnv,
   onSessionExited,
+  onAddTerminalContext,
   focusRequestId,
   autoFocus,
   resizeEpoch,
@@ -135,6 +141,12 @@ function TerminalViewport({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onSessionExitedRef = useRef(onSessionExited);
   const hasHandledExitRef = useRef(false);
+  const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const [selectionAction, setSelectionAction] = useState<{
+    left: number;
+    top: number;
+    selection: TerminalContextSelection;
+  } | null>(null);
 
   useEffect(() => {
     onSessionExitedRef.current = onSessionExited;
@@ -164,6 +176,45 @@ function TerminalViewport({
 
     const api = readNativeApi();
     if (!api) return;
+
+    const clearSelectionAction = () => {
+      setSelectionAction(null);
+    };
+
+    const updateSelectionAction = () => {
+      const activeTerminal = terminalRef.current;
+      const mountElement = containerRef.current;
+      if (!activeTerminal || !mountElement || !activeTerminal.hasSelection()) {
+        clearSelectionAction();
+        return;
+      }
+      const selectionText = activeTerminal.getSelection();
+      const selectionPosition = activeTerminal.getSelectionPosition();
+      const normalizedText = selectionText.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
+      if (!selectionPosition || normalizedText.length === 0) {
+        clearSelectionAction();
+        return;
+      }
+      const lineStart = selectionPosition.start.y + 1;
+      const lineCount = normalizedText.split("\n").length;
+      const lineEnd = Math.max(lineStart, lineStart + lineCount - 1);
+      const bounds = mountElement.getBoundingClientRect();
+      const pointer = selectionPointerRef.current;
+      const preferredLeft =
+        pointer === null ? bounds.width - 116 : Math.round(pointer.x - bounds.left);
+      const preferredTop = pointer === null ? 12 : Math.round(pointer.y - bounds.top - 40);
+      setSelectionAction({
+        left: Math.max(8, Math.min(preferredLeft, Math.max(bounds.width - 116, 8))),
+        top: Math.max(8, Math.min(preferredTop, Math.max(bounds.height - 36, 8))),
+        selection: {
+          terminalId,
+          terminalLabel,
+          lineStart,
+          lineEnd,
+          text: normalizedText,
+        },
+      });
+    };
 
     const sendTerminalInput = async (data: string, fallbackError: string) => {
       const activeTerminal = terminalRef.current;
@@ -259,6 +310,20 @@ function TerminalViewport({
         );
     });
 
+    const selectionDisposable = terminal.onSelectionChange(() => {
+      window.requestAnimationFrame(updateSelectionAction);
+    });
+
+    const handleMouseUp = (event: MouseEvent) => {
+      selectionPointerRef.current = { x: event.clientX, y: event.clientY };
+      window.requestAnimationFrame(updateSelectionAction);
+    };
+    const handlePointerDown = () => {
+      clearSelectionAction();
+    };
+    mount.addEventListener("mouseup", handleMouseUp);
+    mount.addEventListener("pointerdown", handlePointerDown);
+
     const themeObserver = new MutationObserver(() => {
       const activeTerminal = terminalRef.current;
       if (!activeTerminal) return;
@@ -310,11 +375,13 @@ function TerminalViewport({
 
       if (event.type === "output") {
         activeTerminal.write(event.data);
+        clearSelectionAction();
         return;
       }
 
       if (event.type === "started" || event.type === "restarted") {
         hasHandledExitRef.current = false;
+        clearSelectionAction();
         activeTerminal.write("\u001bc");
         if (event.snapshot.history.length > 0) {
           activeTerminal.write(event.snapshot.history);
@@ -323,6 +390,7 @@ function TerminalViewport({
       }
 
       if (event.type === "cleared") {
+        clearSelectionAction();
         activeTerminal.clear();
         activeTerminal.write("\u001bc");
         return;
@@ -383,7 +451,10 @@ function TerminalViewport({
       window.clearTimeout(fitTimer);
       unsubscribe();
       inputDisposable.dispose();
+      selectionDisposable.dispose();
       terminalLinksDisposable.dispose();
+      mount.removeEventListener("mouseup", handleMouseUp);
+      mount.removeEventListener("pointerdown", handlePointerDown);
       themeObserver.disconnect();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -430,7 +501,41 @@ function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, resizeEpoch, terminalId, threadId]);
-  return <div ref={containerRef} className="h-full w-full overflow-hidden rounded-[4px]" />;
+  return (
+    <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-[4px]">
+      {selectionAction ? (
+        <div
+          className="absolute z-20"
+          style={{ left: `${selectionAction.left}px`, top: `${selectionAction.top}px` }}
+        >
+          <div className="rounded-full border border-border/80 bg-background/95 p-1 shadow-lg backdrop-blur">
+            <Button
+              type="button"
+              size="xs"
+              variant="secondary"
+              className="rounded-full px-3"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={() => {
+                onAddTerminalContext(selectionAction.selection);
+                terminalRef.current?.clearSelection();
+                setSelectionAction(null);
+                terminalRef.current?.focus();
+              }}
+            >
+              Add to chat
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 interface ThreadTerminalDrawerProps {
@@ -451,6 +556,7 @@ interface ThreadTerminalDrawerProps {
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
+  onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
 interface TerminalActionButtonProps {
@@ -500,6 +606,7 @@ export default function ThreadTerminalDrawer({
   onActiveTerminalChange,
   onCloseTerminal,
   onHeightChange,
+  onAddTerminalContext,
 }: ThreadTerminalDrawerProps) {
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
   const [resizeEpoch, setResizeEpoch] = useState(0);
@@ -796,9 +903,11 @@ export default function ThreadTerminalDrawer({
                       <TerminalViewport
                         threadId={threadId}
                         terminalId={terminalId}
+                        terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
                         cwd={cwd}
                         {...(runtimeEnv ? { runtimeEnv } : {})}
                         onSessionExited={() => onCloseTerminal(terminalId)}
+                        onAddTerminalContext={onAddTerminalContext}
                         focusRequestId={focusRequestId}
                         autoFocus={terminalId === resolvedActiveTerminalId}
                         resizeEpoch={resizeEpoch}
@@ -814,9 +923,11 @@ export default function ThreadTerminalDrawer({
                   key={resolvedActiveTerminalId}
                   threadId={threadId}
                   terminalId={resolvedActiveTerminalId}
+                  terminalLabel={terminalLabelById.get(resolvedActiveTerminalId) ?? "Terminal"}
                   cwd={cwd}
                   {...(runtimeEnv ? { runtimeEnv } : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
+                  onAddTerminalContext={onAddTerminalContext}
                   focusRequestId={focusRequestId}
                   autoFocus
                   resizeEpoch={resizeEpoch}

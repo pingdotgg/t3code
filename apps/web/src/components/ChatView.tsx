@@ -127,6 +127,12 @@ import {
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../composerDraftStore";
+import {
+  appendTerminalContextsToPrompt,
+  formatTerminalContextLabel,
+  type TerminalContextDraft,
+  type TerminalContextSelection,
+} from "../lib/terminalContext";
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
@@ -140,6 +146,7 @@ import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalAc
 import { CodexTraitsPicker } from "./chat/CodexTraitsPicker";
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
+import { ComposerPendingTerminalContexts } from "./chat/ComposerPendingTerminalContexts";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
 import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
@@ -209,6 +216,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const composerDraft = useComposerThreadDraft(threadId);
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
+  const composerTerminalContexts = composerDraft.terminalContexts;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const setComposerDraftProvider = useComposerDraftStore((store) => store.setProvider);
@@ -222,6 +230,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
+  const addComposerDraftTerminalContext = useComposerDraftStore(
+    (store) => store.addTerminalContext,
+  );
+  const addComposerDraftTerminalContexts = useComposerDraftStore(
+    (store) => store.addTerminalContexts,
+  );
+  const removeComposerDraftTerminalContext = useComposerDraftStore(
+    (store) => store.removeTerminalContext,
+  );
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
   );
@@ -247,6 +264,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
+  const composerTerminalContextsRef = useRef<TerminalContextDraft[]>(composerTerminalContexts);
   const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
     Record<ThreadId, string | null>
   >({});
@@ -349,11 +367,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [addComposerDraftImages, threadId],
   );
+  const addComposerTerminalContextsToDraft = useCallback(
+    (contexts: TerminalContextDraft[]) => {
+      addComposerDraftTerminalContexts(threadId, contexts);
+    },
+    [addComposerDraftTerminalContexts, threadId],
+  );
   const removeComposerImageFromDraft = useCallback(
     (imageId: string) => {
       removeComposerDraftImage(threadId, imageId);
     },
     [removeComposerDraftImage, threadId],
+  );
+  const removeComposerTerminalContextFromDraft = useCallback(
+    (contextId: string) => {
+      removeComposerDraftTerminalContext(threadId, contextId);
+    },
+    [removeComposerDraftTerminalContext, threadId],
   );
 
   const serverThread = threads.find((t) => t.id === threadId);
@@ -1092,6 +1122,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
+  const addTerminalContextToDraft = useCallback(
+    (selection: TerminalContextSelection) => {
+      if (!activeThread) {
+        return;
+      }
+      addComposerDraftTerminalContext(activeThread.id, {
+        id: randomUUID(),
+        threadId: activeThread.id,
+        createdAt: new Date().toISOString(),
+        ...selection,
+      });
+      scheduleComposerFocus();
+    },
+    [activeThread, addComposerDraftTerminalContext, scheduleComposerFocus],
+  );
   const setTerminalOpen = useCallback(
     (open: boolean) => {
       if (!activeThreadId) return;
@@ -1729,6 +1774,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [composerImages]);
 
   useEffect(() => {
+    composerTerminalContextsRef.current = composerTerminalContexts;
+  }, [composerTerminalContexts]);
+
+  useEffect(() => {
     if (!activeThread?.id) return;
     if (activeThread.messages.length === 0) {
       return;
@@ -2220,7 +2269,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     const standaloneSlashCommand =
-      composerImages.length === 0 ? parseStandaloneComposerSlashCommand(trimmed) : null;
+      composerImages.length === 0 && composerTerminalContexts.length === 0
+        ? parseStandaloneComposerSlashCommand(trimmed)
+        : null;
     if (standaloneSlashCommand) {
       await handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
@@ -2230,7 +2281,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerTrigger(null);
       return;
     }
-    if (!trimmed && composerImages.length === 0) return;
+    if (!trimmed && composerImages.length === 0 && composerTerminalContexts.length === 0) return;
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
@@ -2255,6 +2306,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
 
     const composerImagesSnapshot = [...composerImages];
+    const composerTerminalContextsSnapshot = [...composerTerminalContexts];
+    const messageTextForSend = appendTerminalContextsToPrompt(
+      trimmed,
+      composerTerminalContextsSnapshot,
+    );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const turnAttachmentsPromise = Promise.all(
@@ -2279,7 +2335,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {
         id: messageIdForSend,
         role: "user",
-        text: trimmed,
+        text: messageTextForSend,
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
         createdAt: messageCreatedAt,
         streaming: false,
@@ -2337,6 +2393,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!titleSeed) {
         if (firstComposerImageName) {
           titleSeed = `Image: ${firstComposerImageName}`;
+        } else if (composerTerminalContextsSnapshot.length > 0) {
+          titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
         } else {
           titleSeed = "New thread";
         }
@@ -2417,7 +2475,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         message: {
           messageId: messageIdForSend,
           role: "user",
-          text: trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+          text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
           attachments: turnAttachments,
         },
         model: selectedModel || undefined,
@@ -2445,7 +2503,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0
+        composerImagesRef.current.length === 0 &&
+        composerTerminalContextsRef.current.length === 0
       ) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
@@ -2459,6 +2518,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setPrompt(trimmed);
         setComposerCursor(collapseExpandedComposerCursor(trimmed, trimmed.length));
         addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
+        addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
         setComposerTrigger(detectComposerTrigger(trimmed, trimmed.length));
       }
       setThreadError(
@@ -3365,75 +3425,81 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     </div>
                   )}
 
-                  {!isComposerApprovalState &&
-                    pendingUserInputs.length === 0 &&
-                    composerImages.length > 0 && (
-                      <div className="mb-3 flex flex-wrap gap-2">
-                        {composerImages.map((image) => (
-                          <div
-                            key={image.id}
-                            className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                          >
-                            {image.previewUrl ? (
-                              <button
-                                type="button"
-                                className="h-full w-full cursor-zoom-in"
-                                aria-label={`Preview ${image.name}`}
-                                onClick={() => {
-                                  const preview = buildExpandedImagePreview(
-                                    composerImages,
-                                    image.id,
-                                  );
-                                  if (!preview) return;
-                                  setExpandedImage(preview);
-                                }}
-                              >
-                                <img
-                                  src={image.previewUrl}
-                                  alt={image.name}
-                                  className="h-full w-full object-cover"
-                                />
-                              </button>
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
-                                {image.name}
-                              </div>
-                            )}
-                            {nonPersistedComposerImageIdSet.has(image.id) && (
-                              <Tooltip>
-                                <TooltipTrigger
-                                  render={
-                                    <span
-                                      role="img"
-                                      aria-label="Draft attachment may not persist"
-                                      className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
-                                    >
-                                      <CircleAlertIcon className="size-3" />
-                                    </span>
-                                  }
-                                />
-                                <TooltipPopup
-                                  side="top"
-                                  className="max-w-64 whitespace-normal leading-tight"
-                                >
-                                  Draft attachment could not be saved locally and may be lost on
-                                  navigation.
-                                </TooltipPopup>
-                              </Tooltip>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                              onClick={() => removeComposerImage(image.id)}
-                              aria-label={`Remove ${image.name}`}
+                  {!isComposerApprovalState && pendingUserInputs.length === 0 && (
+                    <>
+                      <ComposerPendingTerminalContexts
+                        contexts={composerTerminalContexts}
+                        onRemove={removeComposerTerminalContextFromDraft}
+                      />
+                      {composerImages.length > 0 && (
+                        <div className="mb-3 flex flex-wrap gap-2">
+                          {composerImages.map((image) => (
+                            <div
+                              key={image.id}
+                              className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
                             >
-                              <XIcon />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                              {image.previewUrl ? (
+                                <button
+                                  type="button"
+                                  className="h-full w-full cursor-zoom-in"
+                                  aria-label={`Preview ${image.name}`}
+                                  onClick={() => {
+                                    const preview = buildExpandedImagePreview(
+                                      composerImages,
+                                      image.id,
+                                    );
+                                    if (!preview) return;
+                                    setExpandedImage(preview);
+                                  }}
+                                >
+                                  <img
+                                    src={image.previewUrl}
+                                    alt={image.name}
+                                    className="h-full w-full object-cover"
+                                  />
+                                </button>
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                                  {image.name}
+                                </div>
+                              )}
+                              {nonPersistedComposerImageIdSet.has(image.id) && (
+                                <Tooltip>
+                                  <TooltipTrigger
+                                    render={
+                                      <span
+                                        role="img"
+                                        aria-label="Draft attachment may not persist"
+                                        className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                                      >
+                                        <CircleAlertIcon className="size-3" />
+                                      </span>
+                                    }
+                                  />
+                                  <TooltipPopup
+                                    side="top"
+                                    className="max-w-64 whitespace-normal leading-tight"
+                                  >
+                                    Draft attachment could not be saved locally and may be lost on
+                                    navigation.
+                                  </TooltipPopup>
+                                </Tooltip>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                                onClick={() => removeComposerImage(image.id)}
+                                aria-label={`Remove ${image.name}`}
+                              >
+                                <XIcon />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
                   <ComposerPromptEditor
                     ref={composerEditorRef}
                     value={
@@ -3723,7 +3789,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             disabled={
                               isSendBusy ||
                               isConnecting ||
-                              (!prompt.trim() && composerImages.length === 0)
+                              (!prompt.trim() &&
+                                composerImages.length === 0 &&
+                                composerTerminalContexts.length === 0)
                             }
                             aria-label={
                               isConnecting
@@ -3854,6 +3922,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             onActiveTerminalChange={activateTerminal}
             onCloseTerminal={closeTerminal}
             onHeightChange={setTerminalHeight}
+            onAddTerminalContext={addTerminalContextToDraft}
           />
         );
       })()}

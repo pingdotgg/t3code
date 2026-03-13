@@ -33,6 +33,8 @@ import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { extractTrailingTerminalContexts } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "../../appSettings";
 import { formatTimestamp } from "../../timestampFormat";
@@ -337,6 +339,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "user" &&
         (() => {
           const userImages = row.message.attachments ?? [];
+          const extractedTerminalContexts = extractTrailingTerminalContexts(row.message.text);
+          const visibleUserText = extractedTerminalContexts.promptText;
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
             <div className="flex justify-end">
@@ -378,14 +382,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     )}
                   </div>
                 )}
-                {row.message.text && (
+                {visibleUserText && (
                   <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                    {row.message.text}
+                    {visibleUserText}
                   </pre>
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {row.message.text && <MessageCopyButton text={row.message.text} />}
+                    {visibleUserText && <MessageCopyButton text={visibleUserText} />}
                     {canRevertAgentWork && (
                       <Button
                         type="button"
@@ -399,6 +403,35 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       </Button>
                     )}
                   </div>
+                  {extractedTerminalContexts.contextCount > 0 && (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-muted-foreground/50"
+                            aria-label={`${extractedTerminalContexts.contextCount} terminal context ${
+                              extractedTerminalContexts.contextCount === 1
+                                ? "selection"
+                                : "selections"
+                            }`}
+                            title={extractedTerminalContexts.previewTitle ?? undefined}
+                          >
+                            <TerminalIcon className="size-3" />
+                            <span className="text-[10px] font-medium">
+                              {extractedTerminalContexts.contextCount}
+                            </span>
+                          </button>
+                        }
+                      />
+                      <TooltipPopup
+                        side="top"
+                        className="max-w-80 whitespace-pre-wrap leading-tight"
+                      >
+                        {extractedTerminalContexts.previewTitle}
+                      </TooltipPopup>
+                    </Tooltip>
+                  )}
                   <p className="text-right text-[10px] text-muted-foreground/30">
                     {formatTimestamp(row.message.createdAt, timestampFormat)}
                   </p>
