@@ -30,6 +30,17 @@ function runGit(cwd: string, args: string[], options?: { config?: string[] }): v
   }
 }
 
+function initGitRepo(cwd: string): void {
+  runGit(cwd, ["init"]);
+  runGit(cwd, ["config", "user.email", "test@example.com"]);
+  runGit(cwd, ["config", "user.name", "Test User"]);
+}
+
+function commitAll(cwd: string, message: string): void {
+  runGit(cwd, ["add", "."]);
+  runGit(cwd, ["commit", "-m", message]);
+}
+
 describe("searchWorkspaceEntries", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -147,18 +158,13 @@ describe("searchWorkspaceEntries", () => {
 
   it("includes files inside initialized git submodules", async () => {
     const submoduleOrigin = makeTempDir("t3code-workspace-submodule-origin-");
-    runGit(submoduleOrigin, ["init"]);
-    runGit(submoduleOrigin, ["config", "user.email", "test@example.com"]);
-    runGit(submoduleOrigin, ["config", "user.name", "Test User"]);
+    initGitRepo(submoduleOrigin);
     writeFile(submoduleOrigin, "src/submodule-file.ts", "export {};");
     writeFile(submoduleOrigin, "README.md", "# submodule\n");
-    runGit(submoduleOrigin, ["add", "."]);
-    runGit(submoduleOrigin, ["commit", "-m", "Initial submodule"]);
+    commitAll(submoduleOrigin, "Initial submodule");
 
     const cwd = makeTempDir("t3code-workspace-submodule-root-");
-    runGit(cwd, ["init"]);
-    runGit(cwd, ["config", "user.email", "test@example.com"]);
-    runGit(cwd, ["config", "user.name", "Test User"]);
+    initGitRepo(cwd);
     writeFile(cwd, "src/root.ts", "export {};");
     runGit(cwd, ["add", "src/root.ts"]);
     runGit(cwd, ["commit", "-m", "Initial root"]);
@@ -185,6 +191,74 @@ describe("searchWorkspaceEntries", () => {
     assert.isFalse(
       result.entries.some((entry) => entry.path === "vendor/submodule" && entry.kind === "file"),
     );
+  });
+
+  it("includes files inside nested initialized git submodules", async () => {
+    const nestedOrigin = makeTempDir("t3code-workspace-nested-submodule-origin-");
+    initGitRepo(nestedOrigin);
+    writeFile(nestedOrigin, "src/nested-file.ts", "export {};");
+    commitAll(nestedOrigin, "Initial nested submodule");
+
+    const submoduleOrigin = makeTempDir("t3code-workspace-parent-submodule-origin-");
+    initGitRepo(submoduleOrigin);
+    writeFile(submoduleOrigin, "src/submodule-file.ts", "export {};");
+    commitAll(submoduleOrigin, "Initial parent submodule");
+    runGit(submoduleOrigin, ["submodule", "add", "-q", nestedOrigin, "deps/nested-submodule"], {
+      config: ["protocol.file.allow=always"],
+    });
+    runGit(submoduleOrigin, ["commit", "-am", "Add nested submodule"]);
+
+    const cwd = makeTempDir("t3code-workspace-nested-submodule-root-");
+    initGitRepo(cwd);
+    writeFile(cwd, "src/root.ts", "export {};");
+    runGit(cwd, ["add", "src/root.ts"]);
+    runGit(cwd, ["commit", "-m", "Initial root"]);
+    runGit(cwd, ["submodule", "add", "-q", submoduleOrigin, "vendor/submodule"], {
+      config: ["protocol.file.allow=always"],
+    });
+    runGit(cwd, ["commit", "-am", "Add submodule"]);
+    runGit(cwd, ["submodule", "update", "--init", "--recursive"], {
+      config: ["protocol.file.allow=always"],
+    });
+
+    const result = await searchWorkspaceEntries({ cwd, query: "", limit: 200 });
+    const paths = result.entries.map((entry) => entry.path);
+
+    assert.include(paths, "vendor/submodule");
+    assert.include(paths, "vendor/submodule/deps");
+    assert.include(paths, "vendor/submodule/deps/nested-submodule");
+    assert.include(paths, "vendor/submodule/deps/nested-submodule/src");
+    assert.include(paths, "vendor/submodule/deps/nested-submodule/src/nested-file.ts");
+    assert.isFalse(
+      result.entries.some(
+        (entry) => entry.path === "vendor/submodule/deps/nested-submodule" && entry.kind === "file",
+      ),
+    );
+  });
+
+  it("applies submodule-local ignore rules when listing submodule files", async () => {
+    const submoduleOrigin = makeTempDir("t3code-workspace-submodule-ignore-origin-");
+    initGitRepo(submoduleOrigin);
+    writeFile(submoduleOrigin, ".gitignore", "ignored.ts\n");
+    writeFile(submoduleOrigin, "src/submodule-file.ts", "export {};");
+    commitAll(submoduleOrigin, "Initial submodule");
+
+    const cwd = makeTempDir("t3code-workspace-submodule-ignore-root-");
+    initGitRepo(cwd);
+    writeFile(cwd, "src/root.ts", "export {};");
+    runGit(cwd, ["add", "src/root.ts"]);
+    runGit(cwd, ["commit", "-m", "Initial root"]);
+    runGit(cwd, ["submodule", "add", "-q", submoduleOrigin, "vendor/submodule"], {
+      config: ["protocol.file.allow=always"],
+    });
+    writeFile(cwd, "vendor/submodule/ignored.ts", "export {};");
+    writeFile(cwd, "vendor/submodule/keep.ts", "export {};");
+
+    const result = await searchWorkspaceEntries({ cwd, query: "", limit: 200 });
+    const paths = result.entries.map((entry) => entry.path);
+
+    assert.include(paths, "vendor/submodule/keep.ts");
+    assert.notInclude(paths, "vendor/submodule/ignored.ts");
   });
 
   it("deduplicates concurrent index builds for the same cwd", async () => {
