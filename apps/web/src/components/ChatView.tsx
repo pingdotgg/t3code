@@ -124,6 +124,7 @@ import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   type PersistedComposerImageAttachment,
+  flushComposerDraftStorage,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../composerDraftStore";
@@ -141,6 +142,7 @@ import { CodexTraitsPicker } from "./chat/CodexTraitsPicker";
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
+import { ComposerPendingDiffComments } from "./chat/ComposerPendingDiffComments";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
 import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
@@ -159,6 +161,7 @@ import {
   SendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { appendDiffContextCommentsToPrompt } from "../lib/diffContextComments";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -173,6 +176,17 @@ const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnsw
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+
+function extendReplacementRangeForTrailingSpace(
+  text: string,
+  rangeEnd: number,
+  replacement: string,
+): number {
+  if (!replacement.endsWith(" ")) {
+    return rangeEnd;
+  }
+  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
+}
 
 interface ChatViewProps {
   threadId: ThreadId;
@@ -218,6 +232,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (store) => store.syncPersistedAttachments,
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const restoreComposerDraftSendContent = useComposerDraftStore(
+    (store) => store.restoreComposerSendContent,
+  );
+  const clearComposerDraftDiffContextComments = useComposerDraftStore(
+    (store) => store.clearDiffContextComments,
+  );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
@@ -361,6 +381,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [draftThread, fallbackDraftProject?.model, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
+  const pendingDiffContextComments = composerDraft.diffContextComments;
   const runtimeMode =
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
@@ -558,6 +579,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const hasPendingDiffContextComments = pendingDiffContextComments.length > 0;
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -2219,9 +2241,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerTrigger(null);
       return;
     }
-    if (!trimmed && composerImages.length === 0) return;
+    if (!trimmed && composerImages.length === 0 && !hasPendingDiffContextComments) return;
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
+    const pendingDiffContextCommentsSnapshot = [...pendingDiffContextComments];
+    const persistedComposerAttachmentsSnapshot = [...composerDraft.persistedAttachments];
+    const messageTextForSend = appendDiffContextCommentsToPrompt(
+      trimmed,
+      pendingDiffContextComments,
+    );
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
@@ -2268,7 +2296,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {
         id: messageIdForSend,
         role: "user",
-        text: trimmed,
+        text: messageTextForSend,
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
         createdAt: messageCreatedAt,
         streaming: false,
@@ -2281,6 +2309,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setThreadError(threadIdForSend, null);
     promptRef.current = "";
     clearComposerDraftContent(threadIdForSend);
+    flushComposerDraftStorage();
     setComposerHighlightedItemId(null);
     setComposerCursor(0);
     setComposerTrigger(null);
@@ -2406,7 +2435,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         message: {
           messageId: messageIdForSend,
           role: "user",
-          text: trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+          text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
           attachments: turnAttachments,
         },
         model: selectedModel || undefined,
@@ -2434,7 +2463,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0
+        composerImagesRef.current.length === 0 &&
+        (useComposerDraftStore.getState().draftsByThreadId[threadIdForSend]?.diffContextComments
+          .length ?? 0) === 0
       ) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
@@ -2445,9 +2476,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           return next.length === existing.length ? existing : next;
         });
         promptRef.current = trimmed;
+        restoreComposerDraftSendContent(threadIdForSend, {
+          prompt: trimmed,
+          images: composerImagesSnapshot.map(cloneComposerImageForRetry),
+          persistedAttachments: persistedComposerAttachmentsSnapshot,
+          diffContextComments: pendingDiffContextCommentsSnapshot,
+        });
+        flushComposerDraftStorage();
         setPrompt(trimmed);
         setComposerCursor(collapseExpandedComposerCursor(trimmed, trimmed.length));
-        addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
         setComposerTrigger(detectComposerTrigger(trimmed, trimmed.length));
       }
       setThreadError(
@@ -2968,17 +3005,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
   }, [composerCursor]);
 
-  const extendReplacementRangeForTrailingSpace = (
-    text: string,
-    rangeEnd: number,
-    replacement: string,
-  ): number => {
-    if (!replacement.endsWith(" ")) {
-      return rangeEnd;
-    }
-    return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
-  };
-
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
     trigger: ComposerTrigger | null;
@@ -3367,38 +3393,40 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
                   {!isComposerApprovalState &&
                     pendingUserInputs.length === 0 &&
-                    composerImages.length > 0 && (
-                      <div className="mb-3 flex flex-wrap gap-2">
+                    (pendingDiffContextComments.length > 0 || composerImages.length > 0) && (
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <ComposerPendingDiffComments
+                          comments={pendingDiffContextComments}
+                          onClearAll={() => clearComposerDraftDiffContextComments(threadId)}
+                        />
                         {composerImages.map((image) => (
-                          <div
+                          <button
                             key={image.id}
-                            className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+                            type="button"
+                            className="inline-flex h-8 cursor-zoom-in items-center gap-1.5 rounded-full border border-border/70 bg-card/90 pl-1 pr-1.5 text-foreground shadow-xs transition-colors hover:bg-accent/50"
+                            aria-label={`Preview ${image.name}`}
+                            onClick={() => {
+                              const preview = buildExpandedImagePreview(composerImages, image.id);
+                              if (!preview) return;
+                              setExpandedImage(preview);
+                            }}
                           >
                             {image.previewUrl ? (
-                              <button
-                                type="button"
-                                className="h-full w-full cursor-zoom-in"
-                                aria-label={`Preview ${image.name}`}
-                                onClick={() => {
-                                  const preview = buildExpandedImagePreview(
-                                    composerImages,
-                                    image.id,
-                                  );
-                                  if (!preview) return;
-                                  setExpandedImage(preview);
-                                }}
-                              >
+                              <span className="size-6 shrink-0 overflow-hidden rounded-full">
                                 <img
                                   src={image.previewUrl}
                                   alt={image.name}
                                   className="h-full w-full object-cover"
                                 />
-                              </button>
+                              </span>
                             ) : (
-                              <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
-                                {image.name}
-                              </div>
+                              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[8px] text-muted-foreground">
+                                IMG
+                              </span>
                             )}
+                            <span className="max-w-24 truncate text-xs font-medium">
+                              {image.name}
+                            </span>
                             {nonPersistedComposerImageIdSet.has(image.id) && (
                               <Tooltip>
                                 <TooltipTrigger
@@ -3406,7 +3434,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                     <span
                                       role="img"
                                       aria-label="Draft attachment may not persist"
-                                      className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                                      className="inline-flex items-center justify-center text-amber-600"
                                     >
                                       <CircleAlertIcon className="size-3" />
                                     </span>
@@ -3424,13 +3452,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             <Button
                               variant="ghost"
                               size="icon-xs"
-                              className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                              onClick={() => removeComposerImage(image.id)}
+                              className="size-5 rounded-full"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeComposerImage(image.id);
+                              }}
                               aria-label={`Remove ${image.name}`}
                             >
-                              <XIcon />
+                              <XIcon className="size-3" />
                             </Button>
-                          </div>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -3723,7 +3754,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             disabled={
                               isSendBusy ||
                               isConnecting ||
-                              (!prompt.trim() && composerImages.length === 0)
+                              (!prompt.trim() &&
+                                composerImages.length === 0 &&
+                                !hasPendingDiffContextComments)
                             }
                             aria-label={
                               isConnecting

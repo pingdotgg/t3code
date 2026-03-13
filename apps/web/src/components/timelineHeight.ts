@@ -1,3 +1,5 @@
+import { extractTrailingDiffContextComments } from "../lib/diffContextComments";
+
 const ASSISTANT_CHARS_PER_LINE_FALLBACK = 72;
 const USER_CHARS_PER_LINE_FALLBACK = 56;
 const LINE_HEIGHT_PX = 22;
@@ -6,6 +8,7 @@ const USER_BASE_HEIGHT_PX = 96;
 const ATTACHMENTS_PER_ROW = 2;
 // Attachment thumbnails render with `max-h-[220px]` plus ~8px row gap.
 const USER_ATTACHMENT_ROW_HEIGHT_PX = 228;
+const USER_DIFF_CONTEXT_COMMENTS_HEIGHT_PX = 40;
 const USER_BUBBLE_WIDTH_RATIO = 0.8;
 const USER_BUBBLE_HORIZONTAL_PADDING_PX = 32;
 const ASSISTANT_MESSAGE_HORIZONTAL_PADDING_PX = 8;
@@ -74,12 +77,20 @@ export function estimateTimelineMessageHeight(
   }
 
   if (message.role === "user") {
+    const extractedDiffComments = extractTrailingDiffContextComments(message.text);
     const charsPerLine = estimateCharsPerLineForUser(layout.timelineWidthPx);
-    const estimatedLines = estimateWrappedLineCount(message.text, charsPerLine);
+    const estimatedLines =
+      extractedDiffComments.promptText.length > 0
+        ? estimateWrappedLineCount(extractedDiffComments.promptText, charsPerLine)
+        : 0;
     const attachmentCount = message.attachments?.length ?? 0;
     const attachmentRows = Math.ceil(attachmentCount / ATTACHMENTS_PER_ROW);
     const attachmentHeight = attachmentRows * USER_ATTACHMENT_ROW_HEIGHT_PX;
-    return USER_BASE_HEIGHT_PX + estimatedLines * LINE_HEIGHT_PX + attachmentHeight;
+    const diffCommentsHeight =
+      extractedDiffComments.commentCount > 0 ? USER_DIFF_CONTEXT_COMMENTS_HEIGHT_PX : 0;
+    return (
+      USER_BASE_HEIGHT_PX + estimatedLines * LINE_HEIGHT_PX + attachmentHeight + diffCommentsHeight
+    );
   }
 
   // `system` messages are not rendered in the chat timeline, but keep a stable

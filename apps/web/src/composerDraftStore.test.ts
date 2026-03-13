@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -6,6 +6,7 @@ import {
   createDebouncedStorage,
   useComposerDraftStore,
 } from "./composerDraftStore";
+import { type DiffContextCommentDraft } from "./lib/diffContextComments";
 
 function makeImage(input: {
   id: string;
@@ -31,6 +32,30 @@ function makeImage(input: {
     sizeBytes: file.size,
     previewUrl: input.previewUrl,
     file,
+  };
+}
+
+function makeDiffComment(input: {
+  id: string;
+  threadId?: ThreadId;
+  filePath?: string;
+  lineStart?: number;
+  lineEnd?: number;
+  side?: "additions" | "deletions";
+  body?: string;
+  turnId?: string | null;
+  createdAt?: string;
+}): DiffContextCommentDraft {
+  return {
+    id: input.id,
+    threadId: input.threadId ?? ThreadId.makeUnsafe("thread-comments"),
+    turnId: input.turnId ? TurnId.makeUnsafe(input.turnId) : null,
+    filePath: input.filePath ?? "src/example.ts",
+    lineStart: input.lineStart ?? 12,
+    lineEnd: input.lineEnd ?? 12,
+    side: input.side ?? "additions",
+    body: input.body ?? "Tighten this guard.",
+    createdAt: input.createdAt ?? "2026-03-12T00:00:00.000Z",
   };
 }
 
@@ -155,6 +180,120 @@ describe("composerDraftStore clearComposerContent", () => {
     const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
     expect(draft).toBeUndefined();
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:optimistic");
+  });
+
+  it("clears pending diff context comments with the rest of the composer draft", () => {
+    useComposerDraftStore
+      .getState()
+      .addDiffContextComment(threadId, makeDiffComment({ id: "comment-clear", threadId }));
+
+    useComposerDraftStore.getState().clearComposerContent(threadId);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+
+  it("preserves pending diff context comments when clearing only sendable composer content", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadId, "Retry me");
+    store.addImage(
+      threadId,
+      makeImage({
+        id: "img-send-only",
+        previewUrl: "blob:send-only",
+      }),
+    );
+    store.addDiffContextComment(
+      threadId,
+      makeDiffComment({ id: "comment-send-only", threadId, body: "Keep this draft comment." }),
+    );
+
+    store.clearComposerSendContent(threadId);
+
+    const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
+    expect(draft?.prompt).toBe("");
+    expect(draft?.images).toEqual([]);
+    expect(draft?.diffContextComments.map((comment) => comment.id)).toEqual(["comment-send-only"]);
+  });
+
+  it("restores sendable composer content after a failed send", () => {
+    const store = useComposerDraftStore.getState();
+    const image = makeImage({
+      id: "img-restore",
+      previewUrl: "blob:restore",
+    });
+    const comment = makeDiffComment({
+      id: "comment-restore",
+      threadId,
+      body: "Restore this diff note.",
+    });
+
+    store.clearComposerContent(threadId);
+    store.restoreComposerSendContent(threadId, {
+      prompt: "Try again",
+      images: [image],
+      persistedAttachments: [],
+      diffContextComments: [comment],
+    });
+
+    const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
+    expect(draft?.prompt).toBe("Try again");
+    expect(draft?.images.map((entry) => entry.id)).toEqual(["img-restore"]);
+    expect(draft?.diffContextComments.map((entry) => entry.id)).toEqual(["comment-restore"]);
+  });
+});
+
+describe("composerDraftStore diff context comments", () => {
+  const threadId = ThreadId.makeUnsafe("thread-comments");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("adds, updates, removes, and clears pending diff comments", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.addDiffContextComment(threadId, makeDiffComment({ id: "comment-1", threadId }));
+    store.addDiffContextComment(
+      threadId,
+      makeDiffComment({
+        id: "comment-2",
+        threadId,
+        body: "Keep the fallback.",
+        side: "deletions",
+      }),
+    );
+
+    expect(
+      useComposerDraftStore
+        .getState()
+        .draftsByThreadId[threadId]?.diffContextComments.map((comment) => comment.id),
+    ).toEqual(["comment-1", "comment-2"]);
+
+    store.updateDiffContextComment(threadId, "comment-1", {
+      body: "Use the shared helper instead.",
+    });
+
+    expect(
+      useComposerDraftStore.getState().draftsByThreadId[threadId]?.diffContextComments[0]?.body,
+    ).toBe("Use the shared helper instead.");
+    expect(
+      useComposerDraftStore.getState().draftsByThreadId[threadId]?.diffContextComments[0]?.filePath,
+    ).toBe("src/example.ts");
+
+    store.removeDiffContextComment(threadId, "comment-2");
+    expect(
+      useComposerDraftStore
+        .getState()
+        .draftsByThreadId[threadId]?.diffContextComments.map((comment) => comment.id),
+    ).toEqual(["comment-1"]);
+
+    store.clearDiffContextComments(threadId);
+    store.clearDiffContextComments(threadId);
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });
 });
 
