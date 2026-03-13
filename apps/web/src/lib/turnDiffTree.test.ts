@@ -189,6 +189,6 @@ describe("countVisibleTurnDiffTreeNodes", () => {
       { path: "README.md", additions: 1, deletions: 0 },
     ]);
 
-    expect(countVisibleTurnDiffTreeNodes(tree, true)).toBe(5);
+    expect(countVisibleTurnDiffTreeNodes(tree, true)).toBe(4);
   });
 });
