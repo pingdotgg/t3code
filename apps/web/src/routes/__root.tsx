@@ -386,7 +386,6 @@ function DesktopTrayBootstrap() {
         const latestTurnCompletedAt = thread.latestTurn?.completedAt
           ? Date.parse(thread.latestTurn.completedAt)
           : NaN;
-        console.log(thread.id, latestTurnCompletedAt, lastVisitedAt);
         return {
           id: thread.id,
           name: thread.title,
