@@ -466,6 +466,54 @@ function SettingsRouteView() {
                         the default credential chain.
                       </span>
                     </label>
+
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-foreground">
+                        Model ARN overrides{" "}
+                        <span className="font-normal text-muted-foreground">(optional)</span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Override the default Bedrock model IDs with specific inference profile ARNs.
+                        Leave blank to use the default model IDs.
+                      </p>
+                    </div>
+
+                    {(
+                      [
+                        {
+                          id: "claude-code-bedrock-arn-haiku",
+                          label: "Haiku ARN",
+                          settingKey: "claudeCodeBedrockArnHaiku",
+                          placeholder: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-...",
+                        },
+                        {
+                          id: "claude-code-bedrock-arn-sonnet",
+                          label: "Sonnet ARN",
+                          settingKey: "claudeCodeBedrockArnSonnet",
+                          placeholder: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-...",
+                        },
+                        {
+                          id: "claude-code-bedrock-arn-opus",
+                          label: "Opus ARN",
+                          settingKey: "claudeCodeBedrockArnOpus",
+                          placeholder: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-...",
+                        },
+                      ] as const
+                    ).map((field) => (
+                      <label key={field.id} htmlFor={field.id} className="block space-y-1">
+                        <span className="text-xs font-medium text-foreground">{field.label}</span>
+                        <Input
+                          id={field.id}
+                          value={settings[field.settingKey]}
+                          onChange={(event) =>
+                            updateSettings({ [field.settingKey]: event.target.value })
+                          }
+                          placeholder={field.placeholder}
+                          spellCheck={false}
+                          className="font-mono text-xs"
+                        />
+                      </label>
+                    ))}
                   </div>
                 )}
 
@@ -479,6 +527,9 @@ function SettingsRouteView() {
                         claudeCodeUseBedrock: defaults.claudeCodeUseBedrock,
                         claudeCodeAwsRegion: defaults.claudeCodeAwsRegion,
                         claudeCodeAwsProfile: defaults.claudeCodeAwsProfile,
+                        claudeCodeBedrockArnHaiku: defaults.claudeCodeBedrockArnHaiku,
+                        claudeCodeBedrockArnSonnet: defaults.claudeCodeBedrockArnSonnet,
+                        claudeCodeBedrockArnOpus: defaults.claudeCodeBedrockArnOpus,
                       })
                     }
                   >

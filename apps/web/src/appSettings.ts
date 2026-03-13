@@ -34,6 +34,15 @@ const AppSettingsSchema = Schema.Struct({
   claudeCodeAwsProfile: Schema.String.check(Schema.isMaxLength(256)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
+  claudeCodeBedrockArnHaiku: Schema.String.check(Schema.isMaxLength(2048)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeCodeBedrockArnSonnet: Schema.String.check(Schema.isMaxLength(2048)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeCodeBedrockArnOpus: Schema.String.check(Schema.isMaxLength(2048)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
   defaultThreadEnvMode: Schema.Literals(["local", "worktree"]).pipe(
     Schema.withConstructorDefault(() => Option.some("local")),
   ),
