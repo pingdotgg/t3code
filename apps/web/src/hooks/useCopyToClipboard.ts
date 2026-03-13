@@ -21,6 +21,7 @@ export function useCopyToClipboard<TContext = void>({
 
   const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
+      onErrorRef.current?.(new Error("Clipboard API unavailable."), ctx);
       return;
     }
 
