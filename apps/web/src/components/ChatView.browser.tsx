@@ -19,7 +19,7 @@ import { page } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-import { useComposerDraftStore } from "../composerDraftStore";
+import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDraftStore";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
@@ -1152,6 +1152,81 @@ describe("ChatView timeline estimator parity (full app)", () => {
         .element(page.getByText("Send a message to start the conversation."))
         .toBeInTheDocument();
       await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the new thread route after sending the first message before snapshot sync", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-first-send-thread-test" as MessageId,
+        targetText: "first send thread test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      useComposerDraftStore.getState().setPrompt(newThreadId, "hello from the first draft send");
+      await waitForLayout();
+
+      const sendButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            'form[data-chat-composer-form="true"] button[type="submit"]:not(:disabled)',
+          ),
+        "Unable to find enabled send button.",
+      );
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequests = wsRequests.filter(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          );
+          expect(dispatchRequests).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                command: expect.objectContaining({
+                  type: "thread.create",
+                  threadId: newThreadId,
+                }),
+              }),
+              expect.objectContaining({
+                command: expect.objectContaining({
+                  type: "thread.turn.start",
+                  threadId: newThreadId,
+                }),
+              }),
+            ]),
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 150);
+      });
+      expect(mounted.router.state.location.pathname).toBe(newThreadPath);
+
+      fixture.snapshot = addThreadToSnapshot(fixture.snapshot, newThreadId);
+      useStore.getState().syncServerReadModel(fixture.snapshot);
+      clearPromotedDraftThreads(new Set([newThreadId]));
+      await waitForLayout();
+
+      expect(mounted.router.state.location.pathname).toBe(newThreadPath);
     } finally {
       await mounted.cleanup();
     }

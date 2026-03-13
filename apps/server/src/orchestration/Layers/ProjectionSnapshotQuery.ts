@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 import {
   ChatAttachment,
   IsoDateTime,
@@ -116,6 +118,14 @@ function computeSnapshotSequence(
   }
 
   return Number.isFinite(minSequence) ? minSequence : 0;
+}
+
+function sanitizePersistedWorktreePath(worktreePath: string | null): string | null {
+  if (worktreePath === null) {
+    return null;
+  }
+
+  return existsSync(worktreePath) ? worktreePath : null;
 }
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
@@ -532,7 +542,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             runtimeMode: row.runtimeMode,
             interactionMode: row.interactionMode,
             branch: row.branch,
-            worktreePath: row.worktreePath,
+            worktreePath: sanitizePersistedWorktreePath(row.worktreePath),
             latestTurn: latestTurnByThread.get(row.threadId) ?? null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,

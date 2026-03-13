@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { CheckpointRef, EventId, MessageId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
@@ -287,6 +291,91 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
         },
       ]);
+    }),
+  );
+
+  it.effect("drops persisted worktree paths that no longer exist", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const missingWorktreePath = mkdtempSync(
+        join(tmpdir(), "projection-snapshot-missing-worktree-"),
+      );
+      rmSync(missingWorktreePath, { recursive: true, force: true });
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-1',
+          'Project 1',
+          '/tmp/project-1',
+          NULL,
+          '[]',
+          '2026-02-24T00:00:00.000Z',
+          '2026-02-24T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-1',
+          'project-1',
+          'Thread 1',
+          'gpt-5-codex',
+          'feature/stale-worktree',
+          ${missingWorktreePath},
+          NULL,
+          '2026-02-24T00:00:02.000Z',
+          '2026-02-24T00:00:03.000Z',
+          NULL
+        )
+      `;
+
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (
+            projector,
+            last_applied_sequence,
+            updated_at
+          )
+          VALUES (
+            ${projector},
+            1,
+            '2026-02-24T00:00:09.000Z'
+          )
+        `;
+      }
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+
+      assert.equal(snapshot.threads.length, 1);
+      assert.equal(snapshot.threads[0]?.worktreePath, null);
     }),
   );
 });
