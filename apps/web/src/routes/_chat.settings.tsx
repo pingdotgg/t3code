@@ -54,6 +54,13 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
+  {
+    provider: "glm",
+    title: "GLM (z.ai)",
+    description: "Save additional GLM model slugs for the picker and `/model` command.",
+    placeholder: "your-glm-model-slug",
+    example: "glm-5-plus",
+  },
 ] as const;
 
 const TIMESTAMP_FORMAT_LABELS = {
@@ -67,6 +74,8 @@ function getCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "glm":
+      return settings.customGlmModels;
     case "codex":
     default:
       return settings.customCodexModels;
@@ -78,6 +87,8 @@ function getDefaultCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "glm":
+      return defaults.customGlmModels;
     case "codex":
     default:
       return defaults.customCodexModels;
@@ -86,6 +97,8 @@ function getDefaultCustomModelsForProvider(
 
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
+    case "glm":
+      return { customGlmModels: models };
     case "codex":
     default:
       return { customCodexModels: models };
@@ -102,6 +115,7 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    glm: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>

@@ -390,6 +390,34 @@ export const checkCodexProviderStatus: Effect.Effect<
   } satisfies ServerProviderStatus;
 });
 
+// ── GLM Health check ────────────────────────────────────────────────
+
+const GLM_PROVIDER = "glm" as const;
+
+export const checkGlmProviderStatus: Effect.Effect<ServerProviderStatus> = Effect.sync(() => {
+  const checkedAt = new Date().toISOString();
+  const apiKey = process.env.GLM_API_KEY ?? process.env.ZAI_API_KEY;
+
+  if (!apiKey) {
+    return {
+      provider: GLM_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      checkedAt,
+      message: "GLM API key not configured. Set GLM_API_KEY or ZAI_API_KEY environment variable.",
+    };
+  }
+
+  return {
+    provider: GLM_PROVIDER,
+    status: "ready" as const,
+    available: true,
+    authStatus: "authenticated" as const,
+    checkedAt,
+  };
+});
+
 // ── Layer ───────────────────────────────────────────────────────────
 
 export const ProviderHealthLive = Layer.effect(
@@ -399,9 +427,12 @@ export const ProviderHealthLive = Layer.effect(
       Effect.map(Array.of),
       Effect.forkScoped,
     );
+    const glmStatus = yield* checkGlmProviderStatus;
 
     return {
-      getStatuses: Fiber.join(codexStatusFiber),
+      getStatuses: Fiber.join(codexStatusFiber).pipe(
+        Effect.map((statuses) => Array.prepend(statuses, glmStatus)),
+      ),
     } satisfies ProviderHealthShape;
   }),
 );

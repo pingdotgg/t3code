@@ -5,6 +5,7 @@ import { assertFailure } from "@effect/vitest/utils";
 import { Effect, Layer, Stream } from "effect";
 
 import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { GlmAdapter, type GlmAdapterShape } from "../Services/GlmAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
 import { ProviderUnsupportedError } from "../Errors.ts";
@@ -27,9 +28,32 @@ const fakeCodexAdapter: CodexAdapterShape = {
   streamEvents: Stream.empty,
 };
 
+const fakeGlmAdapter: GlmAdapterShape = {
+  provider: "glm",
+  capabilities: { sessionModelSwitch: "restart-session" },
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
 const layer = it.layer(
   Layer.mergeAll(
-    Layer.provide(ProviderAdapterRegistryLive, Layer.succeed(CodexAdapter, fakeCodexAdapter)),
+    Layer.provide(
+      ProviderAdapterRegistryLive,
+      Layer.mergeAll(
+        Layer.succeed(CodexAdapter, fakeCodexAdapter),
+        Layer.succeed(GlmAdapter, fakeGlmAdapter),
+      ),
+    ),
     NodeServices.layer,
   ),
 );
@@ -42,7 +66,7 @@ layer("ProviderAdapterRegistryLive", (it) => {
       assert.equal(codex, fakeCodexAdapter);
 
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["codex"]);
+      assert.deepEqual(providers, ["codex", "glm"]);
     }),
   );
 
