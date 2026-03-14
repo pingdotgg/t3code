@@ -748,6 +748,59 @@ describe("respondToUserInput", () => {
   });
 });
 
+
+
+describe("handleServerRequest tool calls", () => {
+  it("routes item/tool/call to AgentWatch and writes a JSON-RPC result", () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        sessionId: "sess_1",
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread_1"),
+        resumeCursor: { threadId: "thread_1" },
+        runtimeMode: "full-access",
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+    };
+
+    const writeMessage = vi
+      .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+      .mockImplementation(() => {});
+
+    const handleToolCall = vi
+      .spyOn(
+        (manager as unknown as { agentWatch: { handleToolCall: (...args: unknown[]) => unknown } })
+          .agentWatch,
+        "handleToolCall",
+      )
+      .mockReturnValue({ jobs: [] });
+
+    (
+      manager as unknown as {
+        handleServerRequest: (context: typeof context, request: Record<string, unknown>) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "item/tool/call",
+      params: {
+        toolName: "agentwatch.poll",
+        arguments: { includeHealthy: false },
+      },
+    });
+
+    expect(handleToolCall).toHaveBeenCalledWith("agentwatch.poll", { includeHealthy: false });
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 3,
+      result: { jobs: [] },
+    });
+  });
+});
 describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume", () => {
   it("keeps prior thread history when resuming with a changed runtime mode", async () => {
     const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "codex-live-resume-"));

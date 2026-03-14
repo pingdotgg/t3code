@@ -27,6 +27,7 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "./provider/codexCliVersion";
+import { AgentWatch } from "./agentWatch";
 
 type PendingRequestKey = string;
 
@@ -1015,6 +1016,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     for (const threadId of this.sessions.keys()) {
       this.stopSession(threadId);
     }
+    this.agentWatch.dispose();
   }
 
   private requireSession(threadId: ThreadId): CodexSessionContext {
@@ -1214,6 +1216,43 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         ...(route.turnId ? { turnId: route.turnId } : {}),
         ...(route.itemId ? { itemId: route.itemId } : {}),
       });
+    }
+
+    if (request.method === "item/tool/call") {
+      const toolName = this.readString(request.params, "toolName") ?? this.readString(request.params, "name");
+      const rawArgs =
+        this.readObject(request.params, "arguments") ??
+        this.readObject(request.params, "input") ??
+        this.readObject(request.params, "args") ??
+        this.parseJsonObject(this.readString(request.params, "arguments"));
+
+      if (!toolName) {
+        this.writeMessage(context, {
+          id: request.id,
+          error: {
+            code: -32602,
+            message: "item/tool/call is missing a tool name",
+          },
+        });
+        return;
+      }
+
+      try {
+        const result = this.agentWatch.handleToolCall(toolName, rawArgs);
+        this.writeMessage(context, {
+          id: request.id,
+          result,
+        });
+      } catch (error) {
+        this.writeMessage(context, {
+          id: request.id,
+          error: {
+            code: -32000,
+            message: error instanceof Error ? error.message : "item/tool/call failed",
+          },
+        });
+      }
+      return;
     }
 
     this.emitEvent({
@@ -1449,6 +1488,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     return route;
+  }
+
+  private parseJsonObject(value: string | undefined): Record<string, unknown> | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    try {
+      const parsed = JSON.parse(value);
+      return this.readObject(parsed);
+    } catch {
+      return undefined;
+    }
   }
 
   private readObject(value: unknown, key?: string): Record<string, unknown> | undefined {
