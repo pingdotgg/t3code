@@ -2,15 +2,29 @@ import { runProcess } from "./processRunner";
 
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 
+/**
+ * Shared git-ignore helpers for server-side workspace scans.
+ *
+ * Both callers use these helpers as an optimization and a consistency layer, not
+ * as a hard dependency. If git is unavailable, slow, or returns an unexpected
+ * result, we intentionally fail open so the UI keeps working and avoids hiding
+ * files unpredictably.
+ */
+
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
   const parts = input.split("\0");
-  if (parts.length === 0) return [];
   if (truncated && parts[parts.length - 1]?.length) {
     parts.pop();
   }
   return parts.filter((value) => value.length > 0);
 }
 
+/**
+ * Returns whether `cwd` is inside a git work tree.
+ *
+ * This is a cheap capability probe used to decide whether later git-aware
+ * filtering is worth attempting.
+ */
 export async function isInsideGitWorkTree(cwd: string): Promise<boolean> {
   const insideWorkTree = await runProcess("git", ["rev-parse", "--is-inside-work-tree"], {
     cwd,
@@ -24,6 +38,14 @@ export async function isInsideGitWorkTree(cwd: string): Promise<boolean> {
   );
 }
 
+/**
+ * Filters repo-relative paths that match git ignore rules for `cwd`.
+ *
+ * We use `git check-ignore --no-index` so both tracked and untracked candidates
+ * respect the current ignore rules. Input is chunked to keep stdin bounded, and
+ * unexpected git failures return the original paths unchanged so callers fail
+ * open instead of dropping potentially valid files.
+ */
 export async function filterGitIgnoredPaths(
   cwd: string,
   relativePaths: readonly string[],
