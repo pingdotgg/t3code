@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useDebouncedValue } from "@tanstack/react-pacer";
+import { useQuery } from "@tanstack/react-query";
 import { FolderIcon } from "lucide-react";
 import {
   Command,
@@ -25,117 +27,85 @@ interface AddProjectDialogProps {
 
 export function AddProjectDialog({ open, onOpenChange, onAddProject }: AddProjectDialogProps) {
   const [inputValue, setInputValue] = useState("");
-  const [entries, setEntries] = useState<BrowseEntry[]>([]);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const browse = useCallback(async (partialPath: string) => {
-    if (!partialPath) {
-      setEntries([]);
-      return;
-    }
-    const api = readNativeApi();
-    if (!api) return;
-    try {
-      const result = await api.projects.browseFilesystem({ partialPath });
-      setEntries(result.entries);
-      setHighlightedIndex(0);
-    } catch {
-      setEntries([]);
-    }
+  const [debouncedPath] = useDebouncedValue(inputValue, { wait: 200 });
+
+  const { data: entries = [] } = useQuery({
+    queryKey: ["filesystemBrowse", debouncedPath],
+    queryFn: async () => {
+      const api = readNativeApi();
+      if (!api) return [];
+      const result = await api.projects.browseFilesystem({ partialPath: debouncedPath });
+      return result.entries;
+    },
+    enabled: open && debouncedPath.length > 0,
+  });
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [entries]);
+
+  const close = useCallback(() => onOpenChange(false), [onOpenChange]);
+
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (!next) {
+        setInputValue("");
+        setHighlightedIndex(0);
+      }
+      onOpenChange(next);
+    },
+    [onOpenChange],
+  );
+
+  const addProject = useCallback(
+    (path: string) => {
+      onAddProject(path);
+      close();
+    },
+    [onAddProject, close],
+  );
+
+  const drillInto = useCallback((entry: BrowseEntry) => {
+    setInputValue(entry.fullPath + "/");
+    inputRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    if (!open) {
-      setInputValue("");
-      setEntries([]);
-      setHighlightedIndex(0);
-      return;
+  const getHighlightedEntry = () =>
+    entries.length > 0 ? entries[Math.min(highlightedIndex, entries.length - 1)] : null;
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    const highlighted = getHighlightedEntry();
+
+    switch (event.key) {
+      case "Tab":
+        event.preventDefault();
+        if (highlighted) drillInto(highlighted);
+        break;
+      case "Enter":
+        event.preventDefault();
+        if (highlighted) addProject(highlighted.fullPath);
+        else if (inputValue.trim()) addProject(inputValue.trim());
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        setHighlightedIndex((i) => Math.min(i + 1, entries.length - 1));
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        setHighlightedIndex((i) => Math.max(i - 1, 0));
+        break;
+      case "Escape":
+        event.preventDefault();
+        close();
+        break;
     }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      void browse(inputValue);
-    }, 200);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [inputValue, open, browse]);
-
-  const selectEntry = useCallback(
-    (entry: BrowseEntry) => {
-      const nextValue = entry.fullPath + "/";
-      setInputValue(nextValue);
-      void browse(nextValue);
-      inputRef.current?.focus();
-    },
-    [browse],
-  );
-
-  const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent) => {
-      if (event.key === "Tab") {
-        event.preventDefault();
-        if (entries.length > 0) {
-          const idx = Math.min(highlightedIndex, entries.length - 1);
-          const entry = entries[idx];
-          if (entry) {
-            selectEntry(entry);
-          }
-        }
-        return;
-      }
-
-      if (event.key === "Enter") {
-        event.preventDefault();
-        if (entries.length > 0) {
-          const idx = Math.min(highlightedIndex, entries.length - 1);
-          const entry = entries[idx];
-          if (entry) {
-            onAddProject(entry.fullPath);
-            onOpenChange(false);
-          }
-        } else if (inputValue.trim()) {
-          onAddProject(inputValue.trim());
-          onOpenChange(false);
-        }
-        return;
-      }
-
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setHighlightedIndex((prev) => Math.min(prev + 1, entries.length - 1));
-        return;
-      }
-
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setHighlightedIndex((prev) => Math.max(prev - 1, 0));
-        return;
-      }
-
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onOpenChange(false);
-        return;
-      }
-    },
-    [entries, highlightedIndex, inputValue, onAddProject, onOpenChange, selectEntry],
-  );
-
-  const handleSubmitDirect = useCallback(() => {
-    if (inputValue.trim()) {
-      onAddProject(inputValue.trim());
-      onOpenChange(false);
-    }
-  }, [inputValue, onAddProject, onOpenChange]);
+  };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
+    <CommandDialog open={open} onOpenChange={handleOpenChange}>
       <CommandDialogPopup>
         <Command>
           <CommandPanel>
@@ -153,7 +123,7 @@ export function AddProjectDialog({ open, onOpenChange, onAddProject }: AddProjec
                   key={entry.fullPath}
                   data-highlighted={index === highlightedIndex ? "" : undefined}
                   onPointerMove={() => setHighlightedIndex(index)}
-                  onClick={() => selectEntry(entry)}
+                  onClick={() => drillInto(entry)}
                 >
                   <FolderIcon className="mr-2 size-4 text-muted-foreground" />
                   <span className="truncate">{entry.name}</span>
@@ -168,7 +138,7 @@ export function AddProjectDialog({ open, onOpenChange, onAddProject }: AddProjec
                 <button
                   type="button"
                   className="w-full cursor-pointer rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
-                  onClick={handleSubmitDirect}
+                  onClick={() => addProject(inputValue.trim())}
                 >
                   Add project at <span className="font-medium">{inputValue.trim()}</span>
                 </button>
