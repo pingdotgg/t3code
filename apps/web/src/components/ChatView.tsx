@@ -132,6 +132,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { ActivePlanCard } from "./chat/ActivePlanCard";
 import { ChatHeader } from "./chat/ChatHeader";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
@@ -264,6 +265,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
+  const [collapsedActivePlanByTurnId, setCollapsedActivePlanByTurnId] = useState<
+    Record<string, boolean>
+  >({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
@@ -638,6 +642,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
+  const activePlanCollapseKey = activePlan ? (activePlan.turnId ?? activePlan.createdAt) : null;
+  const activePlanCollapsed = activePlanCollapseKey
+    ? (collapsedActivePlanByTurnId[activePlanCollapseKey] ?? false)
+    : false;
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
@@ -3162,6 +3170,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       [groupId]: !existing[groupId],
     }));
   }, []);
+  const onToggleActivePlanCollapsed = useCallback((planKey: string) => {
+    setCollapsedActivePlanByTurnId((existing) => ({
+      ...existing,
+      [planKey]: !(existing[planKey] ?? false),
+    }));
+  }, []);
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
@@ -3274,9 +3288,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
             onTouchEnd={onMessagesTouchEnd}
             onTouchCancel={onMessagesTouchEnd}
           >
+            {activePlan ? (
+              <div className="sticky top-0 z-10 mx-auto w-full max-w-3xl px-0 pb-3 pt-1">
+                <ActivePlanCard
+                  activePlan={activePlan}
+                  collapsed={activePlanCollapsed}
+                  timestampFormat={timestampFormat}
+                  onToggleCollapsed={() => {
+                    if (activePlanCollapseKey) {
+                      onToggleActivePlanCollapsed(activePlanCollapseKey);
+                    }
+                  }}
+                />
+              </div>
+            ) : null}
             <MessagesTimeline
               key={activeThread.id}
-              hasMessages={timelineEntries.length > 0}
+              hasMessages={timelineEntries.length > 0 || activePlan !== null}
               isWorking={isWorking}
               activeTurnInProgress={isWorking || !latestTurnSettled}
               activeTurnStartedAt={activeWorkStartedAt}

@@ -2,12 +2,14 @@
 import "../index.css";
 
 import {
+  EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  TurnId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -350,6 +352,43 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
               },
             ],
             updatedAt: isoAt(1_001),
+          })
+        : thread,
+    ),
+  };
+}
+
+function createSnapshotWithActivePlan(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-active-plan-target" as MessageId,
+    targetText: "active plan thread",
+  });
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? Object.assign({}, thread, {
+            activities: [
+              {
+                id: EventId.makeUnsafe("active-plan-browser-test"),
+                createdAt: isoAt(1_050),
+                kind: "turn.plan.updated",
+                summary: "Plan updated",
+                tone: "info",
+                turnId: TurnId.makeUnsafe("turn-active-plan"),
+                sequence: 1,
+                payload: {
+                  explanation: "Keep the plan row visible while trimming its footprint.",
+                  plan: [
+                    { step: "Keep timeline rows aligned", status: "inProgress" },
+                    { step: "Preserve header context when collapsed", status: "pending" },
+                    { step: "Retain stable collapse state across remounts", status: "pending" },
+                  ],
+                },
+              },
+            ],
+            updatedAt: isoAt(1_051),
           })
         : thread,
     ),
@@ -1240,6 +1279,60 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         () => {
           expect(document.body.textContent).toContain("deep hidden detail only after expand");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("collapses the active plan container to its header row", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithActivePlan(),
+    });
+
+    try {
+      const collapseButton = await waitForElement(
+        () =>
+          document.querySelector('button[aria-label="Collapse plan"]') as HTMLButtonElement | null,
+        "Unable to find Collapse plan button.",
+      );
+
+      await waitForElement(
+        () => document.querySelector('[data-active-plan-card="true"]') as HTMLDivElement | null,
+        "Unable to find active plan card.",
+      );
+
+      expect(document.body.textContent).toContain("Keep timeline rows aligned");
+      collapseButton.click();
+
+      await vi.waitFor(
+        () => {
+          const activePlanRow = document.querySelector(
+            '[data-active-plan-card="true"]',
+          ) as HTMLDivElement | null;
+          expect(activePlanRow?.textContent).toContain("Plan");
+          expect(activePlanRow?.textContent).toContain("Updated");
+          expect(activePlanRow?.textContent).not.toContain("Keep timeline rows aligned");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const expandButton = await waitForElement(
+        () =>
+          document.querySelector('button[aria-label="Expand plan"]') as HTMLButtonElement | null,
+        "Unable to find Expand plan button.",
+      );
+      expandButton.click();
+
+      await vi.waitFor(
+        () => {
+          const activePlanRow = document.querySelector(
+            '[data-active-plan-card="true"]',
+          ) as HTMLDivElement | null;
+          expect(activePlanRow?.textContent).toContain("Keep timeline rows aligned");
         },
         { timeout: 8_000, interval: 16 },
       );
