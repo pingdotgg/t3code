@@ -159,6 +159,15 @@ export function createWsNativeApi(): NativeApi {
     },
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
+      getSharedSkills: (input) => transport.request(WS_METHODS.serverGetSharedSkills, input),
+      getSharedSkillDetail: (input) =>
+        transport.request(WS_METHODS.serverGetSharedSkillDetail, input),
+      initializeSharedSkills: (input) =>
+        transport.request(WS_METHODS.serverInitializeSharedSkills, input),
+      setSharedSkillEnabled: (input) =>
+        transport.request(WS_METHODS.serverSetSharedSkillEnabled, input),
+      uninstallSharedSkill: (input) =>
+        transport.request(WS_METHODS.serverUninstallSharedSkill, input),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
     },
     orchestration: {

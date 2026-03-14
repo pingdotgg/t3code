@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
@@ -19,8 +19,16 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
+import { SkillsSettingsPanel } from "../components/settings/SkillsSettingsPanel";
 import { APP_VERSION } from "../branding";
+import { cn } from "~/lib/utils";
 import { SidebarInset } from "~/components/ui/sidebar";
+
+type SettingsTab = "general" | "skills";
+
+function parseSettingsSearch(search: Record<string, unknown>): { tab?: SettingsTab } {
+  return search.tab === "skills" ? { tab: "skills" } : {};
+}
 
 const THEME_OPTIONS = [
   {
@@ -93,6 +101,8 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
 }
 
 function SettingsRouteView() {
+  const navigate = useNavigate();
+  const search = Route.useSearch();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
@@ -109,6 +119,7 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const activeTab = search.tab === "skills" ? "skills" : "general";
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
 
@@ -219,471 +230,522 @@ function SettingsRouteView() {
               </p>
             </header>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Appearance</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Choose how T3 Code looks across the app.
-                </p>
-              </div>
+            <nav
+              aria-label="Settings sections"
+              className="flex items-center gap-4 border-b border-border"
+            >
+              {(
+                [
+                  { key: "general", label: "General" },
+                  { key: "skills", label: "Skills" },
+                ] as const
+              ).map((section) => (
+                <button
+                  key={section.key}
+                  type="button"
+                  className={cn(
+                    "-mb-px border-b-2 border-transparent px-0 py-2 text-sm transition-colors",
+                    activeTab === section.key
+                      ? "border-foreground text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  onClick={() => {
+                    void navigate({
+                      to: "/settings",
+                      search: section.key === "skills" ? { tab: "skills" } : {},
+                      replace: true,
+                    });
+                  }}
+                >
+                  {section.label}
+                </button>
+              ))}
+            </nav>
 
-              <div className="space-y-4">
-                <div className="space-y-2" role="radiogroup" aria-label="Theme preference">
-                  {THEME_OPTIONS.map((option) => {
-                    const selected = theme === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
-                          selected
-                            ? "border-primary/60 bg-primary/8 text-foreground"
-                            : "border-border bg-background text-muted-foreground hover:bg-accent"
-                        }`}
-                        onClick={() => setTheme(option.value)}
-                      >
-                        <span className="flex flex-col">
-                          <span className="text-sm font-medium">{option.label}</span>
-                          <span className="text-xs">{option.description}</span>
-                        </span>
-                        {selected ? (
-                          <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-                            Selected
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
+            {activeTab === "general" ? (
+              <>
+                <section className="rounded-2xl border border-border bg-card p-5">
+                  <div className="mb-4">
+                    <h2 className="text-sm font-medium text-foreground">Appearance</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Choose how T3 Code looks across the app.
+                    </p>
+                  </div>
 
-                <p className="text-xs text-muted-foreground">
-                  Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
-                </p>
+                  <div className="space-y-4">
+                    <div className="space-y-2" role="radiogroup" aria-label="Theme preference">
+                      {THEME_OPTIONS.map((option) => {
+                        const selected = theme === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                              selected
+                                ? "border-primary/60 bg-primary/8 text-foreground"
+                                : "border-border bg-background text-muted-foreground hover:bg-accent"
+                            }`}
+                            onClick={() => setTheme(option.value)}
+                          >
+                            <span className="flex flex-col">
+                              <span className="text-sm font-medium">{option.label}</span>
+                              <span className="text-xs">{option.description}</span>
+                            </span>
+                            {selected ? (
+                              <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                                Selected
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
 
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Timestamp format</p>
                     <p className="text-xs text-muted-foreground">
-                      System default follows your browser or OS time format. <code>12-hour</code>{" "}
-                      and <code>24-hour</code> force the hour cycle.
+                      Active theme:{" "}
+                      <span className="font-medium text-foreground">{resolvedTheme}</span>
                     </p>
-                  </div>
-                  <Select
-                    value={settings.timestampFormat}
-                    onValueChange={(value) => {
-                      if (value !== "locale" && value !== "12-hour" && value !== "24-hour") return;
-                      updateSettings({
-                        timestampFormat: value,
-                      });
-                    }}
-                  >
-                    <SelectTrigger className="w-40" aria-label="Timestamp format">
-                      <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup align="end">
-                      <SelectItem value="locale">{TIMESTAMP_FORMAT_LABELS.locale}</SelectItem>
-                      <SelectItem value="12-hour">{TIMESTAMP_FORMAT_LABELS["12-hour"]}</SelectItem>
-                      <SelectItem value="24-hour">{TIMESTAMP_FORMAT_LABELS["24-hour"]}</SelectItem>
-                    </SelectPopup>
-                  </Select>
-                </div>
 
-                {settings.timestampFormat !== defaults.timestampFormat ? (
-                  <div className="flex justify-end">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() =>
-                        updateSettings({
-                          timestampFormat: defaults.timestampFormat,
-                        })
-                      }
-                    >
-                      Restore default
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Codex App Server</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  These overrides apply to new sessions and let you use a non-default Codex install.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <label htmlFor="codex-binary-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Codex binary path</span>
-                  <Input
-                    id="codex-binary-path"
-                    value={codexBinaryPath}
-                    onChange={(event) => updateSettings({ codexBinaryPath: event.target.value })}
-                    placeholder="codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Leave blank to use <code>codex</code> from your PATH.
-                  </span>
-                </label>
-
-                <label htmlFor="codex-home-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">CODEX_HOME path</span>
-                  <Input
-                    id="codex-home-path"
-                    value={codexHomePath}
-                    onChange={(event) => updateSettings({ codexHomePath: event.target.value })}
-                    placeholder="/Users/you/.codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Optional custom Codex home/config directory.
-                  </span>
-                </label>
-
-                <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1">
-                    <p>Binary source</p>
-                    <p className="mt-1 break-all font-mono text-[11px] text-foreground">
-                      {codexBinaryPath || "PATH"}
-                    </p>
-                  </div>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    className="self-start"
-                    onClick={() =>
-                      updateSettings({
-                        codexBinaryPath: defaults.codexBinaryPath,
-                        codexHomePath: defaults.codexHomePath,
-                      })
-                    }
-                  >
-                    Reset codex overrides
-                  </Button>
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Models</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Save additional provider model slugs so they appear in the chat model picker and
-                  `/model` command suggestions.
-                </p>
-              </div>
-
-              <div className="space-y-5">
-                {MODEL_PROVIDER_SETTINGS.map((providerSettings) => {
-                  const provider = providerSettings.provider;
-                  const customModels = getCustomModelsForProvider(settings, provider);
-                  const customModelInput = customModelInputByProvider[provider];
-                  const customModelError = customModelErrorByProvider[provider] ?? null;
-                  return (
-                    <div
-                      key={provider}
-                      className="rounded-xl border border-border bg-background/50 p-4"
-                    >
-                      <div className="mb-4">
-                        <h3 className="text-sm font-medium text-foreground">
-                          {providerSettings.title}
-                        </h3>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {providerSettings.description}
+                    <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Timestamp format</p>
+                        <p className="text-xs text-muted-foreground">
+                          System default follows your browser or OS time format.{" "}
+                          <code>12-hour</code> and <code>24-hour</code> force the hour cycle.
                         </p>
                       </div>
-
-                      <div className="space-y-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-                          <label
-                            htmlFor={`custom-model-slug-${provider}`}
-                            className="block flex-1 space-y-1"
-                          >
-                            <span className="text-xs font-medium text-foreground">
-                              Custom model slug
-                            </span>
-                            <Input
-                              id={`custom-model-slug-${provider}`}
-                              value={customModelInput}
-                              onChange={(event) => {
-                                const value = event.target.value;
-                                setCustomModelInputByProvider((existing) => ({
-                                  ...existing,
-                                  [provider]: value,
-                                }));
-                                if (customModelError) {
-                                  setCustomModelErrorByProvider((existing) => ({
-                                    ...existing,
-                                    [provider]: null,
-                                  }));
-                                }
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key !== "Enter") return;
-                                event.preventDefault();
-                                addCustomModel(provider);
-                              }}
-                              placeholder={providerSettings.placeholder}
-                              spellCheck={false}
-                            />
-                            <span className="text-xs text-muted-foreground">
-                              Example: <code>{providerSettings.example}</code>
-                            </span>
-                          </label>
-
-                          <Button
-                            className="sm:mt-6"
-                            type="button"
-                            onClick={() => addCustomModel(provider)}
-                          >
-                            Add model
-                          </Button>
-                        </div>
-
-                        {customModelError ? (
-                          <p className="text-xs text-destructive">{customModelError}</p>
-                        ) : null}
-
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                            <p>Saved custom models: {customModels.length}</p>
-                            {customModels.length > 0 ? (
-                              <Button
-                                size="xs"
-                                variant="outline"
-                                onClick={() =>
-                                  updateSettings(
-                                    patchCustomModels(provider, [
-                                      ...getDefaultCustomModelsForProvider(defaults, provider),
-                                    ]),
-                                  )
-                                }
-                              >
-                                Reset custom models
-                              </Button>
-                            ) : null}
-                          </div>
-
-                          {customModels.length > 0 ? (
-                            <div className="space-y-2">
-                              {customModels.map((slug) => (
-                                <div
-                                  key={`${provider}:${slug}`}
-                                  className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
-                                >
-                                  <code className="min-w-0 flex-1 truncate text-xs text-foreground">
-                                    {slug}
-                                  </code>
-                                  <Button
-                                    size="xs"
-                                    variant="ghost"
-                                    onClick={() => removeCustomModel(provider, slug)}
-                                  >
-                                    Remove
-                                  </Button>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="rounded-lg border border-dashed border-border bg-background px-3 py-4 text-xs text-muted-foreground">
-                              No custom models saved yet.
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      <Select
+                        value={settings.timestampFormat}
+                        onValueChange={(value) => {
+                          if (value !== "locale" && value !== "12-hour" && value !== "24-hour")
+                            return;
+                          updateSettings({
+                            timestampFormat: value,
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="w-40" aria-label="Timestamp format">
+                          <SelectValue>
+                            {TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup align="end">
+                          <SelectItem value="locale">{TIMESTAMP_FORMAT_LABELS.locale}</SelectItem>
+                          <SelectItem value="12-hour">
+                            {TIMESTAMP_FORMAT_LABELS["12-hour"]}
+                          </SelectItem>
+                          <SelectItem value="24-hour">
+                            {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                          </SelectItem>
+                        </SelectPopup>
+                      </Select>
                     </div>
-                  );
-                })}
-              </div>
-            </section>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Threads</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Choose the default workspace mode for newly created draft threads.
-                </p>
-              </div>
+                    {settings.timestampFormat !== defaults.timestampFormat ? (
+                      <div className="flex justify-end">
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() =>
+                            updateSettings({
+                              timestampFormat: defaults.timestampFormat,
+                            })
+                          }
+                        >
+                          Restore default
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
 
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Default to New worktree</p>
-                  <p className="text-xs text-muted-foreground">
-                    New threads start in New worktree mode instead of Local.
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.defaultThreadEnvMode === "worktree"}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      defaultThreadEnvMode: checked ? "worktree" : "local",
-                    })
-                  }
-                  aria-label="Default new threads to New worktree mode"
-                />
-              </div>
-
-              {settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        defaultThreadEnvMode: defaults.defaultThreadEnvMode,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Responses</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Control how assistant output is rendered during a turn.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Stream assistant messages</p>
-                  <p className="text-xs text-muted-foreground">
-                    Show token-by-token output while a response is in progress.
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.enableAssistantStreaming}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      enableAssistantStreaming: Boolean(checked),
-                    })
-                  }
-                  aria-label="Stream assistant messages"
-                />
-              </div>
-
-              {settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        enableAssistantStreaming: defaults.enableAssistantStreaming,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Keybindings</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Open the persisted <code>keybindings.json</code> file to edit advanced bindings
-                  directly.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-foreground">Config file path</p>
-                    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
-                      {keybindingsConfigPath ?? "Resolving keybindings path..."}
+                <section className="rounded-2xl border border-border bg-card p-5">
+                  <div className="mb-4">
+                    <h2 className="text-sm font-medium text-foreground">Codex App Server</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      These overrides apply to new sessions and let you use a non-default Codex
+                      install.
                     </p>
                   </div>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={!keybindingsConfigPath || isOpeningKeybindings}
-                    onClick={openKeybindingsFile}
-                  >
-                    {isOpeningKeybindings ? "Opening..." : "Open keybindings.json"}
-                  </Button>
-                </div>
 
-                <p className="text-xs text-muted-foreground">
-                  Opens in your preferred editor selection.
-                </p>
-                {openKeybindingsError ? (
-                  <p className="text-xs text-destructive">{openKeybindingsError}</p>
-                ) : null}
-              </div>
-            </section>
+                  <div className="space-y-4">
+                    <label htmlFor="codex-binary-path" className="block space-y-1">
+                      <span className="text-xs font-medium text-foreground">Codex binary path</span>
+                      <Input
+                        id="codex-binary-path"
+                        value={codexBinaryPath}
+                        onChange={(event) =>
+                          updateSettings({ codexBinaryPath: event.target.value })
+                        }
+                        placeholder="codex"
+                        spellCheck={false}
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        Leave blank to use <code>codex</code> from your PATH.
+                      </span>
+                    </label>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Safety</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Additional guardrails for destructive local actions.
-                </p>
-              </div>
+                    <label htmlFor="codex-home-path" className="block space-y-1">
+                      <span className="text-xs font-medium text-foreground">CODEX_HOME path</span>
+                      <Input
+                        id="codex-home-path"
+                        value={codexHomePath}
+                        onChange={(event) => updateSettings({ codexHomePath: event.target.value })}
+                        placeholder="/Users/you/.codex"
+                        spellCheck={false}
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        Optional custom Codex home/config directory.
+                      </span>
+                    </label>
 
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Confirm thread deletion</p>
-                  <p className="text-xs text-muted-foreground">
-                    Ask for confirmation before deleting a thread and its chat history.
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.confirmThreadDelete}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      confirmThreadDelete: Boolean(checked),
-                    })
-                  }
-                  aria-label="Confirm thread deletion"
-                />
-              </div>
+                    <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <p>Binary source</p>
+                        <p className="mt-1 break-all font-mono text-[11px] text-foreground">
+                          {codexBinaryPath || "PATH"}
+                        </p>
+                      </div>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        className="self-start"
+                        onClick={() =>
+                          updateSettings({
+                            codexBinaryPath: defaults.codexBinaryPath,
+                            codexHomePath: defaults.codexHomePath,
+                          })
+                        }
+                      >
+                        Reset codex overrides
+                      </Button>
+                    </div>
+                  </div>
+                </section>
 
-              {settings.confirmThreadDelete !== defaults.confirmThreadDelete ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        confirmThreadDelete: defaults.confirmThreadDelete,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">About</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Application version and environment information.
-                </p>
-              </div>
+                <section className="rounded-2xl border border-border bg-card p-5">
+                  <div className="mb-4">
+                    <h2 className="text-sm font-medium text-foreground">Models</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Save additional provider model slugs so they appear in the chat model picker
+                      and `/model` command suggestions.
+                    </p>
+                  </div>
 
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Version</p>
-                  <p className="text-xs text-muted-foreground">
-                    Current version of the application.
-                  </p>
-                </div>
-                <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
-              </div>
-            </section>
+                  <div className="space-y-5">
+                    {MODEL_PROVIDER_SETTINGS.map((providerSettings) => {
+                      const provider = providerSettings.provider;
+                      const customModels = getCustomModelsForProvider(settings, provider);
+                      const customModelInput = customModelInputByProvider[provider];
+                      const customModelError = customModelErrorByProvider[provider] ?? null;
+                      return (
+                        <div
+                          key={provider}
+                          className="rounded-xl border border-border bg-background/50 p-4"
+                        >
+                          <div className="mb-4">
+                            <h3 className="text-sm font-medium text-foreground">
+                              {providerSettings.title}
+                            </h3>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {providerSettings.description}
+                            </p>
+                          </div>
+
+                          <div className="space-y-4">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                              <label
+                                htmlFor={`custom-model-slug-${provider}`}
+                                className="block flex-1 space-y-1"
+                              >
+                                <span className="text-xs font-medium text-foreground">
+                                  Custom model slug
+                                </span>
+                                <Input
+                                  id={`custom-model-slug-${provider}`}
+                                  value={customModelInput}
+                                  onChange={(event) => {
+                                    const value = event.target.value;
+                                    setCustomModelInputByProvider((existing) => ({
+                                      ...existing,
+                                      [provider]: value,
+                                    }));
+                                    if (customModelError) {
+                                      setCustomModelErrorByProvider((existing) => ({
+                                        ...existing,
+                                        [provider]: null,
+                                      }));
+                                    }
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter") return;
+                                    event.preventDefault();
+                                    addCustomModel(provider);
+                                  }}
+                                  placeholder={providerSettings.placeholder}
+                                  spellCheck={false}
+                                />
+                                <span className="text-xs text-muted-foreground">
+                                  Example: <code>{providerSettings.example}</code>
+                                </span>
+                              </label>
+
+                              <Button
+                                className="sm:mt-6"
+                                type="button"
+                                onClick={() => addCustomModel(provider)}
+                              >
+                                Add model
+                              </Button>
+                            </div>
+
+                            {customModelError ? (
+                              <p className="text-xs text-destructive">{customModelError}</p>
+                            ) : null}
+
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                <p>Saved custom models: {customModels.length}</p>
+                                {customModels.length > 0 ? (
+                                  <Button
+                                    size="xs"
+                                    variant="outline"
+                                    onClick={() =>
+                                      updateSettings(
+                                        patchCustomModels(provider, [
+                                          ...getDefaultCustomModelsForProvider(defaults, provider),
+                                        ]),
+                                      )
+                                    }
+                                  >
+                                    Reset custom models
+                                  </Button>
+                                ) : null}
+                              </div>
+
+                              {customModels.length > 0 ? (
+                                <div className="space-y-2">
+                                  {customModels.map((slug) => (
+                                    <div
+                                      key={`${provider}:${slug}`}
+                                      className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
+                                    >
+                                      <code className="min-w-0 flex-1 truncate text-xs text-foreground">
+                                        {slug}
+                                      </code>
+                                      <Button
+                                        size="xs"
+                                        variant="ghost"
+                                        onClick={() => removeCustomModel(provider, slug)}
+                                      >
+                                        Remove
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="rounded-lg border border-dashed border-border bg-background px-3 py-4 text-xs text-muted-foreground">
+                                  No custom models saved yet.
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-border bg-card p-5">
+                  <div className="mb-4">
+                    <h2 className="text-sm font-medium text-foreground">Threads</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Choose the default workspace mode for newly created draft threads.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Default to New worktree</p>
+                      <p className="text-xs text-muted-foreground">
+                        New threads start in New worktree mode instead of Local.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.defaultThreadEnvMode === "worktree"}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          defaultThreadEnvMode: checked ? "worktree" : "local",
+                        })
+                      }
+                      aria-label="Default new threads to New worktree mode"
+                    />
+                  </div>
+
+                  {settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
+                    <div className="mt-3 flex justify-end">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings({
+                            defaultThreadEnvMode: defaults.defaultThreadEnvMode,
+                          })
+                        }
+                      >
+                        Restore default
+                      </Button>
+                    </div>
+                  ) : null}
+                </section>
+
+                <section className="rounded-2xl border border-border bg-card p-5">
+                  <div className="mb-4">
+                    <h2 className="text-sm font-medium text-foreground">Responses</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Control how assistant output is rendered during a turn.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        Stream assistant messages
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Show token-by-token output while a response is in progress.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.enableAssistantStreaming}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          enableAssistantStreaming: Boolean(checked),
+                        })
+                      }
+                      aria-label="Stream assistant messages"
+                    />
+                  </div>
+
+                  {settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
+                    <div className="mt-3 flex justify-end">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings({
+                            enableAssistantStreaming: defaults.enableAssistantStreaming,
+                          })
+                        }
+                      >
+                        Restore default
+                      </Button>
+                    </div>
+                  ) : null}
+                </section>
+
+                <section className="rounded-2xl border border-border bg-card p-5">
+                  <div className="mb-4">
+                    <h2 className="text-sm font-medium text-foreground">Keybindings</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Open the persisted <code>keybindings.json</code> file to edit advanced
+                      bindings directly.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-foreground">Config file path</p>
+                        <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                          {keybindingsConfigPath ?? "Resolving keybindings path..."}
+                        </p>
+                      </div>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={!keybindingsConfigPath || isOpeningKeybindings}
+                        onClick={openKeybindingsFile}
+                      >
+                        {isOpeningKeybindings ? "Opening..." : "Open keybindings.json"}
+                      </Button>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground">
+                      Opens in your preferred editor selection.
+                    </p>
+                    {openKeybindingsError ? (
+                      <p className="text-xs text-destructive">{openKeybindingsError}</p>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-border bg-card p-5">
+                  <div className="mb-4">
+                    <h2 className="text-sm font-medium text-foreground">Safety</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Additional guardrails for destructive local actions.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Confirm thread deletion</p>
+                      <p className="text-xs text-muted-foreground">
+                        Ask for confirmation before deleting a thread and its chat history.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.confirmThreadDelete}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          confirmThreadDelete: Boolean(checked),
+                        })
+                      }
+                      aria-label="Confirm thread deletion"
+                    />
+                  </div>
+
+                  {settings.confirmThreadDelete !== defaults.confirmThreadDelete ? (
+                    <div className="mt-3 flex justify-end">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings({
+                            confirmThreadDelete: defaults.confirmThreadDelete,
+                          })
+                        }
+                      >
+                        Restore default
+                      </Button>
+                    </div>
+                  ) : null}
+                </section>
+                <section className="rounded-2xl border border-border bg-card p-5">
+                  <div className="mb-4">
+                    <h2 className="text-sm font-medium text-foreground">About</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Application version and environment information.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Version</p>
+                      <p className="text-xs text-muted-foreground">
+                        Current version of the application.
+                      </p>
+                    </div>
+                    <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
+                  </div>
+                </section>
+              </>
+            ) : (
+              <SkillsSettingsPanel codexHomePath={codexHomePath} />
+            )}
           </div>
         </div>
       </div>
@@ -692,5 +754,6 @@ function SettingsRouteView() {
 }
 
 export const Route = createFileRoute("/_chat/settings")({
+  validateSearch: parseSettingsSearch,
   component: SettingsRouteView,
 });

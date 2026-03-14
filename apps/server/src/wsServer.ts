@@ -78,6 +78,13 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import {
+  getSharedSkillDetail,
+  getSharedSkillsState,
+  initializeSharedSkills,
+  setSharedSkillEnabled,
+  uninstallSharedSkill,
+} from "./sharedSkills";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -876,6 +883,31 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           providers: providerStatuses,
           availableEditors,
         };
+
+      case WS_METHODS.serverGetSharedSkills: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise(() => getSharedSkillsState(body));
+      }
+
+      case WS_METHODS.serverGetSharedSkillDetail: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise(() => getSharedSkillDetail(body));
+      }
+
+      case WS_METHODS.serverInitializeSharedSkills: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise(() => initializeSharedSkills(body));
+      }
+
+      case WS_METHODS.serverSetSharedSkillEnabled: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise(() => setSharedSkillEnabled(body));
+      }
+
+      case WS_METHODS.serverUninstallSharedSkill: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise(() => uninstallSharedSkill(body));
+      }
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);

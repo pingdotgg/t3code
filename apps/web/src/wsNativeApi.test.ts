@@ -336,6 +336,76 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards shared skills inspection requests to the server websocket method", async () => {
+    requestMock.mockResolvedValue({ isInitialized: false, skills: [], warnings: [] });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.server.getSharedSkills({
+      codexHomePath: "/tmp/.codex",
+      sharedSkillsPath: "/tmp/Documents/skills",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverGetSharedSkills, {
+      codexHomePath: "/tmp/.codex",
+      sharedSkillsPath: "/tmp/Documents/skills",
+    });
+  });
+
+  it("forwards shared skills initialization requests to the server websocket method", async () => {
+    requestMock.mockResolvedValue({ isInitialized: true, skills: [], warnings: [] });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.server.initializeSharedSkills({
+      codexHomePath: "/tmp/.codex",
+      sharedSkillsPath: "/tmp/Documents/skills",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverInitializeSharedSkills, {
+      codexHomePath: "/tmp/.codex",
+      sharedSkillsPath: "/tmp/Documents/skills",
+    });
+  });
+
+  it("forwards shared skill detail requests to the server websocket method", async () => {
+    requestMock.mockResolvedValue({ skill: { name: "demo" }, markdown: "# Demo" });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.server.getSharedSkillDetail({
+      codexHomePath: "/tmp/.codex",
+      sharedSkillsPath: "/tmp/Documents/skills",
+      skillName: "demo",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverGetSharedSkillDetail, {
+      codexHomePath: "/tmp/.codex",
+      sharedSkillsPath: "/tmp/Documents/skills",
+      skillName: "demo",
+    });
+  });
+
+  it("forwards shared skill enable toggles to the server websocket method", async () => {
+    requestMock.mockResolvedValue({ isInitialized: true, skills: [], warnings: [] });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.server.setSharedSkillEnabled({
+      codexHomePath: "/tmp/.codex",
+      sharedSkillsPath: "/tmp/Documents/skills",
+      skillName: "demo",
+      enabled: false,
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverSetSharedSkillEnabled, {
+      codexHomePath: "/tmp/.codex",
+      sharedSkillsPath: "/tmp/Documents/skills",
+      skillName: "demo",
+      enabled: false,
+    });
+  });
+
   it("forwards context menu metadata to desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {

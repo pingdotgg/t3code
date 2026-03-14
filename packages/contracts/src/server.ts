@@ -55,6 +55,79 @@ export const ServerConfig = Schema.Struct({
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
+export const SharedSkillsConfigInput = Schema.Struct({
+  codexHomePath: Schema.optional(Schema.String),
+  sharedSkillsPath: Schema.optional(Schema.String),
+});
+export type SharedSkillsConfigInput = typeof SharedSkillsConfigInput.Type;
+
+export const SharedSkillStatus = Schema.Literals([
+  "managed",
+  "needs-migration",
+  "needs-link",
+  "conflict",
+  "broken-link",
+]);
+export type SharedSkillStatus = typeof SharedSkillStatus.Type;
+
+export const SharedSkill = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  description: Schema.optional(Schema.String),
+  displayName: Schema.optional(Schema.String),
+  shortDescription: Schema.optional(Schema.String),
+  iconPath: Schema.optional(Schema.String),
+  brandColor: Schema.optional(Schema.String),
+  markdownPath: TrimmedNonEmptyString,
+  enabled: Schema.Boolean,
+  status: SharedSkillStatus,
+  codexPath: TrimmedNonEmptyString,
+  sharedPath: TrimmedNonEmptyString,
+  codexPathExists: Schema.Boolean,
+  sharedPathExists: Schema.Boolean,
+  symlinkedToSharedPath: Schema.Boolean,
+});
+export type SharedSkill = typeof SharedSkill.Type;
+
+export const SharedSkillsState = Schema.Struct({
+  codexHomePath: TrimmedNonEmptyString,
+  codexSkillsPath: TrimmedNonEmptyString,
+  agentsSkillsPath: TrimmedNonEmptyString,
+  sharedSkillsPath: TrimmedNonEmptyString,
+  initializationMarkerPath: TrimmedNonEmptyString,
+  isInitialized: Schema.Boolean,
+  skills: Schema.Array(SharedSkill),
+  warnings: Schema.Array(TrimmedNonEmptyString),
+});
+export type SharedSkillsState = typeof SharedSkillsState.Type;
+
+export const SharedSkillDetailInput = Schema.Struct({
+  codexHomePath: Schema.optional(Schema.String),
+  sharedSkillsPath: Schema.optional(Schema.String),
+  skillName: TrimmedNonEmptyString,
+});
+export type SharedSkillDetailInput = typeof SharedSkillDetailInput.Type;
+
+export const SharedSkillDetail = Schema.Struct({
+  skill: SharedSkill,
+  markdown: Schema.String,
+});
+export type SharedSkillDetail = typeof SharedSkillDetail.Type;
+
+export const SharedSkillSetEnabledInput = Schema.Struct({
+  codexHomePath: Schema.optional(Schema.String),
+  sharedSkillsPath: Schema.optional(Schema.String),
+  skillName: TrimmedNonEmptyString,
+  enabled: Schema.Boolean,
+});
+export type SharedSkillSetEnabledInput = typeof SharedSkillSetEnabledInput.Type;
+
+export const SharedSkillUninstallInput = Schema.Struct({
+  codexHomePath: Schema.optional(Schema.String),
+  sharedSkillsPath: Schema.optional(Schema.String),
+  skillName: TrimmedNonEmptyString,
+});
+export type SharedSkillUninstallInput = typeof SharedSkillUninstallInput.Type;
+
 export const ServerUpsertKeybindingInput = KeybindingRule;
 export type ServerUpsertKeybindingInput = typeof ServerUpsertKeybindingInput.Type;
 

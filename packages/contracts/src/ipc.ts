@@ -26,6 +26,14 @@ import type {
 } from "./project";
 import type { ServerConfig } from "./server";
 import type {
+  SharedSkillDetail,
+  SharedSkillDetailInput,
+  SharedSkillsConfigInput,
+  SharedSkillsState,
+  SharedSkillSetEnabledInput,
+  SharedSkillUninstallInput,
+} from "./server";
+import type {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
@@ -158,6 +166,11 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    getSharedSkills: (input: SharedSkillsConfigInput) => Promise<SharedSkillsState>;
+    getSharedSkillDetail: (input: SharedSkillDetailInput) => Promise<SharedSkillDetail>;
+    initializeSharedSkills: (input: SharedSkillsConfigInput) => Promise<SharedSkillsState>;
+    setSharedSkillEnabled: (input: SharedSkillSetEnabledInput) => Promise<SharedSkillsState>;
+    uninstallSharedSkill: (input: SharedSkillUninstallInput) => Promise<SharedSkillsState>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
   };
   orchestration: {
