@@ -30,3 +30,11 @@ export const newProjectId = (): ProjectId => ProjectId.makeUnsafe(randomUUID());
 export const newThreadId = (): ThreadId => ThreadId.makeUnsafe(randomUUID());
 
 export const newMessageId = (): MessageId => MessageId.makeUnsafe(randomUUID());
+
+export const ensureSentenceEnds = (value: string): string => {
+  const trimmed = value.trim();
+  if ([".", "!", "?"].includes(trimmed.at(-1) ?? "")) {
+    return trimmed;
+  }
+  return `${trimmed}.`;
+};
