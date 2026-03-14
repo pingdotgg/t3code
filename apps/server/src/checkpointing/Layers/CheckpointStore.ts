@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { Effect, Layer, FileSystem, Path } from "effect";
 
 import { CheckpointInvariantError } from "../Errors.ts";
+import { machineReadableGitDiffArgs } from "../../git/diffArgs.ts";
 import { GitCommandError } from "../../git/Errors.ts";
 import { GitServiceLive } from "../../git/Layers/GitService.ts";
 import { GitService } from "../../git/Services/GitService.ts";
@@ -244,7 +245,13 @@ const makeCheckpointStore = Effect.gen(function* () {
       const result = yield* git.execute({
         operation,
         cwd: input.cwd,
-        args: ["diff", "--patch", "--minimal", "--no-color", fromCommitOid, toCommitOid],
+        args: machineReadableGitDiffArgs(
+          "--patch",
+          "--minimal",
+          "--no-color",
+          fromCommitOid,
+          toCommitOid,
+        ),
       });
 
       return result.stdout;

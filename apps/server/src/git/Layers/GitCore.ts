@@ -1,5 +1,6 @@
 import { Cache, Data, Duration, Effect, Exit, FileSystem, Layer, Path } from "effect";
 
+import { machineReadableGitDiffArgs } from "../diffArgs.ts";
 import { GitCommandError } from "../Errors.ts";
 import { GitService } from "../Services/GitService.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
@@ -663,12 +664,16 @@ const makeGitCore = Effect.gen(function* () {
             "--porcelain=2",
             "--branch",
           ]),
-          runGitStdout("GitCore.statusDetails.unstagedNumstat", cwd, ["diff", "--numstat"]),
-          runGitStdout("GitCore.statusDetails.stagedNumstat", cwd, [
-            "diff",
-            "--cached",
-            "--numstat",
-          ]),
+          runGitStdout(
+            "GitCore.statusDetails.unstagedNumstat",
+            cwd,
+            machineReadableGitDiffArgs("--numstat"),
+          ),
+          runGitStdout(
+            "GitCore.statusDetails.stagedNumstat",
+            cwd,
+            machineReadableGitDiffArgs("--cached", "--numstat"),
+          ),
         ],
         { concurrency: "unbounded" },
       );
@@ -782,21 +787,20 @@ const makeGitCore = Effect.gen(function* () {
         yield* runGit("GitCore.prepareCommitContext.addAll", cwd, ["add", "-A"]);
       }
 
-      const stagedSummary = yield* runGitStdout("GitCore.prepareCommitContext.stagedSummary", cwd, [
-        "diff",
-        "--cached",
-        "--name-status",
-      ]).pipe(Effect.map((stdout) => stdout.trim()));
+      const stagedSummary = yield* runGitStdout(
+        "GitCore.prepareCommitContext.stagedSummary",
+        cwd,
+        machineReadableGitDiffArgs("--cached", "--name-status"),
+      ).pipe(Effect.map((stdout) => stdout.trim()));
       if (stagedSummary.length === 0) {
         return null;
       }
 
-      const stagedPatch = yield* runGitStdout("GitCore.prepareCommitContext.stagedPatch", cwd, [
-        "diff",
-        "--cached",
-        "--patch",
-        "--minimal",
-      ]);
+      const stagedPatch = yield* runGitStdout(
+        "GitCore.prepareCommitContext.stagedPatch",
+        cwd,
+        machineReadableGitDiffArgs("--cached", "--patch", "--minimal"),
+      );
 
       return {
         stagedSummary,
@@ -970,13 +974,16 @@ const makeGitCore = Effect.gen(function* () {
       const [commitSummary, diffSummary, diffPatch] = yield* Effect.all(
         [
           runGitStdout("GitCore.readRangeContext.log", cwd, ["log", "--oneline", range]),
-          runGitStdout("GitCore.readRangeContext.diffStat", cwd, ["diff", "--stat", range]),
-          runGitStdout("GitCore.readRangeContext.diffPatch", cwd, [
-            "diff",
-            "--patch",
-            "--minimal",
-            range,
-          ]),
+          runGitStdout(
+            "GitCore.readRangeContext.diffStat",
+            cwd,
+            machineReadableGitDiffArgs("--stat", range),
+          ),
+          runGitStdout(
+            "GitCore.readRangeContext.diffPatch",
+            cwd,
+            machineReadableGitDiffArgs("--patch", "--minimal", range),
+          ),
         ],
         { concurrency: "unbounded" },
       );

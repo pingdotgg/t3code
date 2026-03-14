@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -220,6 +220,33 @@ function commitWithDate(
       GIT_AUTHOR_DATE: dateIsoString,
       GIT_COMMITTER_DATE: dateIsoString,
     });
+  });
+}
+
+function configureExternalDiff(
+  cwd: string,
+  scriptDir: string,
+): Effect.Effect<
+  void,
+  GitCommandError | PlatformError.PlatformError,
+  GitService | FileSystem.FileSystem
+> {
+  return Effect.gen(function* () {
+    const scriptPath = path.join(
+      scriptDir,
+      process.platform === "win32" ? "external-diff.cmd" : "external-diff.sh",
+    );
+    const scriptContents =
+      process.platform === "win32"
+        ? "@echo off\r\necho external-diff %*\r\n"
+        : '#!/bin/sh\necho external-diff "$@"\n';
+
+    yield* writeTextFile(scriptPath, scriptContents);
+    if (process.platform !== "win32") {
+      chmodSync(scriptPath, 0o755);
+    }
+
+    yield* git(cwd, ["config", "diff.external", scriptPath]);
   });
 }
 
@@ -1731,6 +1758,43 @@ it.layer(TestLayer)("git integration", (it) => {
         const statusAfter = yield* git(tmp, ["status", "--porcelain"]);
         expect(statusAfter).toContain("b.txt");
         expect(statusAfter).not.toContain("a.txt");
+      }),
+    );
+
+    it.effect("prepareCommitContext ignores configured external diff tools", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const externalDiffDir = yield* makeTmpDir("external-diff-test-");
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* configureExternalDiff(tmp, externalDiffDir);
+        yield* writeTextFile(path.join(tmp, "README.md"), "new content\n");
+
+        const context = yield* core.prepareCommitContext(tmp);
+        expect(context).not.toBeNull();
+        expect(context!.stagedPatch).toContain("diff --git a/README.md b/README.md");
+        expect(context!.stagedPatch).not.toContain("external-diff");
+      }),
+    );
+
+    it.effect("readRangeContext ignores configured external diff tools", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const externalDiffDir = yield* makeTmpDir("external-diff-test-");
+        const { initialBranch } = yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* git(tmp, ["checkout", "-b", "feature/external-diff"]);
+        yield* writeTextFile(path.join(tmp, "README.md"), "new content\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* git(tmp, ["commit", "-m", "update readme"]);
+        yield* configureExternalDiff(tmp, externalDiffDir);
+
+        const context = yield* core.readRangeContext(tmp, initialBranch);
+        expect(context.diffSummary).toContain("README.md");
+        expect(context.diffPatch).toContain("diff --git a/README.md b/README.md");
+        expect(context.diffPatch).not.toContain("external-diff");
       }),
     );
 
