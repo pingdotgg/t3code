@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  compareThreadsByLastActivity,
   hasUnseenCompletion,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
+import { ThreadId } from "@t3tools/contracts";
+
+function makeThreadId(id: string): ThreadId {
+  return ThreadId.makeUnsafe(id);
+}
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -173,6 +179,55 @@ describe("resolveThreadStatusPill", () => {
         hasPendingUserInput: false,
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
+  });
+});
+
+describe("compareThreadsByLastActivity", () => {
+  it("sorts by updatedAt when present, newest first", () => {
+    const older = {
+      id: makeThreadId("thread-old"),
+      createdAt: "2026-03-01T10:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    };
+    const newer = {
+      id: makeThreadId("thread-new"),
+      createdAt: "2026-03-01T10:00:00.000Z",
+      updatedAt: "2026-03-01T14:00:00.000Z",
+    };
+    expect(compareThreadsByLastActivity(older, newer)).toBeGreaterThan(0);
+    expect(compareThreadsByLastActivity(newer, older)).toBeLessThan(0);
+  });
+
+  it("falls back to createdAt when updatedAt is absent", () => {
+    const older = { id: makeThreadId("thread-a"), createdAt: "2026-03-01T10:00:00.000Z" };
+    const newer = { id: makeThreadId("thread-b"), createdAt: "2026-03-01T12:00:00.000Z" };
+    expect(compareThreadsByLastActivity(older, newer)).toBeGreaterThan(0);
+    expect(compareThreadsByLastActivity(newer, older)).toBeLessThan(0);
+  });
+
+  it("uses id as tiebreaker when timestamps are equal", () => {
+    const a = {
+      id: makeThreadId("thread-aaa"),
+      createdAt: "2026-03-01T10:00:00.000Z",
+      updatedAt: "2026-03-01T10:00:00.000Z",
+    };
+    const b = {
+      id: makeThreadId("thread-zzz"),
+      createdAt: "2026-03-01T10:00:00.000Z",
+      updatedAt: "2026-03-01T10:00:00.000Z",
+    };
+    expect(compareThreadsByLastActivity(a, b)).toBeGreaterThan(0);
+    expect(compareThreadsByLastActivity(b, a)).toBeLessThan(0);
+  });
+
+  it("produces stable sort order for array", () => {
+    const threads = [
+      { id: makeThreadId("thread-1"), createdAt: "2026-03-01T10:00:00.000Z", updatedAt: "2026-03-01T14:00:00.000Z" },
+      { id: makeThreadId("thread-2"), createdAt: "2026-03-01T10:00:00.000Z", updatedAt: "2026-03-01T12:00:00.000Z" },
+      { id: makeThreadId("thread-3"), createdAt: "2026-03-01T10:00:00.000Z", updatedAt: "2026-03-01T16:00:00.000Z" },
+    ];
+    const sorted = [...threads].toSorted(compareThreadsByLastActivity);
+    expect(sorted.map((t) => t.id)).toEqual(["thread-3", "thread-1", "thread-2"]);
   });
 });
 

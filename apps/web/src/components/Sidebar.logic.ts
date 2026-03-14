@@ -5,6 +5,27 @@ import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export type SidebarNewThreadEnvMode = "local" | "worktree";
 
+export type ThreadSortInput = Pick<Thread, "id"> & {
+  createdAt: string;
+  updatedAt?: string;
+};
+
+/**
+ * Comparator for sorting threads by last activity (updatedAt, then createdAt), newest first.
+ * Uses thread id as tiebreaker for deterministic order.
+ */
+export function compareThreadsByLastActivity(
+  a: ThreadSortInput,
+  b: ThreadSortInput,
+): number {
+  
+  const byDate =
+    new Date(b.updatedAt ?? b.createdAt).getTime() -
+    new Date(a.updatedAt ?? a.createdAt).getTime();
+  if (byDate !== 0) return byDate;
+  return b.id.localeCompare(a.id);
+}
+
 export interface ThreadStatusPill {
   label:
     | "Working"
