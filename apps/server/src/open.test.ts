@@ -121,6 +121,20 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       });
     }),
   );
+
+  it.effect("uses VISUAL before EDITOR for system-editor launches", () =>
+    Effect.gen(function* () {
+      const launch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "system-editor" },
+        "darwin",
+        { VISUAL: "my-editor", EDITOR: "fallback-editor" },
+      );
+      assert.deepEqual(launch, {
+        command: "my-editor",
+        args: ["/tmp/workspace"],
+      });
+    }),
+  );
 });
 
 it.layer(NodeServices.layer)("launchDetached", (it) => {
@@ -227,6 +241,22 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
       assert.deepEqual(editors, ["cursor", "file-manager"]);
+    }),
+  );
+
+  it.effect("includes system-editor when VISUAL resolves to an available command", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+
+      yield* fs.writeFileString(path.join(dir, "my-editor.CMD"), "@echo off\r\n");
+      const editors = resolveAvailableEditors("win32", {
+        PATH: dir,
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        VISUAL: "my-editor",
+      });
+      assert.deepEqual(editors, ["system-editor"]);
     }),
   );
 });

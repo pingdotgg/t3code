@@ -38,6 +38,7 @@ interface CommandAvailabilityOptions {
 }
 
 const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const SYSTEM_EDITOR_ENV_KEYS = ["VISUAL", "EDITOR"] as const;
 
 function shouldUseGotoFlag(editorId: EditorId, target: string): boolean {
   return (
@@ -58,6 +59,16 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
 
 function stripWrappingQuotes(value: string): string {
   return value.replace(/^"+|"+$/g, "");
+}
+
+function resolveSystemEditorCommand(env: NodeJS.ProcessEnv): string | null {
+  for (const key of SYSTEM_EDITOR_ENV_KEYS) {
+    const value = env[key]?.trim();
+    if (value && value.length > 0) {
+      return stripWrappingQuotes(value);
+    }
+  }
+  return null;
 }
 
 function resolvePathEnvironmentVariable(env: NodeJS.ProcessEnv): string {
@@ -168,7 +179,13 @@ export function resolveAvailableEditors(
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
-    const command = editor.command ?? fileManagerCommandForPlatform(platform);
+    const command =
+      editor.id === "system-editor"
+        ? resolveSystemEditorCommand(env)
+        : (editor.command ?? fileManagerCommandForPlatform(platform));
+    if (!command) {
+      continue;
+    }
     if (isCommandAvailable(command, { platform, env })) {
       available.push(editor.id);
     }
@@ -206,10 +223,21 @@ export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
 export const resolveEditorLaunch = Effect.fnUntraced(function* (
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<EditorLaunch, OpenError> {
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });
+  }
+
+  if (editorDef.id === "system-editor") {
+    const command = resolveSystemEditorCommand(env);
+    if (!command) {
+      return yield* new OpenError({
+        message: "System editor is unavailable because VISUAL and EDITOR are not set.",
+      });
+    }
+    return { command, args: [input.cwd] };
   }
 
   if (editorDef.command) {
