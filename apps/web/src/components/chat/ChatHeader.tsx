@@ -7,11 +7,13 @@ import {
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { DiffIcon } from "lucide-react";
+import { useAppSettings } from "~/appSettings";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
+import { KeybindingsControl } from "./KeybindingsControl";
 import { OpenInPicker } from "./OpenInPicker";
 
 interface ChatHeaderProps {
@@ -53,6 +55,8 @@ export const ChatHeader = memo(function ChatHeader({
   onDeleteProjectScript,
   onToggleDiff,
 }: ChatHeaderProps) {
+  const { settings } = useAppSettings();
+
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -86,6 +90,9 @@ export const ChatHeader = memo(function ChatHeader({
             onDeleteScript={onDeleteProjectScript}
           />
         )}
+        {settings.showHeaderKeybindingsButton ? (
+          <KeybindingsControl keybindings={keybindings} triggerLabel="Keys" />
+        ) : null}
         {activeProjectName && (
           <OpenInPicker
             keybindings={keybindings}

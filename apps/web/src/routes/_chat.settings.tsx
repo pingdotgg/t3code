@@ -20,6 +20,7 @@ import {
 } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { APP_VERSION } from "../branding";
+import { KeybindingsControl } from "../components/chat/KeybindingsControl";
 import { SidebarInset } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
@@ -111,6 +112,7 @@ function SettingsRouteView() {
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
+  const keybindings = serverConfigQuery.data?.keybindings ?? [];
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -592,12 +594,58 @@ function SettingsRouteView() {
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Keybindings</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Open the persisted <code>keybindings.json</code> file to edit advanced bindings
-                  directly.
+                  Manage the built-in shortcuts from the app and use the JSON file for advanced
+                  overrides.
                 </p>
               </div>
 
               <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">
+                      Show keybindings button in chat header
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Keep the <code>Keys</code> shortcut manager button visible in the top bar.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.showHeaderKeybindingsButton}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        showHeaderKeybindingsButton: Boolean(checked),
+                      })
+                    }
+                    aria-label="Show keybindings button in chat header"
+                  />
+                </div>
+
+                {settings.showHeaderKeybindingsButton !== defaults.showHeaderKeybindingsButton ? (
+                  <div className="flex justify-end">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        updateSettings({
+                          showHeaderKeybindingsButton: defaults.showHeaderKeybindingsButton,
+                        })
+                      }
+                    >
+                      Restore button visibility default
+                    </Button>
+                  </div>
+                ) : null}
+
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Keybinds manager</p>
+                    <p className="text-xs text-muted-foreground">
+                      Update built-in bindings without leaving settings.
+                    </p>
+                  </div>
+                  <KeybindingsControl keybindings={keybindings} triggerLabel="Manage keybindings" />
+                </div>
+
                 <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-foreground">Config file path</p>
@@ -616,7 +664,8 @@ function SettingsRouteView() {
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Opens in your preferred editor selection.
+                  The JSON file is still available for advanced bindings and manual edits. It opens
+                  in your preferred editor selection.
                 </p>
                 {openKeybindingsError ? (
                   <p className="text-xs text-destructive">{openKeybindingsError}</p>

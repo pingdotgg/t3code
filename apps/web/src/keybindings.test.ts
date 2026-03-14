@@ -1,4 +1,4 @@
-import { assert, describe, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 
 import {
   type KeybindingCommand,
@@ -11,6 +11,8 @@ import {
   isChatNewShortcut,
   isChatNewLocalShortcut,
   isDiffToggleShortcut,
+  keybindingValueForCommand,
+  keybindingValueFromEvent,
   isOpenFavoriteEditorShortcut,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
@@ -297,6 +299,30 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: true },
       }),
     );
+  });
+});
+
+describe("keybindingValueFromEvent", () => {
+  it("normalizes modifiers using mod on macOS", () => {
+    expect(
+      keybindingValueFromEvent(event({ key: "k", metaKey: true, shiftKey: true }), "MacIntel"),
+    ).toBe("mod+shift+k");
+  });
+
+  it("normalizes modifiers using mod on non-macOS", () => {
+    expect(
+      keybindingValueFromEvent(event({ key: "k", ctrlKey: true, altKey: true }), "Win32"),
+    ).toBe("mod+alt+k");
+  });
+
+  it("rejects shortcuts without a modifier", () => {
+    expect(keybindingValueFromEvent(event({ key: "k" }), "Linux")).toBeNull();
+  });
+});
+
+describe("keybindingValueForCommand", () => {
+  it("returns the latest serialized binding for a command", () => {
+    expect(keybindingValueForCommand(DEFAULT_BINDINGS, "chat.new")).toBe("mod+shift+o");
   });
 });
 

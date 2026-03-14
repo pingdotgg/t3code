@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_SHOW_HEADER_KEYBINDINGS_BUTTON,
   DEFAULT_TIMESTAMP_FORMAT,
   getAppModelOptions,
   normalizeCustomModelSlugs,
@@ -62,5 +63,11 @@ describe("resolveAppModelSelection", () => {
 describe("timestamp format defaults", () => {
   it("defaults timestamp format to locale", () => {
     expect(DEFAULT_TIMESTAMP_FORMAT).toBe("locale");
+  });
+});
+
+describe("header keybindings button defaults", () => {
+  it("shows the chat header keybindings button by default", () => {
+    expect(DEFAULT_SHOW_HEADER_KEYBINDINGS_BUTTON).toBe(true);
   });
 });

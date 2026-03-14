@@ -4,6 +4,7 @@ import {
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { isMacPlatform } from "./lib/utils";
 
 export interface ShortcutEventLike {
@@ -25,6 +26,82 @@ interface ShortcutMatchOptions {
   platform?: string;
   context?: Partial<ShortcutMatchContext>;
 }
+
+export interface StaticKeybindingDefinition {
+  command: KeybindingCommand;
+  title: string;
+  description: string;
+  section: "workspace" | "chat" | "terminal";
+}
+
+export const STATIC_KEYBINDING_SECTIONS = [
+  {
+    id: "workspace",
+    title: "Workspace",
+    description: "Project-level shortcuts for navigation and review.",
+  },
+  {
+    id: "chat",
+    title: "Chat",
+    description: "Shortcuts for starting new threads and switching context.",
+  },
+  {
+    id: "terminal",
+    title: "Terminal",
+    description: "Shortcuts that control the integrated terminal.",
+  },
+] as const;
+
+export const STATIC_KEYBINDING_DEFINITIONS: ReadonlyArray<StaticKeybindingDefinition> = [
+  {
+    command: "diff.toggle",
+    title: "Toggle diff panel",
+    description: "Open or hide the current thread diff without leaving chat.",
+    section: "workspace",
+  },
+  {
+    command: "editor.openFavorite",
+    title: "Open in editor",
+    description: "Open the active project or worktree in your preferred editor.",
+    section: "workspace",
+  },
+  {
+    command: "chat.new",
+    title: "New chat",
+    description: "Start a new thread while preserving the active branch or worktree context.",
+    section: "chat",
+  },
+  {
+    command: "chat.newLocal",
+    title: "New environment thread",
+    description: "Start a new thread in a fresh local or worktree environment.",
+    section: "chat",
+  },
+  {
+    command: "terminal.toggle",
+    title: "Toggle terminal",
+    description: "Open or hide the terminal drawer without changing threads.",
+    section: "terminal",
+  },
+  {
+    command: "terminal.split",
+    title: "Split terminal",
+    description: "Create another terminal pane when terminal focus is active.",
+    section: "terminal",
+  },
+  {
+    command: "terminal.new",
+    title: "New terminal",
+    description: "Create a fresh terminal when terminal focus is active.",
+    section: "terminal",
+  },
+  {
+    command: "terminal.close",
+    title: "Close terminal",
+    description: "Close the active terminal when terminal focus is active.",
+    section: "terminal",
+  },
+] as const;
 
 const TERMINAL_WORD_BACKWARD = "\u001bb";
 const TERMINAL_WORD_FORWARD = "\u001bf";
@@ -129,6 +206,23 @@ function formatShortcutKeyLabel(key: string): string {
   return key.slice(0, 1).toUpperCase() + key.slice(1);
 }
 
+function encodeShortcutKeyToken(key: string): string {
+  if (key === " ") return "space";
+  if (key === "escape") return "esc";
+  return key;
+}
+
+export function shortcutValueFromShortcut(shortcut: KeybindingShortcut): string {
+  const parts: string[] = [];
+  if (shortcut.modKey) parts.push("mod");
+  if (shortcut.ctrlKey) parts.push("ctrl");
+  if (shortcut.metaKey) parts.push("meta");
+  if (shortcut.altKey) parts.push("alt");
+  if (shortcut.shiftKey) parts.push("shift");
+  parts.push(encodeShortcutKeyToken(shortcut.key));
+  return parts.join("+");
+}
+
 export function formatShortcutLabel(
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
@@ -164,6 +258,100 @@ export function shortcutLabelForCommand(
     return formatShortcutLabel(binding.shortcut, platform);
   }
   return null;
+}
+
+export function shortcutLabelsForCommand(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  platform = navigator.platform,
+): string[] {
+  return keybindings
+    .filter((binding) => binding.command === command)
+    .map((binding) => formatShortcutLabel(binding.shortcut, platform));
+}
+
+export function keybindingValueForCommand(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+): string | null {
+  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
+    const binding = keybindings[index];
+    if (!binding || binding.command !== command) continue;
+    return shortcutValueFromShortcut(binding.shortcut);
+  }
+  return null;
+}
+
+export function normalizeShortcutKeyToken(key: string): string | null {
+  const normalized = key.toLowerCase();
+  if (
+    normalized === "meta" ||
+    normalized === "control" ||
+    normalized === "ctrl" ||
+    normalized === "shift" ||
+    normalized === "alt" ||
+    normalized === "option"
+  ) {
+    return null;
+  }
+  if (normalized === " ") return "space";
+  if (normalized === "escape") return "esc";
+  if (normalized === "arrowup") return "arrowup";
+  if (normalized === "arrowdown") return "arrowdown";
+  if (normalized === "arrowleft") return "arrowleft";
+  if (normalized === "arrowright") return "arrowright";
+  if (normalized.length === 1) return normalized;
+  if (normalized.startsWith("f") && normalized.length <= 3) return normalized;
+  if (normalized === "enter" || normalized === "tab" || normalized === "backspace") {
+    return normalized;
+  }
+  if (normalized === "delete" || normalized === "home" || normalized === "end") {
+    return normalized;
+  }
+  if (normalized === "pageup" || normalized === "pagedown") return normalized;
+  return null;
+}
+
+export function keybindingValueFromEvent(
+  event: ShortcutEventLike,
+  platform = navigator.platform,
+): string | null {
+  const keyToken = normalizeShortcutKeyToken(event.key);
+  if (!keyToken) return null;
+
+  const parts: string[] = [];
+  if (isMacPlatform(platform)) {
+    if (event.metaKey) parts.push("mod");
+    if (event.ctrlKey) parts.push("ctrl");
+  } else {
+    if (event.ctrlKey) parts.push("mod");
+    if (event.metaKey) parts.push("meta");
+  }
+  if (event.altKey) parts.push("alt");
+  if (event.shiftKey) parts.push("shift");
+  if (parts.length === 0) {
+    return null;
+  }
+  parts.push(keyToken);
+  return parts.join("+");
+}
+
+export function defaultRulesForCommand(command: KeybindingCommand) {
+  return DEFAULT_KEYBINDINGS.filter((rule) => rule.command === command);
+}
+
+export function defaultWhenForCommand(command: KeybindingCommand): string | undefined {
+  const [firstRule] = defaultRulesForCommand(command);
+  return firstRule?.when;
+}
+
+export function defaultShortcutValuesForCommand(command: KeybindingCommand): string[] {
+  return defaultRulesForCommand(command).map((rule) => rule.key);
+}
+
+export function primaryDefaultShortcutValueForCommand(command: KeybindingCommand): string | null {
+  const values = defaultShortcutValuesForCommand(command);
+  return values.at(-1) ?? null;
 }
 
 export function isTerminalToggleShortcut(
