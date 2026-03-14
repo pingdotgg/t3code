@@ -1,8 +1,42 @@
 import { EDITORS, EditorId, NativeApi } from "@t3tools/contracts";
-import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+  useLocalStorage,
+} from "./hooks/useLocalStorage";
 import { useMemo } from "react";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
+
+function isKnownEditorId(value: string): value is EditorId {
+  return EDITORS.some((editor) => editor.id === value);
+}
+
+function readStoredPreferredEditor(): { editor: EditorId | null; needsMigration: boolean } {
+  try {
+    return {
+      editor: getLocalStorageItem(LAST_EDITOR_KEY, EditorId),
+      needsMigration: false,
+    };
+  } catch {
+    if (typeof window === "undefined") {
+      return { editor: null, needsMigration: false };
+    }
+
+    const raw = window.localStorage.getItem(LAST_EDITOR_KEY);
+    if (!raw) {
+      return { editor: null, needsMigration: false };
+    }
+
+    if (isKnownEditorId(raw)) {
+      return { editor: raw, needsMigration: true };
+    }
+
+    removeLocalStorageItem(LAST_EDITOR_KEY);
+    return { editor: null, needsMigration: false };
+  }
+}
 
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
@@ -19,8 +53,13 @@ export function resolveAndPersistPreferredEditor(
   availableEditors: readonly EditorId[],
 ): EditorId | null {
   const availableEditorIds = new Set(availableEditors);
-  const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
-  if (stored && availableEditorIds.has(stored)) return stored;
+  const stored = readStoredPreferredEditor();
+  if (stored.editor && availableEditorIds.has(stored.editor)) {
+    if (stored.needsMigration) {
+      setLocalStorageItem(LAST_EDITOR_KEY, stored.editor, EditorId);
+    }
+    return stored.editor;
+  }
   const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
   if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
   return editor ?? null;
