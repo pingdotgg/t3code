@@ -7,6 +7,7 @@
  * @module Server
  */
 import http from "node:http";
+import { existsSync, realpathSync } from "node:fs";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -157,41 +158,104 @@ function toPosixRelativePath(input: string): string {
   return input.replaceAll("\\", "/");
 }
 
+function isPathWithinRoot(params: {
+  rootPath: string;
+  candidatePath: string;
+  path: Path.Path;
+}): boolean {
+  const relativeToRoot = toPosixRelativePath(
+    params.path.relative(params.rootPath, params.candidatePath),
+  );
+  return !(
+    relativeToRoot.startsWith("../") ||
+    relativeToRoot === ".." ||
+    params.path.isAbsolute(relativeToRoot)
+  );
+}
+
+function resolveCanonicalPath(params: {
+  inputPath: string;
+  path: Path.Path;
+}): Effect.Effect<string, RouteRequestError> {
+  return Effect.try({
+    try: () => {
+      const unresolvedSegments: string[] = [];
+      let existingPath = params.inputPath;
+      while (!existsSync(existingPath)) {
+        const parentPath = params.path.dirname(existingPath);
+        if (parentPath === existingPath) {
+          throw new Error(`No existing ancestor found for path: ${params.inputPath}`);
+        }
+        unresolvedSegments.unshift(params.path.basename(existingPath));
+        existingPath = parentPath;
+      }
+
+      const canonicalExistingPath = realpathSync.native(existingPath);
+      return unresolvedSegments.reduce(
+        (currentPath, segment) => params.path.join(currentPath, segment),
+        canonicalExistingPath,
+      );
+    },
+    catch: () =>
+      new RouteRequestError({
+        message: "Workspace file path must stay within the project root.",
+      }),
+  });
+}
+
 function resolveWorkspaceWritePath(params: {
   workspaceRoot: string;
   relativePath: string;
   path: Path.Path;
 }): Effect.Effect<{ absolutePath: string; relativePath: string }, RouteRequestError> {
-  const normalizedInputPath = params.relativePath.trim();
-  if (params.path.isAbsolute(normalizedInputPath)) {
-    return Effect.fail(
-      new RouteRequestError({
+  return Effect.gen(function* () {
+    const normalizedInputPath = params.relativePath.trim();
+    if (params.path.isAbsolute(normalizedInputPath)) {
+      return yield* new RouteRequestError({
         message: "Workspace file path must be relative to the project root.",
-      }),
-    );
-  }
+      });
+    }
 
-  const absolutePath = params.path.resolve(params.workspaceRoot, normalizedInputPath);
-  const relativeToRoot = toPosixRelativePath(
-    params.path.relative(params.workspaceRoot, absolutePath),
-  );
-  if (
-    relativeToRoot.length === 0 ||
-    relativeToRoot === "." ||
-    relativeToRoot.startsWith("../") ||
-    relativeToRoot === ".." ||
-    params.path.isAbsolute(relativeToRoot)
-  ) {
-    return Effect.fail(
-      new RouteRequestError({
+    const absolutePath = params.path.resolve(params.workspaceRoot, normalizedInputPath);
+    const relativeToRoot = toPosixRelativePath(
+      params.path.relative(params.workspaceRoot, absolutePath),
+    );
+    if (
+      relativeToRoot.length === 0 ||
+      relativeToRoot === "." ||
+      relativeToRoot.startsWith("../") ||
+      relativeToRoot === ".." ||
+      params.path.isAbsolute(relativeToRoot)
+    ) {
+      return yield* new RouteRequestError({
         message: "Workspace file path must stay within the project root.",
-      }),
-    );
-  }
+      });
+    }
 
-  return Effect.succeed({
-    absolutePath,
-    relativePath: relativeToRoot,
+    const canonicalWorkspaceRoot = yield* resolveCanonicalPath({
+      inputPath: params.workspaceRoot,
+      path: params.path,
+    });
+    const canonicalTargetPath = yield* resolveCanonicalPath({
+      inputPath: absolutePath,
+      path: params.path,
+    });
+    if (
+      !isPathWithinRoot({
+        rootPath: canonicalWorkspaceRoot,
+        candidatePath: canonicalTargetPath,
+        path: params.path,
+      })
+    ) {
+      return yield* new RouteRequestError({
+        message: "Workspace file path must stay within the project root.",
+      });
+    }
+
+    return {
+      absolutePath: canonicalTargetPath,
+      relativePath: relativeToRoot,
+    };
   });
 }
 
