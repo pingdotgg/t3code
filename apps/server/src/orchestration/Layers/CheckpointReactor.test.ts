@@ -862,7 +862,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    const deadline = Date.now() + 10_000;
+    const deadline = Date.now() + 2000;
     const waitForRollbackCalls = async (): Promise<void> => {
       if (harness.provider.rollbackConversation.mock.calls.length >= 2) {
         return;

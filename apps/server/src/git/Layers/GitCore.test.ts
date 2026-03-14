@@ -539,15 +539,12 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* checkoutGitBranch({ cwd: source, branch: featureBranch });
         const core = yield* GitCore;
         yield* Effect.promise(() =>
-          vi.waitFor(
-            async () => {
-              const details = await Effect.runPromise(core.statusDetails(source));
-              expect(details.branch).toBe(featureBranch);
-              expect(details.aheadCount).toBe(0);
-              expect(details.behindCount).toBe(1);
-            },
-            { timeout: 10_000 },
-          ),
+          vi.waitFor(async () => {
+            const details = await Effect.runPromise(core.statusDetails(source));
+            expect(details.branch).toBe(featureBranch);
+            expect(details.aheadCount).toBe(0);
+            expect(details.behindCount).toBe(1);
+          }),
         );
       }),
     );

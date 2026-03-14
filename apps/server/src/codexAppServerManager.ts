@@ -164,9 +164,6 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
 const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
 const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
 const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "plus"]);
-const CODEX_LONG_RUNNING_TOOL_TIMEOUT_SEC = 315_360_000;
-const CODEX_LONG_RUNNING_STREAM_IDLE_TIMEOUT_MS = 315_360_000_000;
-
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -550,25 +547,15 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
-      const child = spawn(
-        codexBinaryPath,
-        [
-          "app-server",
-          "-c",
-          `tool_timeout_sec=${CODEX_LONG_RUNNING_TOOL_TIMEOUT_SEC}`,
-          "-c",
-          `model_providers.openai.stream_idle_timeout_ms=${CODEX_LONG_RUNNING_STREAM_IDLE_TIMEOUT_MS}`,
-        ],
-        {
-          cwd: resolvedCwd,
-          env: {
-            ...process.env,
-            ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
-          },
-          stdio: ["pipe", "pipe", "pipe"],
-          shell: process.platform === "win32",
+      const child = spawn(codexBinaryPath, ["app-server"], {
+        cwd: resolvedCwd,
+        env: {
+          ...process.env,
+          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
         },
-      );
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: process.platform === "win32",
+      });
       const output = readline.createInterface({ input: child.stdout });
 
       context = {

@@ -6,8 +6,8 @@ export default mergeConfig(
   baseConfig,
   defineConfig({
     test: {
-      testTimeout: 240_000,
-      hookTimeout: 60_000,
+      testTimeout: 15_000,
+      hookTimeout: 15_000,
     },
   }),
 );
