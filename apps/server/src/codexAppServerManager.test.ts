@@ -748,8 +748,6 @@ describe("respondToUserInput", () => {
   });
 });
 
-
-
 describe("handleServerRequest tool calls", () => {
   it("routes item/tool/call to AgentWatch and writes a JSON-RPC result", () => {
     const manager = new CodexAppServerManager();
@@ -767,6 +765,7 @@ describe("handleServerRequest tool calls", () => {
       pendingApprovals: new Map(),
       pendingUserInputs: new Map(),
     };
+    type TestContext = typeof context;
 
     const writeMessage = vi
       .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
@@ -782,7 +781,7 @@ describe("handleServerRequest tool calls", () => {
 
     (
       manager as unknown as {
-        handleServerRequest: (context: typeof context, request: Record<string, unknown>) => void;
+        handleServerRequest: (context: TestContext, request: Record<string, unknown>) => void;
       }
     ).handleServerRequest(context, {
       jsonrpc: "2.0",

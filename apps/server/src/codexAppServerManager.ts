@@ -515,6 +515,7 @@ export interface CodexAppServerManagerEvents {
 
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
+  private readonly agentWatch = new AgentWatch();
 
   private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
   constructor(services?: ServiceMap.ServiceMap<never>) {
@@ -1219,7 +1220,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     if (request.method === "item/tool/call") {
-      const toolName = this.readString(request.params, "toolName") ?? this.readString(request.params, "name");
+      const toolName =
+        this.readString(request.params, "toolName") ?? this.readString(request.params, "name");
       const rawArgs =
         this.readObject(request.params, "arguments") ??
         this.readObject(request.params, "input") ??

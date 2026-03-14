@@ -69,7 +69,10 @@ function parseExitCodeFromLog(logPath: string): number | undefined {
     if (!match || match.length === 0) {
       return undefined;
     }
-    const latest = match[match.length - 1];
+    const latest = match.at(-1);
+    if (!latest) {
+      return undefined;
+    }
     const parsed = Number.parseInt(latest.slice(EXIT_MARKER_PREFIX.length), 10);
     return Number.isInteger(parsed) ? parsed : undefined;
   } catch {
@@ -220,7 +223,10 @@ export class AgentWatch {
 
       if (!isProcessAlive(job.pid)) {
         job.finishedAt = now;
-        job.exitCode = parseExitCodeFromLog(job.logPath);
+        const exitCode = parseExitCodeFromLog(job.logPath);
+        if (exitCode !== undefined) {
+          job.exitCode = exitCode;
+        }
       }
     }
   }
@@ -232,7 +238,11 @@ export class AgentWatch {
 
     const conditions: AgentWatchCondition[] = [];
 
-    if (status === "running" && outputFreshnessMs !== undefined && outputFreshnessMs > job.staleAfterMs) {
+    if (
+      status === "running" &&
+      outputFreshnessMs !== undefined &&
+      outputFreshnessMs > job.staleAfterMs
+    ) {
       conditions.push({
         code: "stale_output",
         message: `No terminal output for ${outputFreshnessMs}ms (threshold ${job.staleAfterMs}ms).`,
@@ -292,7 +302,9 @@ export class AgentWatch {
     if (toolName === "agentwatch.poll") {
       return this.poll({
         ...(typeof args?.jobId === "string" ? { jobId: args.jobId } : {}),
-        ...(typeof args?.includeHealthy === "boolean" ? { includeHealthy: args.includeHealthy } : {}),
+        ...(typeof args?.includeHealthy === "boolean"
+          ? { includeHealthy: args.includeHealthy }
+          : {}),
       });
     }
 
