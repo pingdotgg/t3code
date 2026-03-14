@@ -665,15 +665,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const questionChanged =
       lastSyncedPendingInputRef.current?.requestId !== nextRequestId ||
       lastSyncedPendingInputRef.current?.questionId !== nextQuestionId;
-    const textChangedExternally = promptRef.current !== nextCustomAnswer;
 
     lastSyncedPendingInputRef.current = {
       requestId: nextRequestId,
       questionId: nextQuestionId,
     };
 
-    if (!questionChanged && !textChangedExternally) {
+    // Don't sync when there's user-typed content in the composer.
+    // This keeps the pending question input independent from the main composer draft.
+    // Previously, this would overwrite user-typed text when a planning question appeared.
+    const hasUserTypedInComposer = promptRef.current.length > 0;
+    if (hasUserTypedInComposer) {
       return;
+    }
+
+    // For new questions (questionChanged), always sync to show the question's placeholder.
+    if (!questionChanged) {
+      // For same question: only sync if text actually changed externally.
+      const textChangedExternally = promptRef.current !== nextCustomAnswer;
+      if (!textChangedExternally) {
+        return;
+      }
     }
 
     promptRef.current = nextCustomAnswer;
