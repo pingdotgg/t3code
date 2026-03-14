@@ -1,7 +1,9 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createJSONStorage } from "zustand/middleware";
 
 import {
+  COMPOSER_DRAFT_STORAGE_KEY,
   type ComposerImageAttachment,
   createDebouncedStorage,
   useComposerDraftStore,
@@ -324,7 +326,7 @@ describe("composerDraftStore project draft thread mapping", () => {
     } as unknown as {
       branch?: string | null;
       worktreePath?: string | null;
-      envMode?: "local" | "worktree";
+      envMode?: "local" | "worktree" | "open-worktree";
     };
     store.setProjectDraftThreadId(projectId, threadId, runtimeUndefinedOptions);
 
@@ -333,6 +335,105 @@ describe("composerDraftStore project draft thread mapping", () => {
       branch: "feature/base",
       worktreePath: null,
       envMode: "worktree",
+    });
+  });
+
+  it("preserves open-worktree mode without a worktree path", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "feature/open",
+      worktreePath: null,
+      envMode: "open-worktree",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      projectId,
+      branch: "feature/open",
+      worktreePath: null,
+      envMode: "open-worktree",
+    });
+  });
+
+  it("collapses open-worktree mode to worktree when a worktree path exists", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "feature/open",
+      worktreePath: "/tmp/feature-open",
+      envMode: "open-worktree",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      projectId,
+      branch: "feature/open",
+      worktreePath: "/tmp/feature-open",
+      envMode: "worktree",
+    });
+  });
+});
+
+describe("composerDraftStore persisted env mode normalization", () => {
+  const projectId = ProjectId.makeUnsafe("persisted-project");
+  const threadId = ThreadId.makeUnsafe("persisted-thread");
+  let storageMap: Map<string, string>;
+  let originalStorage: ReturnType<typeof useComposerDraftStore.persist.getOptions>["storage"];
+
+  beforeEach(() => {
+    storageMap = new Map<string, string>();
+    originalStorage = useComposerDraftStore.persist.getOptions().storage;
+    useComposerDraftStore.persist.setOptions({
+      storage: createJSONStorage(() => ({
+        getItem: (name) => storageMap.get(name) ?? null,
+        setItem: (name, value) => {
+          storageMap.set(name, value);
+        },
+        removeItem: (name) => {
+          storageMap.delete(name);
+        },
+      })),
+    });
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  afterEach(() => {
+    useComposerDraftStore.persist.setOptions({ storage: originalStorage });
+  });
+
+  it("rehydrates persisted open-worktree mode without collapsing it", async () => {
+    storageMap.set(
+      COMPOSER_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          draftsByThreadId: {},
+          draftThreadsByThreadId: {
+            [threadId]: {
+              projectId,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: "feature/open",
+              worktreePath: null,
+              envMode: "open-worktree",
+            },
+          },
+          projectDraftThreadIdByProjectId: {
+            [projectId]: threadId,
+          },
+        },
+        version: 1,
+      }),
+    );
+
+    await useComposerDraftStore.persist.rehydrate();
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      projectId,
+      branch: "feature/open",
+      worktreePath: null,
+      envMode: "open-worktree",
     });
   });
 });

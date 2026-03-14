@@ -26,6 +26,8 @@ import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   EnvMode,
+  isPendingWorktreeMode,
+  resolvePendingWorktreeBranchSelection,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
@@ -48,7 +50,11 @@ interface BranchToolbarBranchSelectorProps {
   branchCwd: string | null;
   effectiveEnvMode: EnvMode;
   envLocked: boolean;
-  onSetThreadBranch: (branch: string | null, worktreePath: string | null) => void;
+  onSetThreadBranch: (
+    branch: string | null,
+    worktreePath: string | null,
+    envMode?: EnvMode,
+  ) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
@@ -66,7 +72,7 @@ function getBranchTriggerLabel(input: {
   if (!resolvedActiveBranch) {
     return "Select branch";
   }
-  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
+  if (isPendingWorktreeMode(effectiveEnvMode) && !activeWorktreePath) {
     return `From ${resolvedActiveBranch}`;
   }
   return resolvedActiveBranch;
@@ -112,7 +118,7 @@ export function BranchToolbarBranchSelector({
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
-    effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
+    isPendingWorktreeMode(effectiveEnvMode) && !envLocked && !activeWorktreePath;
   const checkoutPullRequestItemValue =
     prReference && onCheckoutPullRequestRequest ? `__checkout_pull_request__:${prReference}` : null;
   const canCreateBranch = !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
@@ -158,9 +164,14 @@ export function BranchToolbarBranchSelector({
     const api = readNativeApi();
     if (!api || !branchCwd || isBranchActionPending) return;
 
-    // In new-worktree mode, selecting a branch sets the base branch.
+    // In pending worktree modes, selecting a branch configures the future target.
     if (isSelectingWorktreeBase) {
-      onSetThreadBranch(branch.name, null);
+      const nextSelection = resolvePendingWorktreeBranchSelection({
+        activeProjectCwd,
+        envMode: effectiveEnvMode,
+        branch,
+      });
+      onSetThreadBranch(nextSelection.branch, nextSelection.worktreePath, nextSelection.envMode);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
       return;

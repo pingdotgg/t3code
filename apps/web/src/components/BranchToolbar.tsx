@@ -16,6 +16,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 
 const envModeItems = [
   { value: "local", label: "Local" },
+  { value: "open-worktree", label: "Open worktree" },
   { value: "worktree", label: "New worktree" },
 ] as const;
 
@@ -55,7 +56,7 @@ export default function BranchToolbar({
   });
 
   const setThreadBranch = useCallback(
-    (branch: string | null, worktreePath: string | null) => {
+    (branch: string | null, worktreePath: string | null, envMode?: EnvMode) => {
       if (!activeThreadId) return;
       const api = readNativeApi();
       // If the effective cwd is about to change, stop the running session so the
@@ -86,7 +87,7 @@ export default function BranchToolbar({
       const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
         nextWorktreePath: worktreePath,
         currentWorktreePath: activeWorktreePath,
-        effectiveEnvMode,
+        effectiveEnvMode: envMode ?? effectiveEnvMode,
       });
       setDraftThreadContext(threadId, {
         branch,
@@ -131,10 +132,10 @@ export default function BranchToolbar({
           items={envModeItems}
         >
           <SelectTrigger variant="ghost" size="xs" className="font-medium">
-            {effectiveEnvMode === "worktree" ? (
-              <GitForkIcon className="size-3" />
-            ) : (
+            {effectiveEnvMode === "local" ? (
               <FolderIcon className="size-3" />
+            ) : (
+              <GitForkIcon className="size-3" />
             )}
             <SelectValue />
           </SelectTrigger>
@@ -143,6 +144,12 @@ export default function BranchToolbar({
               <span className="inline-flex items-center gap-1.5">
                 <FolderIcon className="size-3" />
                 Local
+              </span>
+            </SelectItem>
+            <SelectItem value="open-worktree">
+              <span className="inline-flex items-center gap-1.5">
+                <GitForkIcon className="size-3" />
+                Open worktree
               </span>
             </SelectItem>
             <SelectItem value="worktree">
