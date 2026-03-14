@@ -43,6 +43,9 @@ const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 interface MessagesTimelineProps {
   hasMessages: boolean;
   isWorking: boolean;
+  isWaitingForUserInput: boolean;
+  waitingStartedAt: string | null;
+  workingForLabel: string | null;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
   scrollContainer: HTMLDivElement | null;
@@ -67,6 +70,9 @@ interface MessagesTimelineProps {
 export const MessagesTimeline = memo(function MessagesTimeline({
   hasMessages,
   isWorking,
+  isWaitingForUserInput,
+  waitingStartedAt,
+  workingForLabel,
   activeTurnInProgress,
   activeTurnStartedAt,
   scrollContainer,
@@ -113,7 +119,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return () => {
       observer.disconnect();
     };
-  }, [hasMessages, isWorking]);
+  }, [hasMessages, isWorking, isWaitingForUserInput]);
 
   const rows = useMemo<TimelineRow[]>(() => {
     const nextRows: TimelineRow[] = [];
@@ -175,10 +181,23 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         id: "working-indicator-row",
         createdAt: activeTurnStartedAt,
       });
+    } else if (isWaitingForUserInput) {
+      nextRows.push({
+        kind: "waiting",
+        id: "waiting-indicator-row",
+        createdAt: waitingStartedAt ?? activeTurnStartedAt,
+      });
     }
 
     return nextRows;
-  }, [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt]);
+  }, [
+    timelineEntries,
+    completionDividerBeforeEntryId,
+    isWorking,
+    activeTurnStartedAt,
+    isWaitingForUserInput,
+    waitingStartedAt,
+  ]);
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
     const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
@@ -189,7 +208,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     let firstCurrentTurnRowIndex = -1;
     if (!Number.isNaN(turnStartedAtMs)) {
       firstCurrentTurnRowIndex = rows.findIndex((row) => {
-        if (row.kind === "working") return true;
+        if (row.kind === "working" || row.kind === "waiting") return true;
         if (!row.createdAt) return false;
         const rowCreatedAtMs = Date.parse(row.createdAt);
         return !Number.isNaN(rowCreatedAtMs) && rowCreatedAtMs >= turnStartedAtMs;
@@ -233,7 +252,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       if (!row) return 96;
       if (row.kind === "work") return 112;
       if (row.kind === "proposed-plan") return estimateTimelineProposedPlanHeight(row.proposedPlan);
-      if (row.kind === "working") return 40;
+      if (row.kind === "working" || row.kind === "waiting") return 40;
       return estimateTimelineMessageHeight(row.message, { timelineWidthPx });
     },
     measureElement: measureVirtualElement,
@@ -518,17 +537,32 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
             </span>
             <span>
-              {row.createdAt
-                ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-                : "Working..."}
+              {workingForLabel
+                ? `Working for ${workingForLabel}`
+                : row.createdAt
+                  ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
+                  : "Working..."}
             </span>
+          </div>
+        </div>
+      )}
+
+      {row.kind === "waiting" && (
+        <div className="py-0.5 pl-1.5">
+          <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
+            <span className="inline-flex items-center gap-[3px]">
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+            </span>
+            <span>Waiting for you</span>
           </div>
         </div>
       )}
     </div>
   );
 
-  if (!hasMessages && !isWorking) {
+  if (!hasMessages && !isWorking && !isWaitingForUserInput) {
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-sm text-muted-foreground/30">
@@ -597,7 +631,8 @@ type TimelineRow =
       createdAt: string;
       proposedPlan: TimelineProposedPlan;
     }
-  | { kind: "working"; id: string; createdAt: string | null };
+  | { kind: "working"; id: string; createdAt: string | null }
+  | { kind: "waiting"; id: string; createdAt: string | null };
 
 function estimateTimelineProposedPlanHeight(proposedPlan: TimelineProposedPlan): number {
   const estimatedLines = Math.max(1, Math.ceil(proposedPlan.planMarkdown.length / 72));

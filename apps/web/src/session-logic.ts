@@ -56,6 +56,11 @@ export interface PendingUserInput {
   questions: ReadonlyArray<UserInputQuestion>;
 }
 
+export interface UserInputWaitInterval {
+  startMs: number;
+  endMs: number | null;
+}
+
 export interface ActivePlanState {
   createdAt: string;
   turnId: TurnId | null;
@@ -116,6 +121,126 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
   return formatDuration(endedAt - startedAt);
 }
 
+function payloadFromActivity(
+  activity: OrchestrationThreadActivity,
+): Record<string, unknown> | null {
+  return activity.payload && typeof activity.payload === "object"
+    ? (activity.payload as Record<string, unknown>)
+    : null;
+}
+
+function requestIdFromPayload(payload: Record<string, unknown> | null): ApprovalRequestId | null {
+  return payload && typeof payload.requestId === "string"
+    ? ApprovalRequestId.makeUnsafe(payload.requestId)
+    : null;
+}
+
+export function deriveUserInputWaitIntervals(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): UserInputWaitInterval[] {
+  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const openWaitStartByRequestId = new Map<ApprovalRequestId, number>();
+  const waitIntervals: UserInputWaitInterval[] = [];
+
+  for (const activity of ordered) {
+    if (activity.kind !== "user-input.requested" && activity.kind !== "user-input.resolved") {
+      continue;
+    }
+
+    const payload = payloadFromActivity(activity);
+    const requestId = requestIdFromPayload(payload);
+    if (!requestId) {
+      continue;
+    }
+
+    const activityMs = Date.parse(activity.createdAt);
+    if (Number.isNaN(activityMs)) {
+      if (activity.kind === "user-input.resolved") {
+        openWaitStartByRequestId.delete(requestId);
+      }
+      continue;
+    }
+
+    if (activity.kind === "user-input.requested") {
+      if (!openWaitStartByRequestId.has(requestId)) {
+        openWaitStartByRequestId.set(requestId, activityMs);
+      }
+      continue;
+    }
+
+    const waitStartMs = openWaitStartByRequestId.get(requestId);
+    openWaitStartByRequestId.delete(requestId);
+    if (waitStartMs === undefined) {
+      continue;
+    }
+
+    if (activityMs <= waitStartMs) {
+      continue;
+    }
+
+    waitIntervals.push({ startMs: waitStartMs, endMs: activityMs });
+  }
+
+  for (const waitStartMs of openWaitStartByRequestId.values()) {
+    waitIntervals.push({ startMs: waitStartMs, endMs: null });
+  }
+
+  return waitIntervals.toSorted(
+    (left, right) =>
+      left.startMs - right.startMs ||
+      (left.endMs ?? Number.POSITIVE_INFINITY) - (right.endMs ?? Number.POSITIVE_INFINITY),
+  );
+}
+
+export function formatTurnWorkElapsedExcludingUserInputWait(
+  startIso: string,
+  endIso: string,
+  waitIntervals: ReadonlyArray<UserInputWaitInterval>,
+): string | null {
+  const startMs = Date.parse(startIso);
+  const endMs = Date.parse(endIso);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs < startMs) {
+    return null;
+  }
+
+  let waitingMs = 0;
+  let currentInterval: { startMs: number; endMs: number } | null = null;
+
+  for (const interval of waitIntervals) {
+    const waitEndMs = interval.endMs ?? endMs;
+    const overlapStartMs = Math.max(startMs, interval.startMs);
+    const overlapEndMs = Math.min(endMs, waitEndMs);
+    if (overlapEndMs <= overlapStartMs) {
+      continue;
+    }
+
+    const overlappingInterval = {
+      startMs: overlapStartMs,
+      endMs: overlapEndMs,
+    };
+
+    if (!currentInterval) {
+      currentInterval = overlappingInterval;
+      continue;
+    }
+
+    if (overlappingInterval.startMs <= currentInterval.endMs) {
+      currentInterval.endMs = Math.max(currentInterval.endMs, overlappingInterval.endMs);
+      continue;
+    }
+
+    waitingMs += currentInterval.endMs - currentInterval.startMs;
+    currentInterval = overlappingInterval;
+  }
+
+  if (currentInterval) {
+    waitingMs += currentInterval.endMs - currentInterval.startMs;
+  }
+
+  const effectiveMs = Math.max(0, endMs - startMs - waitingMs);
+  return formatDuration(effectiveMs);
+}
+
 type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
 type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
 
@@ -163,14 +288,8 @@ export function derivePendingApprovals(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
 
   for (const activity of ordered) {
-    const payload =
-      activity.payload && typeof activity.payload === "object"
-        ? (activity.payload as Record<string, unknown>)
-        : null;
-    const requestId =
-      payload && typeof payload.requestId === "string"
-        ? ApprovalRequestId.makeUnsafe(payload.requestId)
-        : null;
+    const payload = payloadFromActivity(activity);
+    const requestId = requestIdFromPayload(payload);
     const requestKind =
       payload &&
       (payload.requestKind === "command" ||
@@ -268,14 +387,8 @@ export function derivePendingUserInputs(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
 
   for (const activity of ordered) {
-    const payload =
-      activity.payload && typeof activity.payload === "object"
-        ? (activity.payload as Record<string, unknown>)
-        : null;
-    const requestId =
-      payload && typeof payload.requestId === "string"
-        ? ApprovalRequestId.makeUnsafe(payload.requestId)
-        : null;
+    const payload = payloadFromActivity(activity);
+    const requestId = requestIdFromPayload(payload);
 
     if (activity.kind === "user-input.requested" && requestId) {
       const questions = parseUserInputQuestions(payload);
