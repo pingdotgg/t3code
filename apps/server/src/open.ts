@@ -32,6 +32,11 @@ interface EditorLaunch {
   readonly args: ReadonlyArray<string>;
 }
 
+interface ResolvedCommand {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
 interface CommandAvailabilityOptions {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
@@ -61,11 +66,62 @@ function stripWrappingQuotes(value: string): string {
   return value.replace(/^"+|"+$/g, "");
 }
 
-function resolveSystemEditorCommand(env: NodeJS.ProcessEnv): string | null {
+function splitCommandString(value: string): ReadonlyArray<string> {
+  const parts: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === undefined) {
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      index += 1;
+      const escapedChar = value[index];
+      if (escapedChar !== undefined) {
+        current += escapedChar;
+      }
+      continue;
+    }
+
+    if ((char === '"' || char === "'") && quote === null) {
+      quote = char;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+
+    if (/\s/.test(char) && quote === null) {
+      if (current.length > 0) {
+        parts.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.length > 0) {
+    parts.push(current);
+  }
+
+  return parts;
+}
+
+function resolveSystemEditorCommand(env: NodeJS.ProcessEnv): ResolvedCommand | null {
   for (const key of SYSTEM_EDITOR_ENV_KEYS) {
     const value = env[key]?.trim();
     if (value && value.length > 0) {
-      return stripWrappingQuotes(value);
+      const parts = splitCommandString(stripWrappingQuotes(value));
+      const command = parts[0];
+      if (command) {
+        const args = parts.slice(1);
+        return { command, args };
+      }
     }
   }
   return null;
@@ -181,7 +237,7 @@ export function resolveAvailableEditors(
   for (const editor of EDITORS) {
     const command =
       editor.id === "system-editor"
-        ? resolveSystemEditorCommand(env)
+        ? resolveSystemEditorCommand(env)?.command
         : (editor.command ?? fileManagerCommandForPlatform(platform));
     if (!command) {
       continue;
@@ -231,13 +287,13 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
   }
 
   if (editorDef.id === "system-editor") {
-    const command = resolveSystemEditorCommand(env);
-    if (!command) {
+    const resolvedCommand = resolveSystemEditorCommand(env);
+    if (!resolvedCommand) {
       return yield* new OpenError({
         message: "System editor is unavailable because VISUAL and EDITOR are not set.",
       });
     }
-    return { command, args: [input.cwd] };
+    return { command: resolvedCommand.command, args: [...resolvedCommand.args, input.cwd] };
   }
 
   if (editorDef.command) {

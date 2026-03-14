@@ -127,11 +127,11 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       const launch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "system-editor" },
         "darwin",
-        { VISUAL: "my-editor", EDITOR: "fallback-editor" },
+        { VISUAL: "my-editor --wait", EDITOR: "fallback-editor" },
       );
       assert.deepEqual(launch, {
         command: "my-editor",
-        args: ["/tmp/workspace"],
+        args: ["--wait", "/tmp/workspace"],
       });
     }),
   );
@@ -244,7 +244,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
     }),
   );
 
-  it.effect("includes system-editor when VISUAL resolves to an available command", () =>
+  it.effect("includes system-editor when VISUAL resolves to an available command with flags", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -254,7 +254,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
       const editors = resolveAvailableEditors("win32", {
         PATH: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
-        VISUAL: "my-editor",
+        VISUAL: "my-editor --wait",
       });
       assert.deepEqual(editors, ["system-editor"]);
     }),
