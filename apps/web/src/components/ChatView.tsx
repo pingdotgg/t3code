@@ -625,11 +625,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const promptRef = useRef(prompt);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  const [scrollPillPosition, setScrollPillPosition] = useState<{
-    left: number;
-    width: number;
-    bottom: number;
-  } | null>(null);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -687,8 +682,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFormHeightRef = useRef(0);
-  const chatColumnRef = useRef<HTMLDivElement>(null);
-  const composerViewportRef = useRef<HTMLDivElement>(null);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerSelectLockRef = useRef(false);
   const composerMenuOpenRef = useRef(false);
@@ -703,29 +696,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
   }, []);
-  const updateScrollPillPosition = useCallback(() => {
-    const chatColumn = chatColumnRef.current;
-    const composerViewport = composerViewportRef.current;
-    if (!chatColumn || !composerViewport) return;
 
-    const chatRect = chatColumn.getBoundingClientRect();
-    const composerRect = composerViewport.getBoundingClientRect();
-    const nextLeft = Math.max(0, chatRect.left);
-    const nextWidth = Math.max(0, chatRect.width);
-    const nextBottom = Math.max(0, window.innerHeight - composerRect.top);
-
-    setScrollPillPosition((previous) => {
-      if (
-        previous &&
-        Math.abs(previous.left - nextLeft) < 0.5 &&
-        Math.abs(previous.width - nextWidth) < 0.5 &&
-        Math.abs(previous.bottom - nextBottom) < 0.5
-      ) {
-        return previous;
-      }
-      return { left: nextLeft, width: nextWidth, bottom: nextBottom };
-    });
-  }, []);
 
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadId, threadId),
@@ -1953,25 +1924,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       observer.disconnect();
     };
   }, [activeThread?.id, scheduleStickToBottom]);
-  useLayoutEffect(() => {
-    updateScrollPillPosition();
-    if (typeof ResizeObserver === "undefined") return;
-    const chatColumn = chatColumnRef.current;
-    const composerViewport = composerViewportRef.current;
-    if (!chatColumn || !composerViewport) return;
 
-    const observer = new ResizeObserver(() => {
-      updateScrollPillPosition();
-    });
-    observer.observe(chatColumn);
-    observer.observe(composerViewport);
-    window.addEventListener("resize", updateScrollPillPosition);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", updateScrollPillPosition);
-    };
-  }, [updateScrollPillPosition]);
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return;
     scheduleStickToBottom();
@@ -3533,7 +3486,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 flex-1">
         {/* Chat column */}
-        <div ref={chatColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+
+      {/* Messages Wrapper */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
 
       {/* Messages */}
       <div
@@ -3576,15 +3532,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       </div>
 
       {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
-      {showScrollToBottom && scrollPillPosition && (
-        <div
-          className="pointer-events-none fixed z-30 flex justify-center py-1.5"
-          style={{
-            left: scrollPillPosition.left,
-            width: scrollPillPosition.width,
-            bottom: scrollPillPosition.bottom,
-          }}
-        >
+      {showScrollToBottom && (
+        <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
           <button
             type="button"
             onClick={() => scrollMessagesToBottom("smooth")}
@@ -3596,11 +3545,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         </div>
       )}
 
+      </div>
+
       {/* Input bar */}
-      <div
-        ref={composerViewportRef}
-        className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}
-      >
+      <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
         <form
           ref={composerFormRef}
           onSubmit={onSend}
