@@ -84,6 +84,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  handleSidebarArrowNavigation,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -289,6 +290,7 @@ export default function Sidebar() {
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const addProjectInputRef = useRef<HTMLInputElement | null>(null);
+  const sidebarMenuRef = useRef<HTMLUListElement>(null);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
@@ -1287,7 +1289,14 @@ export default function Sidebar() {
             onDragEnd={handleProjectDragEnd}
             onDragCancel={handleProjectDragCancel}
           >
-            <SidebarMenu>
+            <SidebarMenu
+              ref={sidebarMenuRef}
+              onKeyDown={(event) => {
+                if (sidebarMenuRef.current) {
+                  handleSidebarArrowNavigation(event, sidebarMenuRef.current, toggleProject);
+                }
+              }}
+            >
               <SortableContext
                 items={projects.map((project) => project.id)}
                 strategy={verticalListSortingStrategy}
@@ -1319,6 +1328,9 @@ export default function Sidebar() {
                               className="gap-2 px-2 py-1.5 text-left cursor-grab active:cursor-grabbing hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
                               {...dragHandleProps.attributes}
                               {...dragHandleProps.listeners}
+                              data-nav-item="project"
+                              data-project-id={project.id}
+                              aria-expanded={project.expanded}
                               onPointerDownCapture={handleProjectTitlePointerDownCapture}
                               onClick={(event) => handleProjectTitleClick(event, project.id)}
                               onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
@@ -1406,6 +1418,8 @@ export default function Sidebar() {
                                       render={<div role="button" tabIndex={0} />}
                                       size="sm"
                                       isActive={isActive}
+                                      data-nav-item="thread"
+                                      data-project-id={project.id}
                                       className={resolveThreadRowClassName({
                                         isActive,
                                         isSelected,

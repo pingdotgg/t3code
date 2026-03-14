@@ -1,8 +1,11 @@
+import type React from "react";
+import type { ProjectId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { cn } from "../lib/utils";
 import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
+export const SIDEBAR_NAV_ITEM_SELECTOR = "[data-nav-item]";
 export type SidebarNewThreadEnvMode = "local" | "worktree";
 
 export interface ThreadStatusPill {
@@ -144,4 +147,74 @@ export function resolveThreadStatusPill(input: {
   }
 
   return null;
+}
+
+export function handleSidebarArrowNavigation(
+  event: React.KeyboardEvent,
+  container: HTMLElement,
+  toggleProject: (id: ProjectId) => void,
+): void {
+  const { key } = event;
+  if (key !== "ArrowUp" && key !== "ArrowDown" && key !== "ArrowLeft" && key !== "ArrowRight") {
+    return;
+  }
+
+  const active = document.activeElement;
+  if (!active) return;
+  const tagName = (active as HTMLElement).tagName;
+  if (tagName === "INPUT" || tagName === "TEXTAREA") {
+    return;
+  }
+
+  const allItems = container.querySelectorAll<HTMLElement>(SIDEBAR_NAV_ITEM_SELECTOR);
+  const items = Array.from(allItems).filter((el) => {
+    if (el.dataset.navItem !== "thread") return true;
+    const parentProject = container.querySelector<HTMLElement>(
+      `[data-nav-item="project"][data-project-id="${el.dataset.projectId}"]`,
+    );
+    return parentProject?.getAttribute("aria-expanded") === "true";
+  });
+  const navItemEl = (active as HTMLElement).closest?.<HTMLElement>(SIDEBAR_NAV_ITEM_SELECTOR);
+  const currentIndex = navItemEl ? items.indexOf(navItemEl) : -1;
+  if (currentIndex === -1) return;
+
+  event.preventDefault();
+
+  const currentItem = items[currentIndex]!;
+  const navType = currentItem.dataset.navItem;
+  const projectId = currentItem.dataset.projectId as ProjectId | undefined;
+
+  if (key === "ArrowUp") {
+    if (currentIndex > 0) {
+      items[currentIndex - 1]!.focus();
+    }
+  } else if (key === "ArrowDown") {
+    if (currentIndex < items.length - 1) {
+      items[currentIndex + 1]!.focus();
+    }
+  } else if (key === "ArrowLeft") {
+    if (navType === "thread" && projectId) {
+      const parentProject = container.querySelector<HTMLElement>(
+        `[data-nav-item="project"][data-project-id="${projectId}"]`,
+      );
+      parentProject?.focus();
+    } else if (navType === "project" && projectId) {
+      const isExpanded = currentItem.getAttribute("aria-expanded") === "true";
+      if (isExpanded) {
+        toggleProject(projectId);
+      }
+    }
+  } else if (key === "ArrowRight") {
+    if (navType === "project" && projectId) {
+      const isExpanded = currentItem.getAttribute("aria-expanded") === "true";
+      if (isExpanded) {
+        const firstThread = container.querySelector<HTMLElement>(
+          `[data-nav-item="thread"][data-project-id="${projectId}"]`,
+        );
+        firstThread?.focus();
+      } else {
+        toggleProject(projectId);
+      }
+    }
+  }
 }
