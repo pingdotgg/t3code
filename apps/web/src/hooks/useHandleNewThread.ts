@@ -89,6 +89,9 @@ export function useHandleNewThread() {
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       return (async () => {
+        const { lastSelectedModel, lastSelectedProvider, setModel, setProvider } =
+          useComposerDraftStore.getState();
+
         setProjectDraftThreadId(projectId, threadId, {
           createdAt,
           branch: options?.branch ?? null,
@@ -96,6 +99,13 @@ export function useHandleNewThread() {
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
+
+        if (lastSelectedModel) {
+          setModel(threadId, lastSelectedModel);
+        }
+        if (lastSelectedProvider) {
+          setProvider(threadId, lastSelectedProvider);
+        }
 
         await navigate({
           to: "/$threadId",

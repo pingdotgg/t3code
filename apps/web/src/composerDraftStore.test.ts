@@ -372,6 +372,8 @@ describe("composerDraftStore setModel", () => {
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
+      lastSelectedModel: null,
+      lastSelectedProvider: null,
     });
   });
 
@@ -384,6 +386,23 @@ describe("composerDraftStore setModel", () => {
       "gpt-5.3-codex",
     );
   });
+
+  it("updates lastSelectedModel when a non-null model is set", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModel(threadId, "gpt-5.3-codex");
+
+    expect(useComposerDraftStore.getState().lastSelectedModel).toBe("gpt-5.3-codex");
+  });
+
+  it("does not update lastSelectedModel when model is set to null", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModel(threadId, "gpt-5.3-codex");
+    store.setModel(threadId, null);
+
+    expect(useComposerDraftStore.getState().lastSelectedModel).toBe("gpt-5.3-codex");
+  });
 });
 
 describe("composerDraftStore setProvider", () => {
@@ -394,6 +413,8 @@ describe("composerDraftStore setProvider", () => {
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
+      lastSelectedModel: null,
+      lastSelectedProvider: null,
     });
   });
 
@@ -412,6 +433,14 @@ describe("composerDraftStore setProvider", () => {
     store.setProvider(threadId, null);
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+
+  it("updates lastSelectedProvider when a non-null provider is set", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "codex");
+
+    expect(useComposerDraftStore.getState().lastSelectedProvider).toBe("codex");
   });
 });
 
