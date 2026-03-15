@@ -269,6 +269,59 @@ describe("sharedSkills", () => {
     });
   });
 
+  it("ignores empty icon paths in skill manifests", async () => {
+    await useIsolatedHome();
+    const codexHomePath = await makeTempDir("t3-codex-home-");
+    const sharedSkillsPath = path.join(await makeTempDir("t3-shared-skills-"), "skills");
+    const skillPath = await writeSkill(path.join(codexHomePath, "skills"), "demo");
+
+    await fs.writeFile(
+      path.join(skillPath, "SKILL.json"),
+      JSON.stringify({
+        interface: {
+          iconSmall: "",
+        },
+      }),
+      "utf8",
+    );
+
+    const state = await getSharedSkillsState({
+      codexHomePath,
+      sharedSkillsPath,
+    });
+
+    expect(state.skills).toHaveLength(1);
+    expect(state.skills[0]?.name).toBe("demo");
+    expect(state.skills[0]?.iconPath).toBeUndefined();
+    expect(state.skills[0]?.iconPath).not.toBe(skillPath);
+  });
+
+  it("ignores file symlinks while scanning skills", async () => {
+    await useIsolatedHome();
+    const codexHomePath = await makeTempDir("t3-codex-home-");
+    const sharedSkillsPath = path.join(await makeTempDir("t3-shared-skills-"), "skills");
+    const codexSkillsPath = path.join(codexHomePath, "skills");
+
+    await fs.mkdir(codexSkillsPath, { recursive: true });
+    await writeSkill(codexSkillsPath, "demo");
+    await fs.writeFile(path.join(codexHomePath, "not-a-skill.txt"), "hello\n", "utf8");
+    await fs.symlink(
+      path.join(codexHomePath, "not-a-skill.txt"),
+      path.join(codexSkillsPath, "file-link"),
+    );
+
+    const state = await getSharedSkillsState({
+      codexHomePath,
+      sharedSkillsPath,
+    });
+
+    expect(state.skills).toEqual([
+      expect.objectContaining({
+        name: "demo",
+      }),
+    ]);
+  });
+
   it("keeps disabled skills hidden from Codex across refreshes", async () => {
     await useIsolatedHome();
     const codexHomePath = await makeTempDir("t3-codex-home-");

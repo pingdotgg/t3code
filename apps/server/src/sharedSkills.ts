@@ -113,7 +113,8 @@ async function isFile(targetPath: string): Promise<boolean> {
     const stat = await fs.stat(targetPath);
     return stat.isFile();
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    const errorCode = (error as NodeJS.ErrnoException).code;
+    if (errorCode === "ENOENT" || errorCode === "ENOTDIR") {
       return false;
     }
     throw error;
@@ -149,7 +150,7 @@ function extractDescriptionFromFrontmatter(markdown: string): string | null {
 }
 
 function resolveSkillIconPath(skillPath: string, iconPath: unknown): string | null {
-  if (typeof iconPath !== "string") {
+  if (typeof iconPath !== "string" || iconPath.length === 0) {
     return null;
   }
 

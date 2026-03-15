@@ -171,6 +171,17 @@ export function SkillsSettingsPanel({ codexHomePath }: SkillsSettingsPanelProps)
     (uninstallMutation.error instanceof Error && uninstallMutation.error.message) ||
     null;
 
+  const resetActionErrors = () => {
+    setEnabledMutation.reset();
+    uninstallMutation.reset();
+  };
+
+  const selectSkill = (skillName: string) => {
+    setOpenFolderError(null);
+    resetActionErrors();
+    setSelectedSkillName(skillName);
+  };
+
   const openFolderPicker = async () => {
     const pickedPath = await ensureNativeApi().dialogs.pickFolder();
     if (!pickedPath) {
@@ -186,6 +197,7 @@ export function SkillsSettingsPanel({ codexHomePath }: SkillsSettingsPanelProps)
     }
 
     setOpenFolderError(null);
+    resetActionErrors();
     await setEnabledMutation.mutateAsync({
       enabled,
       skillName: selectedSkillDetail.skill.name,
@@ -208,6 +220,7 @@ export function SkillsSettingsPanel({ codexHomePath }: SkillsSettingsPanelProps)
     }
 
     setOpenFolderError(null);
+    resetActionErrors();
     await uninstallMutation.mutateAsync(selectedSkillDetail.skill.name);
     setSelectedSkillName((current) =>
       current === selectedSkillDetail.skill.name ? null : current,
@@ -423,7 +436,7 @@ export function SkillsSettingsPanel({ codexHomePath }: SkillsSettingsPanelProps)
                     key={skill.name}
                     type="button"
                     className="flex w-full items-start gap-3 rounded-lg border border-border bg-background px-4 py-3 text-left transition-colors hover:bg-accent/40"
-                    onClick={() => setSelectedSkillName(skill.name)}
+                    onClick={() => selectSkill(skill.name)}
                   >
                     <SkillTile brandColor={skill.brandColor} label={display.name} />
                     <div className="min-w-0 flex-1">
@@ -459,6 +472,7 @@ export function SkillsSettingsPanel({ codexHomePath }: SkillsSettingsPanelProps)
       <Sheet
         onOpenChange={(open) => {
           if (!open) {
+            resetActionErrors();
             setSelectedSkillName(null);
           }
         }}
