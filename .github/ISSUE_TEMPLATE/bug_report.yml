@@ -96,9 +96,18 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Logs, stack traces, or screenshots
+      label: Logs or stack traces
       description: Paste the most relevant output only. Redact secrets.
       render: shell
+
+  - type: upload
+    id: attachments
+    attributes:
+      label: Screenshots, recordings, or supporting files
+      description: Upload screenshots, short recordings, repro archives, or log files. Redact secrets before uploading.
+    validations:
+      required: false
+      accept: ".png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.mov,.webm,.log,.txt,.json,.zip"
 
   - type: textarea
     id: workaround
