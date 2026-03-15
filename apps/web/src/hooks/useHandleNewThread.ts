@@ -1,4 +1,5 @@
 import { DEFAULT_RUNTIME_MODE, type ProjectId, ThreadId } from "@t3tools/contracts";
+import { getDefaultReasoningEffort } from "@t3tools/shared/model";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback } from "react";
 import {
@@ -14,7 +15,7 @@ export function useHandleNewThread() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const {
-    settings: { model: stickyModel },
+    settings: { model: stickyModel, effort: stickyEffort, codexFastMode: stickyCodexFastMode },
   } = useStickyComposerSettings();
   const navigate = useNavigate();
   const routeThreadId = useParams({
@@ -42,6 +43,8 @@ export function useHandleNewThread() {
         clearProjectDraftThreadId,
         getDraftThread,
         getDraftThreadByProjectId,
+        setCodexFastMode,
+        setEffort,
         setModel,
         setDraftThreadContext,
         setProjectDraftThreadId,
@@ -104,6 +107,8 @@ export function useHandleNewThread() {
         if (stickyModel) {
           setModel(threadId, stickyModel);
         }
+        setEffort(threadId, stickyEffort ?? getDefaultReasoningEffort("codex"));
+        setCodexFastMode(threadId, stickyCodexFastMode);
 
         await navigate({
           to: "/$threadId",
@@ -111,7 +116,7 @@ export function useHandleNewThread() {
         });
       })();
     },
-    [navigate, routeThreadId, stickyModel],
+    [navigate, routeThreadId, stickyCodexFastMode, stickyEffort, stickyModel],
   );
 
   return {

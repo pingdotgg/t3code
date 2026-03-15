@@ -198,8 +198,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const { settings } = useAppSettings();
-  const { settings: stickyComposerSettings, updateSettings: updateStickyComposerSettings } =
-    useStickyComposerSettings();
+  const { updateSettings: updateStickyComposerSettings } = useStickyComposerSettings();
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
   const rawSearch = useSearch({
@@ -517,18 +516,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [baseThreadModel, composerDraft.model, customModelsForSelectedProvider, selectedProvider]);
   const reasoningOptions = getReasoningEffortOptions(selectedProvider);
   const supportsReasoningEffort = reasoningOptions.length > 0;
-  const selectedEffort =
-    selectedProvider !== "codex"
-      ? getDefaultReasoningEffort(selectedProvider)
-      : composerDraft.hasEffortOverride
-        ? (composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider))
-        : (stickyComposerSettings.effort ?? getDefaultReasoningEffort(selectedProvider));
+  const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
   const selectedCodexFastModeEnabled =
-    selectedProvider === "codex"
-      ? composerDraft.hasCodexFastModeOverride
-        ? composerDraft.codexFastMode
-        : stickyComposerSettings.codexFastMode
-      : false;
+    selectedProvider === "codex" ? composerDraft.codexFastMode : false;
   const selectedModelOptionsForDispatch = useMemo(() => {
     if (selectedProvider !== "codex") {
       return undefined;

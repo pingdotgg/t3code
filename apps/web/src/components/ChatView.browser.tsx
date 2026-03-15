@@ -1087,6 +1087,48 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("snapshots sticky codex traits into a new draft thread", async () => {
+    localStorage.setItem(
+      "t3code:sticky-composer-settings:v1",
+      JSON.stringify({
+        model: null,
+        effort: "medium",
+        codexFastMode: true,
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sticky-codex-traits-test" as MessageId,
+        targetText: "sticky codex traits test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]).toMatchObject({
+        effort: "medium",
+        codexFastMode: true,
+        hasEffortOverride: true,
+        hasCodexFastModeOverride: true,
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("creates a new thread from the global chat.new shortcut", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
