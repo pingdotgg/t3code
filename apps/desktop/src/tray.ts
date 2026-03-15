@@ -104,6 +104,34 @@ let trayState: DesktopTrayState = {
   threads: [],
 };
 
+function areTrayThreadsEqual(
+  previous: DesktopTrayState["threads"],
+  next: DesktopTrayState["threads"],
+): boolean {
+  if (previous.length !== next.length) {
+    return false;
+  }
+
+  for (let index = 0; index < previous.length; index += 1) {
+    const previousThread = previous[index];
+    const nextThread = next[index];
+    if (
+      previousThread?.id !== nextThread?.id ||
+      previousThread?.name !== nextThread?.name ||
+      previousThread?.lastUpdated !== nextThread?.lastUpdated ||
+      previousThread?.needsAttention !== nextThread?.needsAttention
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isTrayStateEqual(previous: DesktopTrayState, next: DesktopTrayState): boolean {
+  return areTrayThreadsEqual(previous.threads, next.threads);
+}
+
 // TODO: Maybe move this to a utils file?
 function truncateGraphemes(value: string, maxLength: number): string {
   const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -175,6 +203,10 @@ async function getTrayState(): Promise<DesktopTrayState> {
 }
 
 async function setTrayState(state: DesktopTrayState): Promise<void> {
+  // Avoid updating the tray if the state is the same
+  if (isTrayStateEqual(trayState, state)) {
+    return;
+  }
   trayState = state;
   updateTray();
 }

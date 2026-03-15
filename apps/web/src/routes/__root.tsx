@@ -1,4 +1,4 @@
-import { ThreadId, type DesktopTrayMessage } from "@t3tools/contracts";
+import { ThreadId, type DesktopTrayMessage, type DesktopTrayState } from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -372,15 +372,11 @@ function DesktopTrayBootstrap() {
 
   const threads = useStore((store) => store.threads);
 
-  const [trayState, setTrayState] = useTrayState();
+  const [, setTrayState] = useTrayState();
 
   useEffect(() => {
-    if (!isElectron) return;
-    const bridge = window.desktopBridge;
-    if (!bridge) return;
     if (!settings.showTrayIcon) return;
-    setTrayState({
-      ...trayState,
+    const nextTrayState: DesktopTrayState = {
       threads: threads.map((thread) => {
         const lastVisitedAt = thread.lastVisitedAt ? Date.parse(thread.lastVisitedAt) : NaN;
         const latestTurnCompletedAt = thread.latestTurn?.completedAt
@@ -393,8 +389,9 @@ function DesktopTrayBootstrap() {
           needsAttention: latestTurnCompletedAt > lastVisitedAt,
         };
       }),
-    });
-  }, [threads, settings.showTrayIcon, trayState, setTrayState]);
+    };
+    setTrayState(nextTrayState);
+  }, [threads, settings.showTrayIcon, setTrayState]);
 
   return null;
 }
