@@ -70,6 +70,32 @@ describe("searchWorkspaceEntries", () => {
     assert.isTrue(result.entries.every((entry) => entry.path.toLowerCase().includes("compo")));
   });
 
+  it("supports fuzzy subsequence queries for composer path search", async () => {
+    const cwd = makeTempDir("t3code-workspace-fuzzy-query-");
+    writeFile(cwd, "src/components/Composer.tsx");
+    writeFile(cwd, "src/components/composePrompt.ts");
+    writeFile(cwd, "docs/composition.md");
+
+    const result = await searchWorkspaceEntries({ cwd, query: "cmp", limit: 10 });
+    const paths = result.entries.map((entry) => entry.path);
+
+    assert.isAbove(result.entries.length, 0);
+    assert.include(paths, "src/components");
+    assert.include(paths, "src/components/Composer.tsx");
+  });
+
+  it("tracks truncation without sorting every fuzzy match", async () => {
+    const cwd = makeTempDir("t3code-workspace-fuzzy-limit-");
+    writeFile(cwd, "src/components/Composer.tsx");
+    writeFile(cwd, "src/components/composePrompt.ts");
+    writeFile(cwd, "docs/composition.md");
+
+    const result = await searchWorkspaceEntries({ cwd, query: "cmp", limit: 1 });
+
+    assert.lengthOf(result.entries, 1);
+    assert.isTrue(result.truncated);
+  });
+
   it("excludes gitignored paths for git repositories", async () => {
     const cwd = makeTempDir("t3code-workspace-gitignore-");
     runGit(cwd, ["init"]);

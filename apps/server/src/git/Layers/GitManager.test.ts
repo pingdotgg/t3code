@@ -22,6 +22,7 @@ import { makeGitManager } from "./GitManager.ts";
 
 interface FakeGhScenario {
   prListSequence?: string[];
+  prListByHeadSelector?: Record<string, string>;
   createdPrUrl?: string;
   defaultBranch?: string;
   pullRequest?: {
@@ -221,7 +222,16 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     }
 
     if (args[0] === "pr" && args[1] === "list") {
-      const stdout = (prListQueue.shift() ?? "[]") + "\n";
+      const headSelectorIndex = args.findIndex((value) => value === "--head");
+      const headSelector =
+        headSelectorIndex >= 0 && headSelectorIndex < args.length - 1
+          ? args[headSelectorIndex + 1]
+          : undefined;
+      const mappedStdout =
+        typeof headSelector === "string"
+          ? scenario.prListByHeadSelector?.[headSelector]
+          : undefined;
+      const stdout = (mappedStdout ?? prListQueue.shift() ?? "[]") + "\n";
       return Effect.succeed({
         stdout,
         stderr: "",
@@ -369,7 +379,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "pr",
             "list",
             "--head",
-            input.headBranch,
+            input.headSelector,
             "--state",
             "open",
             "--limit",
@@ -391,7 +401,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "--base",
             input.baseBranch,
             "--head",
-            input.headBranch,
+            input.headSelector,
             "--title",
             input.title,
             "--body-file",
@@ -441,6 +451,7 @@ function runStackedAction(
     action: "commit" | "commit_push" | "commit_push_pr";
     commitMessage?: string;
     featureBranch?: boolean;
+    filePaths?: readonly string[];
   },
 ) {
   return manager.runStackedAction(input);
@@ -521,6 +532,64 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         state: "open",
       });
     }),
+  );
+
+  it.effect(
+    "status detects cross-repo PRs from the upstream remote URL owner",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+        fs.writeFileSync(path.join(repoDir, "fork-pr.txt"), "fork pr\n");
+        yield* runGit(repoDir, ["add", "fork-pr.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Fork PR branch"]);
+        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+        yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-488/statemachine"]);
+        yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.fork-seed.url",
+          "git@github.com:jasonLaster/codething-mvp.git",
+        ]);
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListSequence: [
+              JSON.stringify([]),
+              JSON.stringify([]),
+              JSON.stringify([
+                {
+                  number: 488,
+                  title: "Rebase this PR on latest main",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/488",
+                  baseRefName: "main",
+                  headRefName: "statemachine",
+                  state: "OPEN",
+                  updatedAt: "2026-03-10T07:00:00Z",
+                },
+              ]),
+            ],
+          },
+        });
+
+        const status = yield* manager.status({ cwd: repoDir });
+        expect(status.branch).toBe("t3code/pr-488/statemachine");
+        expect(status.pr).toEqual({
+          number: 488,
+          title: "Rebase this PR on latest main",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/488",
+          baseBranch: "main",
+          headBranch: "statemachine",
+          state: "open",
+        });
+        expect(ghCalls).toContain(
+          "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
+        );
+      }),
+    12_000,
   );
 
   it.effect("status returns merged PR state when latest PR was merged", () =>
@@ -696,6 +765,31 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           Effect.map((result) => result.stdout.trim()),
         ),
       ).toContain("- details from user");
+    }),
+  );
+
+  it.effect("commits only selected files when filePaths is provided", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "a.txt"), "file a\n");
+      fs.writeFileSync(path.join(repoDir, "b.txt"), "file b\n");
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        filePaths: ["a.txt"],
+      });
+
+      expect(result.commit.status).toBe("created");
+
+      // b.txt should remain in the working tree
+      const statusStdout = yield* runGit(repoDir, ["status", "--porcelain"]).pipe(
+        Effect.map((r) => r.stdout),
+      );
+      expect(statusStdout).toContain("b.txt");
+      expect(statusStdout).not.toContain("a.txt");
     }),
   );
 
@@ -964,6 +1058,172 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "returns existing cross-repo PR metadata using the fork owner selector",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.fork-seed.url",
+          "git@github.com:octocat/codething-mvp.git",
+        ]);
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListSequence: [
+              JSON.stringify([]),
+              JSON.stringify([
+                {
+                  number: 142,
+                  title: "Existing fork PR",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/142",
+                  baseRefName: "main",
+                  headRefName: "statemachine",
+                },
+              ]),
+            ],
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.pr.status).toBe("opened_existing");
+        expect(result.pr.number).toBe(142);
+        expect(
+          ghCalls.some((call) =>
+            call.includes("pr list --head octocat:statemachine --state open --limit 1"),
+          ),
+        ).toBe(true);
+        expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+      }),
+    12_000,
+  );
+
+  it.effect(
+    "prefers owner-qualified selectors before bare branch names for cross-repo PRs",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+        yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-142/statemachine"]);
+        yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.fork-seed.url",
+          "git@github.com:octocat/codething-mvp.git",
+        ]);
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              "t3code/pr-142/statemachine": JSON.stringify([]),
+              statemachine: JSON.stringify([
+                {
+                  number: 41,
+                  title: "Unrelated same-repo PR",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/41",
+                  baseRefName: "main",
+                  headRefName: "statemachine",
+                },
+              ]),
+              "octocat:statemachine": JSON.stringify([
+                {
+                  number: 142,
+                  title: "Existing fork PR",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/142",
+                  baseRefName: "main",
+                  headRefName: "statemachine",
+                },
+              ]),
+              "fork-seed:statemachine": JSON.stringify([]),
+            },
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.pr.status).toBe("opened_existing");
+        expect(result.pr.number).toBe(142);
+
+        const ownerSelectorCallIndex = ghCalls.findIndex((call) =>
+          call.includes("pr list --head octocat:statemachine --state open --limit 1"),
+        );
+        expect(ownerSelectorCallIndex).toBeGreaterThanOrEqual(0);
+        expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+      }),
+    12_000,
+  );
+
+  it.effect(
+    "stops probing head selectors after finding an existing PR",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+        yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-142/statemachine"]);
+        yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.fork-seed.url",
+          "git@github.com:octocat/codething-mvp.git",
+        ]);
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              "octocat:statemachine": JSON.stringify([
+                {
+                  number: 142,
+                  title: "Existing fork PR",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/142",
+                  baseRefName: "main",
+                  headRefName: "statemachine",
+                },
+              ]),
+              "fork-seed:statemachine": JSON.stringify([]),
+              "t3code/pr-142/statemachine": JSON.stringify([]),
+              statemachine: JSON.stringify([]),
+            },
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.pr.status).toBe("opened_existing");
+        expect(result.pr.number).toBe(142);
+
+        const prListCalls = ghCalls.filter((call) => call.startsWith("pr list "));
+        expect(prListCalls).toHaveLength(1);
+        expect(prListCalls[0]).toContain(
+          "pr list --head octocat:statemachine --state open --limit 1",
+        );
+      }),
+    12_000,
+  );
+
   it.effect("creates PR when one does not already exist", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -1005,6 +1265,65 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
+  it.effect("creates cross-repo PRs with the fork owner selector and default base branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+      fs.writeFileSync(path.join(repoDir, "changes.txt"), "change\n");
+      yield* runGit(repoDir, ["add", "changes.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+      yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-91/statemachine"]);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
+      yield* runGit(repoDir, [
+        "config",
+        "remote.fork-seed.url",
+        "git@github.com:octocat/codething-mvp.git",
+      ]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            JSON.stringify([]),
+            JSON.stringify([]),
+            JSON.stringify([]),
+            JSON.stringify([]),
+            JSON.stringify([]),
+            JSON.stringify([]),
+            JSON.stringify([
+              {
+                number: 188,
+                title: "Add stacked git actions",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/188",
+                baseRefName: "main",
+                headRefName: "statemachine",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(result.pr.number).toBe(188);
+      expect(
+        ghCalls.some((call) => call.includes("pr create --base main --head octocat:statemachine")),
+      ).toBe(true);
+      expect(
+        ghCalls.some((call) =>
+          call.includes("pr create --base statemachine --head octocat:statemachine"),
+        ),
+      ).toBe(false);
     }),
   );
 

@@ -21,6 +21,10 @@ import {
   type OrchestrationIntegrationHarness,
 } from "./OrchestrationEngineHarness.integration.ts";
 import { checkpointRefForThreadTurn } from "../src/checkpointing/Utils.ts";
+import type {
+  CheckpointDiffFinalizedReceipt,
+  TurnProcessingQuiescedReceipt,
+} from "../src/orchestration/Services/RuntimeReceiptBus.ts";
 
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
@@ -187,6 +191,22 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
         messageId: "msg-user-single",
         text: "Say hello",
       });
+      const finalizedReceipt = yield* harness.waitForReceipt(
+        (receipt): receipt is CheckpointDiffFinalizedReceipt =>
+          receipt.type === "checkpoint.diff.finalized" &&
+          receipt.threadId === THREAD_ID &&
+          receipt.checkpointTurnCount === 1,
+      );
+      if (finalizedReceipt.type !== "checkpoint.diff.finalized") {
+        throw new Error("Expected checkpoint.diff.finalized receipt.");
+      }
+      assert.equal(finalizedReceipt.status, "ready");
+      yield* harness.waitForReceipt(
+        (receipt): receipt is TurnProcessingQuiescedReceipt =>
+          receipt.type === "turn.processing.quiesced" &&
+          receipt.threadId === THREAD_ID &&
+          receipt.checkpointTurnCount === 1,
+      );
 
       const thread = yield* harness.waitForThread(
         THREAD_ID,
@@ -207,8 +227,6 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
       assert.equal(checkpointRows[0]?.checkpointTurnCount, 1);
       assert.equal(checkpointRows[0]?.status, "ready");
       assert.deepEqual(checkpointRows[0]?.files, []);
-
-      yield* harness.waitForDomainEvent((event) => event.type === "thread.turn-diff-completed");
 
       const ref0 = checkpointRefForThreadTurn(THREAD_ID, 0);
       const ref1 = checkpointRefForThreadTurn(THREAD_ID, 1);
@@ -367,6 +385,12 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
         messageId: "msg-user-multi-1",
         text: "Make first edit",
       });
+      yield* harness.waitForReceipt(
+        (receipt): receipt is CheckpointDiffFinalizedReceipt =>
+          receipt.type === "checkpoint.diff.finalized" &&
+          receipt.threadId === THREAD_ID &&
+          receipt.checkpointTurnCount === 1,
+      );
 
       yield* harness.waitForThread(
         THREAD_ID,
@@ -408,6 +432,22 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
         messageId: "msg-user-multi-2",
         text: "Make second edit",
       });
+      const secondReceipt = yield* harness.waitForReceipt(
+        (receipt): receipt is CheckpointDiffFinalizedReceipt =>
+          receipt.type === "checkpoint.diff.finalized" &&
+          receipt.threadId === THREAD_ID &&
+          receipt.checkpointTurnCount === 2,
+      );
+      if (secondReceipt.type !== "checkpoint.diff.finalized") {
+        throw new Error("Expected checkpoint.diff.finalized receipt.");
+      }
+      assert.equal(secondReceipt.status, "ready");
+      yield* harness.waitForReceipt(
+        (receipt): receipt is TurnProcessingQuiescedReceipt =>
+          receipt.type === "turn.processing.quiesced" &&
+          receipt.threadId === THREAD_ID &&
+          receipt.checkpointTurnCount === 2,
+      );
 
       const secondTurnThread = yield* harness.waitForThread(
         THREAD_ID,
