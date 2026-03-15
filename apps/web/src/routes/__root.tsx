@@ -347,7 +347,7 @@ function DesktopTrayBootstrap() {
         });
       }
     },
-    [navigate],
+    [navigate, setSelectionAnchor],
   );
 
   useEffect(() => {
@@ -394,7 +394,7 @@ function DesktopTrayBootstrap() {
         };
       }),
     });
-  }, [threads, settings.showTrayIcon, setTrayState]);
+  }, [threads, settings.showTrayIcon, trayState, setTrayState]);
 
   return null;
 }
