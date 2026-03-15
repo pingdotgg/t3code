@@ -196,6 +196,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
+  const markStoreThreadOptimisticUserSend = useStore((store) => store.markThreadOptimisticUserSend);
+  const clearStoreThreadOptimisticUserSend = useStore(
+    (store) => store.clearThreadOptimisticUserSend,
+  );
   const { settings } = useAppSettings();
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
@@ -2276,6 +2280,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
+    markStoreThreadOptimisticUserSend(threadIdForSend, messageCreatedAt);
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -2435,6 +2440,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
+      clearStoreThreadOptimisticUserSend(threadIdForSend);
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         await api.orchestration
           .dispatchCommand({

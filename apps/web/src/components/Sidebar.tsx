@@ -89,6 +89,7 @@ import {
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
+import { compareThreadsForSidebar } from "../lib/threadRecency";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
@@ -254,6 +255,7 @@ function SortableProjectItem({
 export default function Sidebar() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
+  const optimisticUserSendAtByThreadId = useStore((store) => store.optimisticUserSendAtByThreadId);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
   const reorderProjects = useStore((store) => store.reorderProjects);
@@ -385,11 +387,7 @@ export default function Sidebar() {
     (projectId: ProjectId) => {
       const latestThread = threads
         .filter((thread) => thread.projectId === projectId)
-        .toSorted((a, b) => {
-          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-          if (byDate !== 0) return byDate;
-          return b.id.localeCompare(a.id);
-        })[0];
+        .toSorted((a, b) => compareThreadsForSidebar(a, b, optimisticUserSendAtByThreadId))[0];
       if (!latestThread) return;
 
       void navigate({
@@ -397,7 +395,7 @@ export default function Sidebar() {
         params: { threadId: latestThread.id },
       });
     },
-    [navigate, threads],
+    [navigate, optimisticUserSendAtByThreadId, threads],
   );
 
   const addProjectFromPath = useCallback(
@@ -1295,12 +1293,9 @@ export default function Sidebar() {
                 {projects.map((project) => {
                   const projectThreads = threads
                     .filter((thread) => thread.projectId === project.id)
-                    .toSorted((a, b) => {
-                      const byDate =
-                        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-                      if (byDate !== 0) return byDate;
-                      return b.id.localeCompare(a.id);
-                    });
+                    .toSorted((a, b) =>
+                      compareThreadsForSidebar(a, b, optimisticUserSendAtByThreadId),
+                    );
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
                   const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
                   const visibleThreads =

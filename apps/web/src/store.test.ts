@@ -7,7 +7,14 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
+import {
+  clearThreadOptimisticUserSend,
+  markThreadOptimisticUserSend,
+  markThreadUnread,
+  reorderProjects,
+  syncServerReadModel,
+  type AppState,
+} from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -47,6 +54,7 @@ function makeState(thread: Thread): AppState {
     ],
     threads: [thread],
     threadsHydrated: true,
+    optimisticUserSendAtByThreadId: {},
   };
 }
 
@@ -182,11 +190,56 @@ describe("store pure functions", () => {
       ],
       threads: [],
       threadsHydrated: true,
+      optimisticUserSendAtByThreadId: {},
     };
 
     const next = reorderProjects(state, project1, project3);
 
     expect(next.projects.map((project) => project.id)).toEqual([project2, project3, project1]);
+  });
+
+  it("markThreadOptimisticUserSend stores the optimistic timestamp", () => {
+    const state = makeState(makeThread());
+
+    const next = markThreadOptimisticUserSend(
+      state,
+      ThreadId.makeUnsafe("thread-1"),
+      "2026-03-10T12:00:00.000Z",
+    );
+
+    expect(next.optimisticUserSendAtByThreadId[ThreadId.makeUnsafe("thread-1")]).toBe(
+      "2026-03-10T12:00:00.000Z",
+    );
+  });
+
+  it("markThreadOptimisticUserSend keeps the newest timestamp for a thread", () => {
+    const state = {
+      ...makeState(makeThread()),
+      optimisticUserSendAtByThreadId: {
+        [ThreadId.makeUnsafe("thread-1")]: "2026-03-10T12:00:01.000Z",
+      },
+    } satisfies AppState;
+
+    const next = markThreadOptimisticUserSend(
+      state,
+      ThreadId.makeUnsafe("thread-1"),
+      "2026-03-10T12:00:00.000Z",
+    );
+
+    expect(next).toBe(state);
+  });
+
+  it("clearThreadOptimisticUserSend removes the optimistic timestamp", () => {
+    const state = {
+      ...makeState(makeThread()),
+      optimisticUserSendAtByThreadId: {
+        [ThreadId.makeUnsafe("thread-1")]: "2026-03-10T12:00:00.000Z",
+      },
+    } satisfies AppState;
+
+    const next = clearThreadOptimisticUserSend(state, ThreadId.makeUnsafe("thread-1"));
+
+    expect(next.optimisticUserSendAtByThreadId[ThreadId.makeUnsafe("thread-1")]).toBeUndefined();
   });
 });
 
@@ -229,6 +282,7 @@ describe("store read model sync", () => {
       ],
       threads: [],
       threadsHydrated: true,
+      optimisticUserSendAtByThreadId: {},
     };
     const readModel: OrchestrationReadModel = {
       snapshotSequence: 2,
@@ -256,5 +310,90 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
+  });
+
+  it("clears optimistic user send timestamps once the confirmed user message catches up", () => {
+    const initialState: AppState = {
+      ...makeState(makeThread()),
+      optimisticUserSendAtByThreadId: {
+        [ThreadId.makeUnsafe("thread-1")]: "2026-03-10T12:00:00.000Z",
+      },
+    };
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        messages: [
+          {
+            id: "message-1" as never,
+            role: "user",
+            text: "Hello",
+            attachments: [],
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-03-10T12:00:00.000Z",
+            updatedAt: "2026-03-10T12:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.optimisticUserSendAtByThreadId[ThreadId.makeUnsafe("thread-1")]).toBeUndefined();
+  });
+
+  it("keeps optimistic user send timestamps when the confirmed thread has not caught up", () => {
+    const initialState: AppState = {
+      ...makeState(makeThread()),
+      optimisticUserSendAtByThreadId: {
+        [ThreadId.makeUnsafe("thread-1")]: "2026-03-10T12:00:01.000Z",
+      },
+    };
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        messages: [
+          {
+            id: "message-1" as never,
+            role: "user",
+            text: "Hello",
+            attachments: [],
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-03-10T12:00:00.000Z",
+            updatedAt: "2026-03-10T12:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.optimisticUserSendAtByThreadId[ThreadId.makeUnsafe("thread-1")]).toBe(
+      "2026-03-10T12:00:01.000Z",
+    );
+  });
+
+  it("drops optimistic user send timestamps for threads missing from the latest snapshot", () => {
+    const initialState: AppState = {
+      ...makeState(makeThread()),
+      optimisticUserSendAtByThreadId: {
+        [ThreadId.makeUnsafe("thread-1")]: "2026-03-10T12:00:01.000Z",
+      },
+    };
+    const readModel: OrchestrationReadModel = {
+      snapshotSequence: 2,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      projects: [
+        makeReadModelProject({
+          id: ProjectId.makeUnsafe("project-1"),
+          title: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+        }),
+      ],
+      threads: [],
+    };
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.optimisticUserSendAtByThreadId).toEqual({});
   });
 });

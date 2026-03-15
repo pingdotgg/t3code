@@ -15,6 +15,7 @@ import {
 import { create } from "zustand";
 import { type ChatMessage, type Project, type Thread } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
+import { getLatestUserMessageAt, type OptimisticUserSendAtByThreadId } from "./lib/threadRecency";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ export interface AppState {
   projects: Project[];
   threads: Thread[];
   threadsHydrated: boolean;
+  optimisticUserSendAtByThreadId: OptimisticUserSendAtByThreadId;
 }
 
 const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
@@ -41,6 +43,7 @@ const initialState: AppState = {
   projects: [],
   threads: [],
   threadsHydrated: false,
+  optimisticUserSendAtByThreadId: {},
 };
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
@@ -325,11 +328,26 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         activities: thread.activities.map((activity) => ({ ...activity })),
       };
     });
+  const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
+  const optimisticUserSendAtByThreadId = Object.fromEntries(
+    Object.entries(state.optimisticUserSendAtByThreadId).filter(([threadId, optimisticAt]) => {
+      if (typeof optimisticAt !== "string") {
+        return false;
+      }
+      const thread = threadById.get(threadId as ThreadId);
+      if (!thread) {
+        return false;
+      }
+      const latestUserMessageAt = getLatestUserMessageAt(thread);
+      return latestUserMessageAt === null || latestUserMessageAt.localeCompare(optimisticAt) < 0;
+    }),
+  ) as OptimisticUserSendAtByThreadId;
   return {
     ...state,
     projects,
     threads,
     threadsHydrated: true,
+    optimisticUserSendAtByThreadId,
   };
 }
 
@@ -430,6 +448,36 @@ export function setThreadBranch(
   return threads === state.threads ? state : { ...state, threads };
 }
 
+export function markThreadOptimisticUserSend(
+  state: AppState,
+  threadId: ThreadId,
+  at?: string,
+): AppState {
+  const nextAt = at ?? new Date().toISOString();
+  const previousAt = state.optimisticUserSendAtByThreadId[threadId];
+  if (previousAt !== undefined && previousAt.localeCompare(nextAt) >= 0) {
+    return state;
+  }
+  return {
+    ...state,
+    optimisticUserSendAtByThreadId: {
+      ...state.optimisticUserSendAtByThreadId,
+      [threadId]: nextAt,
+    },
+  };
+}
+
+export function clearThreadOptimisticUserSend(state: AppState, threadId: ThreadId): AppState {
+  if (state.optimisticUserSendAtByThreadId[threadId] === undefined) {
+    return state;
+  }
+  const { [threadId]: _cleared, ...rest } = state.optimisticUserSendAtByThreadId;
+  return {
+    ...state,
+    optimisticUserSendAtByThreadId: rest as OptimisticUserSendAtByThreadId,
+  };
+}
+
 // ── Zustand store ────────────────────────────────────────────────────
 
 interface AppStore extends AppState {
@@ -441,6 +489,8 @@ interface AppStore extends AppState {
   reorderProjects: (draggedProjectId: Project["id"], targetProjectId: Project["id"]) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
+  markThreadOptimisticUserSend: (threadId: ThreadId, at?: string) => void;
+  clearThreadOptimisticUserSend: (threadId: ThreadId) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -457,6 +507,10 @@ export const useStore = create<AppStore>((set) => ({
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
+  markThreadOptimisticUserSend: (threadId, at) =>
+    set((state) => markThreadOptimisticUserSend(state, threadId, at)),
+  clearThreadOptimisticUserSend: (threadId) =>
+    set((state) => clearThreadOptimisticUserSend(state, threadId)),
 }));
 
 // Persist state changes with debouncing to avoid localStorage thrashing
