@@ -14,6 +14,7 @@ import {
   nativeTheme,
   protocol,
   shell,
+  MenuItem,
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
@@ -277,6 +278,8 @@ let updateCheckInFlight = false;
 let updateDownloadInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
+const updateStateListeners = new Set<(state: DesktopUpdateState) => void>();
+updateStateListeners.add(() => emitUpdateState());
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
   if (updateDownloadInFlight) return "download";
@@ -559,18 +562,69 @@ async function checkForUpdatesFromMenu(): Promise<void> {
   }
 }
 
+const CHECK_FOR_UPDATES_MENU_ITEM_LABEL_DEFAULT = "Check for Updates...";
+const CHECK_FOR_UPDATES_MENU_ITEM_LABEL_CHECKING = "Checking for Updates...";
+const CHECK_FOR_UPDATES_MENU_ITEM_LABEL_IDLE = CHECK_FOR_UPDATES_MENU_ITEM_LABEL_DEFAULT;
+const CHECK_FOR_UPDATES_MENU_ITEM_LABEL_DISABLED = "Updates unavailable";
+const CHECK_FOR_UPDATES_MENU_ITEM_LABEL_DOWNLOADING = "Downloading update...";
+const CHECK_FOR_UPDATES_MENU_ITEM_LABEL_DOWNLOADED = "Update downloaded";
+const CHECK_FOR_UPDATES_MENU_ITEM_LABEL_AVAILABLE = "Update available";
+const CHECK_FOR_UPDATES_MENU_ITEM_LABEL_UP_TO_DATE = "You're up to date!";
+const CHECK_FOR_UPDATES_MENU_ITEM_LABEL_ERROR = "Update check failed";
+const checkForUpdatesMenuItem: MenuItem = new MenuItem({
+  label: CHECK_FOR_UPDATES_MENU_ITEM_LABEL_DEFAULT,
+  click: async () => await handleCheckForUpdatesMenuClick(),
+});
+
+// TODO: Only the enabled status is actually dynamic here. Wait for upstream to allow for dynamic label updates.
+updateStateListeners.add((state) => {
+  switch (state.status) {
+    case "checking":
+      checkForUpdatesMenuItem.label = CHECK_FOR_UPDATES_MENU_ITEM_LABEL_CHECKING;
+      checkForUpdatesMenuItem.enabled = false;
+      break;
+    case "available":
+      checkForUpdatesMenuItem.label = CHECK_FOR_UPDATES_MENU_ITEM_LABEL_AVAILABLE;
+      checkForUpdatesMenuItem.enabled = false;
+      break;
+    case "downloading":
+      checkForUpdatesMenuItem.label = CHECK_FOR_UPDATES_MENU_ITEM_LABEL_DOWNLOADING;
+      checkForUpdatesMenuItem.enabled = false;
+      break;
+    case "downloaded":
+      checkForUpdatesMenuItem.label = CHECK_FOR_UPDATES_MENU_ITEM_LABEL_DOWNLOADED;
+      checkForUpdatesMenuItem.enabled = false;
+      break;
+    case "disabled":
+      checkForUpdatesMenuItem.label = CHECK_FOR_UPDATES_MENU_ITEM_LABEL_DISABLED;
+      checkForUpdatesMenuItem.enabled = false;
+      break;
+    case "error":
+      checkForUpdatesMenuItem.label = CHECK_FOR_UPDATES_MENU_ITEM_LABEL_ERROR;
+      checkForUpdatesMenuItem.enabled = false;
+      break;
+    case "up-to-date":
+      checkForUpdatesMenuItem.label = CHECK_FOR_UPDATES_MENU_ITEM_LABEL_UP_TO_DATE;
+      checkForUpdatesMenuItem.enabled = false;
+      break;
+    case "idle":
+      checkForUpdatesMenuItem.label = CHECK_FOR_UPDATES_MENU_ITEM_LABEL_IDLE;
+      checkForUpdatesMenuItem.enabled = true;
+      break;
+  }
+});
+
+let applicationMenu: Menu | null = null;
+
 function configureApplicationMenu(): void {
-  const template: MenuItemConstructorOptions[] = [];
+  const template: (MenuItemConstructorOptions | MenuItem)[] = [];
 
   if (process.platform === "darwin") {
     template.push({
       label: app.name,
-      submenu: [
+      submenu: Menu.buildFromTemplate([
         { role: "about" },
-        {
-          label: "Check for Updates...",
-          click: () => handleCheckForUpdatesMenuClick(),
-        },
+        checkForUpdatesMenuItem,
         { type: "separator" },
         {
           label: "Settings...",
@@ -585,7 +639,7 @@ function configureApplicationMenu(): void {
         { role: "unhide" },
         { type: "separator" },
         { role: "quit" },
-      ],
+      ]),
     });
   }
 
@@ -625,16 +679,13 @@ function configureApplicationMenu(): void {
     { role: "windowMenu" },
     {
       role: "help",
-      submenu: [
-        {
-          label: "Check for Updates...",
-          click: () => handleCheckForUpdatesMenuClick(),
-        },
-      ],
+      // TODO: Is it safe to use the same menu item for both the root menu and the help menu?
+      submenu: Menu.buildFromTemplate([checkForUpdatesMenuItem]),
     },
   );
 
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  applicationMenu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(applicationMenu);
 }
 
 function resolveResourcePath(fileName: string): string | null {
@@ -727,7 +778,9 @@ function emitUpdateState(): void {
 
 function setUpdateState(patch: Partial<DesktopUpdateState>): void {
   updateState = { ...updateState, ...patch };
-  emitUpdateState();
+  for (const listener of updateStateListeners) {
+    listener(updateState);
+  }
 }
 
 function shouldEnableAutoUpdates(): boolean {
