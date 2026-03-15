@@ -227,3 +227,4 @@ describe("resolveThreadRowClassName", () => {
     expect(className).toContain("bg-accent/85");
     expect(className).toContain("hover:bg-accent");
   });
+});

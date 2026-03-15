@@ -47,11 +47,6 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
 
-    const parsedPinToggle = yield* decode(KeybindingRule, {
-      key: "mod+shift+p",
-      command: "thread.togglePinned",
-    });
-    assert.strictEqual(parsedPinToggle.command, "thread.togglePinned");
   }),
 );
 

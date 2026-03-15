@@ -99,11 +99,6 @@ const DEFAULT_BINDINGS = compile([
   },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
-  {
-    shortcut: modShortcut("p", { shiftKey: true }),
-    command: "thread.togglePinned",
-    whenAst: whenNot(whenIdentifier("terminalFocus")),
-  },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
 ]);
 
@@ -243,10 +238,6 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⇧⌘O");
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
-      shortcutLabelForCommand(DEFAULT_BINDINGS, "thread.togglePinned", "Linux"),
-      "Ctrl+Shift+P",
-    );
-    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
       "Ctrl+O",
     );
@@ -276,29 +267,6 @@ describe("chat/editor shortcuts", () => {
     assert.isTrue(
       isChatNewLocalShortcut(event({ key: "n", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
-      }),
-    );
-  });
-
-  it("matches thread.togglePinned shortcut", () => {
-    assert.strictEqual(
-      resolveShortcutCommand(event({ key: "p", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
-        platform: "MacIntel",
-        context: { terminalFocus: false },
-      }),
-      "thread.togglePinned",
-    );
-    assert.strictEqual(
-      resolveShortcutCommand(event({ key: "p", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
-        platform: "Linux",
-        context: { terminalFocus: false },
-      }),
-      "thread.togglePinned",
-    );
-    assert.isNull(
-      resolveShortcutCommand(event({ key: "p", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
-        platform: "Linux",
-        context: { terminalFocus: true },
       }),
     );
   });
