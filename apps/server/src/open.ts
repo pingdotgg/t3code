@@ -32,12 +32,18 @@ interface EditorLaunch {
   readonly args: ReadonlyArray<string>;
 }
 
+interface ResolvedCommand {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
 interface CommandAvailabilityOptions {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
 }
 
 const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const SYSTEM_EDITOR_ENV_KEYS = ["VISUAL", "EDITOR"] as const;
 
 function shouldUseGotoFlag(editorId: EditorId, target: string): boolean {
   return (
@@ -58,6 +64,67 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
 
 function stripWrappingQuotes(value: string): string {
   return value.replace(/^"+|"+$/g, "");
+}
+
+function splitCommandString(value: string): ReadonlyArray<string> {
+  const parts: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === undefined) {
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      index += 1;
+      const escapedChar = value[index];
+      if (escapedChar !== undefined) {
+        current += escapedChar;
+      }
+      continue;
+    }
+
+    if ((char === '"' || char === "'") && quote === null) {
+      quote = char;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+
+    if (/\s/.test(char) && quote === null) {
+      if (current.length > 0) {
+        parts.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.length > 0) {
+    parts.push(current);
+  }
+
+  return parts;
+}
+
+function resolveSystemEditorCommand(env: NodeJS.ProcessEnv): ResolvedCommand | null {
+  for (const key of SYSTEM_EDITOR_ENV_KEYS) {
+    const value = env[key]?.trim();
+    if (value && value.length > 0) {
+      const parts = splitCommandString(stripWrappingQuotes(value));
+      const command = parts[0];
+      if (command) {
+        const args = parts.slice(1);
+        return { command, args };
+      }
+    }
+  }
+  return null;
 }
 
 function resolvePathEnvironmentVariable(env: NodeJS.ProcessEnv): string {
@@ -168,7 +235,13 @@ export function resolveAvailableEditors(
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
-    const command = editor.command ?? fileManagerCommandForPlatform(platform);
+    const command =
+      editor.id === "system-editor"
+        ? resolveSystemEditorCommand(env)?.command
+        : (editor.command ?? fileManagerCommandForPlatform(platform));
+    if (!command) {
+      continue;
+    }
     if (isCommandAvailable(command, { platform, env })) {
       available.push(editor.id);
     }
@@ -206,10 +279,21 @@ export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
 export const resolveEditorLaunch = Effect.fnUntraced(function* (
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<EditorLaunch, OpenError> {
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });
+  }
+
+  if (editorDef.id === "system-editor") {
+    const resolvedCommand = resolveSystemEditorCommand(env);
+    if (!resolvedCommand) {
+      return yield* new OpenError({
+        message: "System editor is unavailable because VISUAL and EDITOR are not set.",
+      });
+    }
+    return { command: resolvedCommand.command, args: [...resolvedCommand.args, input.cwd] };
   }
 
   if (editorDef.command) {
