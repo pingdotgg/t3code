@@ -289,4 +289,124 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       ]);
     }),
   );
+  it.effect("ignores in-progress checkpoint rows with null completedAt", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model,
+          scripts_json,
+          thread_group_order_json,
+          sort_order,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-1',
+          'Project 1',
+          '/tmp/project-1',
+          'gpt-5-codex',
+          '[]',
+          '[]',
+          0,
+          '2026-03-09T12:00:00.000Z',
+          '2026-03-09T12:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-1',
+          'project-1',
+          'Thread 1',
+          'gpt-5-codex',
+          NULL,
+          NULL,
+          'turn-1',
+          '2026-03-09T12:00:01.000Z',
+          '2026-03-09T12:00:04.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-1',
+          'turn-1',
+          NULL,
+          'message-1',
+          'running',
+          '2026-03-09T12:00:02.000Z',
+          '2026-03-09T12:00:03.000Z',
+          NULL,
+          7,
+          'checkpoint-7',
+          'missing',
+          '[]'
+        )
+      `;
+
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (
+            projector,
+            last_applied_sequence,
+            updated_at
+          )
+          VALUES (
+            ${projector},
+            7,
+            '2026-03-09T12:00:04.000Z'
+          )
+        `;
+      }
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+
+      assert.equal(snapshot.snapshotSequence, 7);
+      assert.equal(snapshot.threads.length, 1);
+      assert.deepEqual(snapshot.threads[0]?.checkpoints, []);
+      assert.equal(snapshot.threads[0]?.latestTurn?.turnId, asTurnId("turn-1"));
+      assert.equal(snapshot.threads[0]?.latestTurn?.state, "running");
+      assert.equal(snapshot.updatedAt, "2026-03-09T12:00:04.000Z");
+    }),
+  );
 });
