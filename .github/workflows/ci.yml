@@ -8,11 +8,11 @@ on:
 
 jobs:
   quality:
-    name: Lint, Typecheck, Test, Browser Test, Build
+    name: Format, Lint, Typecheck, Test, Browser Test, Build
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -20,12 +20,12 @@ jobs:
           bun-version-file: package.json
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version-file: package.json
 
       - name: Cache Bun and Turbo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.bun/install/cache
@@ -35,7 +35,7 @@ jobs:
             ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock') }}
@@ -44,6 +44,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Format
+        run: bun run fmt:check
 
       - name: Lint
         run: bun run lint
@@ -75,7 +78,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -83,7 +86,7 @@ jobs:
           bun-version-file: package.json
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version-file: package.json
 

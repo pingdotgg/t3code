@@ -1,0 +1,228 @@
+---
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = "T3 Code",
+  description = "T3 Code — The best way to code with AI.",
+} = Astro.props;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <div class="page">
+      <nav class="nav">
+        <a href="/" class="nav-brand">
+          <img src="/icon.png" alt="T3" class="nav-icon" />
+        </a>
+        <a
+          href="https://github.com/pingdotgg/t3code"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="nav-github"
+        >
+          GitHub
+          <span class="nav-github-arrow" aria-hidden="true">&#8599;</span>
+        </a>
+      </nav>
+
+      <main class="main">
+        <slot />
+      </main>
+
+      <footer class="footer">
+        <span class="footer-copy">&copy; {new Date().getFullYear()} T3 Tools Inc</span>
+        <div class="footer-links">
+          <a href="https://github.com/pingdotgg/t3code" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --bg: #09090b;
+    --fg: #fafafa;
+    --fg-muted: #a1a1aa;
+    --fg-dim: #71717a;
+    --border: rgba(255, 255, 255, 0.08);
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 256px 256px;
+    z-index: 9999;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  img {
+    display: block;
+    max-width: 100%;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+</style>
+
+<style>
+  /* ── Page ── */
+
+  .page {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+  }
+
+  /* ── Navbar ── */
+
+  .nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.5rem 2.5rem;
+    opacity: 0.5;
+    transition: opacity 0.4s ease;
+  }
+
+  .nav:hover {
+    opacity: 1;
+  }
+
+  .nav-brand {
+    display: flex;
+    align-items: center;
+  }
+
+  .nav-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+  }
+
+  .nav-github {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--fg-muted);
+    font-size: 0.875rem;
+    transition: color 0.3s ease;
+  }
+
+  .nav-github:hover {
+    color: var(--fg);
+  }
+
+  .nav-github-arrow {
+    display: inline-block;
+    transition: transform 0.3s ease;
+  }
+
+  .nav-github:hover .nav-github-arrow {
+    transform: translateX(2px) translateY(-1px);
+  }
+
+  /* ── Main content ── */
+
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* ── Footer ── */
+
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.5rem 2.5rem;
+    font-size: 0.8rem;
+    color: var(--fg-dim);
+  }
+
+  .footer-links {
+    display: flex;
+    gap: 1.25rem;
+  }
+
+  .footer-links a {
+    color: var(--fg-dim);
+    transition: color 0.3s ease;
+  }
+
+  .footer-links a:hover {
+    color: var(--fg);
+  }
+
+  /* ── Mobile ── */
+
+  @media (max-width: 640px) {
+    .nav {
+      padding: 1.25rem;
+    }
+
+    .footer {
+      padding: 1.25rem;
+    }
+  }
+</style>

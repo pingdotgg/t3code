@@ -304,12 +304,7 @@ export function projectEvent(
       );
 
     case "thread.runtime-mode-set":
-      return decodeForEvent(
-        ThreadRuntimeModeSetPayload,
-        event.payload,
-        event.type,
-        "payload",
-      ).pipe(
+      return decodeForEvent(ThreadRuntimeModeSetPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
@@ -504,6 +499,16 @@ export function projectEvent(
           event.type,
           "checkpoint",
         );
+
+        // Do not let a placeholder (status "missing") overwrite a checkpoint
+        // that has already been captured with a real git ref (status "ready").
+        // ProviderRuntimeIngestion may fire multiple turn.diff.updated events
+        // per turn; without this guard later placeholders would clobber the
+        // real capture dispatched by CheckpointReactor.
+        const existing = thread.checkpoints.find((entry) => entry.turnId === checkpoint.turnId);
+        if (existing && existing.status !== "missing" && checkpoint.status === "missing") {
+          return nextBase;
+        }
 
         const checkpoints = [
           ...thread.checkpoints.filter((entry) => entry.turnId !== checkpoint.turnId),

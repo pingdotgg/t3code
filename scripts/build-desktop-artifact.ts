@@ -23,8 +23,10 @@ const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
-const ProductionMacIconSource = Effect.zipWith(RepoRoot, Effect.service(Path.Path), (repoRoot, path) =>
-  path.join(repoRoot, BRAND_ASSET_PATHS.productionMacIconPng),
+const ProductionMacIconSource = Effect.zipWith(
+  RepoRoot,
+  Effect.service(Path.Path),
+  (repoRoot, path) => path.join(repoRoot, BRAND_ASSET_PATHS.productionMacIconPng),
 );
 const ProductionLinuxIconSource = Effect.zipWith(
   RepoRoot,
@@ -611,6 +613,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
 
   yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
+
+  // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
+  yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
   const stagePackageJson: StagePackageJson = {
     name: "t3-code-desktop",

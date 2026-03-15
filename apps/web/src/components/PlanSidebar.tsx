@@ -1,4 +1,5 @@
 import { memo, useState, useCallback } from "react";
+import { type TimestampFormat } from "../appSettings";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
@@ -12,18 +13,20 @@ import {
   PanelRightCloseIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
-import { formatTimestamp } from "../session-logic";
 import type { ActivePlanState } from "../session-logic";
 import type { LatestProposedPlanState } from "../session-logic";
+import { formatTimestamp } from "../timestampFormat";
 import {
   proposedPlanTitle,
   buildProposedPlanMarkdownFilename,
   normalizePlanMarkdownForExport,
   downloadPlanAsTextFile,
+  stripDisplayedPlanMarkdown,
 } from "../proposedPlan";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { readNativeApi } from "~/nativeApi";
 import { toastManager } from "./ui/toast";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
 function stepStatusIcon(status: string): React.ReactNode {
   if (status === "completed") {
@@ -52,6 +55,7 @@ interface PlanSidebarProps {
   activeProposedPlan: LatestProposedPlanState | null;
   markdownCwd: string | undefined;
   workspaceRoot: string | undefined;
+  timestampFormat: TimestampFormat;
   onClose: () => void;
 }
 
@@ -60,21 +64,21 @@ const PlanSidebar = memo(function PlanSidebar({
   activeProposedPlan,
   markdownCwd,
   workspaceRoot,
+  timestampFormat,
   onClose,
 }: PlanSidebarProps) {
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { copyToClipboard, isCopied } = useCopyToClipboard();
 
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
+  const displayedPlanMarkdown = planMarkdown ? stripDisplayedPlanMarkdown(planMarkdown) : null;
   const planTitle = planMarkdown ? proposedPlanTitle(planMarkdown) : null;
 
   const handleCopyPlan = useCallback(() => {
     if (!planMarkdown) return;
-    void navigator.clipboard.writeText(planMarkdown);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [planMarkdown]);
+    copyToClipboard(planMarkdown);
+  }, [planMarkdown, copyToClipboard]);
 
   const handleDownload = useCallback(() => {
     if (!planMarkdown) return;
@@ -104,8 +108,7 @@ const PlanSidebar = memo(function PlanSidebar({
         toastManager.add({
           type: "error",
           title: "Could not save plan",
-          description:
-            error instanceof Error ? error.message : "An error occurred.",
+          description: error instanceof Error ? error.message : "An error occurred.",
         });
       })
       .then(
@@ -127,7 +130,7 @@ const PlanSidebar = memo(function PlanSidebar({
           </Badge>
           {activePlan ? (
             <span className="text-[11px] text-muted-foreground/60">
-              {formatTimestamp(activePlan.createdAt)}
+              {formatTimestamp(activePlan.createdAt, timestampFormat)}
             </span>
           ) : null}
         </div>
@@ -148,7 +151,7 @@ const PlanSidebar = memo(function PlanSidebar({
               </MenuTrigger>
               <MenuPopup align="end">
                 <MenuItem onClick={handleCopyPlan}>
-                  {copied ? "Copied!" : "Copy to clipboard"}
+                  {isCopied ? "Copied!" : "Copy to clipboard"}
                 </MenuItem>
                 <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
                 <MenuItem
@@ -197,9 +200,7 @@ const PlanSidebar = memo(function PlanSidebar({
                     step.status === "completed" && "bg-emerald-500/5",
                   )}
                 >
-                  <div className="mt-0.5">
-                    {stepStatusIcon(step.status)}
-                  </div>
+                  <div className="mt-0.5">{stepStatusIcon(step.status)}</div>
                   <p
                     className={cn(
                       "text-[13px] leading-snug",
@@ -237,7 +238,7 @@ const PlanSidebar = memo(function PlanSidebar({
               {proposedPlanExpanded ? (
                 <div className="rounded-lg border border-border/50 bg-background/50 p-3">
                   <ChatMarkdown
-                    text={planMarkdown}
+                    text={displayedPlanMarkdown ?? ""}
                     cwd={markdownCwd}
                     isStreaming={false}
                   />
@@ -249,9 +250,7 @@ const PlanSidebar = memo(function PlanSidebar({
           {/* Empty state */}
           {!activePlan && !planMarkdown ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <p className="text-[13px] text-muted-foreground/40">
-                No active plan yet.
-              </p>
+              <p className="text-[13px] text-muted-foreground/40">No active plan yet.</p>
               <p className="mt-1 text-[11px] text-muted-foreground/30">
                 Plans will appear here when generated.
               </p>

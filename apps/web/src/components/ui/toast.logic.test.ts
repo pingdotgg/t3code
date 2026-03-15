@@ -17,7 +17,11 @@ describe("shouldHideCollapsedToastContent", () => {
 
 describe("buildVisibleToastLayout", () => {
   it("computes indices and offsets from the visible subset", () => {
-    const visibleToasts = [{ id: "a", height: 48 }, { id: "b", height: 72 }, { id: "c", height: 24 }];
+    const visibleToasts = [
+      { id: "a", height: 48 },
+      { id: "b", height: 72 },
+      { id: "c", height: 24 },
+    ];
 
     const layout = buildVisibleToastLayout(visibleToasts);
 
@@ -37,7 +41,11 @@ describe("buildVisibleToastLayout", () => {
   });
 
   it("treats missing heights as zero", () => {
-    const layout = buildVisibleToastLayout([{ id: "a" }, { id: "b", height: undefined }, { id: "c", height: 30 }]);
+    const layout = buildVisibleToastLayout([
+      { id: "a" },
+      { id: "b", height: undefined },
+      { id: "c", height: 30 },
+    ]);
 
     assert.equal(layout.frontmostHeight, 0);
     assert.deepEqual(

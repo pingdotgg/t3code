@@ -363,8 +363,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const attachmentId =
-          `thread-1-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        const attachmentId = `thread-1-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
         const imagePath = path.join(process.cwd(), "attachments", `${attachmentId}.png`);
         yield* fs.makeDirectory(path.join(process.cwd(), "attachments"), { recursive: true });
         yield* fs.writeFile(imagePath, Buffer.from("hello"));
@@ -392,9 +391,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
                 }),
               ),
             ),
-            Effect.ensuring(
-              fs.remove(imagePath).pipe(Effect.catch(() => Effect.void)),
-            ),
+            Effect.ensuring(fs.remove(imagePath).pipe(Effect.catch(() => Effect.void))),
           );
 
         expect(generated.branch).toBe("fix/ui-regression");

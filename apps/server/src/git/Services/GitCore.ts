@@ -56,6 +56,32 @@ export interface GitRenameBranchResult {
   branch: string;
 }
 
+export interface GitFetchPullRequestBranchInput {
+  cwd: string;
+  prNumber: number;
+  branch: string;
+}
+
+export interface GitEnsureRemoteInput {
+  cwd: string;
+  preferredName: string;
+  url: string;
+}
+
+export interface GitFetchRemoteBranchInput {
+  cwd: string;
+  remoteName: string;
+  remoteBranch: string;
+  localBranch: string;
+}
+
+export interface GitSetBranchUpstreamInput {
+  cwd: string;
+  branch: string;
+  remoteName: string;
+  remoteBranch: string;
+}
+
 /**
  * GitCoreShape - Service API for low-level Git repository interactions.
  */
@@ -75,6 +101,7 @@ export interface GitCoreShape {
    */
   readonly prepareCommitContext: (
     cwd: string,
+    filePaths?: readonly string[],
   ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
 
   /**
@@ -128,6 +155,32 @@ export interface GitCoreShape {
   readonly createWorktree: (
     input: GitCreateWorktreeInput,
   ) => Effect.Effect<GitCreateWorktreeResult, GitCommandError>;
+
+  /**
+   * Materialize a GitHub pull request head as a local branch without switching checkout.
+   */
+  readonly fetchPullRequestBranch: (
+    input: GitFetchPullRequestBranchInput,
+  ) => Effect.Effect<void, GitCommandError>;
+
+  /**
+   * Ensure a named remote exists for the provided URL, returning the reused or created remote name.
+   */
+  readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
+
+  /**
+   * Fetch a remote branch into a local branch without checkout.
+   */
+  readonly fetchRemoteBranch: (
+    input: GitFetchRemoteBranchInput,
+  ) => Effect.Effect<void, GitCommandError>;
+
+  /**
+   * Set the upstream tracking branch for a local branch.
+   */
+  readonly setBranchUpstream: (
+    input: GitSetBranchUpstreamInput,
+  ) => Effect.Effect<void, GitCommandError>;
 
   /**
    * Remove an existing worktree.

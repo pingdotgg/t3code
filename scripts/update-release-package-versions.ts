@@ -88,7 +88,8 @@ function parseArgs(argv: ReadonlyArray<string>): {
   return { version, rootDir, writeGithubOutput };
 }
 
-const isMain = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain =
+  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (isMain) {
   const { version, rootDir, writeGithubOutput } = parseArgs(process.argv.slice(2));

@@ -61,12 +61,7 @@ const RuntimeThreadState = Schema.Literals([
 ]);
 export type RuntimeThreadState = typeof RuntimeThreadState.Type;
 
-const RuntimeTurnState = Schema.Literals([
-  "completed",
-  "failed",
-  "interrupted",
-  "cancelled",
-]);
+const RuntimeTurnState = Schema.Literals(["completed", "failed", "interrupted", "cancelled"]);
 export type RuntimeTurnState = typeof RuntimeTurnState.Type;
 
 const RuntimePlanStepStatus = Schema.Literals(["pending", "inProgress", "completed"]);
@@ -98,11 +93,7 @@ const RuntimeErrorClass = Schema.Literals([
 ]);
 export type RuntimeErrorClass = typeof RuntimeErrorClass.Type;
 
-export const CanonicalItemType = Schema.Literals([
-  "user_message",
-  "assistant_message",
-  "reasoning",
-  "plan",
+export const TOOL_LIFECYCLE_ITEM_TYPES = [
   "command_execution",
   "file_change",
   "mcp_tool_call",
@@ -110,6 +101,21 @@ export const CanonicalItemType = Schema.Literals([
   "collab_agent_tool_call",
   "web_search",
   "image_view",
+] as const;
+
+export const ToolLifecycleItemType = Schema.Literals(TOOL_LIFECYCLE_ITEM_TYPES);
+export type ToolLifecycleItemType = typeof ToolLifecycleItemType.Type;
+
+export function isToolLifecycleItemType(value: string): value is ToolLifecycleItemType {
+  return TOOL_LIFECYCLE_ITEM_TYPES.includes(value as ToolLifecycleItemType);
+}
+
+export const CanonicalItemType = Schema.Literals([
+  "user_message",
+  "assistant_message",
+  "reasoning",
+  "plan",
+  ...TOOL_LIFECYCLE_ITEM_TYPES,
   "review_entered",
   "review_exited",
   "context_compaction",
@@ -573,14 +579,16 @@ const ProviderRuntimeSessionConfiguredEvent = Schema.Struct({
   type: SessionConfiguredType,
   payload: SessionConfiguredPayload,
 });
-export type ProviderRuntimeSessionConfiguredEvent = typeof ProviderRuntimeSessionConfiguredEvent.Type;
+export type ProviderRuntimeSessionConfiguredEvent =
+  typeof ProviderRuntimeSessionConfiguredEvent.Type;
 
 const ProviderRuntimeSessionStateChangedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: SessionStateChangedType,
   payload: SessionStateChangedPayload,
 });
-export type ProviderRuntimeSessionStateChangedEvent = typeof ProviderRuntimeSessionStateChangedEvent.Type;
+export type ProviderRuntimeSessionStateChangedEvent =
+  typeof ProviderRuntimeSessionStateChangedEvent.Type;
 
 const ProviderRuntimeSessionExitedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
@@ -601,14 +609,16 @@ const ProviderRuntimeThreadStateChangedEvent = Schema.Struct({
   type: ThreadStateChangedType,
   payload: ThreadStateChangedPayload,
 });
-export type ProviderRuntimeThreadStateChangedEvent = typeof ProviderRuntimeThreadStateChangedEvent.Type;
+export type ProviderRuntimeThreadStateChangedEvent =
+  typeof ProviderRuntimeThreadStateChangedEvent.Type;
 
 const ProviderRuntimeThreadMetadataUpdatedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ThreadMetadataUpdatedType,
   payload: ThreadMetadataUpdatedPayload,
 });
-export type ProviderRuntimeThreadMetadataUpdatedEvent = typeof ProviderRuntimeThreadMetadataUpdatedEvent.Type;
+export type ProviderRuntimeThreadMetadataUpdatedEvent =
+  typeof ProviderRuntimeThreadMetadataUpdatedEvent.Type;
 
 const ProviderRuntimeThreadTokenUsageUpdatedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
@@ -764,7 +774,8 @@ const ProviderRuntimeUserInputResolvedEvent = Schema.Struct({
   type: UserInputResolvedType,
   payload: UserInputResolvedPayload,
 });
-export type ProviderRuntimeUserInputResolvedEvent = typeof ProviderRuntimeUserInputResolvedEvent.Type;
+export type ProviderRuntimeUserInputResolvedEvent =
+  typeof ProviderRuntimeUserInputResolvedEvent.Type;
 
 const ProviderRuntimeTaskStartedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
@@ -856,7 +867,8 @@ const ProviderRuntimeMcpOauthCompletedEvent = Schema.Struct({
   type: McpOauthCompletedType,
   payload: McpOauthCompletedPayload,
 });
-export type ProviderRuntimeMcpOauthCompletedEvent = typeof ProviderRuntimeMcpOauthCompletedEvent.Type;
+export type ProviderRuntimeMcpOauthCompletedEvent =
+  typeof ProviderRuntimeMcpOauthCompletedEvent.Type;
 
 const ProviderRuntimeModelReroutedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
@@ -877,7 +889,8 @@ const ProviderRuntimeDeprecationNoticeEvent = Schema.Struct({
   type: DeprecationNoticeType,
   payload: DeprecationNoticePayload,
 });
-export type ProviderRuntimeDeprecationNoticeEvent = typeof ProviderRuntimeDeprecationNoticeEvent.Type;
+export type ProviderRuntimeDeprecationNoticeEvent =
+  typeof ProviderRuntimeDeprecationNoticeEvent.Type;
 
 const ProviderRuntimeFilesPersistedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
@@ -969,12 +982,7 @@ const ProviderRuntimeApprovalResolvedEvent = ProviderRuntimeRequestResolvedEvent
 export type ProviderRuntimeApprovalResolvedEvent = ProviderRuntimeRequestResolvedEvent;
 
 // Legacy helper aliases retained for adapters/tests.
-const ProviderRuntimeToolKind = Schema.Literals([
-  "command",
-  "file-read",
-  "file-change",
-  "other",
-]);
+const ProviderRuntimeToolKind = Schema.Literals(["command", "file-read", "file-change", "other"]);
 export type ProviderRuntimeToolKind = typeof ProviderRuntimeToolKind.Type;
 
 export const ProviderRuntimeTurnStatus = RuntimeTurnState;

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { hasUnseenCompletion, resolveThreadStatusPill } from "./Sidebar.logic";
+import {
+  hasUnseenCompletion,
+  resolveSidebarNewThreadEnvMode,
+  resolveThreadRowClassName,
+  resolveThreadStatusPill,
+  shouldClearThreadSelectionOnMouseDown,
+} from "./Sidebar.logic";
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -27,6 +33,53 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("shouldClearThreadSelectionOnMouseDown", () => {
+  it("preserves selection for thread items", () => {
+    const child = {
+      closest: (selector: string) =>
+        selector.includes("[data-thread-item]") ? ({} as Element) : null,
+    } as unknown as HTMLElement;
+
+    expect(shouldClearThreadSelectionOnMouseDown(child)).toBe(false);
+  });
+
+  it("preserves selection for thread list toggle controls", () => {
+    const selectionSafe = {
+      closest: (selector: string) =>
+        selector.includes("[data-thread-selection-safe]") ? ({} as Element) : null,
+    } as unknown as HTMLElement;
+
+    expect(shouldClearThreadSelectionOnMouseDown(selectionSafe)).toBe(false);
+  });
+
+  it("clears selection for unrelated sidebar clicks", () => {
+    const unrelated = {
+      closest: () => null,
+    } as unknown as HTMLElement;
+
+    expect(shouldClearThreadSelectionOnMouseDown(unrelated)).toBe(true);
+  });
+});
+
+describe("resolveSidebarNewThreadEnvMode", () => {
+  it("uses the app default when the caller does not request a specific mode", () => {
+    expect(
+      resolveSidebarNewThreadEnvMode({
+        defaultEnvMode: "worktree",
+      }),
+    ).toBe("worktree");
+  });
+
+  it("preserves an explicit requested mode over the app default", () => {
+    expect(
+      resolveSidebarNewThreadEnvMode({
+        requestedEnvMode: "local",
+        defaultEnvMode: "worktree",
+      }),
+    ).toBe("local");
   });
 });
 
@@ -120,5 +173,29 @@ describe("resolveThreadStatusPill", () => {
         hasPendingUserInput: false,
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
+  });
+});
+
+describe("resolveThreadRowClassName", () => {
+  it("uses the darker selected palette when a thread is both selected and active", () => {
+    const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
+    expect(className).toContain("bg-primary/22");
+    expect(className).toContain("hover:bg-primary/26");
+    expect(className).toContain("dark:bg-primary/30");
+    expect(className).not.toContain("bg-accent/85");
+  });
+
+  it("uses selected hover colors for selected threads", () => {
+    const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
+    expect(className).toContain("bg-primary/15");
+    expect(className).toContain("hover:bg-primary/19");
+    expect(className).toContain("dark:bg-primary/22");
+    expect(className).not.toContain("hover:bg-accent");
+  });
+
+  it("keeps the accent palette for active-only threads", () => {
+    const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
+    expect(className).toContain("bg-accent/85");
+    expect(className).toContain("hover:bg-accent");
   });
 });

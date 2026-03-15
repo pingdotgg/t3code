@@ -5,6 +5,7 @@ _Last updated: 2026-02-26_
 This is the working checklist for remediation execution.
 
 Status values:
+
 - `TODO`: Not started
 - `IN_PROGRESS`: Currently being worked
 - `BLOCKED`: Waiting on decision/dependency
@@ -150,7 +151,7 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Area: `WebSocket robustness`
   - File: `apps/web/src/wsTransport.ts:59`
   - Threads: PRRT_kwDORLtfbc5whtrN
-  - Audit note: Transport _tag override risk exists but current callsites are constrained.
+  - Audit note: Transport \_tag override risk exists but current callsites are constrained.
 
 ### Phase 2
 
@@ -181,7 +182,7 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5whxJO
   - Audit note: Message fallback retention issue is real, but prior FK-violation claim is overstated.
 
-- [x] `C016` The in-memory `pendingTurnStartByThreadId` map isn't restored during bootstrap. If the service restarts after processing `thread.turn-start-requested` but before `thread.session-set`, the `userMessageId` and `startedAt` will be lost since bootstrap resumes *after* the committed sequence. Consider persisting this pending state or processing these two events atomically. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+- [x] `C016` The in-memory `pendingTurnStartByThreadId` map isn't restored during bootstrap. If the service restarts after processing `thread.turn-start-requested` but before `thread.session-set`, the `userMessageId` and `startedAt` will be lost since bootstrap resumes _after_ the committed sequence. Consider persisting this pending state or processing these two events atomically. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
   - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Medium`
@@ -198,7 +199,7 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Severity: `Medium`
   - Area: `Checkpointing correctness`
   - File: `apps/server/src/checkpointing/Layers/CheckpointStore.ts:94`
-  - Threads: PRRT_kwDORLtfbc5widJw, PRRT_kwDORLtfbc5wnWv_, PRRT_kwDORLtfbc5w0_g7, PRRT_kwDORLtfbc5w1C36 (+3 duplicate thread(s))
+  - Threads: PRRT*kwDORLtfbc5widJw, PRRT_kwDORLtfbc5wnWv*, PRRT_kwDORLtfbc5w0_g7, PRRT_kwDORLtfbc5w1C36 (+3 duplicate thread(s))
   - Audit note: Edge schema strategy is in place across contracts/consumers (trim/normalize via schemas and decode at boundaries); CheckpointStore remains an internal repository boundary.
 
 - [x] `C017` `REQUIRED_SNAPSHOT_PROJECTORS` includes `pending-approvals` and `thread-turns`, but `getSnapshot` doesn't query their data. If these projectors lag behind, the returned `snapshotSequence` will be lower than what the included data actually reflects, causing clients to replay already-applied events. Consider filtering `REQUIRED_SNAPSHOT_PROJECTORS` to only include projectors whose data is actually fetched in the snapshot. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
@@ -250,7 +251,7 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
 
 ### Phase 5
 
-- [ ] `C009` Git's braced rename syntax (e.g., `src/{old => new}/file.ts`) isn't handled correctly. The current slice after ` => ` produces invalid paths like `new}/file.ts`. Consider expanding the braces to construct the full destination path. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+- [ ] `C009` Git's braced rename syntax (e.g., `src/{old => new}/file.ts`) isn't handled correctly. The current slice after `=>` produces invalid paths like `new}/file.ts`. Consider expanding the braces to construct the full destination path. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
   - Status: `TODO`
   - Verdict: `valid`
   - Severity: `Medium`

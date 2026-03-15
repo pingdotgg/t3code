@@ -6,7 +6,10 @@ import { Data, Effect, FileSystem, Logger, Option, Path } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { DEVELOPMENT_ICON_OVERRIDES, PUBLISH_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
+import {
+  DEVELOPMENT_ICON_OVERRIDES,
+  PUBLISH_ICON_OVERRIDES,
+} from "../../../scripts/lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import serverPackageJson from "../package.json" with { type: "json" };
@@ -237,9 +240,7 @@ const publishCmd = Command.make(
           Effect.gen(function* () {
             yield* restorePublishIconOverrides(resource.iconBackups).pipe(
               Effect.catch((error) =>
-                Effect.logError(
-                  `[cli] Failed to restore publish icon overrides: ${String(error)}`,
-                ),
+                Effect.logError(`[cli] Failed to restore publish icon overrides: ${String(error)}`),
               ),
             );
             yield* fs.rename(backupPath, packageJsonPath);

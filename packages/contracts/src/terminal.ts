@@ -60,12 +60,13 @@ export const TerminalClearInput = TerminalSessionInput;
 export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>;
 
 export const TerminalRestartInput = Schema.Struct({
-  ...TerminalThreadInput.fields,
+  ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
   env: Schema.optional(TerminalEnvSchema),
 });
+export type TerminalRestartInput = Schema.Codec.Encoded<typeof TerminalRestartInput>;
 
 export const TerminalCloseInput = Schema.Struct({
   ...TerminalThreadInput.fields,

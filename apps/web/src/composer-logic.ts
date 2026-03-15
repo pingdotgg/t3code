@@ -61,11 +61,13 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
   return expandedCursor;
 }
 
-function collapsedSegmentLength(segment: { type: "text"; text: string } | { type: "mention" }): number {
+function collapsedSegmentLength(
+  segment: { type: "text"; text: string } | { type: "mention" },
+): number {
   return segment.type === "mention" ? 1 : segment.text.length;
 }
 
-function clampCollapsedComposerCursor(
+function clampCollapsedComposerCursorForSegments(
   segments: ReadonlyArray<{ type: "text"; text: string } | { type: "mention" }>,
   cursorInput: number,
 ): number {
@@ -79,6 +81,48 @@ function clampCollapsedComposerCursor(
   return Math.max(0, Math.min(collapsedLength, Math.floor(cursorInput)));
 }
 
+export function clampCollapsedComposerCursor(text: string, cursorInput: number): number {
+  return clampCollapsedComposerCursorForSegments(
+    splitPromptIntoComposerSegments(text),
+    cursorInput,
+  );
+}
+
+export function collapseExpandedComposerCursor(text: string, cursorInput: number): number {
+  const expandedCursor = clampCursor(text, cursorInput);
+  const segments = splitPromptIntoComposerSegments(text);
+  if (segments.length === 0) {
+    return expandedCursor;
+  }
+
+  let remaining = expandedCursor;
+  let collapsedCursor = 0;
+
+  for (const segment of segments) {
+    if (segment.type === "mention") {
+      const expandedLength = segment.path.length + 1;
+      if (remaining === 0) {
+        return collapsedCursor;
+      }
+      if (remaining <= expandedLength) {
+        return collapsedCursor + 1;
+      }
+      remaining -= expandedLength;
+      collapsedCursor += 1;
+      continue;
+    }
+
+    const segmentLength = segment.text.length;
+    if (remaining <= segmentLength) {
+      return collapsedCursor + remaining;
+    }
+    remaining -= segmentLength;
+    collapsedCursor += segmentLength;
+  }
+
+  return collapsedCursor;
+}
+
 export function isCollapsedCursorAdjacentToMention(
   text: string,
   cursorInput: number,
@@ -89,7 +133,7 @@ export function isCollapsedCursorAdjacentToMention(
     return false;
   }
 
-  const cursor = clampCollapsedComposerCursor(segments, cursorInput);
+  const cursor = clampCollapsedComposerCursorForSegments(segments, cursorInput);
   let collapsedOffset = 0;
 
   for (const segment of segments) {
@@ -160,15 +204,16 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   };
 }
 
-export function parseStandaloneComposerSlashCommand(text: string): Exclude<
-  ComposerSlashCommand,
-  "model"
-> | null {
+export function parseStandaloneComposerSlashCommand(
+  text: string,
+): Exclude<ComposerSlashCommand, "model"> | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
   }
-  return match[1]?.toLowerCase() === "plan" ? "plan" : "default";
+  const command = match[1]?.toLowerCase();
+  if (command === "plan") return "plan";
+  return "default";
 }
 
 export function replaceTextRange(

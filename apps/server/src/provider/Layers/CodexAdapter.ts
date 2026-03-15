@@ -164,7 +164,7 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
     case "plan":
       return "Plan";
     case "command_execution":
-      return "Command run";
+      return "Ran command";
     case "file_change":
       return "File change";
     case "mcp_tool_call":
@@ -403,7 +403,9 @@ function asRuntimeTaskId(taskId: string): RuntimeTaskId {
   return RuntimeTaskId.makeUnsafe(taskId);
 }
 
-function codexEventMessage(payload: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+function codexEventMessage(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
   return asObject(payload?.msg);
 }
 
@@ -1037,7 +1039,9 @@ function mapToRuntimeEvents(
         type: "content.delta",
         payload: {
           streamKind:
-            asNumber(msg?.summary_index) !== undefined ? "reasoning_summary_text" : "reasoning_text",
+            asNumber(msg?.summary_index) !== undefined
+              ? "reasoning_summary_text"
+              : "reasoning_text",
           delta,
           ...(asNumber(msg?.summary_index) !== undefined
             ? { summaryIndex: asNumber(msg?.summary_index) }
@@ -1192,13 +1196,14 @@ function mapToRuntimeEvents(
   if (event.method === "error") {
     const message =
       asString(asObject(payload?.error)?.message) ?? event.message ?? "Provider runtime error";
+    const willRetry = payload?.willRetry === true;
     return [
       {
-        type: "runtime.error",
+        type: willRetry ? "runtime.warning" : "runtime.error",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
-          class: "provider_error",
+          ...(!willRetry ? { class: "provider_error" as const } : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
@@ -1313,9 +1318,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
             detail: toMessage(cause, "Failed to start Codex adapter session."),
             cause,
           }),
-      }).pipe(
-        Effect.map((session) => session),
-      );
+      }).pipe(Effect.map((session) => session));
     };
 
     const sendTurn: CodexAdapterShape["sendTurn"] = (input) =>
@@ -1335,11 +1338,17 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
                   new Error(`Invalid attachment id '${attachment.id}'.`),
                 );
               }
-              const bytes = yield* fileSystem
-                .readFile(attachmentPath)
-                .pipe(
-                  Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)),
-                );
+              const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterRequestError({
+                      provider: PROVIDER,
+                      method: "turn/start",
+                      detail: toMessage(cause, "Failed to read attachment file."),
+                      cause,
+                    }),
+                ),
+              );
               return {
                 type: "image" as const,
                 url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,

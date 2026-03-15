@@ -2,10 +2,7 @@ import { type ProviderKind, type ThreadId } from "@t3tools/contracts";
 import { Effect, Layer, Option } from "effect";
 
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
-import {
-  ProviderSessionDirectoryPersistenceError,
-  ProviderValidationError,
-} from "../Errors.ts";
+import { ProviderSessionDirectoryPersistenceError, ProviderValidationError } from "../Errors.ts";
 import {
   ProviderSessionDirectory,
   type ProviderRuntimeBinding,
@@ -138,7 +135,9 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
   const remove: ProviderSessionDirectoryShape["remove"] = (threadId) =>
     repository
       .deleteByThreadId({ threadId })
-      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.remove:deleteByThreadId")));
+      .pipe(
+        Effect.mapError(toPersistenceError("ProviderSessionDirectory.remove:deleteByThreadId")),
+      );
 
   const listThreadIds: ProviderSessionDirectoryShape["listThreadIds"] = () =>
     repository.list().pipe(

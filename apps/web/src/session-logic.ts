@@ -1,14 +1,22 @@
 import {
   ApprovalRequestId,
+  isToolLifecycleItemType,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   type ProviderKind,
+  type ToolLifecycleItemType,
   type UserInputQuestion,
   type TurnId,
 } from "@t3tools/contracts";
 
-import type { ChatMessage, ProposedPlan, SessionPhase, ThreadSession, TurnDiffSummary } from "./types";
+import type {
+  ChatMessage,
+  ProposedPlan,
+  SessionPhase,
+  ThreadSession,
+  TurnDiffSummary,
+} from "./types";
 
 export type ProviderPickerKind = ProviderKind | "claudeCode" | "cursor";
 
@@ -30,6 +38,9 @@ export interface WorkLogEntry {
   command?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
+  toolTitle?: string;
+  itemType?: ToolLifecycleItemType;
+  requestKind?: PendingApproval["requestKind"];
 }
 
 export interface PendingApproval {
@@ -83,14 +94,6 @@ export type TimelineEntry =
       entry: WorkLogEntry;
     };
 
-export function formatTimestamp(isoDate: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(isoDate));
-}
-
 export function formatDuration(durationMs: number): string {
   if (!Number.isFinite(durationMs) || durationMs < 0) return "0ms";
   if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`;
@@ -138,9 +141,7 @@ export function deriveActiveWorkStartedAt(
   return sendStartedAt;
 }
 
-function requestKindFromRequestType(
-  requestType: unknown,
-): PendingApproval["requestKind"] | null {
+function requestKindFromRequestType(requestType: unknown): PendingApproval["requestKind"] | null {
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":
@@ -333,9 +334,7 @@ export function deriveActivePlanState(
         return null;
       }
       const status =
-        record.status === "completed" || record.status === "inProgress"
-          ? record.status
-          : "pending";
+        record.status === "completed" || record.status === "inProgress" ? record.status : "pending";
       return {
         step: record.step,
         status,
@@ -355,7 +354,9 @@ export function deriveActivePlanState(
   return {
     createdAt: latest.createdAt,
     turnId: latest.turnId,
-    ...(payload && "explanation" in payload ? { explanation: payload.explanation as string | null } : {}),
+    ...(payload && "explanation" in payload
+      ? { explanation: payload.explanation as string | null }
+      : {}),
     steps,
   };
 }
@@ -419,20 +420,35 @@ export function deriveWorkLogEntries(
           : null;
       const command = extractToolCommand(payload);
       const changedFiles = extractChangedFiles(payload);
+      const title = extractToolTitle(payload);
       const entry: WorkLogEntry = {
         id: activity.id,
         createdAt: activity.createdAt,
         label: activity.summary,
         tone: activity.tone === "approval" ? "info" : activity.tone,
       };
+      const itemType = extractWorkLogItemType(payload);
+      const requestKind = extractWorkLogRequestKind(payload);
       if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
-        entry.detail = payload.detail;
+        const detail = stripTrailingExitCode(payload.detail).output;
+        if (detail) {
+          entry.detail = detail;
+        }
       }
       if (command) {
         entry.command = command;
       }
       if (changedFiles.length > 0) {
         entry.changedFiles = changedFiles;
+      }
+      if (title) {
+        entry.toolTitle = title;
+      }
+      if (itemType) {
+        entry.itemType = itemType;
+      }
+      if (requestKind) {
+        entry.requestKind = requestKind;
       }
       return entry;
     });
@@ -478,6 +494,53 @@ function extractToolCommand(payload: Record<string, unknown> | null): string | n
   return candidates.find((candidate) => candidate !== null) ?? null;
 }
 
+function extractToolTitle(payload: Record<string, unknown> | null): string | null {
+  return asTrimmedString(payload?.title);
+}
+
+function stripTrailingExitCode(value: string): {
+  output: string | null;
+  exitCode?: number | undefined;
+} {
+  const trimmed = value.trim();
+  const match = /^(?<output>[\s\S]*?)(?:\s*<exited with exit code (?<code>\d+)>)\s*$/i.exec(
+    trimmed,
+  );
+  if (!match?.groups) {
+    return {
+      output: trimmed.length > 0 ? trimmed : null,
+    };
+  }
+  const exitCode = Number.parseInt(match.groups.code ?? "", 10);
+  const normalizedOutput = match.groups.output?.trim() ?? "";
+  return {
+    output: normalizedOutput.length > 0 ? normalizedOutput : null,
+    ...(Number.isInteger(exitCode) ? { exitCode } : {}),
+  };
+}
+
+function extractWorkLogItemType(
+  payload: Record<string, unknown> | null,
+): WorkLogEntry["itemType"] | undefined {
+  if (typeof payload?.itemType === "string" && isToolLifecycleItemType(payload.itemType)) {
+    return payload.itemType;
+  }
+  return undefined;
+}
+
+function extractWorkLogRequestKind(
+  payload: Record<string, unknown> | null,
+): WorkLogEntry["requestKind"] | undefined {
+  if (
+    payload?.requestKind === "command" ||
+    payload?.requestKind === "file-read" ||
+    payload?.requestKind === "file-change"
+  ) {
+    return payload.requestKind;
+  }
+  return requestKindFromRequestType(payload?.requestType) ?? undefined;
+}
+
 function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
   const normalized = asTrimmedString(value);
   if (!normalized || seen.has(normalized)) {
@@ -487,12 +550,7 @@ function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
   target.push(normalized);
 }
 
-function collectChangedFiles(
-  value: unknown,
-  target: string[],
-  seen: Set<string>,
-  depth: number,
-) {
+function collectChangedFiles(value: unknown, target: string[], seen: Set<string>, depth: number) {
   if (depth > 4 || target.length >= 12) {
     return;
   }
@@ -541,9 +599,9 @@ function collectChangedFiles(
 }
 
 function extractChangedFiles(payload: Record<string, unknown> | null): string[] {
-  const data = asRecord(payload?.data);
   const changedFiles: string[] = [];
-  collectChangedFiles(data, changedFiles, new Set<string>(), 0);
+  const seen = new Set<string>();
+  collectChangedFiles(asRecord(payload?.data), changedFiles, seen, 0);
   return changedFiles;
 }
 
