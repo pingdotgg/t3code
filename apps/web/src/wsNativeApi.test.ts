@@ -12,12 +12,13 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
-const showContextMenuFallbackMock = vi.fn<
-  <T extends string>(
-    items: readonly ContextMenuItem<T>[],
-    position?: { x: number; y: number },
-  ) => Promise<T | null>
->();
+const showContextMenuFallbackMock =
+  vi.fn<
+    <T extends string>(
+      items: readonly ContextMenuItem<T>[],
+      position?: { x: number; y: number },
+    ) => Promise<T | null>
+  >();
 const channelListeners = new Map<string, Set<(data: unknown) => void>>();
 const subscribeMock = vi.fn<(channel: string, listener: (data: unknown) => void) => () => void>(
   (channel, listener) => {
@@ -400,10 +401,10 @@ describe("wsNativeApi", () => {
 
     const { createWsNativeApi } = await import("./wsNativeApi");
     const api = createWsNativeApi();
-    await api.contextMenu.show(
-      [{ id: "delete", label: "Delete", destructive: true }],
-      { x: 20, y: 30 },
-    );
+    await api.contextMenu.show([{ id: "delete", label: "Delete", destructive: true }], {
+      x: 20,
+      y: 30,
+    });
 
     expect(showContextMenuFallbackMock).toHaveBeenCalledWith(
       [{ id: "delete", label: "Delete", destructive: true }],

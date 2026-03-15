@@ -49,13 +49,6 @@ function commandToAggregateRef(command: OrchestrationCommand): {
   }
 }
 
-function formatDispatchError(error: OrchestrationDispatchError): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return String(error);
-}
-
 const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const eventStore = yield* OrchestrationEventStore;
@@ -191,7 +184,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 acceptedAt: new Date().toISOString(),
                 resultSequence: readModel.snapshotSequence,
                 status: "rejected",
-                error: formatDispatchError(error),
+                error: error.message,
               })
               .pipe(Effect.catch(() => Effect.void));
           }

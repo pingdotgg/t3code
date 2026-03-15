@@ -211,7 +211,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       });
 
       assert.isTrue(configState.keybindings.some((entry) => entry.command === "terminal.toggle"));
-      assert.isFalse(configState.keybindings.some((entry) => String(entry.command) === "invalid.command"));
+      assert.isFalse(
+        configState.keybindings.some((entry) => String(entry.command) === "invalid.command"),
+      );
       assert.deepEqual(configState.issues, [
         {
           kind: "keybindings.invalid-entry",

@@ -61,7 +61,9 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
   return expandedCursor;
 }
 
-function collapsedSegmentLength(segment: { type: "text"; text: string } | { type: "mention" }): number {
+function collapsedSegmentLength(
+  segment: { type: "text"; text: string } | { type: "mention" },
+): number {
   return segment.type === "mention" ? 1 : segment.text.length;
 }
 
@@ -160,15 +162,16 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   };
 }
 
-export function parseStandaloneComposerSlashCommand(text: string): Exclude<
-  ComposerSlashCommand,
-  "model"
-> | null {
+export function parseStandaloneComposerSlashCommand(
+  text: string,
+): Exclude<ComposerSlashCommand, "model"> | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
   }
-  return match[1]?.toLowerCase() === "plan" ? "plan" : "default";
+  const command = match[1]?.toLowerCase();
+  if (command === "plan") return "plan";
+  return "default";
 }
 
 export function replaceTextRange(

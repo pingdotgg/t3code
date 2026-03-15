@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
 import {
+  getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldHighlightDesktopUpdateError,
+  shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
@@ -15,6 +17,9 @@ const baseState: DesktopUpdateState = {
   enabled: true,
   status: "idle",
   currentVersion: "1.0.0",
+  hostArch: "x64",
+  appArch: "x64",
+  runningUnderArm64Translation: false,
   availableVersion: null,
   downloadedVersion: null,
   downloadPercent: null,
@@ -26,7 +31,11 @@ const baseState: DesktopUpdateState = {
 
 describe("desktop update button state", () => {
   it("shows a download action when an update is available", () => {
-    const state: DesktopUpdateState = { ...baseState, status: "available", availableVersion: "1.1.0" };
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "available",
+      availableVersion: "1.1.0",
+    };
     expect(shouldShowDesktopUpdateButton(state)).toBe(true);
     expect(resolveDesktopUpdateButtonAction(state)).toBe("download");
   });
@@ -170,5 +179,31 @@ describe("desktop update UI helpers", () => {
         canRetry: true,
       }),
     ).toBe(false);
+  });
+
+  it("shows an Apple Silicon warning for Intel builds under Rosetta", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      hostArch: "arm64",
+      appArch: "x64",
+      runningUnderArm64Translation: true,
+    };
+
+    expect(shouldShowArm64IntelBuildWarning(state)).toBe(true);
+    expect(getArm64IntelBuildWarningDescription(state)).toContain("Apple Silicon");
+    expect(getArm64IntelBuildWarningDescription(state)).toContain("Intel build");
+  });
+
+  it("changes the warning copy when a native build update is ready to download", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      hostArch: "arm64",
+      appArch: "x64",
+      runningUnderArm64Translation: true,
+      status: "available",
+      availableVersion: "1.1.0",
+    };
+
+    expect(getArm64IntelBuildWarningDescription(state)).toContain("Download the available update");
   });
 });

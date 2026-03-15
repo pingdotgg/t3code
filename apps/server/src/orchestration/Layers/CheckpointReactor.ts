@@ -115,9 +115,7 @@ const make = Effect.gen(function* () {
 
   const resolveSessionRuntimeForThread = Effect.fnUntraced(function* (
     threadId: ThreadId,
-  ): Effect.fn.Return<
-    Option.Option<{ readonly threadId: ThreadId; readonly cwd: string }>
-  > {
+  ): Effect.fn.Return<Option.Option<{ readonly threadId: ThreadId; readonly cwd: string }>> {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
 
@@ -133,9 +131,7 @@ const make = Effect.gen(function* () {
     };
 
     if (thread) {
-      const projectedSession = sessions.find(
-        (session) => session.threadId === thread.id,
-      );
+      const projectedSession = sessions.find((session) => session.threadId === thread.id);
       const fromProjected = findSessionWithCwd(projectedSession);
       if (Option.isSome(fromProjected)) {
         return fromProjected;
@@ -306,9 +302,7 @@ const make = Effect.gen(function* () {
     }
 
     const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find(
-      (entry) => entry.id === event.threadId,
-    );
+    const thread = readModel.threads.find((entry) => entry.id === event.threadId);
     if (!thread) {
       return;
     }

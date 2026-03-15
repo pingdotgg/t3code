@@ -7,7 +7,11 @@ import { desktopDir, resolveElectronPath } from "./electron-launcher.mjs";
 
 const port = Number(process.env.ELECTRON_RENDERER_PORT ?? 5733);
 const devServerUrl = `http://localhost:${port}`;
-const requiredFiles = ["dist-electron/main.js", "dist-electron/preload.js", "../server/dist/index.mjs"];
+const requiredFiles = [
+  "dist-electron/main.js",
+  "dist-electron/preload.js",
+  "../server/dist/index.mjs",
+];
 const watchedDirectories = [
   { directory: "dist-electron", files: new Set(["main.js", "preload.js"]) },
   { directory: "../server/dist", files: new Set(["index.mjs"]) },
@@ -148,13 +152,17 @@ function scheduleRestart() {
 
 function startWatchers() {
   for (const { directory, files } of watchedDirectories) {
-    const watcher = watch(join(desktopDir, directory), { persistent: true }, (_eventType, filename) => {
-      if (typeof filename !== "string" || !files.has(filename)) {
-        return;
-      }
+    const watcher = watch(
+      join(desktopDir, directory),
+      { persistent: true },
+      (_eventType, filename) => {
+        if (typeof filename !== "string" || !files.has(filename)) {
+          return;
+        }
 
-      scheduleRestart();
-    });
+        scheduleRestart();
+      },
+    );
 
     watchers.push(watcher);
   }
