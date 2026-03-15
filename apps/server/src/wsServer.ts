@@ -866,6 +866,40 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* terminalManager.close(body);
       }
 
+      case WS_METHODS.filesystemBrowse: {
+        const body = stripRequestTag(request.body);
+        const expanded = path.resolve(yield* expandHomePath(body.partialPath));
+        const endsWithSep = body.partialPath.endsWith("/") || body.partialPath === "~";
+        const parentDir = endsWithSep ? expanded : path.dirname(expanded);
+        const prefix = endsWithSep ? "" : path.basename(expanded);
+
+        const names = yield* fileSystem
+          .readDirectory(parentDir)
+          .pipe(Effect.catch(() => Effect.succeed([] as string[])));
+
+        const showHidden = prefix.startsWith(".");
+        const filtered = names
+          .filter((n) => n.startsWith(prefix) && (showHidden || !n.startsWith(".")))
+          .slice(0, 100);
+
+        const entries = yield* Effect.forEach(
+          filtered,
+          (name) =>
+            fileSystem.stat(path.join(parentDir, name)).pipe(
+              Effect.map((s) =>
+                s.type === "Directory" ? { name, fullPath: path.join(parentDir, name) } : null,
+              ),
+              Effect.catch(() => Effect.succeed(null)),
+            ),
+          { concurrency: 16 },
+        );
+
+        return {
+          parentPath: parentDir,
+          entries: entries.filter(Boolean).slice(0, 50),
+        };
+      }
+
       case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
         return {
