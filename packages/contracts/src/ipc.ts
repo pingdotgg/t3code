@@ -128,6 +128,10 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+    browseFilesystem: (input: { partialPath: string }) => Promise<{
+      parentPath: string;
+      entries: Array<{ name: string; fullPath: string }>;
+    }>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
