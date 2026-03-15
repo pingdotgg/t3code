@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  handleSidebarArrowNavigation,
   hasUnseenCompletion,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -197,5 +198,230 @@ describe("resolveThreadRowClassName", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
     expect(className).toContain("bg-accent/85");
     expect(className).toContain("hover:bg-accent");
+  });
+});
+
+describe("handleSidebarArrowNavigation", () => {
+  let mockActiveElement: unknown = null;
+  const originalDocument = globalThis.document;
+
+  function setupMockDocument() {
+    globalThis.document = {
+      get activeElement() {
+        return mockActiveElement;
+      },
+    } as Document;
+  }
+
+  function teardownMockDocument() {
+    globalThis.document = originalDocument;
+    mockActiveElement = null;
+  }
+
+  function makeMockElement(navItem: string, projectId: string, options?: { expanded?: boolean }) {
+    const attrs: Record<string, string> = {};
+    if (navItem === "project") {
+      attrs["aria-expanded"] = options?.expanded ? "true" : "false";
+    }
+    const el = {
+      dataset: { navItem, projectId },
+      focus: vi.fn(),
+      closest: () => el,
+      getAttribute: (name: string) => attrs[name] ?? null,
+    } as unknown as HTMLElement;
+    return el;
+  }
+
+  function makeMockContainer(
+    allItems: HTMLElement[],
+    querySelectorResults: Record<string, HTMLElement | null>,
+  ) {
+    return {
+      querySelectorAll: () => allItems,
+      querySelector: (selector: string) => querySelectorResults[selector] ?? null,
+    } as unknown as HTMLElement;
+  }
+
+  function makeKeyEvent(key: string) {
+    const prevented = { value: false };
+    return {
+      event: {
+        key,
+        preventDefault: () => {
+          prevented.value = true;
+        },
+      } as unknown as React.KeyboardEvent,
+      prevented,
+    };
+  }
+
+  it("moves focus down on ArrowDown", () => {
+    setupMockDocument();
+    const project = makeMockElement("project", "p1", { expanded: true });
+    const thread = makeMockElement("thread", "p1");
+    const container = makeMockContainer([project, thread], {
+      '[data-nav-item="project"][data-project-id="p1"]': project,
+    });
+    mockActiveElement = project;
+
+    const { event } = makeKeyEvent("ArrowDown");
+    handleSidebarArrowNavigation(event, container, vi.fn());
+
+    expect(thread.focus).toHaveBeenCalled();
+    teardownMockDocument();
+  });
+
+  it("skips collapsed threads on ArrowDown", () => {
+    setupMockDocument();
+    const project1 = makeMockElement("project", "p1", { expanded: false });
+    const thread1 = makeMockElement("thread", "p1");
+    const project2 = makeMockElement("project", "p2");
+    const container = makeMockContainer([project1, thread1, project2], {
+      '[data-nav-item="project"][data-project-id="p1"]': project1,
+    });
+    mockActiveElement = project1;
+
+    const { event } = makeKeyEvent("ArrowDown");
+    handleSidebarArrowNavigation(event, container, vi.fn());
+
+    expect(project2.focus).toHaveBeenCalled();
+    expect(thread1.focus).not.toHaveBeenCalled();
+    teardownMockDocument();
+  });
+
+  it("moves focus up on ArrowUp", () => {
+    setupMockDocument();
+    const project = makeMockElement("project", "p1", { expanded: true });
+    const thread = makeMockElement("thread", "p1");
+    const container = makeMockContainer([project, thread], {
+      '[data-nav-item="project"][data-project-id="p1"]': project,
+    });
+    mockActiveElement = thread;
+
+    const { event } = makeKeyEvent("ArrowUp");
+    handleSidebarArrowNavigation(event, container, vi.fn());
+
+    expect(project.focus).toHaveBeenCalled();
+    teardownMockDocument();
+  });
+
+  it("does not move focus past the last item on ArrowDown", () => {
+    setupMockDocument();
+    const project = makeMockElement("project", "p1");
+    const container = makeMockContainer([project], {});
+    mockActiveElement = project;
+
+    const { event } = makeKeyEvent("ArrowDown");
+    handleSidebarArrowNavigation(event, container, vi.fn());
+
+    expect(project.focus).not.toHaveBeenCalled();
+    teardownMockDocument();
+  });
+
+  it("focuses parent project on ArrowLeft from a thread", () => {
+    setupMockDocument();
+    const project = makeMockElement("project", "p1", { expanded: true });
+    const thread = makeMockElement("thread", "p1");
+    const container = makeMockContainer([project, thread], {
+      '[data-nav-item="project"][data-project-id="p1"]': project,
+    });
+    mockActiveElement = thread;
+
+    const { event } = makeKeyEvent("ArrowLeft");
+    handleSidebarArrowNavigation(event, container, vi.fn());
+
+    expect(project.focus).toHaveBeenCalled();
+    teardownMockDocument();
+  });
+
+  it("collapses an expanded project on ArrowLeft", () => {
+    setupMockDocument();
+    const project = makeMockElement("project", "p1", { expanded: true });
+    const thread = makeMockElement("thread", "p1");
+    const container = makeMockContainer([project, thread], {
+      '[data-nav-item="project"][data-project-id="p1"]': project,
+    });
+    mockActiveElement = project;
+
+    const { event } = makeKeyEvent("ArrowLeft");
+    const toggleProject = vi.fn();
+    handleSidebarArrowNavigation(event, container, toggleProject);
+
+    expect(toggleProject).toHaveBeenCalledWith("p1");
+    teardownMockDocument();
+  });
+
+  it("does not collapse a collapsed project on ArrowLeft", () => {
+    setupMockDocument();
+    const project = makeMockElement("project", "p1", { expanded: false });
+    const container = makeMockContainer([project], {});
+    mockActiveElement = project;
+
+    const { event } = makeKeyEvent("ArrowLeft");
+    const toggleProject = vi.fn();
+    handleSidebarArrowNavigation(event, container, toggleProject);
+
+    expect(toggleProject).not.toHaveBeenCalled();
+    teardownMockDocument();
+  });
+
+  it("expands a collapsed project on ArrowRight", () => {
+    setupMockDocument();
+    const project = makeMockElement("project", "p1", { expanded: false });
+    const container = makeMockContainer([project], {});
+    mockActiveElement = project;
+
+    const { event } = makeKeyEvent("ArrowRight");
+    const toggleProject = vi.fn();
+    handleSidebarArrowNavigation(event, container, toggleProject);
+
+    expect(toggleProject).toHaveBeenCalledWith("p1");
+    teardownMockDocument();
+  });
+
+  it("focuses first thread on ArrowRight from an expanded project", () => {
+    setupMockDocument();
+    const project = makeMockElement("project", "p1", { expanded: true });
+    const thread = makeMockElement("thread", "p1");
+    const container = makeMockContainer([project, thread], {
+      '[data-nav-item="project"][data-project-id="p1"]': project,
+      '[data-nav-item="thread"][data-project-id="p1"]': thread,
+    });
+    mockActiveElement = project;
+
+    const { event } = makeKeyEvent("ArrowRight");
+    handleSidebarArrowNavigation(event, container, vi.fn());
+
+    expect(thread.focus).toHaveBeenCalled();
+    teardownMockDocument();
+  });
+
+  it("ignores non-arrow keys", () => {
+    const { event, prevented } = makeKeyEvent("Enter");
+    handleSidebarArrowNavigation(event, {} as HTMLElement, vi.fn());
+
+    expect(prevented.value).toBe(false);
+  });
+
+  it("ignores arrow keys when focus is on an input element", () => {
+    setupMockDocument();
+    mockActiveElement = { tagName: "INPUT" };
+
+    const { event, prevented } = makeKeyEvent("ArrowDown");
+    handleSidebarArrowNavigation(event, {} as HTMLElement, vi.fn());
+
+    expect(prevented.value).toBe(false);
+    teardownMockDocument();
+  });
+
+  it("ignores arrow keys when focus is on a textarea", () => {
+    setupMockDocument();
+    mockActiveElement = { tagName: "TEXTAREA" };
+
+    const { event, prevented } = makeKeyEvent("ArrowDown");
+    handleSidebarArrowNavigation(event, {} as HTMLElement, vi.fn());
+
+    expect(prevented.value).toBe(false);
+    teardownMockDocument();
   });
 });
