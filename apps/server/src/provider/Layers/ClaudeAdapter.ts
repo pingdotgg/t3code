@@ -235,6 +235,14 @@ function classifyToolItemType(toolName: string): CanonicalItemType {
     return "collab_agent_tool_call";
   }
   if (
+    normalized === "task" ||
+    normalized === "agent" ||
+    normalized.includes("subagent") ||
+    normalized.includes("sub-agent")
+  ) {
+    return "collab_agent_tool_call";
+  }
+  if (
     normalized.includes("bash") ||
     normalized.includes("command") ||
     normalized.includes("shell") ||
@@ -312,7 +320,7 @@ function titleForTool(itemType: CanonicalItemType): string {
     case "mcp_tool_call":
       return "MCP tool call";
     case "collab_agent_tool_call":
-      return "Agent task";
+      return "Subagent task";
     case "web_search":
       return "Web search";
     case "image_view":
@@ -1608,6 +1616,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               payload: {
                 taskId: RuntimeTaskId.makeUnsafe(message.task_id),
                 description: message.description,
+                ...(message.summary ? { summary: message.summary } : {}),
                 ...(message.usage ? { usage: message.usage } : {}),
                 ...(message.last_tool_name ? { lastToolName: message.last_tool_name } : {}),
               },
