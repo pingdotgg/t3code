@@ -53,6 +53,7 @@ import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import * as loggerModule from "./logger";
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -783,8 +784,12 @@ describe("WebSocket Server", () => {
   });
 
   it("logs outbound websocket push events in dev mode", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {
-      // Keep test output clean while verifying websocket logs.
+    const eventSpy = vi.fn();
+    vi.spyOn(loggerModule, "createLogger").mockReturnValue({
+      error: vi.fn(),
+      event: eventSpy,
+      info: vi.fn(),
+      warn: vi.fn(),
     });
 
     server = await createTestServer({
@@ -798,16 +803,17 @@ describe("WebSocket Server", () => {
     const [ws] = await connectAndAwaitWelcome(port);
     connections.push(ws);
 
-    expect(
-      logSpy.mock.calls.some(([message]) => {
-        if (typeof message !== "string") return false;
-        return (
-          message.includes("[ws]") &&
-          message.includes("outgoing push") &&
-          message.includes(`channel="${WS_CHANNELS.serverWelcome}"`)
-        );
+    expect(eventSpy).toHaveBeenCalledWith(
+      "outgoing push",
+      expect.objectContaining({
+        channel: WS_CHANNELS.serverWelcome,
+        payload: expect.objectContaining({
+          cwd: "/test/project",
+        }),
+        recipients: 1,
+        sequence: 1,
       }),
-    ).toBe(true);
+    );
   });
 
   it("responds to server.getConfig", async () => {
