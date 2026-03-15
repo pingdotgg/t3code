@@ -207,6 +207,13 @@ interface CommitAndBranchSuggestion {
   commitMessage: string;
 }
 
+function tokenizeCommitFlags(rawFlags?: string): string[] {
+  return (rawFlags ?? "")
+    .trim()
+    .split(/\s+/g)
+    .filter((value) => value.length > 0);
+}
+
 function formatCommitMessage(subject: string, body: string): string {
   const trimmedBody = body.trim();
   if (trimmedBody.length === 0) {
@@ -680,6 +687,7 @@ export const makeGitManager = Effect.gen(function* () {
     cwd: string,
     branch: string | null,
     commitMessage?: string,
+    commitFlags?: string,
     preResolvedSuggestion?: CommitAndBranchSuggestion,
     filePaths?: readonly string[],
   ) =>
@@ -696,7 +704,12 @@ export const makeGitManager = Effect.gen(function* () {
         return { status: "skipped_no_changes" as const };
       }
 
-      const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body);
+      const { commitSha } = yield* gitCore.commit(
+        cwd,
+        suggestion.subject,
+        suggestion.body,
+        tokenizeCommitFlags(commitFlags),
+      );
       return {
         status: "created" as const,
         commitSha,
@@ -1042,6 +1055,7 @@ export const makeGitManager = Effect.gen(function* () {
         input.cwd,
         currentBranch,
         commitMessageForStep,
+        input.commitFlags,
         preResolvedCommitSuggestion,
         input.filePaths,
       );

@@ -32,6 +32,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
+import { useAppSettings } from "~/appSettings";
 import { openInPreferredEditor } from "~/editorPreferences";
 import {
   gitBranchesQueryOptions,
@@ -158,6 +159,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
   );
+  const { settings } = useAppSettings();
   const queryClient = useQueryClient();
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -199,6 +201,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
   const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
   const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
+  const configuredCommitFlags = settings.gitCommitFlags.trim();
   const isDefaultBranch = useMemo(() => {
     const branchName = gitStatusForActions?.branch;
     if (!branchName) return false;
@@ -349,6 +352,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       const promise = runImmediateGitActionMutation.mutateAsync({
         action,
         ...(commitMessage ? { commitMessage } : {}),
+        ...(configuredCommitFlags ? { commitFlags: configuredCommitFlags } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
       });
@@ -442,6 +446,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     },
 
     [
+      configuredCommitFlags,
       isDefaultBranch,
       runImmediateGitActionMutation,
       setPendingDefaultBranchAction,

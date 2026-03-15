@@ -804,9 +804,9 @@ const makeGitCore = Effect.gen(function* () {
       };
     });
 
-  const commit: GitCoreShape["commit"] = (cwd, subject, body) =>
+  const commit: GitCoreShape["commit"] = (cwd, subject, body, extraArgs = []) =>
     Effect.gen(function* () {
-      const args = ["commit", "-m", subject];
+      const args = ["commit", ...extraArgs, "-m", subject];
       const trimmedBody = body.trim();
       if (trimmedBody.length > 0) {
         args.push("-m", trimmedBody);

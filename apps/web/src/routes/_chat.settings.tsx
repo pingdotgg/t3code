@@ -109,6 +109,7 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const gitCommitFlags = settings.gitCommitFlags;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
 
@@ -543,6 +544,48 @@ function SettingsRouteView() {
                   </Button>
                 </div>
               ) : null}
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Git</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Configure extra flags for app-run <code>git commit</code> commands.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="git-commit-flags" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">
+                    Extra git commit flags
+                  </span>
+                  <Input
+                    id="git-commit-flags"
+                    value={gitCommitFlags}
+                    onChange={(event) => updateSettings({ gitCommitFlags: event.target.value })}
+                    placeholder="--no-gpg-sign"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Applied to app-run git commit commands only. Example: <code>--no-gpg-sign</code>
+                    . Quoted arguments are not supported yet.
+                  </span>
+                </label>
+
+                <div className="flex justify-end">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        gitCommitFlags: defaults.gitCommitFlags,
+                      })
+                    }
+                  >
+                    Restore default
+                  </Button>
+                </div>
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
