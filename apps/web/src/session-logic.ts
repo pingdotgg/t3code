@@ -24,7 +24,7 @@ export const PROVIDER_OPTIONS: Array<{
   value: ProviderPickerKind;
   label: string;
   available: boolean;
-  docsUrl: string | null;
+  docsUrl: string;
 }> = [
   {
     value: "codex",
