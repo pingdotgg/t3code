@@ -16,10 +16,10 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "dist-electron/**"]
+      "outputs": ["dist/**", "dist-electron/**", "build/Release/**"]
     },
     "dev": {
-      "dependsOn": ["@t3tools/contracts#build"],
+      "dependsOn": ["@t3tools/contracts#build", "@t3tools/native#build"],
       "cache": false,
       "persistent": true
     },

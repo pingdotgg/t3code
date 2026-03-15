@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "declaration": true,
+    "rootDir": ".",
+    "outDir": "../../dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+  },
+  "include": ["./**/*.ts", "../../types/binding.d.ts"],
+  "exclude": ["../../node_modules", "../../dist", "../../build", "../../scripts"],
+}
