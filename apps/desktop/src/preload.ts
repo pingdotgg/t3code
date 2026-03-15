@@ -14,6 +14,7 @@ const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const SET_TRAY_ENABLED_CHANNEL = "desktop:set-tray-enabled";
 const GET_TRAY_STATE_CHANNEL = "desktop:get-tray-state";
 const SET_TRAY_STATE_CHANNEL = "desktop:set-tray-state";
+const SET_READY_TO_HANDLE_TRAY_MESSAGES_CHANNEL = "desktop:set-ready-to-handle-tray-messages";
 const TRAY_MESSAGE_CHANNEL = "desktop:tray-message";
 const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
 
@@ -52,6 +53,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setTrayEnabled: (enabled: boolean) => ipcRenderer.invoke(SET_TRAY_ENABLED_CHANNEL, enabled),
   getTrayState: () => ipcRenderer.invoke(GET_TRAY_STATE_CHANNEL),
   setTrayState: (state: DesktopTrayState) => ipcRenderer.invoke(SET_TRAY_STATE_CHANNEL, state),
+  setReadyToHandleTrayMessages: (ready: boolean) =>
+    ipcRenderer.invoke(SET_READY_TO_HANDLE_TRAY_MESSAGES_CHANNEL, ready),
   onTrayMessage: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, message: unknown) => {
       if (typeof message !== "object" || message === null) return;

@@ -160,13 +160,13 @@ function buildTrayContextMenu(): Menu {
     return {
       // TODO: This isn't accessible to screen readers!
       label: `${thread.needsAttention ? "·" : ""} ${truncateGraphemes(thread.name, MAX_THREAD_NAME_LENGTH)}`,
-      click: () => {
+      click: async () => {
         const mainWindow = getMainWindow(true);
         if (!mainWindow) {
           console.error("[tray] Failed to get (or create) main window");
           return;
         }
-        // TODO: Wait to ensure the window is ready?
+        await waitForWindowReady();
         sendTrayMessage({ type: "thread-click", threadId: thread.id as ThreadId }, mainWindow);
         mainWindow.focus();
       },
@@ -211,6 +211,31 @@ async function setTrayState(state: DesktopTrayState): Promise<void> {
   updateTray();
 }
 
+let readyToHandleTrayMessages = false;
+
+function setReadyToHandleTrayMessages(ready: boolean): void {
+  readyToHandleTrayMessages = ready;
+}
+
+const WAIT_FOR_WINDOW_READY_TIMEOUT_MS = 250;
+async function waitForWindowReady(
+  timeoutMs: number = WAIT_FOR_WINDOW_READY_TIMEOUT_MS,
+): Promise<void> {
+  const startTime = Date.now();
+  // oxlint-disable-next-line no-unmodified-loop-condition
+  while (!readyToHandleTrayMessages && Date.now() - startTime < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  if (!readyToHandleTrayMessages) {
+    throw new Error("Window not ready to handle tray messages");
+  }
+}
+
+function sendTrayMessage(message: DesktopTrayMessage, window: BrowserWindow): void {
+  const TRAY_MESSAGE_CHANNEL = "desktop:tray-message";
+  window.webContents.send(TRAY_MESSAGE_CHANNEL, message);
+}
+
 function setupTrayIpcHandlers(): void {
   const SET_TRAY_ENABLED_CHANNEL = "desktop:set-tray-enabled";
   ipcMain.handle(SET_TRAY_ENABLED_CHANNEL, async (_event, enabled: boolean) => {
@@ -224,11 +249,10 @@ function setupTrayIpcHandlers(): void {
   ipcMain.handle(SET_TRAY_STATE_CHANNEL, async (_event, state: DesktopTrayState) => {
     await setTrayState(state);
   });
-}
-
-function sendTrayMessage(message: DesktopTrayMessage, window: BrowserWindow): void {
-  const TRAY_MESSAGE_CHANNEL = "desktop:tray-message";
-  window.webContents.send(TRAY_MESSAGE_CHANNEL, message);
+  const SET_READY_TO_HANDLE_TRAY_MESSAGES_CHANNEL = "desktop:set-ready-to-handle-tray-messages";
+  ipcMain.handle(SET_READY_TO_HANDLE_TRAY_MESSAGES_CHANNEL, async (_event, ready: boolean) => {
+    setReadyToHandleTrayMessages(ready);
+  });
 }
 
 async function configureTray(): Promise<void> {
@@ -246,4 +270,4 @@ async function setTrayEnabled(enabled: boolean): Promise<void> {
   }
 }
 
-export { setupTrayIpcHandlers, setTrayEnabled };
+export { setupTrayIpcHandlers, setTrayEnabled, setReadyToHandleTrayMessages };

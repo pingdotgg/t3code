@@ -350,6 +350,23 @@ function DesktopTrayBootstrap() {
     [navigate, setSelectionAnchor],
   );
 
+  const threads = useStore((store) => store.threads);
+
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+    if (threads.length === 0) return;
+    void bridge.setReadyToHandleTrayMessages(true).catch(() => {
+      // Do nothing
+    });
+    return () => {
+      void bridge.setReadyToHandleTrayMessages(false).catch(() => {
+        // Do nothing
+      });
+    };
+  }, [threads]);
+
   useEffect(() => {
     if (!isElectron) return;
     const bridge = window.desktopBridge;
@@ -369,8 +386,6 @@ function DesktopTrayBootstrap() {
       // Keep the persisted setting as the source of truth and retry on the next change.
     });
   }, [settings.showTrayIcon]);
-
-  const threads = useStore((store) => store.threads);
 
   const [, setTrayState] = useTrayState();
 

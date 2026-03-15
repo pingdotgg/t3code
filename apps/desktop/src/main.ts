@@ -43,7 +43,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
-import { setupTrayIpcHandlers, setTrayEnabled } from "./tray";
+import { setupTrayIpcHandlers, setTrayEnabled, setReadyToHandleTrayMessages } from "./tray";
 
 fixPath();
 
@@ -1370,6 +1370,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+  setReadyToHandleTrayMessages(false);
 });
 
 if (process.platform !== "win32") {
