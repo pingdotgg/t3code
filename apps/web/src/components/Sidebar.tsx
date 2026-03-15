@@ -104,6 +104,25 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function getThreadSidebarTimestamp(thread: Thread): string {
+  if (thread.messages.length === 0) {
+    return thread.createdAt;
+  }
+
+  let earliestTimestamp = thread.messages[0]?.createdAt ?? thread.createdAt;
+  let earliestTime = new Date(earliestTimestamp).getTime();
+
+  for (const message of thread.messages) {
+    const messageTime = new Date(message.createdAt).getTime();
+    if (messageTime < earliestTime) {
+      earliestTimestamp = message.createdAt;
+      earliestTime = messageTime;
+    }
+  }
+
+  return earliestTimestamp;
+}
+
 interface TerminalStatusIndicator {
   label: "Terminal process running";
   colorClass: string;
@@ -386,7 +405,9 @@ export default function Sidebar() {
       const latestThread = threads
         .filter((thread) => thread.projectId === projectId)
         .toSorted((a, b) => {
-          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          const byDate =
+            new Date(getThreadSidebarTimestamp(b)).getTime() -
+            new Date(getThreadSidebarTimestamp(a)).getTime();
           if (byDate !== 0) return byDate;
           return b.id.localeCompare(a.id);
         })[0];
@@ -1297,7 +1318,8 @@ export default function Sidebar() {
                     .filter((thread) => thread.projectId === project.id)
                     .toSorted((a, b) => {
                       const byDate =
-                        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+                        new Date(getThreadSidebarTimestamp(b)).getTime() -
+                        new Date(getThreadSidebarTimestamp(a)).getTime();
                       if (byDate !== 0) return byDate;
                       return b.id.localeCompare(a.id);
                     });
@@ -1551,7 +1573,7 @@ export default function Sidebar() {
                                               : "text-muted-foreground/40"
                                           }`}
                                         >
-                                          {formatRelativeTime(thread.createdAt)}
+                                          {formatRelativeTime(getThreadSidebarTimestamp(thread))}
                                         </span>
                                       </div>
                                     </SidebarMenuSubButton>
