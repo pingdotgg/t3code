@@ -121,6 +121,50 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       });
     }),
   );
+
+  it.effect("uses VISUAL before EDITOR for system-editor launches", () =>
+    Effect.gen(function* () {
+      const launch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "system-editor" },
+        "darwin",
+        { VISUAL: "my-editor --wait", EDITOR: "fallback-editor" },
+      );
+      assert.deepEqual(launch, {
+        command: "my-editor",
+        args: ["--wait", "/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("reuses known editor goto behavior for system-editor launches", () =>
+    Effect.gen(function* () {
+      const launch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "system-editor" },
+        "darwin",
+        { EDITOR: "code --wait" },
+      );
+      assert.deepEqual(launch, {
+        command: "code",
+        args: ["--wait", "--goto", "/tmp/workspace/src/open.ts:71:5"],
+      });
+    }),
+  );
+
+  it.effect("preserves quoted executable paths for system-editor launches", () =>
+    Effect.gen(function* () {
+      const launch = yield* resolveEditorLaunch(
+        { cwd: "C:\\workspace\\src\\open.ts:71:5", editor: "system-editor" },
+        "win32",
+        {
+          EDITOR: '"C:\\Program Files\\Microsoft VS Code\\Code.exe" --wait',
+        },
+      );
+      assert.deepEqual(launch, {
+        command: "C:\\Program Files\\Microsoft VS Code\\Code.exe",
+        args: ["--wait", "--goto", "C:\\workspace\\src\\open.ts:71:5"],
+      });
+    }),
+  );
 });
 
 it.layer(NodeServices.layer)("launchDetached", (it) => {
@@ -228,5 +272,24 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
       });
       assert.deepEqual(editors, ["cursor", "file-manager"]);
     }),
+  );
+
+  it.effect(
+    "includes system-editor when EDITOR resolves to an available quoted path with flags",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+        const commandPath = path.join(dir, "Code Editor.CMD");
+
+        yield* fs.writeFileString(commandPath, "@echo off\r\n");
+        const editors = resolveAvailableEditors("win32", {
+          PATH: "",
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          EDITOR: `"${commandPath}" --wait`,
+        });
+        assert.deepEqual(editors, ["system-editor"]);
+      }),
   );
 });
