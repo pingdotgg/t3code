@@ -38,7 +38,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
-import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
+import { APP_STAGE_LABEL } from "../branding";
 import { isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -47,6 +47,7 @@ import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useAppVersion } from "../hooks/useAppVersion";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
@@ -252,6 +253,7 @@ function SortableProjectItem({
 }
 
 export default function Sidebar() {
+  const appVersion = useAppVersion();
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
@@ -1124,7 +1126,7 @@ export default function Sidebar() {
           }
         />
         <TooltipPopup side="bottom" sideOffset={2}>
-          Version {APP_VERSION}
+          Version {appVersion}
         </TooltipPopup>
       </Tooltip>
     </div>

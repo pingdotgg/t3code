@@ -6,6 +6,7 @@ import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
+import { useAppVersion } from "../hooks/useAppVersion";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
@@ -19,7 +20,6 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
-import { APP_VERSION } from "../branding";
 import { SidebarInset } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
@@ -93,6 +93,7 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
 }
 
 function SettingsRouteView() {
+  const appVersion = useAppVersion();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
@@ -681,7 +682,7 @@ function SettingsRouteView() {
                     Current version of the application.
                   </p>
                 </div>
-                <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
+                <code className="text-xs font-medium text-muted-foreground">{appVersion}</code>
               </div>
             </section>
           </div>

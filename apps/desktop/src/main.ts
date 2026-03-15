@@ -47,6 +47,7 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 fixPath();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
+const APP_GET_VERSION_CHANNEL = "desktop:app-get-version";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
@@ -1181,6 +1182,9 @@ function registerIpcHandlers(): void {
       return false;
     }
   });
+
+  ipcMain.removeHandler(APP_GET_VERSION_CHANNEL);
+  ipcMain.handle(APP_GET_VERSION_CHANNEL, async () => app.getVersion());
 
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);
   ipcMain.handle(UPDATE_GET_STATE_CHANNEL, async () => updateState);
