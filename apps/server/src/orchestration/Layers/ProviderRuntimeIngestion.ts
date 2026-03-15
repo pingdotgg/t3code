@@ -925,6 +925,17 @@ const make = Effect.gen(function* () {
               acceptedTurnStartedSourcePlan.sourcePlanId,
               thread.id,
               now,
+            ).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "provider runtime ingestion failed to mark source proposed plan",
+                  {
+                    eventId: event.eventId,
+                    eventType: event.type,
+                    cause: Cause.pretty(cause),
+                  },
+                ),
+              ),
             );
           }
 
