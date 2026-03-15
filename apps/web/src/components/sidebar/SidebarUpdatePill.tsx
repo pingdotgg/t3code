@@ -13,51 +13,70 @@ import {
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function SidebarUpdatePill() {
-  const [state, setState] = useState<DesktopUpdateState | null>(null);
+  // TODO: REMOVE - hardcoded for testing arm64 warning
+  const [state, setState] = useState<DesktopUpdateState | null>({
+    enabled: true,
+    status: "available",
+    currentVersion: "1.0.0",
+    availableVersion: "1.2.3",
+    downloadedVersion: null,
+    downloadPercent: null,
+    checkedAt: new Date().toISOString(),
+    message: null,
+    errorContext: null,
+    hostArch: "arm64",
+    appArch: "x64",
+    runningUnderArm64Translation: true,
+    canRetry: false,
+  });
   const [dismissed, setDismissed] = useState(false);
 
-  useEffect(() => {
-    if (!isElectron) return;
-    const bridge = window.desktopBridge;
-    if (
-      !bridge ||
-      typeof bridge.getUpdateState !== "function" ||
-      typeof bridge.onUpdateState !== "function"
-    ) {
-      return;
-    }
+  // TODO: REMOVE - disabled for testing
+  // useEffect(() => {
+  //   if (!isElectron) return;
+  //   const bridge = window.desktopBridge;
+  //   if (
+  //     !bridge ||
+  //     typeof bridge.getUpdateState !== "function" ||
+  //     typeof bridge.onUpdateState !== "function"
+  //   ) {
+  //     return;
+  //   }
+  //
+  //   let disposed = false;
+  //   let receivedSubscriptionUpdate = false;
+  //   const unsubscribe = bridge.onUpdateState((nextState) => {
+  //     if (disposed) return;
+  //     receivedSubscriptionUpdate = true;
+  //     setState(nextState);
+  //   });
+  //
+  //   void bridge
+  //     .getUpdateState()
+  //     .then((nextState) => {
+  //       if (disposed || receivedSubscriptionUpdate) return;
+  //       setState(nextState);
+  //     })
+  //     .catch(() => undefined);
+  //
+  //   return () => {
+  //     disposed = true;
+  //     unsubscribe();
+  //   };
+  // }, []);
 
-    let disposed = false;
-    let receivedSubscriptionUpdate = false;
-    const unsubscribe = bridge.onUpdateState((nextState) => {
-      if (disposed) return;
-      receivedSubscriptionUpdate = true;
-      setState(nextState);
-    });
-
-    void bridge
-      .getUpdateState()
-      .then((nextState) => {
-        if (disposed || receivedSubscriptionUpdate) return;
-        setState(nextState);
-      })
-      .catch(() => undefined);
-
-    return () => {
-      disposed = true;
-      unsubscribe();
-    };
-  }, []);
-
-  const visible = isElectron && shouldShowDesktopUpdateButton(state) && !dismissed;
+  // TODO: REMOVE - bypassed isElectron for testing
+  const visible = /* isElectron && */ shouldShowDesktopUpdateButton(state) && !dismissed;
   const tooltip = state ? getDesktopUpdateButtonTooltip(state) : "Update available";
   const disabled = isDesktopUpdateButtonDisabled(state);
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
 
-  const showArm64Warning = isElectron && shouldShowArm64IntelBuildWarning(state);
+  // TODO: REMOVE - bypassed isElectron for testing
+  const showArm64Warning = /* isElectron && */ shouldShowArm64IntelBuildWarning(state);
   const arm64Description =
     state && showArm64Warning ? getArm64IntelBuildWarningDescription(state) : null;
 
@@ -124,10 +143,11 @@ export function SidebarUpdatePill() {
   return (
     <div className="px-1 pb-1 flex flex-col gap-1">
       {showArm64Warning && arm64Description && (
-        <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
-          <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-          <span>{arm64Description}</span>
-        </div>
+        <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8 text-xs">
+          <TriangleAlertIcon />
+          <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+          <AlertDescription>{arm64Description}</AlertDescription>
+        </Alert>
       )}
       {visible && (
         <div
