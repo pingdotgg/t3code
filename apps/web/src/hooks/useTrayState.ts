@@ -23,7 +23,7 @@ export function useTrayState(): TrayState {
       .catch(() => {
         // Do nothing
       });
-  }, [setLocalTrayState]);
+  }, [setLocalTrayState, bridge]);
 
   const setTrayStateOverBridge = useCallback(
     (state: DesktopTrayState) => {
@@ -36,7 +36,7 @@ export function useTrayState(): TrayState {
           // Do nothing
         });
     },
-    [setLocalTrayState],
+    [setLocalTrayState, bridge],
   );
 
   return [localTrayState, setTrayStateOverBridge];

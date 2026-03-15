@@ -11,16 +11,19 @@ export function useTrayEnabled(): TrayEnabledState {
 
   const { settings, updateSettings } = useAppSettings();
 
-  const setEnabledOverBridge = useCallback((enabled: boolean) => {
-    bridge
-      .setTrayEnabled(enabled)
-      .then(() => {
-        updateSettings({ showTrayIcon: enabled });
-      })
-      .catch(() => {
-        // Do nothing
-      });
-  }, []);
+  const setEnabledOverBridge = useCallback(
+    (enabled: boolean) => {
+      bridge
+        .setTrayEnabled(enabled)
+        .then(() => {
+          updateSettings({ showTrayIcon: enabled });
+        })
+        .catch(() => {
+          // Do nothing
+        });
+    },
+    [bridge, updateSettings],
+  );
 
   return [settings.showTrayIcon, setEnabledOverBridge];
 }
