@@ -19,6 +19,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
+const CLAUDE_AGENT_SDK_ASAR_UNPACK_GLOB = "node_modules/@anthropic-ai/claude-agent-sdk/**/*";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
@@ -452,6 +453,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     appId: "com.t3tools.t3code",
     productName,
     artifactName: "T3-Code-${version}-${arch}.${ext}",
+    asarUnpack: [CLAUDE_AGENT_SDK_ASAR_UNPACK_GLOB],
     directories: {
       buildResources: "apps/desktop/resources",
     },
