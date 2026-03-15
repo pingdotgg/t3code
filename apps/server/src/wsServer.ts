@@ -545,6 +545,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           .stat(filePath)
           .pipe(Effect.catch(() => Effect.succeed(null)));
         if (!fileInfo || fileInfo.type !== "File") {
+          if (ext) {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
           const indexPath = path.resolve(staticRoot, "index.html");
           const indexData = yield* fileSystem
             .readFile(indexPath)

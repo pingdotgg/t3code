@@ -648,6 +648,36 @@ describe("WebSocket Server", () => {
     expect(await response.text()).toContain("static-root");
   });
 
+  it("falls back to static index for missing route paths without an extension", async () => {
+    const stateDir = makeTempDir("t3code-state-static-route-fallback-");
+    const staticDir = makeTempDir("t3code-static-route-fallback-");
+    fs.writeFileSync(path.join(staticDir, "index.html"), "<h1>static-route-fallback</h1>", "utf8");
+
+    server = await createTestServer({ cwd: "/test/project", stateDir, staticDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const response = await requestPath(port, "/chat/thread-123");
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("static-route-fallback");
+  });
+
+  it("returns 404 for missing static asset paths with an extension", async () => {
+    const stateDir = makeTempDir("t3code-state-static-assets-");
+    const staticDir = makeTempDir("t3code-static-assets-");
+    fs.writeFileSync(path.join(staticDir, "index.html"), "<h1>static-assets</h1>", "utf8");
+
+    server = await createTestServer({ cwd: "/test/project", stateDir, staticDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const response = await requestPath(port, "/assets/missing.js");
+    expect(response.statusCode).toBe(404);
+    expect(response.body).toBe("Not Found");
+  });
+
   it("rejects static path traversal attempts", async () => {
     const stateDir = makeTempDir("t3code-state-static-traversal-");
     const staticDir = makeTempDir("t3code-static-traversal-");
