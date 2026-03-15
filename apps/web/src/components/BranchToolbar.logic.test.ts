@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  resolveEffectiveEnvMode,
+  resolvePendingWorktreeBranchSelection,
   resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,
   resolveBranchToolbarValue,
@@ -27,6 +29,16 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
         effectiveEnvMode: "worktree",
       }),
     ).toBe("worktree");
+  });
+
+  it("keeps open-worktree mode when selecting a branch before worktree creation", () => {
+    expect(
+      resolveDraftEnvModeAfterBranchChange({
+        nextWorktreePath: null,
+        currentWorktreePath: null,
+        effectiveEnvMode: "open-worktree",
+      }),
+    ).toBe("open-worktree");
   });
 
   it("uses worktree mode when selecting a branch already attached to a worktree", () => {
@@ -63,6 +75,17 @@ describe("resolveBranchToolbarValue", () => {
     ).toBe("feature/base");
   });
 
+  it("keeps an explicitly selected open-worktree branch", () => {
+    expect(
+      resolveBranchToolbarValue({
+        envMode: "open-worktree",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/base",
+        currentGitBranch: "main",
+      }),
+    ).toBe("feature/base");
+  });
+
   it("shows the actual checked-out branch when not selecting a new worktree base", () => {
     expect(
       resolveBranchToolbarValue({
@@ -72,6 +95,18 @@ describe("resolveBranchToolbarValue", () => {
         currentGitBranch: "main",
       }),
     ).toBe("main");
+  });
+});
+
+describe("resolveEffectiveEnvMode", () => {
+  it("preserves open-worktree mode for draft threads before creation", () => {
+    expect(
+      resolveEffectiveEnvMode({
+        activeWorktreePath: null,
+        hasServerThread: false,
+        draftThreadEnvMode: "open-worktree",
+      }),
+    ).toBe("open-worktree");
   });
 });
 
@@ -264,6 +299,98 @@ describe("resolveBranchSelectionTarget", () => {
       checkoutCwd: "/repo/.t3/worktrees/feature-a",
       nextWorktreePath: "/repo/.t3/worktrees/feature-a",
       reuseExistingWorktree: false,
+    });
+  });
+});
+
+describe("resolvePendingWorktreeBranchSelection", () => {
+  it("stores the selected base branch for new worktree mode", () => {
+    expect(
+      resolvePendingWorktreeBranchSelection({
+        activeProjectCwd: "/repo",
+        envMode: "worktree",
+        branch: {
+          name: "feature/base",
+          isRemote: false,
+          worktreePath: null,
+        },
+      }),
+    ).toEqual({
+      branch: "feature/base",
+      envMode: "worktree",
+      worktreePath: null,
+    });
+  });
+
+  it("stores a local branch without a worktree for open-worktree mode", () => {
+    expect(
+      resolvePendingWorktreeBranchSelection({
+        activeProjectCwd: "/repo",
+        envMode: "open-worktree",
+        branch: {
+          name: "feature/open-me",
+          isRemote: false,
+          worktreePath: null,
+        },
+      }),
+    ).toEqual({
+      branch: "feature/open-me",
+      envMode: "open-worktree",
+      worktreePath: null,
+    });
+  });
+
+  it("normalizes remote-only branches for open-worktree mode", () => {
+    expect(
+      resolvePendingWorktreeBranchSelection({
+        activeProjectCwd: "/repo",
+        envMode: "open-worktree",
+        branch: {
+          name: "origin/feature/remote-only",
+          isRemote: true,
+          worktreePath: null,
+        },
+      }),
+    ).toEqual({
+      branch: "feature/remote-only",
+      envMode: "open-worktree",
+      worktreePath: null,
+    });
+  });
+
+  it("reuses an existing secondary worktree for open-worktree mode", () => {
+    expect(
+      resolvePendingWorktreeBranchSelection({
+        activeProjectCwd: "/repo",
+        envMode: "open-worktree",
+        branch: {
+          name: "feature/already-open",
+          isRemote: false,
+          worktreePath: "/repo/.t3/worktrees/feature-already-open",
+        },
+      }),
+    ).toEqual({
+      branch: "feature/already-open",
+      envMode: "worktree",
+      worktreePath: "/repo/.t3/worktrees/feature-already-open",
+    });
+  });
+
+  it("keeps open-worktree mode when selecting a branch from the main repo checkout", () => {
+    expect(
+      resolvePendingWorktreeBranchSelection({
+        activeProjectCwd: "/repo",
+        envMode: "open-worktree",
+        branch: {
+          name: "main",
+          isRemote: false,
+          worktreePath: "/repo",
+        },
+      }),
+    ).toEqual({
+      branch: "main",
+      envMode: "open-worktree",
+      worktreePath: null,
     });
   });
 });

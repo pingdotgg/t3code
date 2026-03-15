@@ -1,6 +1,12 @@
 import type { GitBranch } from "@t3tools/contracts";
 
-export type EnvMode = "local" | "worktree";
+export type EnvMode = "local" | "worktree" | "open-worktree";
+
+export function isPendingWorktreeMode(
+  envMode: EnvMode,
+): envMode is Extract<EnvMode, "worktree" | "open-worktree"> {
+  return envMode === "worktree" || envMode === "open-worktree";
+}
 
 export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
@@ -8,9 +14,13 @@ export function resolveEffectiveEnvMode(input: {
   draftThreadEnvMode: EnvMode | undefined;
 }): EnvMode {
   const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
-  return activeWorktreePath || (!hasServerThread && draftThreadEnvMode === "worktree")
-    ? "worktree"
-    : "local";
+  if (activeWorktreePath) {
+    return "worktree";
+  }
+  if (!hasServerThread && draftThreadEnvMode) {
+    return draftThreadEnvMode;
+  }
+  return "local";
 }
 
 export function resolveDraftEnvModeAfterBranchChange(input: {
@@ -22,8 +32,8 @@ export function resolveDraftEnvModeAfterBranchChange(input: {
   if (nextWorktreePath) {
     return "worktree";
   }
-  if (effectiveEnvMode === "worktree" && !currentWorktreePath) {
-    return "worktree";
+  if (isPendingWorktreeMode(effectiveEnvMode) && !currentWorktreePath) {
+    return effectiveEnvMode;
   }
   return "local";
 }
@@ -35,7 +45,7 @@ export function resolveBranchToolbarValue(input: {
   currentGitBranch: string | null;
 }): string | null {
   const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  if (envMode === "worktree" && !activeWorktreePath) {
+  if (isPendingWorktreeMode(envMode) && !activeWorktreePath) {
     return activeThreadBranch ?? currentGitBranch;
   }
   return currentGitBranch ?? activeThreadBranch;
@@ -119,5 +129,40 @@ export function resolveBranchSelectionTarget(input: {
     checkoutCwd: nextWorktreePath ?? activeProjectCwd,
     nextWorktreePath,
     reuseExistingWorktree: false,
+  };
+}
+
+export function resolvePendingWorktreeBranchSelection(input: {
+  activeProjectCwd: string;
+  envMode: Extract<EnvMode, "worktree" | "open-worktree">;
+  branch: Pick<GitBranch, "name" | "isRemote" | "worktreePath">;
+}): {
+  branch: string;
+  envMode: EnvMode;
+  worktreePath: string | null;
+} {
+  const { activeProjectCwd, envMode, branch } = input;
+
+  if (envMode === "worktree") {
+    return {
+      branch: branch.name,
+      envMode,
+      worktreePath: null,
+    };
+  }
+
+  if (branch.worktreePath) {
+    const isProjectRoot = branch.worktreePath === activeProjectCwd;
+    return {
+      branch: branch.name,
+      envMode: isProjectRoot ? envMode : "worktree",
+      worktreePath: isProjectRoot ? null : branch.worktreePath,
+    };
+  }
+
+  return {
+    branch: branch.isRemote ? deriveLocalBranchNameFromRemoteRef(branch.name) : branch.name,
+    envMode,
+    worktreePath: null,
   };
 }
