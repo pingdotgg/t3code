@@ -135,10 +135,42 @@ function TerminalViewport({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onSessionExitedRef = useRef(onSessionExited);
   const hasHandledExitRef = useRef(false);
+  const viewportSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
     onSessionExitedRef.current = onSessionExited;
   }, [onSessionExited]);
+
+  const syncViewportSize = useCallback(() => {
+    const api = readNativeApi();
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    const container = containerRef.current;
+    if (!api || !terminal || !fitAddon || !container) return;
+
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    if (width <= 0 || height <= 0) return;
+
+    const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
+    fitAddon.fit();
+    if (wasAtBottom) {
+      terminal.scrollToBottom();
+    }
+
+    const nextSignature = `${terminal.cols}x${terminal.rows}`;
+    if (viewportSignatureRef.current === nextSignature) return;
+    viewportSignatureRef.current = nextSignature;
+
+    void api.terminal
+      .resize({
+        threadId,
+        terminalId,
+        cols: terminal.cols,
+        rows: terminal.rows,
+      })
+      .catch(() => undefined);
+  }, [terminalId, threadId]);
 
   useEffect(() => {
     const mount = containerRef.current;
@@ -358,23 +390,7 @@ function TerminalViewport({
     });
 
     const fitTimer = window.setTimeout(() => {
-      const activeTerminal = terminalRef.current;
-      const activeFitAddon = fitAddonRef.current;
-      if (!activeTerminal || !activeFitAddon) return;
-      const wasAtBottom =
-        activeTerminal.buffer.active.viewportY >= activeTerminal.buffer.active.baseY;
-      activeFitAddon.fit();
-      if (wasAtBottom) {
-        activeTerminal.scrollToBottom();
-      }
-      void api.terminal
-        .resize({
-          threadId,
-          terminalId,
-          cols: activeTerminal.cols,
-          rows: activeTerminal.rows,
-        })
-        .catch(() => undefined);
+      syncViewportSize();
     }, 30);
     void openTerminal();
 
@@ -392,7 +408,7 @@ function TerminalViewport({
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, runtimeEnv, terminalId, threadId]);
+  }, [cwd, runtimeEnv, syncViewportSize, terminalId, threadId]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -407,29 +423,34 @@ function TerminalViewport({
   }, [autoFocus, focusRequestId]);
 
   useEffect(() => {
-    const api = readNativeApi();
-    const terminal = terminalRef.current;
-    const fitAddon = fitAddonRef.current;
-    if (!api || !terminal || !fitAddon) return;
-    const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
-    const frame = window.requestAnimationFrame(() => {
-      fitAddon.fit();
-      if (wasAtBottom) {
-        terminal.scrollToBottom();
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+
+    let frame = 0;
+    const scheduleSync = () => {
+      if (frame !== 0) {
+        window.cancelAnimationFrame(frame);
       }
-      void api.terminal
-        .resize({
-          threadId,
-          terminalId,
-          cols: terminal.cols,
-          rows: terminal.rows,
-        })
-        .catch(() => undefined);
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        syncViewportSize();
+      });
     };
-  }, [drawerHeight, resizeEpoch, terminalId, threadId]);
+
+    scheduleSync();
+
+    const observer = new ResizeObserver(() => {
+      scheduleSync();
+    });
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+      if (frame !== 0) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [drawerHeight, resizeEpoch, syncViewportSize]);
   return <div ref={containerRef} className="h-full w-full overflow-hidden rounded-[4px]" />;
 }
 
