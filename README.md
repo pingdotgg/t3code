@@ -7,6 +7,8 @@ T3 Code is a minimal web GUI for coding agents. Currently Codex-first, with Clau
 > [!WARNING]
 > You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for T3 Code to work.
 
+**Need help installing Codex?** See our [installation guide](./docs/guide/codex_installation.md)
+
 ```bash
 npx t3
 ```
