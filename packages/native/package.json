@@ -18,10 +18,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./binding": {
-      "types": "./types/binding.d.ts",
-      "default": "./dist/binding.js"
     }
   },
   "scripts": {
