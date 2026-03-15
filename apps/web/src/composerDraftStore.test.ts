@@ -188,6 +188,11 @@ describe("composerDraftStore project draft thread mapping", () => {
       branch: "feature/test",
       worktreePath: "/tmp/worktree-test",
       envMode: "worktree",
+      worktreeBranchNaming: {
+        mode: "auto",
+        prefix: "",
+        branchName: "",
+      },
       runtimeMode: "full-access",
       interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -197,6 +202,11 @@ describe("composerDraftStore project draft thread mapping", () => {
       branch: "feature/test",
       worktreePath: "/tmp/worktree-test",
       envMode: "worktree",
+      worktreeBranchNaming: {
+        mode: "auto",
+        prefix: "",
+        branchName: "",
+      },
       runtimeMode: "full-access",
       interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -333,6 +343,27 @@ describe("composerDraftStore project draft thread mapping", () => {
       branch: "feature/base",
       worktreePath: null,
       envMode: "worktree",
+    });
+  });
+
+  it("stores worktree branch naming preferences on the draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId);
+    store.setDraftThreadContext(threadId, {
+      worktreeBranchNaming: {
+        mode: "prefix",
+        prefix: "team-branches",
+        branchName: "",
+      },
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      projectId,
+      worktreeBranchNaming: {
+        mode: "prefix",
+        prefix: "team-branches",
+        branchName: "",
+      },
     });
   });
 });
