@@ -32,12 +32,18 @@ interface EditorLaunch {
   readonly args: ReadonlyArray<string>;
 }
 
+interface ResolvedCommand {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
 interface CommandAvailabilityOptions {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
 }
 
 const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const SYSTEM_EDITOR_ENV_KEYS = ["VISUAL", "EDITOR"] as const;
 
 function shouldUseGotoFlag(editorId: EditorId, target: string): boolean {
   return (
@@ -58,6 +64,92 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
 
 function stripWrappingQuotes(value: string): string {
   return value.replace(/^"+|"+$/g, "");
+}
+
+// Parse conservatively so quoted executable paths survive, especially on Windows.
+function splitCommandString(value: string): ReadonlyArray<string> {
+  const parts: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+
+  for (const char of value) {
+    if ((char === '"' || char === "'") && quote === null) {
+      quote = char;
+      continue;
+    }
+
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+
+    if (/\s/.test(char) && quote === null) {
+      if (current.length > 0) {
+        parts.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.length > 0) {
+    parts.push(current);
+  }
+
+  return parts;
+}
+
+function resolveSystemEditorCommand(env: NodeJS.ProcessEnv): ResolvedCommand | null {
+  for (const key of SYSTEM_EDITOR_ENV_KEYS) {
+    const value = env[key]?.trim();
+    if (!value) {
+      continue;
+    }
+
+    const parts = splitCommandString(value);
+    const command = parts[0];
+    if (command) {
+      return {
+        command,
+        args: parts.slice(1),
+      };
+    }
+  }
+
+  return null;
+}
+
+function normalizeCommandName(command: string): string {
+  const lastSegment = command.split(/[/\\]/).at(-1) ?? command;
+  const extension = extname(lastSegment);
+
+  if ([".bat", ".cmd", ".com", ".exe"].includes(extension.toLowerCase())) {
+    return lastSegment.slice(0, -extension.length).toLowerCase();
+  }
+
+  return lastSegment.toLowerCase();
+}
+
+function resolveKnownEditorIdForCommand(command: string): EditorId | null {
+  const normalizedCommand = normalizeCommandName(command);
+  return (
+    EDITORS.find(
+      (editor) =>
+        editor.command !== null && normalizeCommandName(editor.command) === normalizedCommand,
+    )?.id ?? null
+  );
+}
+
+function resolveLaunchArgs(
+  editorId: EditorId | null,
+  target: string,
+  prefixArgs: ReadonlyArray<string> = [],
+): ReadonlyArray<string> {
+  return editorId && shouldUseGotoFlag(editorId, target)
+    ? [...prefixArgs, "--goto", target]
+    : [...prefixArgs, target];
 }
 
 function resolvePathEnvironmentVariable(env: NodeJS.ProcessEnv): string {
@@ -168,7 +260,13 @@ export function resolveAvailableEditors(
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
-    const command = editor.command ?? fileManagerCommandForPlatform(platform);
+    const command =
+      editor.id === "system-editor"
+        ? resolveSystemEditorCommand(env)?.command
+        : (editor.command ?? fileManagerCommandForPlatform(platform));
+    if (!command) {
+      continue;
+    }
     if (isCommandAvailable(command, { platform, env })) {
       available.push(editor.id);
     }
@@ -206,16 +304,36 @@ export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
 export const resolveEditorLaunch = Effect.fnUntraced(function* (
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<EditorLaunch, OpenError> {
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });
   }
 
+  if (editorDef.id === "system-editor") {
+    const resolvedCommand = resolveSystemEditorCommand(env);
+    if (!resolvedCommand) {
+      return yield* new OpenError({
+        message: "System editor is unavailable because VISUAL and EDITOR are not set.",
+      });
+    }
+
+    return {
+      command: resolvedCommand.command,
+      args: resolveLaunchArgs(
+        resolveKnownEditorIdForCommand(resolvedCommand.command),
+        input.cwd,
+        resolvedCommand.args,
+      ),
+    };
+  }
+
   if (editorDef.command) {
-    return shouldUseGotoFlag(editorDef.id, input.cwd)
-      ? { command: editorDef.command, args: ["--goto", input.cwd] }
-      : { command: editorDef.command, args: [input.cwd] };
+    return {
+      command: editorDef.command,
+      args: resolveLaunchArgs(editorDef.id, input.cwd),
+    };
   }
 
   if (editorDef.id !== "file-manager") {

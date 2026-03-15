@@ -6,6 +6,7 @@ export const EDITORS = [
   { id: "vscode", label: "VS Code", command: "code" },
   { id: "zed", label: "Zed", command: "zed" },
   { id: "antigravity", label: "Antigravity", command: "agy" },
+  { id: "system-editor", label: "System Editor", command: null },
   { id: "file-manager", label: "File Manager", command: null },
 ] as const;
 
