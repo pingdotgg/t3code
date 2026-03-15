@@ -50,11 +50,35 @@ export interface SqliteMemoryClientConfig extends Omit<
   "filename" | "readonly"
 > {}
 
+/**
+ * Verify that the current Node.js version includes the `node:sqlite` APIs
+ * used by `NodeSqliteClient` — specifically `StatementSync.columns()` (added
+ * in Node 22.16.0 / 23.11.0).
+ *
+ * @see https://github.com/nodejs/node/pull/57490
+ */
+const checkNodeSqliteCompat = () => {
+  const parts = process.versions.node.split(".").map(Number);
+  const major = parts[0] ?? 0;
+  const minor = parts[1] ?? 0;
+  const supported = (major === 22 && minor >= 16) || (major === 23 && minor >= 11) || major >= 24;
+
+  if (!supported) {
+    return Effect.die(
+      `Node.js ${process.versions.node} is missing required node:sqlite APIs ` +
+        `(StatementSync.columns). Upgrade to Node.js >=22.16, >=23.11, or >=24.`,
+    );
+  }
+  return Effect.void;
+};
+
 const makeWithDatabase = (
   options: SqliteClientConfig,
   openDatabase: () => DatabaseSync,
 ): Effect.Effect<Client.SqlClient, never, Scope.Scope | Reactivity.Reactivity> =>
   Effect.gen(function* () {
+    yield* checkNodeSqliteCompat();
+
     const compiler = Statement.makeCompilerSqlite(options.transformQueryNames);
     const transformRows = options.transformResultNames
       ? Statement.defaultTransforms(options.transformResultNames).array
