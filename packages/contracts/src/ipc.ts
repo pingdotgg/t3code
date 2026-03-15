@@ -170,4 +170,6 @@ export interface NativeApi {
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
   };
+  /** Low-level RPC call for methods without dedicated typed wrappers. */
+  request: <T = unknown>(method: string, params?: unknown) => Promise<T>;
 }

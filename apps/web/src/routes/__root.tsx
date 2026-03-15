@@ -19,6 +19,7 @@ import { readNativeApi } from "../nativeApi";
 import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
+import { useProjectDirectoryCheck } from "../hooks/useProjectDirectoryCheck";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
@@ -52,6 +53,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <EventRouter />
+        <ProjectDirectoryChecker />
         <DesktopProjectBootstrap />
         <Outlet />
       </AnchoredToastProvider>
@@ -318,6 +320,11 @@ function EventRouter() {
     syncServerReadModel,
   ]);
 
+  return null;
+}
+
+function ProjectDirectoryChecker() {
+  useProjectDirectoryCheck();
   return null;
 }
 

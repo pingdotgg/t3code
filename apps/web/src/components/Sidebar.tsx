@@ -39,7 +39,7 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
-import { isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import { cn, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
 import { shortcutLabelForCommand } from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
@@ -263,6 +263,7 @@ export default function Sidebar() {
   );
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
+  const missingProjectCwds = useStore((store) => store.missingProjectCwds);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
@@ -1395,6 +1396,10 @@ export default function Sidebar() {
                                   selectThreadTerminalState(terminalStateByThreadId, thread.id)
                                     .runningTerminalIds,
                                 );
+                                const projectCwd = projectCwdById.get(thread.projectId);
+                                const isProjectMissing = projectCwd
+                                  ? missingProjectCwds.has(projectCwd)
+                                  : false;
 
                                 return (
                                   <SidebarMenuSubItem
@@ -1526,7 +1531,13 @@ export default function Sidebar() {
                                             onClick={(e) => e.stopPropagation()}
                                           />
                                         ) : (
-                                          <span className="min-w-0 flex-1 truncate text-xs">
+                                          <span
+                                            className={cn(
+                                              "min-w-0 flex-1 truncate text-xs",
+                                              isProjectMissing &&
+                                                "line-through text-destructive/60",
+                                            )}
+                                          >
                                             {thread.title}
                                           </span>
                                         )}
