@@ -25,6 +25,8 @@ interface OpenPrInfo {
 interface PullRequestInfo extends OpenPrInfo {
   state: "open" | "closed" | "merged";
   updatedAt: string | null;
+  headRepositoryNameWithOwner: string | null;
+  headRepositoryOwnerLogin: string | null;
 }
 
 interface ResolvedPullRequest {
@@ -45,11 +47,13 @@ interface PullRequestHeadRemoteInfo {
 interface BranchHeadContext {
   localBranch: string;
   headBranch: string;
-  headSelectors: ReadonlyArray<string>;
+  headSelector: string;
   preferredHeadSelector: string;
   remoteName: string | null;
   headRepositoryNameWithOwner: string | null;
   headRepositoryOwnerLogin: string | null;
+  baseRepositoryNameWithOwner: string | null;
+  baseRepositoryDefaultBranch: string | null;
   isCrossRepository: boolean;
 }
 
@@ -132,6 +136,8 @@ function parsePullRequestList(raw: unknown): PullRequestInfo[] {
     const state = record.state;
     const mergedAt = record.mergedAt;
     const updatedAt = record.updatedAt;
+    const headRepository = record.headRepository;
+    const headRepositoryOwner = record.headRepositoryOwner;
     if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) {
       continue;
     }
@@ -155,6 +161,19 @@ function parsePullRequestList(raw: unknown): PullRequestInfo[] {
       continue;
     }
 
+    const headRepositoryNameWithOwner =
+      typeof headRepository === "object" &&
+      headRepository !== null &&
+      typeof (headRepository as { nameWithOwner?: unknown }).nameWithOwner === "string"
+        ? (headRepository as { nameWithOwner: string }).nameWithOwner.trim() || null
+        : null;
+    const headRepositoryOwnerLogin =
+      typeof headRepositoryOwner === "object" &&
+      headRepositoryOwner !== null &&
+      typeof (headRepositoryOwner as { login?: unknown }).login === "string"
+        ? (headRepositoryOwner as { login: string }).login.trim() || null
+        : parseRepositoryOwnerLogin(headRepositoryNameWithOwner);
+
     parsed.push({
       number,
       title,
@@ -163,9 +182,43 @@ function parsePullRequestList(raw: unknown): PullRequestInfo[] {
       headRefName,
       state: normalizedState,
       updatedAt: typeof updatedAt === "string" && updatedAt.trim().length > 0 ? updatedAt : null,
+      headRepositoryNameWithOwner,
+      headRepositoryOwnerLogin,
     });
   }
   return parsed;
+}
+
+function matchesPullRequestHeadContext(
+  pullRequest: Pick<
+    PullRequestInfo,
+    "headRefName" | "headRepositoryNameWithOwner" | "headRepositoryOwnerLogin"
+  >,
+  headContext: Pick<
+    BranchHeadContext,
+    "headBranch" | "headRepositoryNameWithOwner" | "headRepositoryOwnerLogin"
+  >,
+): boolean {
+  if (pullRequest.headRefName.trim() !== headContext.headBranch) {
+    return false;
+  }
+
+  const expectedRepository = headContext.headRepositoryNameWithOwner?.trim().toLowerCase() ?? "";
+  const actualRepository = pullRequest.headRepositoryNameWithOwner?.trim().toLowerCase() ?? "";
+  if (expectedRepository.length > 0 && actualRepository.length > 0) {
+    return expectedRepository === actualRepository;
+  }
+
+  const expectedOwner = headContext.headRepositoryOwnerLogin?.trim().toLowerCase() ?? "";
+  const actualOwner =
+    pullRequest.headRepositoryOwnerLogin?.trim().toLowerCase() ??
+    parseRepositoryOwnerLogin(pullRequest.headRepositoryNameWithOwner)?.trim().toLowerCase() ??
+    "";
+  if (expectedOwner.length > 0 && actualOwner.length > 0) {
+    return expectedOwner === actualOwner;
+  }
+
+  return true;
 }
 
 function gitManagerError(operation: string, detail: string, cause?: unknown): GitManagerError {
@@ -250,14 +303,6 @@ function extractBranchFromRef(ref: string): string {
     return normalized;
   }
   return normalized.slice(firstSlash + 1).trim();
-}
-
-function appendUnique(values: string[], next: string | null | undefined): void {
-  const trimmed = next?.trim() ?? "";
-  if (trimmed.length === 0 || values.includes(trimmed)) {
-    return;
-  }
-  values.push(trimmed);
 }
 
 function toStatusPr(pr: PullRequestInfo): {
@@ -440,6 +485,16 @@ export const makeGitManager = Effect.gen(function* () {
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.catch(() => Effect.succeed(null)));
 
+  const resolveGitHubRepositoryMetadataNullable = (cwd: string, repository: string | null) =>
+    repository
+      ? gitHubCli
+          .getRepositoryMetadata({
+            cwd,
+            repository,
+          })
+          .pipe(Effect.catch(() => Effect.succeed(null)))
+      : Effect.succeed(null);
+
   const resolveRemoteRepositoryContext = (cwd: string, remoteName: string | null) =>
     Effect.gen(function* () {
       if (!remoteName) {
@@ -457,6 +512,70 @@ export const makeGitManager = Effect.gen(function* () {
       };
     });
 
+  const resolveFallbackBaseRepositoryName = (
+    cwd: string,
+    headRepositoryNameWithOwner: string | null,
+  ) =>
+    Effect.gen(function* () {
+      for (const remoteName of ["upstream", "origin"] as const) {
+        const remoteRepository = yield* resolveRemoteRepositoryContext(cwd, remoteName);
+        const repositoryNameWithOwner = remoteRepository.repositoryNameWithOwner;
+        if (!repositoryNameWithOwner) {
+          continue;
+        }
+        if (
+          !headRepositoryNameWithOwner ||
+          repositoryNameWithOwner.toLowerCase() !== headRepositoryNameWithOwner.toLowerCase()
+        ) {
+          return repositoryNameWithOwner;
+        }
+      }
+      return null;
+    });
+
+  const listPullRequestsByHead = (input: {
+    cwd: string;
+    repositoryNameWithOwner: string | null;
+    headBranch: string;
+    state: "open" | "all";
+    limit: number;
+  }) =>
+    gitHubCli
+      .execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "list",
+          ...(input.repositoryNameWithOwner ? ["--repo", input.repositoryNameWithOwner] : []),
+          "--head",
+          input.headBranch,
+          "--state",
+          input.state,
+          "--limit",
+          String(input.limit),
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+      })
+      .pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) => {
+          if (raw.length === 0) {
+            return Effect.succeed([] as PullRequestInfo[]);
+          }
+
+          return Effect.try({
+            try: () => parsePullRequestList(JSON.parse(raw) as unknown),
+            catch: (cause) =>
+              gitManagerError(
+                "listPullRequestsByHead",
+                "GitHub CLI returned invalid PR list JSON.",
+                cause,
+              ),
+          });
+        }),
+      );
+
   const resolveBranchHeadContext = (
     cwd: string,
     details: { branch: string; upstreamRef: string | null },
@@ -468,135 +587,87 @@ export const makeGitManager = Effect.gen(function* () {
         : "";
       const headBranch =
         headBranchFromUpstream.length > 0 ? headBranchFromUpstream : details.branch;
-
-      const [remoteRepository, originRepository] = yield* Effect.all(
-        [
-          resolveRemoteRepositoryContext(cwd, remoteName),
-          resolveRemoteRepositoryContext(cwd, "origin"),
-        ],
-        { concurrency: "unbounded" },
+      const remoteRepository = yield* resolveRemoteRepositoryContext(cwd, remoteName);
+      const headRepositoryMetadata = yield* resolveGitHubRepositoryMetadataNullable(
+        cwd,
+        remoteRepository.repositoryNameWithOwner,
       );
-
+      const headRepositoryNameWithOwner =
+        headRepositoryMetadata?.nameWithOwner ?? remoteRepository.repositoryNameWithOwner;
+      const fallbackBaseRepositoryNameWithOwner = yield* resolveFallbackBaseRepositoryName(
+        cwd,
+        headRepositoryNameWithOwner,
+      );
+      const baseRepositoryNameWithOwner = headRepositoryMetadata
+        ? ((headRepositoryMetadata.isFork ? headRepositoryMetadata.parentNameWithOwner : null) ??
+          headRepositoryNameWithOwner)
+        : (fallbackBaseRepositoryNameWithOwner ?? headRepositoryNameWithOwner);
+      const baseRepositoryMetadata =
+        baseRepositoryNameWithOwner &&
+        (!headRepositoryMetadata ||
+          baseRepositoryNameWithOwner.toLowerCase() !==
+            headRepositoryMetadata.nameWithOwner.toLowerCase())
+          ? yield* resolveGitHubRepositoryMetadataNullable(cwd, baseRepositoryNameWithOwner)
+          : headRepositoryMetadata;
+      const headRepositoryOwnerLogin =
+        parseRepositoryOwnerLogin(headRepositoryNameWithOwner) ?? remoteRepository.ownerLogin;
       const isCrossRepository =
-        remoteRepository.repositoryNameWithOwner !== null &&
-        originRepository.repositoryNameWithOwner !== null
-          ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
-            originRepository.repositoryNameWithOwner.toLowerCase()
-          : remoteName !== null &&
-            remoteName !== "origin" &&
-            remoteRepository.repositoryNameWithOwner !== null;
-
+        headRepositoryNameWithOwner !== null && baseRepositoryNameWithOwner !== null
+          ? headRepositoryNameWithOwner.toLowerCase() !== baseRepositoryNameWithOwner.toLowerCase()
+          : remoteName !== null && remoteName !== "origin" && headRepositoryNameWithOwner !== null;
       const ownerHeadSelector =
-        remoteRepository.ownerLogin && headBranch.length > 0
-          ? `${remoteRepository.ownerLogin}:${headBranch}`
+        headRepositoryOwnerLogin && headBranch.length > 0
+          ? `${headRepositoryOwnerLogin}:${headBranch}`
           : null;
-      const remoteAliasHeadSelector =
-        remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
-      const shouldProbeRemoteOwnedSelectors =
-        isCrossRepository || (remoteName !== null && remoteName !== "origin");
-
-      const headSelectors: string[] = [];
-      if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {
-        appendUnique(headSelectors, ownerHeadSelector);
-        appendUnique(
-          headSelectors,
-          remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
-        );
-      }
-      appendUnique(headSelectors, details.branch);
-      appendUnique(headSelectors, headBranch !== details.branch ? headBranch : null);
-      if (!isCrossRepository && shouldProbeRemoteOwnedSelectors) {
-        appendUnique(headSelectors, ownerHeadSelector);
-        appendUnique(
-          headSelectors,
-          remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
-        );
-      }
 
       return {
         localBranch: details.branch,
         headBranch,
-        headSelectors,
+        headSelector: headBranch,
         preferredHeadSelector:
           ownerHeadSelector && isCrossRepository ? ownerHeadSelector : headBranch,
         remoteName,
-        headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
-        headRepositoryOwnerLogin: remoteRepository.ownerLogin,
+        headRepositoryNameWithOwner,
+        headRepositoryOwnerLogin,
+        baseRepositoryNameWithOwner,
+        baseRepositoryDefaultBranch: baseRepositoryMetadata?.defaultBranch ?? null,
         isCrossRepository,
       } satisfies BranchHeadContext;
     });
 
-  const findOpenPr = (cwd: string, headSelectors: ReadonlyArray<string>) =>
+  const findOpenPr = (cwd: string, headContext: BranchHeadContext) =>
     Effect.gen(function* () {
-      for (const headSelector of headSelectors) {
-        const pullRequests = yield* gitHubCli.listOpenPullRequests({
-          cwd,
-          headSelector,
-          limit: 1,
-        });
+      const pullRequests = yield* listPullRequestsByHead({
+        cwd,
+        repositoryNameWithOwner: headContext.baseRepositoryNameWithOwner,
+        headBranch: headContext.headSelector,
+        state: "open",
+        limit: 20,
+      });
 
-        const [firstPullRequest] = pullRequests;
-        if (firstPullRequest) {
-          return {
-            number: firstPullRequest.number,
-            title: firstPullRequest.title,
-            url: firstPullRequest.url,
-            baseRefName: firstPullRequest.baseRefName,
-            headRefName: firstPullRequest.headRefName,
-            state: "open",
-            updatedAt: null,
-          } satisfies PullRequestInfo;
-        }
-      }
-
-      return null;
+      return (
+        pullRequests.find((pullRequest) =>
+          matchesPullRequestHeadContext(pullRequest, headContext),
+        ) ?? null
+      );
     });
 
   const findLatestPr = (cwd: string, details: { branch: string; upstreamRef: string | null }) =>
     Effect.gen(function* () {
       const headContext = yield* resolveBranchHeadContext(cwd, details);
-      const parsedByNumber = new Map<number, PullRequestInfo>();
-
-      for (const headSelector of headContext.headSelectors) {
-        const stdout = yield* gitHubCli
-          .execute({
-            cwd,
-            args: [
-              "pr",
-              "list",
-              "--head",
-              headSelector,
-              "--state",
-              "all",
-              "--limit",
-              "20",
-              "--json",
-              "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
-            ],
-          })
-          .pipe(Effect.map((result) => result.stdout));
-
-        const raw = stdout.trim();
-        if (raw.length === 0) {
-          continue;
-        }
-
-        const parsedJson = yield* Effect.try({
-          try: () => JSON.parse(raw) as unknown,
-          catch: (cause) =>
-            gitManagerError("findLatestPr", "GitHub CLI returned invalid PR list JSON.", cause),
+      const parsed = (yield* listPullRequestsByHead({
+        cwd,
+        repositoryNameWithOwner: headContext.baseRepositoryNameWithOwner,
+        headBranch: headContext.headSelector,
+        state: "all",
+        limit: 20,
+      }))
+        .filter((pullRequest) => matchesPullRequestHeadContext(pullRequest, headContext))
+        .toSorted((a, b) => {
+          const left = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+          const right = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+          return right - left;
         });
-
-        for (const pr of parsePullRequestList(parsedJson)) {
-          parsedByNumber.set(pr.number, pr);
-        }
-      }
-
-      const parsed = Array.from(parsedByNumber.values()).toSorted((a, b) => {
-        const left = a.updatedAt ? Date.parse(a.updatedAt) : 0;
-        const right = b.updatedAt ? Date.parse(b.updatedAt) : 0;
-        return right - left;
-      });
 
       const latestOpenPr = parsed.find((pr) => pr.state === "open");
       if (latestOpenPr) {
@@ -609,7 +680,7 @@ export const makeGitManager = Effect.gen(function* () {
     cwd: string,
     branch: string,
     upstreamRef: string | null,
-    headContext: Pick<BranchHeadContext, "isCrossRepository">,
+    headContext: Pick<BranchHeadContext, "isCrossRepository" | "baseRepositoryDefaultBranch">,
   ) =>
     Effect.gen(function* () {
       const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
@@ -622,9 +693,9 @@ export const makeGitManager = Effect.gen(function* () {
         }
       }
 
-      const defaultFromGh = yield* gitHubCli
-        .getDefaultBranch({ cwd })
-        .pipe(Effect.catch(() => Effect.succeed(null)));
+      const defaultFromGh =
+        headContext.baseRepositoryDefaultBranch ??
+        (yield* gitHubCli.getDefaultBranch({ cwd }).pipe(Effect.catch(() => Effect.succeed(null))));
       if (defaultFromGh) {
         return defaultFromGh;
       }
@@ -726,7 +797,7 @@ export const makeGitManager = Effect.gen(function* () {
         upstreamRef: details.upstreamRef,
       });
 
-      const existing = yield* findOpenPr(cwd, headContext.headSelectors);
+      const existing = yield* findOpenPr(cwd, headContext);
       if (existing) {
         return {
           status: "opened_existing" as const,
@@ -761,6 +832,9 @@ export const makeGitManager = Effect.gen(function* () {
       yield* gitHubCli
         .createPullRequest({
           cwd,
+          ...(headContext.baseRepositoryNameWithOwner
+            ? { repository: headContext.baseRepositoryNameWithOwner }
+            : {}),
           baseBranch,
           headSelector: headContext.preferredHeadSelector,
           title: generated.title,
@@ -768,7 +842,7 @@ export const makeGitManager = Effect.gen(function* () {
         })
         .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
 
-      const created = yield* findOpenPr(cwd, headContext.headSelectors);
+      const created = yield* findOpenPr(cwd, headContext);
       if (!created) {
         return {
           status: "created" as const,

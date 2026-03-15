@@ -37,6 +37,14 @@ interface FakeGhScenario {
     headRepositoryOwnerLogin?: string | null;
   };
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
+  repositoryMetadata?: Record<
+    string,
+    {
+      defaultBranch?: string;
+      isFork?: boolean;
+      parentNameWithOwner?: string | null;
+    }
+  >;
   failWith?: GitHubCliError;
 }
 
@@ -227,6 +235,15 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         headSelectorIndex >= 0 && headSelectorIndex < args.length - 1
           ? args[headSelectorIndex + 1]
           : undefined;
+      if (typeof headSelector === "string" && headSelector.includes(":")) {
+        return Effect.fail(
+          new GitHubCliError({
+            operation: "execute",
+            detail:
+              "Fake gh rejects owner-qualified `pr list --head` selectors to match the real CLI.",
+          }),
+        );
+      }
       const mappedStdout =
         typeof headSelector === "string"
           ? scenario.prListByHeadSelector?.[headSelector]
@@ -352,6 +369,41 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           timedOut: false,
         });
       }
+      if (
+        typeof repository === "string" &&
+        args.includes("nameWithOwner,isFork,defaultBranchRef,parent")
+      ) {
+        const metadata = scenario.repositoryMetadata?.[repository];
+        if (!metadata) {
+          return Effect.fail(
+            new GitHubCliError({
+              operation: "execute",
+              detail: `Unexpected repository metadata lookup: ${repository}`,
+            }),
+          );
+        }
+        return Effect.succeed({
+          stdout:
+            JSON.stringify({
+              nameWithOwner: repository,
+              isFork: metadata.isFork ?? false,
+              defaultBranchRef: metadata.defaultBranch
+                ? {
+                    name: metadata.defaultBranch,
+                  }
+                : null,
+              parent: metadata.parentNameWithOwner
+                ? {
+                    nameWithOwner: metadata.parentNameWithOwner,
+                  }
+                : null,
+            }) + "\n",
+          stderr: "",
+          code: 0,
+          signal: null,
+          timedOut: false,
+        });
+      }
       return Effect.succeed({
         stdout: `${scenario.defaultBranch ?? "main"}\n`,
         stderr: "",
@@ -398,6 +450,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           args: [
             "pr",
             "create",
+            ...(input.repository ? ["--repo", input.repository] : []),
             "--base",
             input.baseBranch,
             "--head",
@@ -434,6 +487,33 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
+      getRepositoryMetadata: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "repo",
+            "view",
+            input.repository,
+            "--json",
+            "nameWithOwner,isFork,defaultBranchRef,parent",
+          ],
+        }).pipe(
+          Effect.map(
+            (result) =>
+              JSON.parse(result.stdout) as {
+                nameWithOwner: string;
+                isFork: boolean;
+                defaultBranchRef?: { name?: string | undefined } | null;
+                parent?: { nameWithOwner?: string | undefined } | null;
+              },
+          ),
+          Effect.map((result) => ({
+            nameWithOwner: result.nameWithOwner,
+            isFork: result.isFork,
+            defaultBranch: result.defaultBranchRef?.name ?? null,
+            parentNameWithOwner: result.parent?.nameWithOwner ?? null,
+          })),
+        ),
       checkoutPullRequest: (input) =>
         execute({
           cwd: input.cwd,
@@ -558,8 +638,6 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListSequence: [
-              JSON.stringify([]),
-              JSON.stringify([]),
               JSON.stringify([
                 {
                   number: 488,
@@ -569,9 +647,26 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                   headRefName: "statemachine",
                   state: "OPEN",
                   updatedAt: "2026-03-10T07:00:00Z",
+                  headRepository: {
+                    nameWithOwner: "jasonLaster/codething-mvp",
+                  },
+                  headRepositoryOwner: {
+                    login: "jasonLaster",
+                  },
                 },
               ]),
             ],
+            repositoryMetadata: {
+              "jasonLaster/codething-mvp": {
+                defaultBranch: "main",
+                isFork: true,
+                parentNameWithOwner: "pingdotgg/codething-mvp",
+              },
+              "pingdotgg/codething-mvp": {
+                defaultBranch: "main",
+                isFork: false,
+              },
+            },
           },
         });
 
@@ -586,7 +681,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           state: "open",
         });
         expect(ghCalls).toContain(
-          "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
+          "pr list --repo pingdotgg/codething-mvp --head statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
         );
       }),
     12_000,
@@ -1059,7 +1154,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   );
 
   it.effect(
-    "returns existing cross-repo PR metadata using the fork owner selector",
+    "returns existing cross-repo PR metadata using the fork base repo and head branch",
     () =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -1077,7 +1172,6 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListSequence: [
-              JSON.stringify([]),
               JSON.stringify([
                 {
                   number: 142,
@@ -1085,9 +1179,26 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                   url: "https://github.com/pingdotgg/codething-mvp/pull/142",
                   baseRefName: "main",
                   headRefName: "statemachine",
+                  headRepository: {
+                    nameWithOwner: "octocat/codething-mvp",
+                  },
+                  headRepositoryOwner: {
+                    login: "octocat",
+                  },
                 },
               ]),
             ],
+            repositoryMetadata: {
+              "octocat/codething-mvp": {
+                defaultBranch: "main",
+                isFork: true,
+                parentNameWithOwner: "pingdotgg/codething-mvp",
+              },
+              "pingdotgg/codething-mvp": {
+                defaultBranch: "main",
+                isFork: false,
+              },
+            },
           },
         });
 
@@ -1100,7 +1211,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect(result.pr.number).toBe(142);
         expect(
           ghCalls.some((call) =>
-            call.includes("pr list --head octocat:statemachine --state open --limit 1"),
+            call.includes(
+              "pr list --repo pingdotgg/codething-mvp --head statemachine --state open --limit 20",
+            ),
           ),
         ).toBe(true);
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
@@ -1109,7 +1222,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   );
 
   it.effect(
-    "prefers owner-qualified selectors before bare branch names for cross-repo PRs",
+    "filters cross-repo PR lookups by head repository when branch names collide",
     () =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -1129,7 +1242,6 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListByHeadSelector: {
-              "t3code/pr-142/statemachine": JSON.stringify([]),
               statemachine: JSON.stringify([
                 {
                   number: 41,
@@ -1137,18 +1249,38 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                   url: "https://github.com/pingdotgg/codething-mvp/pull/41",
                   baseRefName: "main",
                   headRefName: "statemachine",
+                  headRepository: {
+                    nameWithOwner: "pingdotgg/codething-mvp",
+                  },
+                  headRepositoryOwner: {
+                    login: "pingdotgg",
+                  },
                 },
-              ]),
-              "octocat:statemachine": JSON.stringify([
                 {
                   number: 142,
                   title: "Existing fork PR",
                   url: "https://github.com/pingdotgg/codething-mvp/pull/142",
                   baseRefName: "main",
                   headRefName: "statemachine",
+                  headRepository: {
+                    nameWithOwner: "octocat/codething-mvp",
+                  },
+                  headRepositoryOwner: {
+                    login: "octocat",
+                  },
                 },
               ]),
-              "fork-seed:statemachine": JSON.stringify([]),
+            },
+            repositoryMetadata: {
+              "octocat/codething-mvp": {
+                defaultBranch: "main",
+                isFork: true,
+                parentNameWithOwner: "pingdotgg/codething-mvp",
+              },
+              "pingdotgg/codething-mvp": {
+                defaultBranch: "main",
+                isFork: false,
+              },
             },
           },
         });
@@ -1161,17 +1293,19 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect(result.pr.status).toBe("opened_existing");
         expect(result.pr.number).toBe(142);
 
-        const ownerSelectorCallIndex = ghCalls.findIndex((call) =>
-          call.includes("pr list --head octocat:statemachine --state open --limit 1"),
+        const headBranchCallIndex = ghCalls.findIndex((call) =>
+          call.includes(
+            "pr list --repo pingdotgg/codething-mvp --head statemachine --state open --limit 20",
+          ),
         );
-        expect(ownerSelectorCallIndex).toBeGreaterThanOrEqual(0);
+        expect(headBranchCallIndex).toBeGreaterThanOrEqual(0);
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
       }),
     12_000,
   );
 
   it.effect(
-    "stops probing head selectors after finding an existing PR",
+    "uses a single head-branch lookup for cross-repo PRs",
     () =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -1191,18 +1325,32 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListByHeadSelector: {
-              "octocat:statemachine": JSON.stringify([
+              statemachine: JSON.stringify([
                 {
                   number: 142,
                   title: "Existing fork PR",
                   url: "https://github.com/pingdotgg/codething-mvp/pull/142",
                   baseRefName: "main",
                   headRefName: "statemachine",
+                  headRepository: {
+                    nameWithOwner: "octocat/codething-mvp",
+                  },
+                  headRepositoryOwner: {
+                    login: "octocat",
+                  },
                 },
               ]),
-              "fork-seed:statemachine": JSON.stringify([]),
-              "t3code/pr-142/statemachine": JSON.stringify([]),
-              statemachine: JSON.stringify([]),
+            },
+            repositoryMetadata: {
+              "octocat/codething-mvp": {
+                defaultBranch: "main",
+                isFork: true,
+                parentNameWithOwner: "pingdotgg/codething-mvp",
+              },
+              "pingdotgg/codething-mvp": {
+                defaultBranch: "main",
+                isFork: false,
+              },
             },
           },
         });
@@ -1218,7 +1366,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const prListCalls = ghCalls.filter((call) => call.startsWith("pr list "));
         expect(prListCalls).toHaveLength(1);
         expect(prListCalls[0]).toContain(
-          "pr list --head octocat:statemachine --state open --limit 1",
+          "pr list --repo pingdotgg/codething-mvp --head statemachine --state open --limit 20",
         );
       }),
     12_000,
@@ -1291,11 +1439,6 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ghScenario: {
           prListSequence: [
             JSON.stringify([]),
-            JSON.stringify([]),
-            JSON.stringify([]),
-            JSON.stringify([]),
-            JSON.stringify([]),
-            JSON.stringify([]),
             JSON.stringify([
               {
                 number: 188,
@@ -1303,9 +1446,26 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                 url: "https://github.com/pingdotgg/codething-mvp/pull/188",
                 baseRefName: "main",
                 headRefName: "statemachine",
+                headRepository: {
+                  nameWithOwner: "octocat/codething-mvp",
+                },
+                headRepositoryOwner: {
+                  login: "octocat",
+                },
               },
             ]),
           ],
+          repositoryMetadata: {
+            "octocat/codething-mvp": {
+              defaultBranch: "main",
+              isFork: true,
+              parentNameWithOwner: "pingdotgg/codething-mvp",
+            },
+            "pingdotgg/codething-mvp": {
+              defaultBranch: "main",
+              isFork: false,
+            },
+          },
         },
       });
 
@@ -1317,13 +1477,102 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.pr.status).toBe("created");
       expect(result.pr.number).toBe(188);
       expect(
-        ghCalls.some((call) => call.includes("pr create --base main --head octocat:statemachine")),
+        ghCalls.some((call) =>
+          call.includes(
+            "pr create --repo pingdotgg/codething-mvp --base main --head octocat:statemachine",
+          ),
+        ),
       ).toBe(true);
       expect(
         ghCalls.some((call) =>
-          call.includes("pr create --base statemachine --head octocat:statemachine"),
+          call.includes(
+            "pr create --repo pingdotgg/codething-mvp --base statemachine --head octocat:statemachine",
+          ),
         ),
       ).toBe(false);
+    }),
+  );
+
+  it.effect("creates PRs from fork clones against the parent repo instead of the fork", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const upstreamDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", forkDir]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/fork-clone-pr"]);
+      fs.writeFileSync(path.join(repoDir, "fork-clone.txt"), "fork clone\n");
+      yield* runGit(repoDir, ["add", "fork-clone.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Fork clone PR branch"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/fork-clone-pr"]);
+      yield* runGit(repoDir, [
+        "config",
+        "remote.origin.url",
+        "git@github.com:octocat/codething-mvp.git",
+      ]);
+      yield* runGit(repoDir, [
+        "config",
+        "remote.upstream.url",
+        "git@github.com:pingdotgg/codething-mvp.git",
+      ]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            JSON.stringify([]),
+            JSON.stringify([
+              {
+                number: 289,
+                title: "Add fork clone flow",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/289",
+                baseRefName: "main",
+                headRefName: "feature/fork-clone-pr",
+                headRepository: {
+                  nameWithOwner: "octocat/codething-mvp",
+                },
+                headRepositoryOwner: {
+                  login: "octocat",
+                },
+              },
+            ]),
+          ],
+          repositoryMetadata: {
+            "octocat/codething-mvp": {
+              defaultBranch: "main",
+              isFork: true,
+              parentNameWithOwner: "pingdotgg/codething-mvp",
+            },
+            "pingdotgg/codething-mvp": {
+              defaultBranch: "main",
+              isFork: false,
+            },
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.push.status).toBe("skipped_up_to_date");
+      expect(result.pr.status).toBe("created");
+      expect(result.pr.number).toBe(289);
+      expect(
+        ghCalls.some((call) =>
+          call.includes(
+            "pr list --repo pingdotgg/codething-mvp --head feature/fork-clone-pr --state open --limit 20",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        ghCalls.some((call) =>
+          call.includes(
+            "pr create --repo pingdotgg/codething-mvp --base main --head octocat:feature/fork-clone-pr",
+          ),
+        ),
+      ).toBe(true);
     }),
   );
 
