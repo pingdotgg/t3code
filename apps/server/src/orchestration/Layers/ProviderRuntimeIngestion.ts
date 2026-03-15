@@ -919,6 +919,15 @@ const make = Effect.gen(function* () {
                 : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
+          if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
+            yield* markSourceProposedPlanImplemented(
+              acceptedTurnStartedSourcePlan.sourceThreadId,
+              acceptedTurnStartedSourcePlan.sourcePlanId,
+              thread.id,
+              now,
+            );
+          }
+
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: providerCommandId(event, "thread-session-set"),
@@ -934,15 +943,6 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
-
-          if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
-            yield* markSourceProposedPlanImplemented(
-              acceptedTurnStartedSourcePlan.sourceThreadId,
-              acceptedTurnStartedSourcePlan.sourcePlanId,
-              thread.id,
-              now,
-            );
-          }
         }
       }
 
