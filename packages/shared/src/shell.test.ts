@@ -61,20 +61,25 @@ describe("readPathFromLoginShell", () => {
 });
 
 describe("readPathForDesktopRuntime", () => {
-  it("hydrates PATH using the Linux fallback shell when SHELL is missing", () => {
-    const execFile = vi.fn<
-      (
-        file: string,
-        args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
-      ) => string
-    >(() => "__T3CODE_PATH_START__\n/a:/b\n__T3CODE_PATH_END__\n");
+  it("uses the configured shell or Linux fallback shell", () => {
+    for (const [shell, expectedShell] of [
+      [undefined, "/bin/bash"],
+      ["/usr/bin/fish", "/usr/bin/fish"],
+    ] as const) {
+      const execFile = vi.fn<
+        (
+          file: string,
+          args: ReadonlyArray<string>,
+          options: { encoding: "utf8"; timeout: number },
+        ) => string
+      >(() => "__T3CODE_PATH_START__\n/a:/b\n__T3CODE_PATH_END__\n");
 
-    expect(readPathForDesktopRuntime("linux", undefined, execFile)).toBe("/a:/b");
-    expect(execFile).toHaveBeenCalledWith("/bin/bash", expect.any(Array), {
-      encoding: "utf8",
-      timeout: 5000,
-    });
+      expect(readPathForDesktopRuntime("linux", shell, execFile)).toBe("/a:/b");
+      expect(execFile).toHaveBeenCalledWith(expectedShell, expect.any(Array), {
+        encoding: "utf8",
+        timeout: 5000,
+      });
+    }
   });
 
   it("skips PATH hydration on unsupported platforms", () => {
@@ -82,21 +87,5 @@ describe("readPathForDesktopRuntime", () => {
 
     expect(readPathForDesktopRuntime("win32", undefined, execFile)).toBeUndefined();
     expect(execFile).not.toHaveBeenCalled();
-  });
-
-  it("prefers the configured shell when present", () => {
-    const execFile = vi.fn<
-      (
-        file: string,
-        args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
-      ) => string
-    >(() => "__T3CODE_PATH_START__\n/a:/b\n__T3CODE_PATH_END__\n");
-
-    expect(readPathForDesktopRuntime("linux", "/usr/bin/fish", execFile)).toBe("/a:/b");
-    expect(execFile).toHaveBeenCalledWith("/usr/bin/fish", expect.any(Array), {
-      encoding: "utf8",
-      timeout: 5000,
-    });
   });
 });
