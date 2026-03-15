@@ -13,7 +13,13 @@ import {
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
 import { create } from "zustand";
-import { type ChatMessage, type Project, type Thread } from "./types";
+import {
+  type ChatMessage,
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type Project,
+  type Thread,
+} from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -55,6 +61,22 @@ function readPersistedState(): AppState {
     const parsed = JSON.parse(raw) as {
       expandedProjectCwds?: string[];
       projectOrderCwds?: string[];
+      cachedProjects?: Array<{
+        id: string;
+        name: string;
+        cwd: string;
+        model: string;
+        expanded: boolean;
+        scripts: Project["scripts"];
+      }>;
+      cachedThreads?: Array<{
+        id: string;
+        projectId: string;
+        title: string;
+        createdAt: string;
+        branch: string | null;
+        worktreePath: string | null;
+      }>;
     };
     persistedExpandedProjectCwds.clear();
     persistedProjectOrderCwds.length = 0;
@@ -68,7 +90,37 @@ function readPersistedState(): AppState {
         persistedProjectOrderCwds.push(cwd);
       }
     }
-    return { ...initialState };
+
+    const projects: Project[] = (parsed.cachedProjects ?? []).map((p) => ({
+      id: p.id as Project["id"],
+      name: p.name,
+      cwd: p.cwd,
+      model: p.model,
+      expanded: p.expanded,
+      scripts: p.scripts ?? [],
+    }));
+
+    const threads: Thread[] = (parsed.cachedThreads ?? []).map((t) => ({
+      id: t.id as Thread["id"],
+      codexThreadId: null,
+      projectId: t.projectId as Thread["projectId"],
+      title: t.title,
+      model: DEFAULT_MODEL_BY_PROVIDER.codex,
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      interactionMode: DEFAULT_INTERACTION_MODE,
+      session: null,
+      messages: [],
+      proposedPlans: [],
+      error: null,
+      createdAt: t.createdAt,
+      latestTurn: null,
+      branch: t.branch,
+      worktreePath: t.worktreePath,
+      turnDiffSummaries: [],
+      activities: [],
+    }));
+
+    return { projects, threads, threadsHydrated: false };
   } catch {
     return initialState;
   }
@@ -86,6 +138,22 @@ function persistState(state: AppState): void {
           .filter((project) => project.expanded)
           .map((project) => project.cwd),
         projectOrderCwds: state.projects.map((project) => project.cwd),
+        cachedProjects: state.projects.map((project) => ({
+          id: project.id,
+          name: project.name,
+          cwd: project.cwd,
+          model: project.model,
+          expanded: project.expanded,
+          scripts: project.scripts,
+        })),
+        cachedThreads: state.threads.map((thread) => ({
+          id: thread.id,
+          projectId: thread.projectId,
+          title: thread.title,
+          createdAt: thread.createdAt,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+        })),
       }),
     );
     if (!legacyKeysCleanedUp) {
