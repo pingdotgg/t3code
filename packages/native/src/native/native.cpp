@@ -12,7 +12,7 @@ Napi::Value Ping(const Napi::CallbackInfo &info) {
 
 static Napi::Object Init(Napi::Env env, Napi::Object exports) {
   platforms::darwin::Init(env, exports);
-  platforms::linux::Init(env, exports);
+  platforms::gnu_linux::Init(env, exports);
   platforms::win32::Init(env, exports);
   exports.Set("ping", Napi::Function::New(env, Ping));
   return exports;

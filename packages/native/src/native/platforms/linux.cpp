@@ -4,7 +4,7 @@
 
 #ifdef T3TOOLS_OS_LINUX
 
-namespace t3tools::native::platforms::linux {
+namespace t3tools::native::platforms::gnu_linux {
   void Init(Napi::Env env, Napi::Object exports) {
     // TODO: Implement Linux platform-specific functionality here
   }
@@ -12,7 +12,7 @@ namespace t3tools::native::platforms::linux {
 
 #else
 
-namespace t3tools::native::platforms::linux {
+namespace t3tools::native::platforms::gnu_linux {
   void Init(Napi::Env env, Napi::Object exports) {
     // Not supported on this platform
   }

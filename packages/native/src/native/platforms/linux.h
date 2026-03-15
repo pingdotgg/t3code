@@ -5,7 +5,7 @@
 
 #include <napi.h>
 
-namespace t3tools::native::platforms::linux {
+namespace t3tools::native::platforms::gnu_linux {
   void Init(Napi::Env env, Napi::Object exports);
 }
 
