@@ -1344,13 +1344,16 @@ export default function Sidebar() {
                                 <span
                                   aria-hidden="true"
                                   title={projectStatus.label}
-                                  className={`-ml-0.5 inline-flex size-3.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
+                                  className={`-ml-0.5 relative inline-flex size-3.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
                                 >
-                                  <span
-                                    className={`size-2 rounded-full ${projectStatus.dotClass} ${
-                                      projectStatus.pulse ? "animate-pulse" : ""
-                                    }`}
-                                  />
+                                  <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover/project-header:opacity-0">
+                                    <span
+                                      className={`size-[9px] rounded-full ${projectStatus.dotClass} ${
+                                        projectStatus.pulse ? "animate-pulse" : ""
+                                      }`}
+                                    />
+                                  </span>
+                                  <ChevronRightIcon className="absolute inset-0 m-auto size-3.5 text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
                                 </span>
                               ) : (
                                 <ChevronRightIcon
