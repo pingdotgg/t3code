@@ -521,7 +521,6 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
-    asarUnpack: ["**/*.node"],
   };
   const publishConfig = resolveGitHubPublishConfig();
   if (publishConfig) {
