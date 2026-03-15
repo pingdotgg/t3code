@@ -94,3 +94,20 @@ export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | nu
   if (!state || state.status !== "error") return false;
   return state.errorContext === "download" || state.errorContext === "install";
 }
+
+export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
+  if (!state || !state.enabled) return false;
+  return (
+    state.status !== "checking" && state.status !== "downloading" && state.status !== "disabled"
+  );
+}
+
+export function getCheckForUpdateButtonLabel(state: DesktopUpdateState | null): string {
+  if (!state) return "Check for Updates";
+  if (state.status === "checking") return "Checking…";
+  if (state.status === "up-to-date") return "Up to Date";
+  if (state.status === "available") return `Update Available: ${state.availableVersion ?? ""}`;
+  if (state.status === "downloading") return "Downloading…";
+  if (state.status === "downloaded") return "Update Ready to Install";
+  return "Check for Updates";
+}

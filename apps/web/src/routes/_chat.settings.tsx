@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
-import { type ProviderKind } from "@t3tools/contracts";
+import { useCallback, useEffect, useState } from "react";
+import { type ProviderKind, type DesktopUpdateState } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
@@ -20,6 +20,7 @@ import {
 } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { APP_VERSION } from "../branding";
+import { canCheckForUpdate, getCheckForUpdateButtonLabel } from "../components/desktopUpdate.logic";
 import { SidebarInset } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
@@ -90,6 +91,97 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
     default:
       return { customCodexModels: models };
   }
+}
+
+function DesktopUpdateCheckSection() {
+  const [updateState, setUpdateState] = useState<DesktopUpdateState | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const bridge = window.desktopBridge;
+    if (
+      !bridge ||
+      typeof bridge.getUpdateState !== "function" ||
+      typeof bridge.onUpdateState !== "function"
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    let receivedSubscriptionUpdate = false;
+    const unsubscribe = bridge.onUpdateState((nextState) => {
+      if (disposed) return;
+      receivedSubscriptionUpdate = true;
+      setUpdateState(nextState);
+    });
+
+    void bridge
+      .getUpdateState()
+      .then((nextState) => {
+        if (disposed || receivedSubscriptionUpdate) return;
+        setUpdateState(nextState);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const handleCheckForUpdate = useCallback(() => {
+    const bridge = window.desktopBridge;
+    if (!bridge || typeof bridge.checkForUpdate !== "function") return;
+    setCheckError(null);
+
+    void bridge
+      .checkForUpdate()
+      .then((result) => {
+        setUpdateState(result.state);
+        if (!result.checked) {
+          setCheckError(
+            result.state.message ?? "Automatic updates are not available in this build.",
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        setCheckError(error instanceof Error ? error.message : "Update check failed.");
+      });
+  }, []);
+
+  const buttonLabel = getCheckForUpdateButtonLabel(updateState);
+  const buttonDisabled = !canCheckForUpdate(updateState);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+        <div>
+          <p className="text-sm font-medium text-foreground">Updates</p>
+          <p className="text-xs text-muted-foreground">
+            {updateState?.checkedAt
+              ? `Last checked: ${new Date(updateState.checkedAt).toLocaleString()}`
+              : "Check for available updates."}
+          </p>
+        </div>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={buttonDisabled}
+          onClick={handleCheckForUpdate}
+        >
+          {buttonLabel}
+        </Button>
+      </div>
+
+      {checkError ? <p className="text-xs text-destructive">{checkError}</p> : null}
+
+      {updateState?.status === "error" && updateState.errorContext === "check" ? (
+        <p className="text-xs text-destructive">
+          {updateState.message ?? "Could not check for updates."}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function SettingsRouteView() {
@@ -674,14 +766,18 @@ function SettingsRouteView() {
                 </p>
               </div>
 
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Version</p>
-                  <p className="text-xs text-muted-foreground">
-                    Current version of the application.
-                  </p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Version</p>
+                    <p className="text-xs text-muted-foreground">
+                      Current version of the application.
+                    </p>
+                  </div>
+                  <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
                 </div>
-                <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
+
+                {isElectron ? <DesktopUpdateCheckSection /> : null}
               </div>
             </section>
           </div>
