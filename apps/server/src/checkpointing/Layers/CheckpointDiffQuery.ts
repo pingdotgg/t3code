@@ -1,5 +1,7 @@
 import {
+  CheckpointRef,
   OrchestrationGetTurnDiffResult,
+  ThreadId,
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
@@ -20,6 +22,34 @@ const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const checkpointStore = yield* CheckpointStore;
+
+  const resolveCheckpointRefAtOrBeforeTurnCount = (input: {
+    readonly threadId: ThreadId;
+    readonly requestedTurnCount: number;
+    readonly checkpoints: ReadonlyArray<{
+      readonly checkpointTurnCount: number;
+      readonly checkpointRef: CheckpointRef;
+    }>;
+  }): CheckpointRef => {
+    if (input.requestedTurnCount <= 0) {
+      return checkpointRefForThreadTurn(input.threadId, 0);
+    }
+
+    const matchingCheckpoint = input.checkpoints.reduce<{
+      readonly checkpointTurnCount: number;
+      readonly checkpointRef: CheckpointRef;
+    } | null>((resolved, checkpoint) => {
+      if (checkpoint.checkpointTurnCount > input.requestedTurnCount) {
+        return resolved;
+      }
+      if (resolved && resolved.checkpointTurnCount >= checkpoint.checkpointTurnCount) {
+        return resolved;
+      }
+      return checkpoint;
+    }, null);
+
+    return matchingCheckpoint?.checkpointRef ?? checkpointRefForThreadTurn(input.threadId, 0);
+  };
 
   const getTurnDiff: CheckpointDiffQueryShape["getTurnDiff"] = (input) =>
     Effect.gen(function* () {
@@ -73,30 +103,16 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const fromCheckpointRef =
-        input.fromTurnCount === 0
-          ? checkpointRefForThreadTurn(input.threadId, 0)
-          : thread.checkpoints.find(
-              (checkpoint) => checkpoint.checkpointTurnCount === input.fromTurnCount,
-            )?.checkpointRef;
-      if (!fromCheckpointRef) {
-        return yield* new CheckpointUnavailableError({
-          threadId: input.threadId,
-          turnCount: input.fromTurnCount,
-          detail: `Checkpoint ref is unavailable for turn ${input.fromTurnCount}.`,
-        });
-      }
-
-      const toCheckpointRef = thread.checkpoints.find(
-        (checkpoint) => checkpoint.checkpointTurnCount === input.toTurnCount,
-      )?.checkpointRef;
-      if (!toCheckpointRef) {
-        return yield* new CheckpointUnavailableError({
-          threadId: input.threadId,
-          turnCount: input.toTurnCount,
-          detail: `Checkpoint ref is unavailable for turn ${input.toTurnCount}.`,
-        });
-      }
+      const fromCheckpointRef = resolveCheckpointRefAtOrBeforeTurnCount({
+        threadId: input.threadId,
+        requestedTurnCount: input.fromTurnCount,
+        checkpoints: thread.checkpoints,
+      });
+      const toCheckpointRef = resolveCheckpointRefAtOrBeforeTurnCount({
+        threadId: input.threadId,
+        requestedTurnCount: input.toTurnCount,
+        checkpoints: thread.checkpoints,
+      });
 
       const [fromExists, toExists] = yield* Effect.all(
         [

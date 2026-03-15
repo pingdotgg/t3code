@@ -20,8 +20,11 @@ function makeSnapshot(input: {
   readonly threadId: ThreadId;
   readonly workspaceRoot: string;
   readonly worktreePath: string | null;
-  readonly checkpointTurnCount: number;
-  readonly checkpointRef: CheckpointRef;
+  readonly checkpoints: ReadonlyArray<{
+    readonly turnId: TurnId;
+    readonly checkpointTurnCount: number;
+    readonly checkpointRef: CheckpointRef;
+  }>;
 }): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -62,17 +65,15 @@ function makeSnapshot(input: {
         messages: [],
         activities: [],
         proposedPlans: [],
-        checkpoints: [
-          {
-            turnId: TurnId.makeUnsafe("turn-1"),
-            checkpointTurnCount: input.checkpointTurnCount,
-            checkpointRef: input.checkpointRef,
-            status: "ready",
-            files: [],
-            assistantMessageId: null,
-            completedAt: "2026-01-01T00:00:00.000Z",
-          },
-        ],
+        checkpoints: input.checkpoints.map((checkpoint) => ({
+          turnId: checkpoint.turnId,
+          checkpointTurnCount: checkpoint.checkpointTurnCount,
+          checkpointRef: checkpoint.checkpointRef,
+          status: "ready" as const,
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-01-01T00:00:00.000Z",
+        })),
         session: null,
       },
     ],
@@ -96,8 +97,13 @@ describe("CheckpointDiffQueryLive", () => {
       threadId,
       workspaceRoot: "/tmp/workspace",
       worktreePath: null,
-      checkpointTurnCount: 1,
-      checkpointRef: toCheckpointRef,
+      checkpoints: [
+        {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: toCheckpointRef,
+        },
+      ],
     });
 
     const checkpointStore: CheckpointStoreShape = {
@@ -193,5 +199,89 @@ describe("CheckpointDiffQueryLive", () => {
         }).pipe(Effect.provide(layer)),
       ),
     ).rejects.toThrow("Thread 'thread-missing' not found.");
+  });
+
+  it("falls back to the nearest earlier checkpoint when an exact turn checkpoint is missing", async () => {
+    const projectId = ProjectId.makeUnsafe("project-1");
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const checkpointRef2 = checkpointRefForThreadTurn(threadId, 2);
+    const checkpointRef4 = checkpointRefForThreadTurn(threadId, 4);
+    const hasCheckpointRefCalls: Array<CheckpointRef> = [];
+    const diffCheckpointsCalls: Array<{
+      readonly fromCheckpointRef: CheckpointRef;
+      readonly toCheckpointRef: CheckpointRef;
+      readonly cwd: string;
+    }> = [];
+
+    const snapshot = makeSnapshot({
+      projectId,
+      threadId,
+      workspaceRoot: "/tmp/workspace",
+      worktreePath: null,
+      checkpoints: [
+        {
+          turnId: TurnId.makeUnsafe("turn-2"),
+          checkpointTurnCount: 2,
+          checkpointRef: checkpointRef2,
+        },
+        {
+          turnId: TurnId.makeUnsafe("turn-4"),
+          checkpointTurnCount: 4,
+          checkpointRef: checkpointRef4,
+        },
+      ],
+    });
+
+    const checkpointStore: CheckpointStoreShape = {
+      isGitRepository: () => Effect.succeed(true),
+      captureCheckpoint: () => Effect.void,
+      hasCheckpointRef: ({ checkpointRef }) =>
+        Effect.sync(() => {
+          hasCheckpointRefCalls.push(checkpointRef);
+          return true;
+        }),
+      restoreCheckpoint: () => Effect.succeed(true),
+      diffCheckpoints: ({ fromCheckpointRef, toCheckpointRef, cwd }) =>
+        Effect.sync(() => {
+          diffCheckpointsCalls.push({ fromCheckpointRef, toCheckpointRef, cwd });
+          return "";
+        }),
+      deleteCheckpointRefs: () => Effect.void,
+    };
+
+    const layer = CheckpointDiffQueryLive.pipe(
+      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
+      Layer.provideMerge(
+        Layer.succeed(ProjectionSnapshotQuery, {
+          getSnapshot: () => Effect.succeed(snapshot),
+        }),
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery;
+        return yield* query.getTurnDiff({
+          threadId,
+          fromTurnCount: 2,
+          toTurnCount: 3,
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(hasCheckpointRefCalls).toEqual([checkpointRef2, checkpointRef2]);
+    expect(diffCheckpointsCalls).toEqual([
+      {
+        cwd: "/tmp/workspace",
+        fromCheckpointRef: checkpointRef2,
+        toCheckpointRef: checkpointRef2,
+      },
+    ]);
+    expect(result).toEqual({
+      threadId,
+      fromTurnCount: 2,
+      toTurnCount: 3,
+      diff: "",
+    });
   });
 });

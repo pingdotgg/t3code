@@ -110,7 +110,7 @@ async function waitForThread(
   engine: OrchestrationEngineShape,
   predicate: (thread: {
     latestTurn: { turnId: string } | null;
-    checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
+    checkpoints: ReadonlyArray<{ checkpointTurnCount: number; turnId: string }>;
     activities: ReadonlyArray<{ kind: string }>;
   }) => boolean,
   timeoutMs = 5000,
@@ -118,7 +118,7 @@ async function waitForThread(
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<{
     latestTurn: { turnId: string } | null;
-    checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
+    checkpoints: ReadonlyArray<{ checkpointTurnCount: number; turnId: string }>;
     activities: ReadonlyArray<{ kind: string }>;
   }> => {
     const readModel = await Effect.runPromise(engine.getReadModel());
@@ -403,7 +403,7 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
-  it("ignores auxiliary thread turn completion while primary turn is active", async () => {
+  it("captures completed turns even when session activeTurnId points at a different turn", async () => {
     const harness = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = new Date().toISOString();
 
@@ -453,11 +453,12 @@ describe("CheckpointReactor", () => {
     });
 
     await harness.drain();
-    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
-    const midThread = midReadModel.threads.find(
-      (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+    const midThread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.checkpoints.length === 1 && entry.checkpoints[0]?.turnId === asTurnId("turn-aux"),
     );
-    expect(midThread?.checkpoints).toHaveLength(0);
+    expect(midThread.checkpoints[0]?.checkpointTurnCount).toBe(1);
 
     harness.provider.emit({
       type: "turn.completed",
@@ -472,9 +473,13 @@ describe("CheckpointReactor", () => {
 
     const thread = await waitForThread(
       harness.engine,
-      (entry) => entry.latestTurn?.turnId === "turn-main" && entry.checkpoints.length === 1,
+      (entry) => entry.latestTurn?.turnId === "turn-main" && entry.checkpoints.length === 2,
     );
-    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+    expect(thread.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount)).toEqual([1, 2]);
+    expect(thread.checkpoints.map((checkpoint) => checkpoint.turnId)).toEqual([
+      asTurnId("turn-aux"),
+      asTurnId("turn-main"),
+    ]);
   });
 
   it("appends capture failure activity when turn diff summary cannot be derived", async () => {
@@ -786,7 +791,9 @@ describe("CheckpointReactor", () => {
       threadId: ThreadId.makeUnsafe("thread-1"),
       numTurns: 1,
     });
-    expect(fs.readFileSync(path.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
+    expect(
+      fs.readFileSync(path.join(harness.cwd, "README.md"), "utf8").replaceAll("\r\n", "\n"),
+    ).toBe("v2\n");
     expect(
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 2)),
     ).toBe(false);
