@@ -3328,14 +3328,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
               data-chat-composer-form="true"
             >
               <div
-                className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring/45 ${
-                  isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"
+                className={`group relative overflow-visible rounded-[20px] border bg-card transition-colors duration-200 ${
+                  isDragOverComposer
+                    ? interactionMode === "plan"
+                      ? "border-ring-plan/70 bg-accent/30"
+                      : "border-primary/70 bg-accent/30"
+                    : interactionMode === "plan"
+                      ? "border-border focus-within:border-ring-plan/45"
+                      : "border-border focus-within:border-ring/45"
                 }`}
                 onDragEnter={onComposerDragEnter}
                 onDragOver={onComposerDragOver}
                 onDragLeave={onComposerDragLeave}
                 onDrop={onComposerDrop}
               >
+                {interactionMode === "plan" && (
+                  <span className={`absolute -top-3 left-5 rounded-full border bg-card transition-colors duration-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${isDragOverComposer ? "border-ring-plan/70 text-ring-plan" : "border-border group-focus-within:border-ring-plan/45 text-ring-plan/50 group-focus-within:text-ring-plan"}`}>
+                    Plan
+                  </span>
+                )}
                 {activePendingApproval ? (
                   <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                     <ComposerPendingApprovalPanel
@@ -3563,29 +3574,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
                             size="sm"
                             type="button"
-                            onClick={toggleInteractionMode}
-                            title={
-                              interactionMode === "plan"
-                                ? "Plan mode — click to return to normal chat mode"
-                                : "Default mode — click to enter plan mode"
-                            }
-                          >
-                            <BotIcon />
-                            <span className="sr-only sm:not-sr-only">
-                              {interactionMode === "plan" ? "Plan" : "Chat"}
-                            </span>
-                          </Button>
-
-                          <Separator
-                            orientation="vertical"
-                            className="mx-0.5 hidden h-4 sm:block"
-                          />
-
-                          <Button
-                            variant="ghost"
-                            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                            size="sm"
-                            type="button"
                             onClick={() =>
                               void handleRuntimeModeChange(
                                 runtimeMode === "full-access" ? "approval-required" : "full-access",
@@ -3738,7 +3726,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         ) : (
                           <button
                             type="submit"
-                            className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
+                            className={`flex h-9 w-9 items-center justify-center rounded-full transition-all duration-150 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8 ${
+                              interactionMode === "plan"
+                                ? "bg-ring-plan/90 text-white hover:bg-ring-plan hover:scale-105"
+                                : "bg-primary/90 text-primary-foreground hover:bg-primary hover:scale-105"
+                            }`}
                             disabled={
                               isSendBusy ||
                               isConnecting ||
