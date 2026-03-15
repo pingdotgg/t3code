@@ -46,21 +46,16 @@ jobs:
             platform: mac
             target: dmg
             arch: arm64
-          - label: macOS x64
-            runner: macos-15-intel
-            platform: mac
-            target: dmg
-            arch: x64
           - label: Linux x64
             runner: ubuntu-24.04
             platform: linux
             target: AppImage
             arch: x64
-          - label: Windows x64
-            runner: windows-2022
-            platform: win
-            target: nsis
-            arch: x64
+          # - label: Windows x64
+          #   runner: windows-2022
+          #   platform: win
+          #   target: nsis
+          #   arch: x64
 
     steps:
       - name: Checkout
