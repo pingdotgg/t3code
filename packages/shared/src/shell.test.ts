@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { extractPathFromShellOutput, readPathFromLoginShell } from "./shell";
+import {
+  extractPathFromShellOutput,
+  readPathForDesktopRuntime,
+  readPathFromLoginShell,
+} from "./shell";
 
 describe("extractPathFromShellOutput", () => {
   it("extracts the path between capture markers", () => {
@@ -53,5 +57,35 @@ describe("readPathFromLoginShell", () => {
     expect(args?.[1]).toContain("__T3CODE_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_PATH_END__");
     expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+  });
+});
+
+describe("readPathForDesktopRuntime", () => {
+  it("uses the configured shell or Linux fallback shell", () => {
+    for (const [shell, expectedShell] of [
+      [undefined, "/bin/bash"],
+      ["/usr/bin/fish", "/usr/bin/fish"],
+    ] as const) {
+      const execFile = vi.fn<
+        (
+          file: string,
+          args: ReadonlyArray<string>,
+          options: { encoding: "utf8"; timeout: number },
+        ) => string
+      >(() => "__T3CODE_PATH_START__\n/a:/b\n__T3CODE_PATH_END__\n");
+
+      expect(readPathForDesktopRuntime("linux", shell, execFile)).toBe("/a:/b");
+      expect(execFile).toHaveBeenCalledWith(expectedShell, expect.any(Array), {
+        encoding: "utf8",
+        timeout: 5000,
+      });
+    }
+  });
+
+  it("skips PATH hydration on unsupported platforms", () => {
+    const execFile = vi.fn();
+
+    expect(readPathForDesktopRuntime("win32", undefined, execFile)).toBeUndefined();
+    expect(execFile).not.toHaveBeenCalled();
   });
 });

@@ -36,3 +36,17 @@ export function readPathFromLoginShell(
   });
   return extractPathFromShellOutput(output) ?? undefined;
 }
+
+export function readPathForDesktopRuntime(
+  platform: NodeJS.Platform,
+  shell: string | undefined,
+  execFile: ExecFileSyncLike = execFileSync,
+): string | undefined {
+  if (platform !== "darwin" && platform !== "linux") {
+    return undefined;
+  }
+
+  const resolvedShell = shell?.trim() || (platform === "linux" ? "/bin/bash" : "/bin/zsh");
+
+  return readPathFromLoginShell(resolvedShell, execFile);
+}
