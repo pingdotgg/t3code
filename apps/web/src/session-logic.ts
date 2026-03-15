@@ -56,6 +56,20 @@ export interface PendingUserInput {
   questions: ReadonlyArray<UserInputQuestion>;
 }
 
+export const THREAD_CONTEXT_COMPACTION_RECENT_WINDOW_MS = 2 * 60 * 1000;
+
+export interface ThreadContextUsageSnapshot {
+  usedTokens: number | null;
+  maxTokens: number | null;
+  percentUsed: number | null;
+  sourceUsage: unknown;
+  updatedAt: string | null;
+  compactedAt: string | null;
+  recentlyCompacted: boolean;
+}
+
+export type ThreadContextUsageSeverity = "neutral" | "warning" | "danger";
+
 export interface ActivePlanState {
   createdAt: string;
   turnId: TurnId | null;
@@ -298,6 +312,125 @@ export function derivePendingUserInputs(
   return [...openByRequestId.values()].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
+}
+
+function asNonNegativeNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return value;
+}
+
+function normalizePercentUsed(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return value <= 1 ? value * 100 : value;
+}
+
+function normalizeThreadContextUsageActivityPayload(payload: Record<string, unknown> | null): {
+  usedTokens: number | null;
+  maxTokens: number | null;
+  percentUsed: number | null;
+  sourceUsage: unknown;
+} {
+  const usedTokens = asNonNegativeNumber(payload?.usedTokens);
+  const maxTokens = asNonNegativeNumber(payload?.maxTokens);
+  const percentFromPayload = normalizePercentUsed(payload?.percentUsed);
+  const percentUsed =
+    usedTokens !== null && maxTokens !== null && maxTokens > 0
+      ? Math.min((usedTokens / maxTokens) * 100, 100)
+      : maxTokens === null
+        ? null
+        : percentFromPayload;
+
+  return {
+    usedTokens,
+    maxTokens,
+    percentUsed,
+    sourceUsage: payload?.sourceUsage ?? null,
+  };
+}
+
+export function deriveContextUsageSeverity(percentUsed: number | null): ThreadContextUsageSeverity {
+  if (percentUsed === null || !Number.isFinite(percentUsed)) {
+    return "neutral";
+  }
+  if (percentUsed > 85) {
+    return "danger";
+  }
+  if (percentUsed >= 70) {
+    return "warning";
+  }
+  return "neutral";
+}
+
+export function deriveThreadContextUsageSnapshot(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  nowIso: string,
+): ThreadContextUsageSnapshot {
+  let latestUsageAt: string | null = null;
+  let usedTokens: number | null = null;
+  let maxTokens: number | null = null;
+  let percentUsed: number | null = null;
+  let sourceUsage: unknown = null;
+  let compactedAt: string | null = null;
+
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (!activity) {
+      continue;
+    }
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+
+    if (latestUsageAt === null && activity.kind === "thread.context.usage.updated") {
+      const normalized = normalizeThreadContextUsageActivityPayload(payload);
+      latestUsageAt = activity.createdAt;
+      usedTokens = normalized.usedTokens;
+      maxTokens = normalized.maxTokens;
+      percentUsed = normalized.percentUsed;
+      sourceUsage = normalized.sourceUsage;
+    }
+
+    if (compactedAt === null && activity.kind === "thread.context.compacted") {
+      compactedAt = activity.createdAt;
+    }
+
+    if (latestUsageAt !== null && compactedAt !== null) {
+      break;
+    }
+  }
+
+  const nowMs = Date.parse(nowIso);
+  const usageAtMs = latestUsageAt ? Date.parse(latestUsageAt) : Number.NaN;
+  const compactedAtMs = compactedAt ? Date.parse(compactedAt) : Number.NaN;
+  const compactionInvalidatesUsage =
+    Number.isFinite(usageAtMs) && Number.isFinite(compactedAtMs) && compactedAtMs > usageAtMs;
+  if (compactionInvalidatesUsage) {
+    latestUsageAt = null;
+    usedTokens = null;
+    maxTokens = null;
+    percentUsed = null;
+    sourceUsage = null;
+  }
+  const recentlyCompacted =
+    Number.isFinite(nowMs) &&
+    Number.isFinite(compactedAtMs) &&
+    nowMs >= compactedAtMs &&
+    nowMs - compactedAtMs <= THREAD_CONTEXT_COMPACTION_RECENT_WINDOW_MS;
+
+  return {
+    usedTokens,
+    maxTokens,
+    percentUsed,
+    sourceUsage,
+    updatedAt: latestUsageAt,
+    compactedAt,
+    recentlyCompacted,
+  };
 }
 
 export function deriveActivePlanState(

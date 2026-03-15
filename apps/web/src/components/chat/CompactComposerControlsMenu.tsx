@@ -7,6 +7,7 @@ import {
 import { getDefaultReasoningEffort } from "@t3tools/shared/model";
 import { memo } from "react";
 import { EllipsisIcon, ListTodoIcon } from "lucide-react";
+import type { ThreadContextUsageSnapshot } from "../../session-logic";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -18,6 +19,7 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
+import { buildComposerContextUsageIndicatorViewModel } from "./ComposerContextUsageIndicator.logic";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
@@ -28,6 +30,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   selectedProvider: ProviderKind;
   selectedCodexFastModeEnabled: boolean;
   reasoningOptions: ReadonlyArray<CodexReasoningEffort>;
+  contextUsageSnapshot: ThreadContextUsageSnapshot | null;
   onEffortSelect: (effort: CodexReasoningEffort) => void;
   onCodexFastModeChange: (enabled: boolean) => void;
   onToggleInteractionMode: () => void;
@@ -35,6 +38,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   onToggleRuntimeMode: () => void;
 }) {
   const defaultReasoningEffort = getDefaultReasoningEffort("codex");
+  const contextViewModel = buildComposerContextUsageIndicatorViewModel(props.contextUsageSnapshot);
   const reasoningLabelByOption: Record<CodexReasoningEffort, string> = {
     low: "Low",
     medium: "Medium",
@@ -120,6 +124,21 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
             <MenuRadioItem value="full-access">Full access</MenuRadioItem>
           </MenuRadioGroup>
+        </MenuGroup>
+        <MenuDivider />
+        <MenuGroup>
+          <div className="px-2 pt-1.5 pb-0.5 text-muted-foreground text-xs">Context window:</div>
+          <div className="px-2 pb-0.5 font-medium text-foreground text-sm leading-tight">
+            {contextViewModel.summaryLine}
+          </div>
+          <div className="px-2 pb-1.5 text-foreground text-sm leading-tight">
+            {contextViewModel.tokensLine}
+          </div>
+          {contextViewModel.showCompactionNotice ? (
+            <div className="px-2 pb-1.5 text-amber-600 text-xs leading-tight">
+              Context was compacted recently.
+            </div>
+          ) : null}
         </MenuGroup>
         {props.activePlan ? (
           <>
