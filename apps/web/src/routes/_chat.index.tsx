@@ -22,7 +22,7 @@ function ChatIndexRouteView() {
 
       {isElectron && (
         <div
-          className={`drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5${showSidebarTrigger && trafficLightsVisible ? " pl-[90px]" : ""}`}
+          className={`drag-region flex h-[52px] shrink-0 items-center border-b border-border${showSidebarTrigger && trafficLightsVisible ? " pl-[90px] pr-5" : " px-5"}`}
         >
           {showSidebarTrigger ? <SidebarTrigger className="mr-2 shrink-0" /> : null}
           <span className="text-xs text-muted-foreground/50">No active thread</span>

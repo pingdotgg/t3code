@@ -3250,8 +3250,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         {isElectron && (
           <div
             className={cn(
-              "drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5",
-              showSidebarTrigger && trafficLightsVisible ? "pl-[90px]" : null,
+              "drag-region flex h-[52px] shrink-0 items-center border-b border-border",
+              showSidebarTrigger && trafficLightsVisible ? "pl-[90px] pr-5" : "px-5",
             )}
           >
             {showSidebarTrigger ? <SidebarTrigger className="mr-2 shrink-0" /> : null}
@@ -3272,9 +3272,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Top bar */}
       <header
         className={cn(
-          "border-b border-border px-3 sm:px-5",
+          "border-b border-border",
           isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
-          isElectron && showSidebarTrigger && trafficLightsVisible ? "pl-[90px]" : null,
+          isElectron && showSidebarTrigger && trafficLightsVisible
+            ? "pl-[90px] pr-3 sm:pr-5"
+            : "px-3 sm:px-5",
         )}
       >
         <ChatHeader
