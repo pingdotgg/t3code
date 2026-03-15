@@ -1258,6 +1258,14 @@ function createWindow(): BrowserWindow {
       menuTemplate.push({ type: "separator" });
     }
 
+    if (params.mediaType === "image") {
+      menuTemplate.push({
+        label: "Copy Image",
+        click: () => window.webContents.copyImageAt(params.x, params.y),
+      });
+      menuTemplate.push({ type: "separator" });
+    }
+
     menuTemplate.push(
       { role: "cut", enabled: params.editFlags.canCut },
       { role: "copy", enabled: params.editFlags.canCopy },
