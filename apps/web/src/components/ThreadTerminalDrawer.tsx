@@ -20,6 +20,12 @@ import {
 } from "../terminal-links";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
 import {
+  isTerminalCopyShortcut,
+  isTerminalPasteShortcut,
+  readTextFromTerminalClipboard,
+  writeTextToTerminalClipboard,
+} from "../terminalClipboard";
+import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
@@ -175,7 +181,56 @@ function TerminalViewport({
       }
     };
 
+    const copyTerminalSelection = async () => {
+      const activeTerminal = terminalRef.current;
+      if (!activeTerminal) return;
+      const selection = activeTerminal.getSelection();
+      if (selection.length === 0) {
+        return;
+      }
+      try {
+        await writeTextToTerminalClipboard(selection);
+      } catch (error) {
+        writeSystemMessage(
+          activeTerminal,
+          error instanceof Error ? error.message : "Failed to copy terminal selection",
+        );
+      }
+    };
+
+    const pasteTerminalClipboard = async () => {
+      const activeTerminal = terminalRef.current;
+      if (!activeTerminal) return;
+      try {
+        const text = await readTextFromTerminalClipboard();
+        if (text.length === 0) return;
+        await api.terminal.write({ threadId, terminalId, data: text });
+      } catch (error) {
+        writeSystemMessage(
+          activeTerminal,
+          error instanceof Error ? error.message : "Failed to paste terminal clipboard",
+        );
+      }
+    };
+
     terminal.attachCustomKeyEventHandler((event) => {
+      const activeTerminal = terminalRef.current;
+      const hasSelection = activeTerminal?.hasSelection() ?? false;
+
+      if (isTerminalCopyShortcut(event, hasSelection)) {
+        event.preventDefault();
+        event.stopPropagation();
+        void copyTerminalSelection();
+        return false;
+      }
+
+      if (isTerminalPasteShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        void pasteTerminalClipboard();
+        return false;
+      }
+
       const navigationData = terminalNavigationShortcutData(event);
       if (navigationData !== null) {
         event.preventDefault();
@@ -190,6 +245,24 @@ function TerminalViewport({
       void sendTerminalInput("\u000c", "Failed to clear terminal");
       return false;
     });
+
+    const onCopy = (event: ClipboardEvent) => {
+      const activeTerminal = terminalRef.current;
+      if (!activeTerminal) return;
+      const selection = activeTerminal.getSelection();
+      if (selection.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.clipboardData) {
+        event.clipboardData.setData("text/plain", selection);
+        return;
+      }
+      void copyTerminalSelection();
+    };
+
+    mount.addEventListener("copy", onCopy);
 
     const terminalLinksDisposable = terminal.registerLinkProvider({
       provideLinks: (bufferLineNumber, callback) => {
@@ -385,6 +458,7 @@ function TerminalViewport({
       inputDisposable.dispose();
       terminalLinksDisposable.dispose();
       themeObserver.disconnect();
+      mount.removeEventListener("copy", onCopy);
       terminalRef.current = null;
       fitAddonRef.current = null;
       terminal.dispose();

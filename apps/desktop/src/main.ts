@@ -7,6 +7,7 @@ import * as Path from "node:path";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -48,6 +49,8 @@ fixPath();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
+const WRITE_CLIPBOARD_CHANNEL = "desktop:write-clipboard";
+const READ_CLIPBOARD_CHANNEL = "desktop:read-clipboard";
 const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
@@ -1095,6 +1098,17 @@ function registerIpcHandlers(): void {
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
     return showDesktopConfirmDialog(message, owner);
   });
+
+  ipcMain.removeHandler(WRITE_CLIPBOARD_CHANNEL);
+  ipcMain.handle(WRITE_CLIPBOARD_CHANNEL, async (_event, text: unknown) => {
+    if (typeof text !== "string") {
+      throw new TypeError("Clipboard text must be a string.");
+    }
+    clipboard.writeText(text);
+  });
+
+  ipcMain.removeHandler(READ_CLIPBOARD_CHANNEL);
+  ipcMain.handle(READ_CLIPBOARD_CHANNEL, async () => clipboard.readText());
 
   ipcMain.removeHandler(SET_THEME_CHANNEL);
   ipcMain.handle(SET_THEME_CHANNEL, async (_event, rawTheme: unknown) => {
