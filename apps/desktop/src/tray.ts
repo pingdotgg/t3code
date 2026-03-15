@@ -161,7 +161,7 @@ function buildTrayContextMenu(): Menu {
       // TODO: This isn't accessible to screen readers!
       label: `${thread.needsAttention ? "·" : ""} ${truncateGraphemes(thread.name, MAX_THREAD_NAME_LENGTH)}`,
       click: () => {
-        const mainWindow = getMainWindow();
+        const mainWindow = getMainWindow(true);
         if (!mainWindow) {
           console.error("[tray] Failed to get (or create) main window");
           return;
