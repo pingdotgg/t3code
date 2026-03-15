@@ -3,7 +3,6 @@ import * as Crypto from "node:crypto";
 import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
-
 import {
   app,
   BrowserWindow,
@@ -13,6 +12,7 @@ import {
   nativeImage,
   nativeTheme,
   protocol,
+  screen,
   shell,
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
@@ -75,6 +75,48 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
+const BASE_DEFAULT_WIDTH = 1100;
+const BASE_DEFAULT_HEIGHT = 780;
+const BASE_MIN_WIDTH = 840;
+const BASE_MIN_HEIGHT = 620;
+const REFERENCE_SHORT_EDGE = 1080;
+const ZOOM_STEP = 0.25;
+const MIN_ZOOM_FACTOR = 0.5;
+const MAX_ZOOM_FACTOR = 3.0;
+const ZOOM_PREFS_FILE = Path.join(STATE_DIR, "zoom-preferences.json");
+
+// Stored as a delta from auto-computed zoom so it transfers correctly across monitors with different DPIs.
+function loadZoomDelta(): number | null {
+  try {
+    const data = JSON.parse(FS.readFileSync(ZOOM_PREFS_FILE, "utf-8"));
+    if (typeof data.zoomDelta === "number" && Number.isFinite(data.zoomDelta)) {
+      return data.zoomDelta;
+    }
+  } catch {
+    // missing or invalid file
+  }
+  return null;
+}
+
+let cachedZoomDelta = loadZoomDelta();
+
+function writeZoomDelta(zoomDelta: number): void {
+  if (!Number.isFinite(zoomDelta)) return;
+  cachedZoomDelta = zoomDelta;
+  try {
+    FS.mkdirSync(Path.dirname(ZOOM_PREFS_FILE), { recursive: true });
+    FS.writeFileSync(ZOOM_PREFS_FILE, JSON.stringify({ zoomDelta }), "utf-8");
+  } catch {
+    // best-effort
+  }
+}
+
+function clearZoomDelta(): void {
+  cachedZoomDelta = null;
+  try {
+    FS.unlinkSync(ZOOM_PREFS_FILE);
+  } catch {}
+}
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 
@@ -614,10 +656,32 @@ function configureApplicationMenu(): void {
         { role: "forceReload" },
         { role: "toggleDevTools" },
         { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
-        { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
-        { role: "zoomOut" },
+        {
+          label: "Reset Zoom",
+          accelerator: "CmdOrCtrl+0",
+          click: () => {
+            clearZoomDelta();
+            for (const win of BrowserWindow.getAllWindows()) {
+              if (!win.isDestroyed()) applyAutoZoom(win);
+            }
+          },
+        },
+        {
+          label: "Zoom In",
+          accelerator: "CmdOrCtrl+=",
+          click: () => adjustZoom(ZOOM_STEP),
+        },
+        {
+          label: "Zoom In",
+          accelerator: "CmdOrCtrl+Plus",
+          visible: false,
+          click: () => adjustZoom(ZOOM_STEP),
+        },
+        {
+          label: "Zoom Out",
+          accelerator: "CmdOrCtrl+-",
+          click: () => adjustZoom(-ZOOM_STEP),
+        },
         { type: "separator" },
         { role: "togglefullscreen" },
       ],
@@ -1220,12 +1284,91 @@ function getIconOption(): { icon: string } | Record<string, never> {
   return iconPath ? { icon: iconPath } : {};
 }
 
+function getFocusedBrowserWindow(): BrowserWindow | null {
+  return BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
+}
+
+function computeAutoZoomFactor(display: Electron.Display): number {
+  if (process.platform === "darwin") return 1.0;
+  const shortEdge = Math.min(display.size.width, display.size.height);
+  if (shortEdge <= REFERENCE_SHORT_EDGE) return 1.0;
+  const ratio = shortEdge / REFERENCE_SHORT_EDGE;
+  return Math.min(Math.round(ratio / ZOOM_STEP) * ZOOM_STEP, MAX_ZOOM_FACTOR);
+}
+
+function computeEffectiveZoom(display: Electron.Display): number {
+  const autoZoom = computeAutoZoomFactor(display);
+  const delta = cachedZoomDelta ?? 0;
+  return Math.min(Math.max(autoZoom + delta, MIN_ZOOM_FACTOR), MAX_ZOOM_FACTOR);
+}
+
+function adjustZoom(delta: number): void {
+  const win = getFocusedBrowserWindow();
+  if (!win || win.isDestroyed()) return;
+  const display = screen.getDisplayMatching(win.getBounds());
+  const autoZoom = computeAutoZoomFactor(display);
+  const currentDelta = cachedZoomDelta ?? 0;
+  const newDelta = currentDelta + delta;
+  const clampedDelta = Math.min(Math.max(newDelta, MIN_ZOOM_FACTOR - autoZoom), MAX_ZOOM_FACTOR - autoZoom);
+  if (clampedDelta === currentDelta) return;
+  writeZoomDelta(clampedDelta);
+  applyAutoZoom(win);
+}
+
+// Reentrancy guard — setBounds/setMinimumSize can synchronously trigger move/resize events.
+const applyingZoomWindows = new Set<number>();
+
+function applyAutoZoom(window: BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  if (applyingZoomWindows.has(window.id)) return;
+  applyingZoomWindows.add(window.id);
+  try {
+    const display = screen.getDisplayMatching(window.getBounds());
+    const zoomFactor = computeEffectiveZoom(display);
+    window.webContents.setZoomFactor(zoomFactor);
+
+    // WM owns the geometry when maximized/fullscreen.
+    if (window.isFullScreen() || window.isMaximized()) return;
+
+    const workArea = display.workArea;
+    window.setMinimumSize(
+      Math.min(Math.round(BASE_MIN_WIDTH * zoomFactor), workArea.width),
+      Math.min(Math.round(BASE_MIN_HEIGHT * zoomFactor), workArea.height),
+    );
+
+    const bounds = window.getBounds();
+    const clamped = { ...bounds };
+    if (clamped.width > workArea.width) clamped.width = workArea.width;
+    if (clamped.height > workArea.height) clamped.height = workArea.height;
+    if (clamped.x < workArea.x) clamped.x = workArea.x;
+    if (clamped.y < workArea.y) clamped.y = workArea.y;
+    if (clamped.x + clamped.width > workArea.x + workArea.width)
+      clamped.x = workArea.x + workArea.width - clamped.width;
+    if (clamped.y + clamped.height > workArea.y + workArea.height)
+      clamped.y = workArea.y + workArea.height - clamped.height;
+
+    if (
+      clamped.x !== bounds.x ||
+      clamped.y !== bounds.y ||
+      clamped.width !== bounds.width ||
+      clamped.height !== bounds.height
+    ) {
+      window.setBounds(clamped);
+    }
+  } finally {
+    applyingZoomWindows.delete(window.id);
+  }
+}
+
 function createWindow(): BrowserWindow {
+  const targetDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const zoomFactor = computeEffectiveZoom(targetDisplay);
+
   const window = new BrowserWindow({
-    width: 1100,
-    height: 780,
-    minWidth: 840,
-    minHeight: 620,
+    width: Math.round(BASE_DEFAULT_WIDTH * zoomFactor),
+    height: Math.round(BASE_DEFAULT_HEIGHT * zoomFactor),
+    minWidth: Math.round(BASE_MIN_WIDTH * zoomFactor),
+    minHeight: Math.round(BASE_MIN_HEIGHT * zoomFactor),
     show: false,
     autoHideMenuBar: true,
     ...getIconOption(),
@@ -1284,7 +1427,31 @@ function createWindow(): BrowserWindow {
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
   });
+
+  let lastDisplayId = screen.getDisplayMatching(window.getBounds()).id;
+
+  const onDisplayChange = () => {
+    if (window.isDestroyed()) return;
+    const currentDisplay = screen.getDisplayMatching(window.getBounds());
+    if (currentDisplay.id !== lastDisplayId) {
+      lastDisplayId = currentDisplay.id;
+      applyAutoZoom(window);
+    }
+  };
+
+  const onExitFullState = () => {
+    if (window.isDestroyed()) return;
+    applyAutoZoom(window);
+    lastDisplayId = screen.getDisplayMatching(window.getBounds()).id;
+  };
+
+  window.on("move", onDisplayChange);
+  window.on("resize", onDisplayChange);
+  window.on("unmaximize", onExitFullState);
+  window.on("leave-full-screen", onExitFullState);
+
   window.once("ready-to-show", () => {
+    applyAutoZoom(window);
     window.show();
   });
 
@@ -1348,6 +1515,21 @@ app
     configureApplicationMenu();
     registerDesktopProtocol();
     configureAutoUpdater();
+
+    let displayMetricsTimer: ReturnType<typeof setTimeout> | null = null;
+    screen.on("display-metrics-changed", () => {
+      if (displayMetricsTimer) clearTimeout(displayMetricsTimer);
+      displayMetricsTimer = setTimeout(() => {
+        // On Windows/Linux, clear user override so zoom recomputes for the new display config.
+        // On macOS, preserve the user's delta since the OS handles DPI scaling natively.
+        if (process.platform !== "darwin") {
+          clearZoomDelta();
+        }
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) applyAutoZoom(win);
+        }
+      }, 300);
+    });
     void bootstrap().catch((error) => {
       handleFatalStartupError("bootstrap", error);
     });
