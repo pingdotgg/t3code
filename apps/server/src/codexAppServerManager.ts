@@ -541,10 +541,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       };
 
       const codexOptions = readCodexProviderOptions(input);
-      const codexBinaryPath = codexOptions.binaryPath ?? "codex";
       const codexHomePath = codexOptions.homePath;
-      this.assertSupportedCodexCliVersion({
-        binaryPath: codexBinaryPath,
+      const codexBinaryPath = resolveCodexBinaryPath({
+        binaryPath: codexOptions.binaryPath ?? "codex",
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
@@ -1563,6 +1562,35 @@ function assertSupportedCodexCliVersion(input: {
   const parsedVersion = parseCodexCliVersion(`${stdout}\n${stderr}`);
   if (parsedVersion && !isCodexCliVersionSupported(parsedVersion)) {
     throw new Error(formatCodexCliUpgradeMessage(parsedVersion));
+  }
+}
+
+function resolveCodexBinaryPath(input: {
+  readonly binaryPath: string;
+  readonly cwd: string;
+  readonly homePath?: string;
+}): string {
+  try {
+    assertSupportedCodexCliVersion(input);
+    return input.binaryPath;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      input.binaryPath !== "codex" &&
+      message.includes("is not installed or not executable")
+    ) {
+      assertSupportedCodexCliVersion({
+        binaryPath: "codex",
+        cwd: input.cwd,
+        ...(input.homePath ? { homePath: input.homePath } : {}),
+      });
+      console.warn(
+        "codex cli binary path not executable; falling back to PATH lookup",
+        { binaryPath: input.binaryPath },
+      );
+      return "codex";
+    }
+    throw error;
   }
 }
 
