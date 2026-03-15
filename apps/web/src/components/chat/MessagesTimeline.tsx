@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { clamp } from "effect/Number";
-import { estimateTimelineMessageHeight } from "../timelineHeight";
+import { estimateTimelineRowHeight } from "../timelineHeight";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -161,6 +161,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         message: timelineEntry.message,
+        assistantDiffSummary:
+          timelineEntry.message.role === "assistant"
+            ? (turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id) ?? null)
+            : null,
         durationStart:
           durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt,
         showCompletionDivider:
@@ -178,7 +182,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
 
     return nextRows;
-  }, [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt]);
+  }, [
+    timelineEntries,
+    completionDividerBeforeEntryId,
+    isWorking,
+    activeTurnStartedAt,
+    turnDiffSummaryByAssistantMessageId,
+  ]);
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
     const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
@@ -231,10 +241,34 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     estimateSize: (index: number) => {
       const row = rows[index];
       if (!row) return 96;
-      if (row.kind === "work") return 112;
-      if (row.kind === "proposed-plan") return estimateTimelineProposedPlanHeight(row.proposedPlan);
-      if (row.kind === "working") return 40;
-      return estimateTimelineMessageHeight(row.message, { timelineWidthPx });
+      if (row.kind === "work") {
+        return estimateTimelineRowHeight(
+          {
+            kind: "work",
+            groupedEntries: row.groupedEntries,
+            expanded: expandedWorkGroups[row.id] ?? false,
+          },
+          { timelineWidthPx },
+        );
+      }
+      if (row.kind === "proposed-plan") {
+        return estimateTimelineRowHeight(
+          { kind: "proposed-plan", proposedPlan: row.proposedPlan },
+          { timelineWidthPx },
+        );
+      }
+      if (row.kind === "working") {
+        return estimateTimelineRowHeight({ kind: "working" }, { timelineWidthPx });
+      }
+      return estimateTimelineRowHeight(
+        {
+          kind: "message",
+          message: row.message,
+          showCompletionDivider: row.showCompletionDivider,
+          diffSummary: row.assistantDiffSummary ? { files: row.assistantDiffSummary.files } : null,
+        },
+        { timelineWidthPx },
+      );
     },
     measureElement: measureVirtualElement,
     useAnimationFrameWithResizeObserver: true,
@@ -430,7 +464,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   isStreaming={Boolean(row.message.streaming)}
                 />
                 {(() => {
-                  const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
+                  const turnSummary = row.assistantDiffSummary;
                   if (!turnSummary) return null;
                   const checkpointFiles = turnSummary.files;
                   if (checkpointFiles.length === 0) return null;
@@ -588,6 +622,7 @@ type TimelineRow =
       id: string;
       createdAt: string;
       message: TimelineMessage;
+      assistantDiffSummary: TurnDiffSummary | null;
       durationStart: string;
       showCompletionDivider: boolean;
     }
@@ -598,11 +633,6 @@ type TimelineRow =
       proposedPlan: TimelineProposedPlan;
     }
   | { kind: "working"; id: string; createdAt: string | null };
-
-function estimateTimelineProposedPlanHeight(proposedPlan: TimelineProposedPlan): number {
-  const estimatedLines = Math.max(1, Math.ceil(proposedPlan.planMarkdown.length / 72));
-  return 120 + Math.min(estimatedLines * 22, 880);
-}
 
 function formatWorkingTimer(startIso: string, endIso: string): string | null {
   const startedAtMs = Date.parse(startIso);
