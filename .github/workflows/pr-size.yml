@@ -24,32 +24,32 @@ jobs:
               {
                 name: "size:XS",
                 color: "0e8a16",
-                description: "0-9 changed lines (additions + deletions).",
+                description: "0-9 effective changed lines (test files excluded in mixed PRs).",
               },
               {
                 name: "size:S",
                 color: "5ebd3e",
-                description: "10-29 changed lines (additions + deletions).",
+                description: "10-29 effective changed lines (test files excluded in mixed PRs).",
               },
               {
                 name: "size:M",
                 color: "fbca04",
-                description: "30-99 changed lines (additions + deletions).",
+                description: "30-99 effective changed lines (test files excluded in mixed PRs).",
               },
               {
                 name: "size:L",
                 color: "fe7d37",
-                description: "100-499 changed lines (additions + deletions).",
+                description: "100-499 effective changed lines (test files excluded in mixed PRs).",
               },
               {
                 name: "size:XL",
                 color: "d93f0b",
-                description: "500-999 changed lines (additions + deletions).",
+                description: "500-999 effective changed lines (test files excluded in mixed PRs).",
               },
               {
                 name: "size:XXL",
                 color: "b60205",
-                description: "1,000+ changed lines (additions + deletions).",
+                description: "1,000+ effective changed lines (test files excluded in mixed PRs).",
               },
             ];
 
@@ -131,12 +131,18 @@ jobs:
         with:
           script: |
             const issueNumber = context.payload.pull_request.number;
-            const additions = context.payload.pull_request.additions ?? 0;
-            const deletions = context.payload.pull_request.deletions ?? 0;
-            const changedLines = additions + deletions;
             const managedLabels = JSON.parse(process.env.PR_SIZE_LABELS_JSON ?? "[]");
-
             const managedLabelNames = new Set(managedLabels.map((label) => label.name));
+            // Keep this aligned with the repo's test entrypoints and test-only support files.
+            const testFilePatterns = [
+              /(^|\/)__tests__(\/|$)/,
+              /(^|\/)tests?(\/|$)/,
+              /^apps\/server\/integration\//,
+              /\.(test|spec|browser|integration)\.[^.\/]+$/,
+            ];
+
+            const isTestFile = (filename) =>
+              testFilePatterns.some((pattern) => pattern.test(filename));
 
             const resolveSizeLabel = (totalChangedLines) => {
               if (totalChangedLines < 10) {
@@ -162,6 +168,42 @@ jobs:
               return "size:XXL";
             };
 
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: issueNumber,
+                per_page: 100,
+              },
+              (response) => response.data,
+            );
+
+            if (files.length >= 3000) {
+              core.warning(
+                "The GitHub pull request files API may truncate results at 3,000 files; PR size may be undercounted.",
+              );
+            }
+
+            let testChangedLines = 0;
+            let nonTestChangedLines = 0;
+
+            for (const file of files) {
+              const changedLinesForFile = (file.additions ?? 0) + (file.deletions ?? 0);
+
+              if (changedLinesForFile === 0) {
+                continue;
+              }
+
+              if (isTestFile(file.filename)) {
+                testChangedLines += changedLinesForFile;
+                continue;
+              }
+
+              nonTestChangedLines += changedLinesForFile;
+            }
+
+            const changedLines = nonTestChangedLines === 0 ? testChangedLines : nonTestChangedLines;
             const nextLabelName = resolveSizeLabel(changedLines);
 
             const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
@@ -199,4 +241,15 @@ jobs:
               });
             }
 
-            core.info(`PR #${issueNumber}: ${changedLines} changed lines -> ${nextLabelName}`);
+            const classification =
+              nonTestChangedLines === 0
+                ? testChangedLines > 0
+                  ? "test-only PR"
+                  : "no line changes"
+                : testChangedLines > 0
+                  ? "test lines excluded"
+                  : "all non-test changes";
+
+            core.info(
+              `PR #${issueNumber}: ${nonTestChangedLines} non-test lines, ${testChangedLines} test lines, ${changedLines} effective lines -> ${nextLabelName} (${classification})`,
+            );
