@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
 import {
+  canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
+  getCheckForUpdateButtonLabel,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   isDesktopUpdateButtonDisabled,
@@ -205,5 +207,104 @@ describe("desktop update UI helpers", () => {
     };
 
     expect(getArm64IntelBuildWarningDescription(state)).toContain("Download the available update");
+  });
+});
+
+describe("canCheckForUpdate", () => {
+  it("returns false for null state", () => {
+    expect(canCheckForUpdate(null)).toBe(false);
+  });
+
+  it("returns false when updates are disabled", () => {
+    expect(canCheckForUpdate({ ...baseState, enabled: false, status: "disabled" })).toBe(false);
+  });
+
+  it("returns false while checking", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "checking" })).toBe(false);
+  });
+
+  it("returns false while downloading", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "downloading", downloadPercent: 50 })).toBe(
+      false,
+    );
+  });
+
+  it("returns true when idle", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "idle" })).toBe(true);
+  });
+
+  it("returns true when up-to-date", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "up-to-date" })).toBe(true);
+  });
+
+  it("returns true when an update is available", () => {
+    expect(
+      canCheckForUpdate({ ...baseState, status: "available", availableVersion: "1.1.0" }),
+    ).toBe(true);
+  });
+
+  it("returns true on error so the user can retry", () => {
+    expect(
+      canCheckForUpdate({
+        ...baseState,
+        status: "error",
+        errorContext: "check",
+        message: "network",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("getCheckForUpdateButtonLabel", () => {
+  it("returns the default label for null state", () => {
+    expect(getCheckForUpdateButtonLabel(null)).toBe("Check for Updates");
+  });
+
+  it("returns 'Checking…' while checking", () => {
+    expect(getCheckForUpdateButtonLabel({ ...baseState, status: "checking" })).toBe("Checking…");
+  });
+
+  it("returns 'Up to Date' when up-to-date", () => {
+    expect(getCheckForUpdateButtonLabel({ ...baseState, status: "up-to-date" })).toBe("Up to Date");
+  });
+
+  it("returns the available version when an update is available", () => {
+    expect(
+      getCheckForUpdateButtonLabel({
+        ...baseState,
+        status: "available",
+        availableVersion: "1.2.0",
+      }),
+    ).toBe("Update Available: 1.2.0");
+  });
+
+  it("returns 'Downloading…' while downloading", () => {
+    expect(
+      getCheckForUpdateButtonLabel({ ...baseState, status: "downloading", downloadPercent: 30 }),
+    ).toBe("Downloading…");
+  });
+
+  it("returns 'Update Ready to Install' when downloaded", () => {
+    expect(
+      getCheckForUpdateButtonLabel({
+        ...baseState,
+        status: "downloaded",
+        downloadedVersion: "1.2.0",
+      }),
+    ).toBe("Update Ready to Install");
+  });
+
+  it("returns the default label for idle and error states", () => {
+    expect(getCheckForUpdateButtonLabel({ ...baseState, status: "idle" })).toBe(
+      "Check for Updates",
+    );
+    expect(
+      getCheckForUpdateButtonLabel({
+        ...baseState,
+        status: "error",
+        errorContext: "check",
+        message: "fail",
+      }),
+    ).toBe("Check for Updates");
   });
 });
