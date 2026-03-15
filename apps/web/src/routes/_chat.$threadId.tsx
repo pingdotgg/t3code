@@ -1,6 +1,6 @@
 import { ThreadId } from "@t3tools/contracts";
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, type ReactNode, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, type ReactNode, useCallback, useEffect, useRef } from "react";
 
 import ChatView from "../components/ChatView";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
@@ -176,7 +176,7 @@ function ChatThreadRouteView() {
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
   // TanStack Router keeps active route components mounted across param-only navigations
   // unless remountDeps are configured, so this stays warm across thread switches.
-  const [hasOpenedDiff, setHasOpenedDiff] = useState(diffOpen);
+  const hasOpenedDiffRef = useRef(diffOpen);
   const closeDiff = useCallback(() => {
     void navigate({
       to: "/$threadId",
@@ -195,11 +195,7 @@ function ChatThreadRouteView() {
     });
   }, [navigate, threadId]);
 
-  useEffect(() => {
-    if (diffOpen) {
-      setHasOpenedDiff(true);
-    }
-  }, [diffOpen]);
+  if (diffOpen) hasOpenedDiffRef.current = true;
 
   useEffect(() => {
     if (!threadsHydrated) {
@@ -216,7 +212,7 @@ function ChatThreadRouteView() {
     return null;
   }
 
-  const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
+  const shouldRenderDiffContent = diffOpen || hasOpenedDiffRef.current;
 
   if (!shouldUseDiffSheet) {
     return (
