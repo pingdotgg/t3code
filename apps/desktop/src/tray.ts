@@ -90,8 +90,10 @@ let tray: Tray | null = null;
 
 async function createTray(): Promise<void> {
   // macOS only (for now)
-  if (process.platform !== "darwin") tray = null;
-
+  if (process.platform !== "darwin") {
+    tray = null;
+    return;
+  }
   const image = await createTrayTemplateImage();
   const newTray = new Tray(image);
   newTray.setToolTip(app.getName());
