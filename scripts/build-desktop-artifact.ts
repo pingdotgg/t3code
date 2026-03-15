@@ -475,6 +475,11 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icon.png",
       category: "Development",
     };
+    // TODO: Remove this once electron-builder defaults to the static AppImage runtime.
+    // Ubuntu 22.04+ does not install libfuse2 by default, so we pin the static runtime here.
+    buildConfig.toolsets = {
+      appimage: "1.0.2",
+    };
   }
 
   if (platform === "win") {
