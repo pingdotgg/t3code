@@ -23,6 +23,20 @@ type ThreadStatusInput = Pick<
   "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
 >;
 
+type ProjectActivityThread = Pick<Thread, "projectId" | "session">;
+
+export function getProjectIdsWithRunningThreads(
+  threads: readonly ProjectActivityThread[],
+): ReadonlySet<Thread["projectId"]> {
+  const projectIds = new Set<Thread["projectId"]>();
+  for (const thread of threads) {
+    if (thread.session?.status === "running") {
+      projectIds.add(thread.projectId);
+    }
+  }
+  return projectIds;
+}
+
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);

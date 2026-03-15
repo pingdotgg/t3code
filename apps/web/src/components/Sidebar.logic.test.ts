@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getProjectIdsWithRunningThreads,
   hasUnseenCompletion,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -173,6 +174,62 @@ describe("resolveThreadStatusPill", () => {
         hasPendingUserInput: false,
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
+  });
+});
+
+describe("getProjectIdsWithRunningThreads", () => {
+  it("collects the project ids that have a running thread", () => {
+    expect(
+      getProjectIdsWithRunningThreads([
+        {
+          projectId: "project-1" as never,
+          session: {
+            provider: "codex" as const,
+            status: "running" as const,
+            createdAt: "2026-03-09T10:00:00.000Z",
+            updatedAt: "2026-03-09T10:00:00.000Z",
+            orchestrationStatus: "running" as const,
+          },
+        },
+        {
+          projectId: "project-2" as never,
+          session: {
+            provider: "codex" as const,
+            status: "ready" as const,
+            createdAt: "2026-03-09T10:00:00.000Z",
+            updatedAt: "2026-03-09T10:00:00.000Z",
+            orchestrationStatus: "ready" as const,
+          },
+        },
+      ]),
+    ).toEqual(new Set(["project-1"]));
+  });
+
+  it("ignores non-running sessions", () => {
+    expect(
+      getProjectIdsWithRunningThreads([
+        {
+          projectId: "project-2" as never,
+          session: {
+            provider: "codex" as const,
+            status: "running" as const,
+            createdAt: "2026-03-09T10:00:00.000Z",
+            updatedAt: "2026-03-09T10:00:00.000Z",
+            orchestrationStatus: "running" as const,
+          },
+        },
+        {
+          projectId: "project-3" as never,
+          session: {
+            provider: "codex" as const,
+            status: "ready" as const,
+            createdAt: "2026-03-09T10:00:00.000Z",
+            updatedAt: "2026-03-09T10:00:00.000Z",
+            orchestrationStatus: "ready" as const,
+          },
+        },
+      ]),
+    ).toEqual(new Set(["project-2"]));
   });
 });
 
