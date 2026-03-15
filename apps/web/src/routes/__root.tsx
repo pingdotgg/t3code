@@ -28,6 +28,7 @@ import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { isElectron } from "../env";
 import { useThreadSelectionStore } from "~/threadSelectionStore";
 import { useTrayState } from "~/hooks/useTrayState";
+import { useHandleNewThread } from "~/hooks/useHandleNewThread";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -337,17 +338,24 @@ function DesktopTrayBootstrap() {
   const navigate = useNavigate();
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
 
+  const { handleNewThread } = useHandleNewThread();
+
   const onTrayMessage = useCallback(
     (message: DesktopTrayMessage) => {
-      if (message.type === "thread-click") {
-        setSelectionAnchor(message.threadId);
-        void navigate({
-          to: "/$threadId",
-          params: { threadId: message.threadId },
-        });
+      switch (message.type) {
+        case "thread-click":
+          setSelectionAnchor(message.threadId);
+          void navigate({
+            to: "/$threadId",
+            params: { threadId: message.threadId },
+          });
+          break;
+        case "new-thread-in-project-click":
+          void handleNewThread(message.projectId);
+          break;
       }
     },
-    [navigate, setSelectionAnchor],
+    [navigate, setSelectionAnchor, handleNewThread],
   );
 
   useEffect(() => {
@@ -407,6 +415,19 @@ function DesktopTrayBootstrap() {
       }),
     }));
   }, [threads, settings.showTrayIcon, setTrayState]);
+
+  const projects = useStore((store) => store.projects);
+
+  useEffect(() => {
+    if (!settings.showTrayIcon) return;
+    setTrayState((previous) => ({
+      ...previous,
+      projects: projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+      })),
+    }));
+  }, [projects, settings.showTrayIcon, setTrayState]);
 
   return null;
 }

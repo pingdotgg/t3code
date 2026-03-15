@@ -46,7 +46,7 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
-import { ThreadId } from "./baseSchemas";
+import { ProjectId, ThreadId } from "./baseSchemas";
 
 export interface DesktopTrayState {
   threads: {
@@ -55,6 +55,10 @@ export interface DesktopTrayState {
     lastUpdated: number;
     needsAttention: boolean;
   }[];
+  projects: {
+    id: string;
+    name: string;
+  }[];
 }
 
 interface DesktopTrayThreadMessage {
@@ -62,7 +66,12 @@ interface DesktopTrayThreadMessage {
   threadId: ThreadId;
 }
 
-export type DesktopTrayMessage = DesktopTrayThreadMessage; // TODO: Add more message types as needed
+interface DesktopTrayProjectMessage {
+  type: "new-thread-in-project-click";
+  projectId: ProjectId;
+}
+
+export type DesktopTrayMessage = DesktopTrayThreadMessage | DesktopTrayProjectMessage;
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;

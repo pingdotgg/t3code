@@ -8,7 +8,7 @@ import {
   type MenuItemConstructorOptions,
   type BrowserWindow,
 } from "electron";
-import type { DesktopTrayState, DesktopTrayMessage, ThreadId } from "@t3tools/contracts";
+import type { DesktopTrayState, DesktopTrayMessage, ThreadId, ProjectId } from "@t3tools/contracts";
 import { getMainWindow } from "./main";
 
 // Stolen from the T3Wordmark component in the web app
@@ -102,6 +102,7 @@ async function createTray(): Promise<void> {
 
 let trayState: DesktopTrayState = {
   threads: [],
+  projects: [],
 };
 
 function areTrayThreadsEqual(
@@ -128,8 +129,28 @@ function areTrayThreadsEqual(
   return true;
 }
 
+function areTrayProjectsEqual(
+  previous: DesktopTrayState["projects"],
+  next: DesktopTrayState["projects"],
+): boolean {
+  if (previous.length !== next.length) {
+    return false;
+  }
+  for (let index = 0; index < previous.length; index += 1) {
+    const previousProject = previous[index];
+    const nextProject = next[index];
+    if (previousProject?.id !== nextProject?.id || previousProject?.name !== nextProject?.name) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function isTrayStateEqual(previous: DesktopTrayState, next: DesktopTrayState): boolean {
-  return areTrayThreadsEqual(previous.threads, next.threads);
+  return (
+    areTrayThreadsEqual(previous.threads, next.threads) &&
+    areTrayProjectsEqual(previous.projects, next.projects)
+  );
 }
 
 // TODO: Maybe move this to a utils file?
@@ -142,6 +163,16 @@ function truncateGraphemes(value: string, maxLength: number): string {
   }
 
   return `${graphemes.slice(0, maxLength).join("")}...`;
+}
+
+async function getMainWindowAndWaitForReady(): Promise<BrowserWindow | null> {
+  const mainWindow = getMainWindow(true);
+  if (!mainWindow) {
+    console.error("[tray] Failed to get (or create) main window");
+    return null;
+  }
+  await waitForWindowReady();
+  return mainWindow;
 }
 
 const MAX_THREAD_NAME_LENGTH = 40;
@@ -161,18 +192,36 @@ function buildTrayContextMenu(): Menu {
       // TODO: This isn't accessible to screen readers!
       label: `${thread.needsAttention ? "·" : ""} ${truncateGraphemes(thread.name, MAX_THREAD_NAME_LENGTH)}`,
       click: async () => {
-        const mainWindow = getMainWindow(true);
-        if (!mainWindow) {
-          console.error("[tray] Failed to get (or create) main window");
-          return;
-        }
-        await waitForWindowReady();
+        const mainWindow = await getMainWindowAndWaitForReady();
+        if (!mainWindow) return;
         sendTrayMessage({ type: "thread-click", threadId: thread.id as ThreadId }, mainWindow);
         mainWindow.focus();
       },
     };
   }
+  function buildNewThreadInProjectMenuItem(
+    project: DesktopTrayState["projects"][number],
+  ): MenuItemConstructorOptions {
+    return {
+      label: project.name,
+      click: async () => {
+        const mainWindow = await getMainWindowAndWaitForReady();
+        if (!mainWindow) return;
+        sendTrayMessage(
+          { type: "new-thread-in-project-click", projectId: project.id as ProjectId },
+          mainWindow,
+        );
+        mainWindow.focus();
+      },
+    };
+  }
   const menuItemConstructors: MenuItemConstructorOptions[] = [
+    {
+      type: "submenu",
+      label: "New thread in...",
+      submenu: trayState.projects.map(buildNewThreadInProjectMenuItem),
+    },
+    { type: "separator" },
     ...topLevelThreads.map(buildThreadMenuItem),
     {
       type: "submenu",

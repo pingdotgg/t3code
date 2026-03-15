@@ -4,6 +4,7 @@ import type { DesktopTrayState } from "@t3tools/contracts";
 
 const EMPTY_TRAY_STATE: DesktopTrayState = {
   threads: [],
+  projects: [],
 };
 type SetTrayStateAction = DesktopTrayState | ((previous: DesktopTrayState) => DesktopTrayState);
 type TrayState = [DesktopTrayState, (action: SetTrayStateAction) => void];
