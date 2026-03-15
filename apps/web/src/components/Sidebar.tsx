@@ -111,13 +111,14 @@ interface TerminalStatusIndicator {
 }
 
 interface PrStatusIndicator {
-  label: "PR open" | "PR closed" | "PR merged";
+  label: string;
   colorClass: string;
   tooltip: string;
   url: string;
 }
 
 type ThreadPr = GitStatusResult["pr"];
+type HostingPlatform = GitStatusResult["hostingPlatform"];
 
 function terminalStatusFromRunningIds(
   runningTerminalIds: string[],
@@ -132,30 +133,34 @@ function terminalStatusFromRunningIds(
   };
 }
 
-function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
+function prStatusIndicator(
+  pr: ThreadPr,
+  platform: HostingPlatform = "github",
+): PrStatusIndicator | null {
   if (!pr) return null;
 
+  const label = platform === "gitlab" ? "MR" : "PR";
   if (pr.state === "open") {
     return {
-      label: "PR open",
+      label: `${label} open`,
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      tooltip: `#${pr.number} PR open: ${pr.title}`,
+      tooltip: `#${pr.number} ${label} open: ${pr.title}`,
       url: pr.url,
     };
   }
   if (pr.state === "closed") {
     return {
-      label: "PR closed",
+      label: `${label} closed`,
       colorClass: "text-zinc-500 dark:text-zinc-400/80",
-      tooltip: `#${pr.number} PR closed: ${pr.title}`,
+      tooltip: `#${pr.number} ${label} closed: ${pr.title}`,
       url: pr.url,
     };
   }
   if (pr.state === "merged") {
     return {
-      label: "PR merged",
+      label: `${label} merged`,
       colorClass: "text-violet-600 dark:text-violet-300/90",
-      tooltip: `#${pr.number} PR merged: ${pr.title}`,
+      tooltip: `#${pr.number} ${label} merged: ${pr.title}`,
       url: pr.url,
     };
   }
@@ -338,7 +343,7 @@ export default function Sidebar() {
       refetchInterval: 60_000,
     })),
   });
-  const prByThreadId = useMemo(() => {
+  const { prByThreadId, platformByThreadId } = useMemo(() => {
     const statusByCwd = new Map<string, GitStatusResult>();
     for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
       const cwd = threadGitStatusCwds[index];
@@ -349,37 +354,45 @@ export default function Sidebar() {
       }
     }
 
-    const map = new Map<ThreadId, ThreadPr>();
+    const prMap = new Map<ThreadId, ThreadPr>();
+    const platformMap = new Map<ThreadId, HostingPlatform>();
     for (const target of threadGitTargets) {
       const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
       const branchMatches =
         target.branch !== null && status?.branch !== null && status?.branch === target.branch;
-      map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
+      prMap.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
+      if (status?.hostingPlatform) {
+        platformMap.set(target.threadId, status.hostingPlatform);
+      }
     }
-    return map;
+    return { prByThreadId: prMap, platformByThreadId: platformMap };
   }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
 
-  const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const openPrLink = useCallback(
+    (event: React.MouseEvent<HTMLElement>, prUrl: string, platform: HostingPlatform = "github") => {
+      event.preventDefault();
+      event.stopPropagation();
 
-    const api = readNativeApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Link opening is unavailable.",
-      });
-      return;
-    }
+      const api = readNativeApi();
+      if (!api) {
+        toastManager.add({
+          type: "error",
+          title: "Link opening is unavailable.",
+        });
+        return;
+      }
 
-    void api.shell.openExternal(prUrl).catch((error) => {
-      toastManager.add({
-        type: "error",
-        title: "Unable to open PR link",
-        description: error instanceof Error ? error.message : "An error occurred.",
+      const label = platform === "gitlab" ? "MR" : "PR";
+      void api.shell.openExternal(prUrl).catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: `Unable to open ${label} link`,
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
       });
-    });
-  }, []);
+    },
+    [],
+  );
 
   const focusMostRecentThreadForProject = useCallback(
     (projectId: ProjectId) => {
@@ -1388,8 +1401,11 @@ export default function Sidebar() {
                                   hasPendingUserInput:
                                     derivePendingUserInputs(thread.activities).length > 0,
                                 });
+                                const threadPlatform =
+                                  platformByThreadId.get(thread.id) ?? "github";
                                 const prStatus = prStatusIndicator(
                                   prByThreadId.get(thread.id) ?? null,
+                                  threadPlatform,
                                 );
                                 const terminalStatus = terminalStatusFromRunningIds(
                                   selectThreadTerminalState(terminalStateByThreadId, thread.id)
@@ -1460,7 +1476,7 @@ export default function Sidebar() {
                                                   aria-label={prStatus.tooltip}
                                                   className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
                                                   onClick={(event) => {
-                                                    openPrLink(event, prStatus.url);
+                                                    openPrLink(event, prStatus.url, threadPlatform);
                                                   }}
                                                 >
                                                   <GitPullRequestIcon className="size-3" />

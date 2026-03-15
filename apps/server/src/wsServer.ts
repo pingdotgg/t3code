@@ -34,6 +34,7 @@ import {
   Exit,
   FileSystem,
   Layer,
+  Option,
   Path,
   Ref,
   Result,
@@ -892,6 +893,28 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }
   });
 
+  /**
+   * Extract a user-facing error message from an Effect Cause.
+   *
+   * Prefers the `.message` of known tagged errors (which are written to be
+   * human-readable) over `Cause.pretty` (which includes fiber metadata and
+   * nested cause chains that are useful for debugging but not for end-users).
+   */
+  function formatCauseForClient(cause: Cause.Cause<unknown>): string {
+    const failure = Cause.findErrorOption(cause);
+    if (Option.isSome(failure)) {
+      const error = failure.value;
+      if (error instanceof Error) {
+        return error.message;
+      }
+      if (typeof error === "object" && error !== null && "message" in error) {
+        return String((error as { message: unknown }).message);
+      }
+      return String(error);
+    }
+    return Cause.pretty(cause);
+  }
+
   const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {
     const sendWsResponse = (response: WsResponseMessage) =>
       encodeWsResponse(response).pipe(
@@ -919,7 +942,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (Exit.isFailure(result)) {
       return yield* sendWsResponse({
         id: request.success.id,
-        error: { message: Cause.pretty(result.cause) },
+        error: { message: formatCauseForClient(result.cause) },
       });
     }
 

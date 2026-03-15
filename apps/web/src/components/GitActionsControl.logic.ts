@@ -1,10 +1,19 @@
 import type {
+  GitHostingPlatform,
   GitRunStackedActionResult,
   GitStackedAction,
   GitStatusResult,
 } from "@t3tools/contracts";
 
 export type GitActionIconName = "commit" | "push" | "pr";
+
+/**
+ * Returns the short label for a pull/merge request based on the hosting platform.
+ * GitHub uses "PR", GitLab uses "MR".
+ */
+export function prLabel(platform: GitHostingPlatform): string {
+  return platform === "gitlab" ? "MR" : "PR";
+}
 
 export type GitDialogAction = "commit" | "push" | "create_pr";
 
@@ -58,7 +67,9 @@ export function buildGitActionProgressStages(input: {
   forcePushOnly?: boolean;
   pushTarget?: string;
   featureBranch?: boolean;
+  platform?: GitHostingPlatform;
 }): string[] {
+  const label = prLabel(input.platform ?? "github");
   const branchStages = input.featureBranch ? ["Preparing feature branch..."] : [];
   const shouldIncludeCommitStages =
     !input.forcePushOnly && (input.action === "commit" || input.hasWorkingTreeChanges);
@@ -74,19 +85,23 @@ export function buildGitActionProgressStages(input: {
   if (input.action === "commit_push") {
     return [...branchStages, ...commitStages, pushStage];
   }
-  return [...branchStages, ...commitStages, pushStage, "Creating PR..."];
+  return [...branchStages, ...commitStages, pushStage, `Creating ${label}...`];
 }
 
 const withDescription = (title: string, description: string | undefined) =>
   description ? { title, description } : { title };
 
-export function summarizeGitResult(result: GitRunStackedActionResult): {
+export function summarizeGitResult(
+  result: GitRunStackedActionResult,
+  platform: GitHostingPlatform = "github",
+): {
   title: string;
   description?: string;
 } {
   if (result.pr.status === "created" || result.pr.status === "opened_existing") {
+    const label = prLabel(platform);
     const prNumber = result.pr.number ? ` #${result.pr.number}` : "";
-    const title = `${result.pr.status === "created" ? "Created PR" : "Opened PR"}${prNumber}`;
+    const title = `${result.pr.status === "created" ? `Created ${label}` : `Opened ${label}`}${prNumber}`;
     return withDescription(title, truncateText(result.pr.title));
   }
 
@@ -114,14 +129,18 @@ export function buildMenuItems(
   gitStatus: GitStatusResult | null,
   isBusy: boolean,
   hasOriginRemote = true,
+  platform: GitHostingPlatform = "github",
+  hostingCliAuthenticated: boolean | null = null,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
 
+  const label = prLabel(platform);
   const hasBranch = gitStatus.branch !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
   const canPushWithoutUpstream = hasOriginRemote && !gitStatus.hasUpstream;
+  const isCliUnauthenticated = hostingCliAuthenticated === false;
   const canCommit = !isBusy && hasChanges;
   const canPush =
     !isBusy &&
@@ -132,6 +151,7 @@ export function buildMenuItems(
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canCreatePr =
     !isBusy &&
+    !isCliUnauthenticated &&
     hasBranch &&
     !hasChanges &&
     !hasOpenPr &&
@@ -160,14 +180,14 @@ export function buildMenuItems(
     hasOpenPr
       ? {
           id: "pr",
-          label: "View PR",
+          label: `View ${label}`,
           disabled: !canOpenPr,
           icon: "pr",
           kind: "open_pr",
         }
       : {
           id: "pr",
-          label: "Create PR",
+          label: `Create ${label}`,
           disabled: !canCreatePr,
           icon: "pr",
           kind: "open_dialog",
@@ -181,7 +201,12 @@ export function resolveQuickAction(
   isBusy: boolean,
   isDefaultBranch = false,
   hasOriginRemote = true,
+  platform: GitHostingPlatform = "github",
+  hostingCliAuthenticated: boolean | null = null,
 ): GitQuickAction {
+  const label = prLabel(platform);
+  const isCliUnauthenticated = hostingCliAuthenticated === false;
+
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
   }
@@ -201,13 +226,15 @@ export function resolveQuickAction(
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
   const isDiverged = isAhead && isBehind;
+  // When the CLI is not authenticated, skip PR/MR steps and downgrade to push-only.
+  const skipPr = isCliUnauthenticated;
 
   if (!hasBranch) {
     return {
       label: "Commit",
       disabled: true,
       kind: "show_hint",
-      hint: "Create and checkout a branch before pushing or opening a PR.",
+      hint: `Create and checkout a branch before pushing or opening a ${label}.`,
     };
   }
 
@@ -215,11 +242,11 @@ export function resolveQuickAction(
     if (!gitStatus.hasUpstream && !hasOriginRemote) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || skipPr) {
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
-      label: "Commit, push & PR",
+      label: `Commit, push & ${label}`,
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
@@ -229,18 +256,18 @@ export function resolveQuickAction(
   if (!gitStatus.hasUpstream) {
     if (!hasOriginRemote) {
       if (hasOpenPr && !isAhead) {
-        return { label: "View PR", disabled: false, kind: "open_pr" };
+        return { label: `View ${label}`, disabled: false, kind: "open_pr" };
       }
       return {
         label: "Push",
         disabled: true,
         kind: "show_hint",
-        hint: 'Add an "origin" remote before pushing or creating a PR.',
+        hint: `Add an "origin" remote before pushing or creating a ${label}.`,
       };
     }
     if (!isAhead) {
       if (hasOpenPr) {
-        return { label: "View PR", disabled: false, kind: "open_pr" };
+        return { label: `View ${label}`, disabled: false, kind: "open_pr" };
       }
       return {
         label: "Push",
@@ -249,11 +276,11 @@ export function resolveQuickAction(
         hint: "No local commits to push.",
       };
     }
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || skipPr) {
       return { label: "Push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
-      label: "Push & create PR",
+      label: `Push & create ${label}`,
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
@@ -278,11 +305,11 @@ export function resolveQuickAction(
   }
 
   if (isAhead) {
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || skipPr) {
       return { label: "Push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
-      label: "Push & create PR",
+      label: `Push & create ${label}`,
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
@@ -290,7 +317,7 @@ export function resolveQuickAction(
   }
 
   if (hasOpenPr && gitStatus.hasUpstream) {
-    return { label: "View PR", disabled: false, kind: "open_pr" };
+    return { label: `View ${label}`, disabled: false, kind: "open_pr" };
   }
 
   return {
@@ -313,7 +340,9 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   action: DefaultBranchConfirmableAction;
   branchName: string;
   includesCommit: boolean;
+  platform?: GitHostingPlatform;
 }): DefaultBranchActionDialogCopy {
+  const label = prLabel(input.platform ?? "github");
   const branchLabel = input.branchName;
   const suffix = ` on "${branchLabel}". You can continue on this branch or create a feature branch and run the same action there.`;
 
@@ -334,15 +363,15 @@ export function resolveDefaultBranchActionDialogCopy(input: {
 
   if (input.includesCommit) {
     return {
-      title: "Commit, push & create PR from default branch?",
-      description: `This action will commit, push, and create a PR${suffix}`,
-      continueLabel: `Commit, push & create PR`,
+      title: `Commit, push & create ${label} from default branch?`,
+      description: `This action will commit, push, and create a ${label}${suffix}`,
+      continueLabel: `Commit, push & create ${label}`,
     };
   }
   return {
-    title: "Push & create PR from default branch?",
-    description: `This action will push local commits and create a PR${suffix}`,
-    continueLabel: "Push & create PR",
+    title: `Push & create ${label} from default branch?`,
+    description: `This action will push local commits and create a ${label}${suffix}`,
+    continueLabel: `Push & create ${label}`,
   };
 }
 

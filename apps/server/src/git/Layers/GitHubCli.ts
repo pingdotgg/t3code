@@ -86,6 +86,7 @@ const RawGitHubPullRequestSchema = Schema.Struct({
   headRefName: TrimmedNonEmptyString,
   state: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepository: Schema.optional(
     Schema.NullOr(
@@ -125,6 +126,7 @@ function normalizePullRequestSummary(
     baseRefName: raw.baseRefName,
     headRefName: raw.headRefName,
     state: normalizePullRequestState(raw),
+    updatedAt: raw.updatedAt ?? null,
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),
@@ -146,7 +148,11 @@ function normalizeRepositoryCloneUrls(
 function decodeGitHubJson<S extends Schema.Top>(
   raw: string,
   schema: S,
-  operation: "listOpenPullRequests" | "getPullRequest" | "getRepositoryCloneUrls",
+  operation:
+    | "listOpenPullRequests"
+    | "listPullRequests"
+    | "getPullRequest"
+    | "getRepositoryCloneUrls",
   invalidDetail: string,
 ): Effect.Effect<S["Type"], GitHubCliError, S["DecodingServices"]> {
   return Schema.decodeEffect(Schema.fromJsonString(schema))(raw).pipe(
@@ -198,6 +204,35 @@ const makeGitHubCli = Effect.sync(() => {
                 raw,
                 Schema.Array(RawGitHubPullRequestSchema),
                 "listOpenPullRequests",
+                "GitHub CLI returned invalid PR list JSON.",
+              ),
+        ),
+        Effect.map((pullRequests) => pullRequests.map(normalizePullRequestSummary)),
+      ),
+    listPullRequests: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "list",
+          "--head",
+          input.headSelector,
+          "--state",
+          input.state,
+          "--limit",
+          String(input.limit ?? 20),
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed([])
+            : decodeGitHubJson(
+                raw,
+                Schema.Array(RawGitHubPullRequestSchema),
+                "listPullRequests",
                 "GitHub CLI returned invalid PR list JSON.",
               ),
         ),

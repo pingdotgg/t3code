@@ -11,7 +11,7 @@ import {
 import { GitManagerError } from "../Errors.ts";
 import { GitManager, type GitManagerShape } from "../Services/GitManager.ts";
 import { GitCore } from "../Services/GitCore.ts";
-import { GitHubCli } from "../Services/GitHubCli.ts";
+import { GitHostingCli } from "../Services/GitHostingCli.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 
 interface OpenPrInfo {
@@ -115,57 +115,6 @@ function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null 
   const [ownerLogin] = trimmed.split("/");
   const normalizedOwnerLogin = ownerLogin?.trim() ?? "";
   return normalizedOwnerLogin.length > 0 ? normalizedOwnerLogin : null;
-}
-
-function parsePullRequestList(raw: unknown): PullRequestInfo[] {
-  if (!Array.isArray(raw)) return [];
-
-  const parsed: PullRequestInfo[] = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    const number = record.number;
-    const title = record.title;
-    const url = record.url;
-    const baseRefName = record.baseRefName;
-    const headRefName = record.headRefName;
-    const state = record.state;
-    const mergedAt = record.mergedAt;
-    const updatedAt = record.updatedAt;
-    if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) {
-      continue;
-    }
-    if (
-      typeof title !== "string" ||
-      typeof url !== "string" ||
-      typeof baseRefName !== "string" ||
-      typeof headRefName !== "string"
-    ) {
-      continue;
-    }
-
-    let normalizedState: "open" | "closed" | "merged";
-    if ((typeof mergedAt === "string" && mergedAt.trim().length > 0) || state === "MERGED") {
-      normalizedState = "merged";
-    } else if (state === "OPEN" || state === undefined || state === null) {
-      normalizedState = "open";
-    } else if (state === "CLOSED") {
-      normalizedState = "closed";
-    } else {
-      continue;
-    }
-
-    parsed.push({
-      number,
-      title,
-      url,
-      baseRefName,
-      headRefName,
-      state: normalizedState,
-      updatedAt: typeof updatedAt === "string" && updatedAt.trim().length > 0 ? updatedAt : null,
-    });
-  }
-  return parsed;
 }
 
 function gitManagerError(operation: string, detail: string, cause?: unknown): GitManagerError {
@@ -334,7 +283,7 @@ function toPullRequestHeadRemoteInfo(pr: {
 
 export const makeGitManager = Effect.gen(function* () {
   const gitCore = yield* GitCore;
-  const gitHubCli = yield* GitHubCli;
+  const gitHostingCli = yield* GitHostingCli;
   const textGeneration = yield* TextGeneration;
 
   const configurePullRequestHeadUpstream = (
@@ -348,7 +297,7 @@ export const makeGitManager = Effect.gen(function* () {
         return;
       }
 
-      const cloneUrls = yield* gitHubCli.getRepositoryCloneUrls({
+      const cloneUrls = yield* gitHostingCli.getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
       });
@@ -395,7 +344,7 @@ export const makeGitManager = Effect.gen(function* () {
         return;
       }
 
-      const cloneUrls = yield* gitHubCli.getRepositoryCloneUrls({
+      const cloneUrls = yield* gitHostingCli.getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
       });
@@ -529,7 +478,7 @@ export const makeGitManager = Effect.gen(function* () {
   const findOpenPr = (cwd: string, headSelectors: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       for (const headSelector of headSelectors) {
-        const pullRequests = yield* gitHubCli.listOpenPullRequests({
+        const pullRequests = yield* gitHostingCli.listOpenPullRequests({
           cwd,
           headSelector,
           limit: 1,
@@ -558,37 +507,25 @@ export const makeGitManager = Effect.gen(function* () {
       const parsedByNumber = new Map<number, PullRequestInfo>();
 
       for (const headSelector of headContext.headSelectors) {
-        const stdout = yield* gitHubCli
-          .execute({
-            cwd,
-            args: [
-              "pr",
-              "list",
-              "--head",
-              headSelector,
-              "--state",
-              "all",
-              "--limit",
-              "20",
-              "--json",
-              "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
-            ],
-          })
-          .pipe(Effect.map((result) => result.stdout));
-
-        const raw = stdout.trim();
-        if (raw.length === 0) {
-          continue;
-        }
-
-        const parsedJson = yield* Effect.try({
-          try: () => JSON.parse(raw) as unknown,
-          catch: (cause) =>
-            gitManagerError("findLatestPr", "GitHub CLI returned invalid PR list JSON.", cause),
+        const pullRequests = yield* gitHostingCli.listPullRequests({
+          cwd,
+          headSelector,
+          state: "all",
+          limit: 20,
         });
 
-        for (const pr of parsePullRequestList(parsedJson)) {
-          parsedByNumber.set(pr.number, pr);
+        for (const pr of pullRequests) {
+          if (pr.state) {
+            parsedByNumber.set(pr.number, {
+              number: pr.number,
+              title: pr.title,
+              url: pr.url,
+              baseRefName: pr.baseRefName,
+              headRefName: pr.headRefName,
+              state: pr.state,
+              updatedAt: pr.updatedAt ?? null,
+            });
+          }
         }
       }
 
@@ -622,7 +559,7 @@ export const makeGitManager = Effect.gen(function* () {
         }
       }
 
-      const defaultFromGh = yield* gitHubCli
+      const defaultFromGh = yield* gitHostingCli
         .getDefaultBranch({ cwd })
         .pipe(Effect.catch(() => Effect.succeed(null)));
       if (defaultFromGh) {
@@ -758,7 +695,7 @@ export const makeGitManager = Effect.gen(function* () {
             gitManagerError("runPrStep", "Failed to write pull request body temp file.", cause),
           ),
         );
-      yield* gitHubCli
+      yield* gitHostingCli
         .createPullRequest({
           cwd,
           baseBranch,
@@ -804,6 +741,8 @@ export const makeGitManager = Effect.gen(function* () {
 
     return {
       branch: details.branch,
+      hostingPlatform: gitHostingCli.getHostingPlatform(input.cwd),
+      hostingCliAuthenticated: gitHostingCli.checkAuthStatus(input.cwd),
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
       hasUpstream: details.hasUpstream,
@@ -815,7 +754,7 @@ export const makeGitManager = Effect.gen(function* () {
 
   const resolvePullRequest: GitManagerShape["resolvePullRequest"] = Effect.fnUntraced(
     function* (input) {
-      const pullRequest = yield* gitHubCli
+      const pullRequest = yield* gitHostingCli
         .getPullRequest({
           cwd: input.cwd,
           reference: normalizePullRequestReference(input.reference),
@@ -830,14 +769,14 @@ export const makeGitManager = Effect.gen(function* () {
     function* (input) {
       const normalizedReference = normalizePullRequestReference(input.reference);
       const rootWorktreePath = canonicalizeExistingPath(input.cwd);
-      const pullRequestSummary = yield* gitHubCli.getPullRequest({
+      const pullRequestSummary = yield* gitHostingCli.getPullRequest({
         cwd: input.cwd,
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
-        yield* gitHubCli.checkoutPullRequest({
+        yield* gitHostingCli.checkoutPullRequest({
           cwd: input.cwd,
           reference: normalizedReference,
           force: true,

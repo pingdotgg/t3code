@@ -3,6 +3,7 @@ import { assert, describe, it } from "vitest";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  prLabel,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -13,6 +14,8 @@ import {
 function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
   return {
     branch: "feature/test",
+    hostingPlatform: "github",
+    hostingCliAuthenticated: null,
     hasWorkingTreeChanges: false,
     workingTree: {
       files: [],
@@ -1013,5 +1016,260 @@ describe("resolveAutoFeatureBranchName", () => {
   it("falls back to feature/update when no preferred name is provided", () => {
     const branch = resolveAutoFeatureBranchName(["main"]);
     assert.equal(branch, "feature/update");
+  });
+});
+
+describe("prLabel", () => {
+  it("returns PR for github", () => {
+    assert.equal(prLabel("github"), "PR");
+  });
+
+  it("returns MR for gitlab", () => {
+    assert.equal(prLabel("gitlab"), "MR");
+  });
+});
+
+describe("GitLab platform: MR terminology", () => {
+  const gitlab = "gitlab" as const;
+
+  it("resolveQuickAction uses MR in labels for gitlab", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      gitlab,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push_pr",
+      label: "Commit, push & MR",
+    });
+  });
+
+  it("resolveQuickAction uses View MR for gitlab when open", () => {
+    const quick = resolveQuickAction(
+      status({
+        pr: {
+          number: 10,
+          title: "Open MR",
+          url: "https://gitlab.com/org/repo/-/merge_requests/10",
+          baseBranch: "main",
+          headBranch: "feature/test",
+          state: "open",
+        },
+      }),
+      false,
+      false,
+      true,
+      gitlab,
+    );
+    assert.deepInclude(quick, { kind: "open_pr", label: "View MR", disabled: false });
+  });
+
+  it("resolveQuickAction uses Push & create MR for gitlab", () => {
+    const quick = resolveQuickAction(
+      status({ aheadCount: 2, pr: null }),
+      false,
+      false,
+      true,
+      gitlab,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push_pr",
+      label: "Push & create MR",
+    });
+  });
+
+  it("buildMenuItems uses MR labels for gitlab", () => {
+    const items = buildMenuItems(
+      status({
+        pr: {
+          number: 11,
+          title: "Existing MR",
+          url: "https://gitlab.com/org/repo/-/merge_requests/11",
+          baseBranch: "main",
+          headBranch: "feature/test",
+          state: "open",
+        },
+      }),
+      false,
+      true,
+      gitlab,
+    );
+    const prItem = items.find((item) => item.id === "pr");
+    assert.equal(prItem?.label, "View MR");
+  });
+
+  it("buildMenuItems uses Create MR for gitlab when no open MR", () => {
+    const items = buildMenuItems(status({ aheadCount: 2, pr: null }), false, true, gitlab);
+    const prItem = items.find((item) => item.id === "pr");
+    assert.equal(prItem?.label, "Create MR");
+  });
+
+  it("summarizeGitResult uses MR for gitlab", () => {
+    const result = summarizeGitResult(
+      {
+        action: "commit_push_pr",
+        branch: { status: "skipped_not_requested" },
+        commit: { status: "created", commitSha: "abc123", subject: "test" },
+        push: { status: "pushed", branch: "foo" },
+        pr: { status: "created", number: 42, title: "feat: gitlab support" },
+      },
+      gitlab,
+    );
+    assert.equal(result.title, "Created MR #42");
+  });
+
+  it("buildGitActionProgressStages uses MR for gitlab", () => {
+    const stages = buildGitActionProgressStages({
+      action: "commit_push_pr",
+      hasCustomCommitMessage: false,
+      hasWorkingTreeChanges: true,
+      platform: gitlab,
+    });
+    assert.include(stages[stages.length - 1], "Creating MR...");
+  });
+
+  it("resolveDefaultBranchActionDialogCopy uses MR for gitlab", () => {
+    const copy = resolveDefaultBranchActionDialogCopy({
+      action: "commit_push_pr",
+      branchName: "main",
+      includesCommit: true,
+      platform: gitlab,
+    });
+    assert.equal(copy.title, "Commit, push & create MR from default branch?");
+    assert.include(copy.description, "create a MR");
+    assert.equal(copy.continueLabel, "Commit, push & create MR");
+  });
+});
+
+describe("Hosting CLI authentication", () => {
+  it("resolveQuickAction downgrades to commit & push when CLI is unauthenticated", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      "github",
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push",
+      label: "Commit & push",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction downgrades push & create PR to push when CLI is unauthenticated", () => {
+    const quick = resolveQuickAction(
+      status({ aheadCount: 1 }),
+      false,
+      false,
+      true,
+      "github",
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push",
+      label: "Push",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction does not downgrade when CLI is authenticated", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      "github",
+      true,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push_pr",
+      label: "Commit, push & PR",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction does not downgrade when auth status is null (unknown)", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      "github",
+      null,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push_pr",
+      label: "Commit, push & PR",
+      disabled: false,
+    });
+  });
+
+  it("buildMenuItems disables Create PR when CLI is unauthenticated", () => {
+    const items = buildMenuItems(
+      status({ aheadCount: 1, hasWorkingTreeChanges: false }),
+      false,
+      true,
+      "github",
+      false,
+    );
+    const prItem = items.find((i) => i.id === "pr");
+    assert.ok(prItem);
+    assert.equal(prItem!.label, "Create PR");
+    assert.isTrue(prItem!.disabled);
+  });
+
+  it("buildMenuItems enables Create PR when CLI is authenticated", () => {
+    const items = buildMenuItems(
+      status({ aheadCount: 1, hasWorkingTreeChanges: false }),
+      false,
+      true,
+      "github",
+      true,
+    );
+    const prItem = items.find((i) => i.id === "pr");
+    assert.ok(prItem);
+    assert.equal(prItem!.label, "Create PR");
+    assert.isFalse(prItem!.disabled);
+  });
+
+  it("buildMenuItems disables Create MR on gitlab when CLI is unauthenticated", () => {
+    const items = buildMenuItems(
+      status({ aheadCount: 1, hasWorkingTreeChanges: false }),
+      false,
+      true,
+      "gitlab",
+      false,
+    );
+    const prItem = items.find((i) => i.id === "pr");
+    assert.ok(prItem);
+    assert.equal(prItem!.label, "Create MR");
+    assert.isTrue(prItem!.disabled);
+  });
+
+  it("resolveQuickAction downgrades MR to push on gitlab when CLI is unauthenticated", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      "gitlab",
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push",
+      label: "Commit & push",
+      disabled: false,
+    });
   });
 });
