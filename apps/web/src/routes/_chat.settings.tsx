@@ -62,6 +62,19 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const THREAD_ENV_MODE_OPTIONS = [
+  {
+    value: "local",
+    label: "Local",
+    description: "Start new threads in the main project working tree.",
+  },
+  {
+    value: "worktree",
+    label: "New worktree",
+    description: "Start new threads in worktree mode so the first send creates a new worktree.",
+  },
+] as const;
+
 function getCustomModelsForProvider(
   settings: ReturnType<typeof useAppSettings>["settings"],
   provider: ProviderKind,
@@ -502,47 +515,98 @@ function SettingsRouteView() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Threads</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Choose the default workspace mode for newly created draft threads.
-                </p>
-              </div>
+            <section className="relative overflow-hidden rounded-2xl border border-border/70 bg-[linear-gradient(180deg,hsl(var(--card))_0%,hsl(var(--card)/0.96)_100%)] p-5 shadow-[0_20px_60px_-42px_rgba(0,0,0,0.8)]">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 left-1/2 w-3/4 -translate-x-1/2 bg-[radial-gradient(circle_at_center,hsl(var(--primary)/0.22),transparent_68%)] opacity-90"
+              />
 
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Default to New worktree</p>
-                  <p className="text-xs text-muted-foreground">
-                    New threads start in New worktree mode instead of Local.
+              <div className="relative">
+                <div className="mb-4">
+                  <h2 className="text-sm font-medium text-foreground">Threads</h2>
+                  <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
+                    Choose how new draft threads start before you send the first message.
                   </p>
                 </div>
-                <Switch
-                  checked={settings.defaultThreadEnvMode === "worktree"}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      defaultThreadEnvMode: checked ? "worktree" : "local",
-                    })
-                  }
-                  aria-label="Default new threads to New worktree mode"
-                />
-              </div>
 
-              {settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        defaultThreadEnvMode: defaults.defaultThreadEnvMode,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
+                <div className="space-y-4" role="radiogroup" aria-label="Default thread mode">
+                  {THREAD_ENV_MODE_OPTIONS.map((option) => {
+                    const selected = settings.defaultThreadEnvMode === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        className={`group relative flex w-full items-start justify-between gap-3 overflow-hidden rounded-lg border px-3 py-3 text-left transition-all duration-200 ${
+                          selected
+                            ? "border-primary/75 bg-[linear-gradient(135deg,hsl(var(--primary)/0.18),transparent_72%)] text-foreground shadow-[0_0_0_1px_hsl(var(--primary)/0.18),0_24px_60px_-38px_hsl(var(--primary)/0.9)]"
+                            : "border-border/60 bg-background/35 text-muted-foreground hover:border-border hover:bg-background/55"
+                        }`}
+                        onClick={() =>
+                          updateSettings({
+                            defaultThreadEnvMode: option.value,
+                          })
+                        }
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`pointer-events-none absolute inset-0 transition-opacity ${
+                            selected
+                              ? "bg-[radial-gradient(circle_at_30%_35%,hsl(var(--primary)/0.14),transparent_48%)] opacity-100"
+                              : "opacity-0 group-hover:opacity-100 group-hover:bg-[radial-gradient(circle_at_30%_35%,hsl(var(--foreground)/0.06),transparent_48%)]"
+                          }`}
+                        />
+
+                        <span className="relative flex min-w-0 flex-1 flex-col">
+                          <span
+                            className={`text-sm font-medium ${
+                              selected ? "text-foreground" : "text-foreground/80"
+                            }`}
+                          >
+                            {option.label}
+                          </span>
+                          <span
+                            className={`mt-1 max-w-2xl text-xs ${
+                              selected ? "text-foreground/80" : "text-muted-foreground"
+                            }`}
+                          >
+                            {option.description}
+                          </span>
+                        </span>
+
+                        <span className="relative shrink-0">
+                          {selected ? (
+                            <span className="rounded bg-primary/18 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                              Selected
+                            </span>
+                          ) : (
+                            <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/75">
+                              Select
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
-              ) : null}
+
+                {settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
+                  <div className="mt-4 flex justify-end">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        updateSettings({
+                          defaultThreadEnvMode: defaults.defaultThreadEnvMode,
+                        })
+                      }
+                    >
+                      Restore default
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
