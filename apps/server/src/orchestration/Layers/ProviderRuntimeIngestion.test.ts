@@ -255,6 +255,61 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("preserves file-change payload data on completed tool activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-file-change-completed"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-1"),
+      itemId: asItemId("item-file-change-1"),
+      payload: {
+        itemType: "file_change",
+        title: "File change",
+        detail: "Updated UI text",
+        data: {
+          item: {
+            changes: [
+              { path: "apps/web/src/components/ChatView.tsx" },
+              { filename: "apps/web/src/session-logic.ts" },
+            ],
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.id === "evt-file-change-completed",
+        ),
+    );
+
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-file-change-completed",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(activity?.kind).toBe("tool.completed");
+    expect(payload?.itemType).toBe("file_change");
+    expect(payload?.data).toEqual({
+      item: {
+        changes: [
+          { path: "apps/web/src/components/ChatView.tsx" },
+          { filename: "apps/web/src/session-logic.ts" },
+        ],
+      },
+    });
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = new Date().toISOString();
