@@ -6,7 +6,7 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
@@ -36,6 +36,11 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
+  const [hasLoadedInitialSnapshot, setHasLoadedInitialSnapshot] = useState(false);
+  const [initialSnapshotError, setInitialSnapshotError] = useState<unknown | null>(null);
+  const [isRetryingInitialSnapshot, setIsRetryingInitialSnapshot] = useState(false);
+  const retryInitialSnapshotRef = useRef<(() => Promise<boolean>) | null>(null);
+
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
@@ -51,11 +56,104 @@ function RootRouteView() {
   return (
     <ToastProvider>
       <AnchoredToastProvider>
-        <EventRouter />
-        <DesktopProjectBootstrap />
-        <Outlet />
+        <EventRouter
+          hasLoadedInitialSnapshot={hasLoadedInitialSnapshot}
+          setHasLoadedInitialSnapshot={setHasLoadedInitialSnapshot}
+          setInitialSnapshotError={setInitialSnapshotError}
+          retryInitialSnapshotRef={retryInitialSnapshotRef}
+        />
+        {initialSnapshotError ? (
+          <InitialSnapshotRecoveryView
+            error={initialSnapshotError}
+            isRetrying={isRetryingInitialSnapshot}
+            onRetry={() => {
+              const retryInitialSnapshot = retryInitialSnapshotRef.current;
+              if (!retryInitialSnapshot) {
+                return Promise.resolve();
+              }
+
+              setIsRetryingInitialSnapshot(true);
+              return retryInitialSnapshot()
+                .then(() => undefined)
+                .finally(() => {
+                  setIsRetryingInitialSnapshot(false);
+                });
+            }}
+          />
+        ) : (
+          <>
+            <DesktopProjectBootstrap />
+            <Outlet />
+          </>
+        )}
       </AnchoredToastProvider>
     </ToastProvider>
+  );
+}
+
+function InitialSnapshotRecoveryView(props: {
+  error: unknown;
+  isRetrying: boolean;
+  onRetry: () => Promise<void>;
+}) {
+  const message = errorMessage(props.error);
+  const details = errorDetails(props.error);
+
+  return (
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
+      <div className="pointer-events-none absolute inset-0 opacity-80">
+        <div className="absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-red-500)_16%,transparent),transparent)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]" />
+      </div>
+
+      <section
+        className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8"
+        data-testid="initial-snapshot-recovery"
+      >
+        <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+          {APP_DISPLAY_NAME}
+        </p>
+        <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
+          Couldn&apos;t load app state.
+        </h1>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          T3 Code could not load its initial state from persisted data. This can happen if
+          `T3CODE_STATE_DIR`, `CODEX_HOME`, or other saved app state has become invalid or
+          corrupted.
+        </p>
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{message}</p>
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+          Retry the snapshot load first. If the problem keeps happening, reload the app and retry
+          with a fresh `T3CODE_STATE_DIR`. If provider runtime state may be involved, also retry
+          with a fresh `CODEX_HOME`.
+        </p>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            disabled={props.isRetrying}
+            onClick={() => {
+              void props.onRetry();
+            }}
+          >
+            {props.isRetrying ? "Retrying snapshot..." : "Retry snapshot"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
+            Reload app
+          </Button>
+        </div>
+
+        <details className="group mt-5 overflow-hidden rounded-lg border border-border/70 bg-background/55">
+          <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-muted-foreground">
+            <span className="group-open:hidden">Show error details</span>
+            <span className="hidden group-open:inline">Hide error details</span>
+          </summary>
+          <pre className="max-h-56 overflow-auto border-t border-border/70 bg-background/80 px-3 py-2 text-xs text-foreground/85">
+            {details}
+          </pre>
+        </details>
+      </section>
+    </div>
   );
 }
 
@@ -130,7 +228,17 @@ function errorDetails(error: unknown): string {
   }
 }
 
-function EventRouter() {
+function EventRouter({
+  hasLoadedInitialSnapshot,
+  setHasLoadedInitialSnapshot,
+  setInitialSnapshotError,
+  retryInitialSnapshotRef,
+}: {
+  hasLoadedInitialSnapshot: boolean;
+  setHasLoadedInitialSnapshot: (loaded: boolean) => void;
+  setInitialSnapshotError: (error: unknown | null) => void;
+  retryInitialSnapshotRef: MutableRefObject<(() => Promise<boolean>) | null>;
+}) {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setProjectExpanded = useStore((store) => store.setProjectExpanded);
   const removeOrphanedTerminalStates = useTerminalStateStore(
@@ -141,8 +249,10 @@ function EventRouter() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const pathnameRef = useRef(pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
+  const hasLoadedInitialSnapshotRef = useRef(hasLoadedInitialSnapshot);
 
   pathnameRef.current = pathname;
+  hasLoadedInitialSnapshotRef.current = hasLoadedInitialSnapshot;
 
   useEffect(() => {
     const api = readNativeApi();
@@ -156,6 +266,9 @@ function EventRouter() {
     const flushSnapshotSync = async (): Promise<void> => {
       const snapshot = await api.orchestration.getSnapshot();
       if (disposed) return;
+      hasLoadedInitialSnapshotRef.current = true;
+      setHasLoadedInitialSnapshot(true);
+      setInitialSnapshotError(null);
       latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
       syncServerReadModel(snapshot);
       clearPromotedDraftThreads(new Set(snapshot.threads.map((t) => t.id)));
@@ -173,19 +286,32 @@ function EventRouter() {
       }
     };
 
-    const syncSnapshot = async () => {
+    const syncSnapshot = async (): Promise<boolean> => {
       if (syncing) {
         pending = true;
-        return;
+        return hasLoadedInitialSnapshotRef.current;
       }
       syncing = true;
       pending = false;
       try {
         await flushSnapshotSync();
-      } catch {
+        return true;
+      } catch (error) {
+        if (!hasLoadedInitialSnapshotRef.current) {
+          setInitialSnapshotError(error);
+          return false;
+        }
+
         // Keep prior state and wait for next domain event to trigger a resync.
+        return true;
+      } finally {
+        syncing = false;
       }
-      syncing = false;
+    };
+
+    retryInitialSnapshotRef.current = syncSnapshot;
+    const clearRetryInitialSnapshot = () => {
+      retryInitialSnapshotRef.current = null;
     };
 
     const domainEventFlushThrottler = new Throttler(
@@ -231,8 +357,11 @@ function EventRouter() {
     });
     const unsubWelcome = onServerWelcome((payload) => {
       void (async () => {
-        await syncSnapshot();
+        const synced = await syncSnapshot();
         if (disposed) {
+          return;
+        }
+        if (!synced) {
           return;
         }
 
@@ -309,11 +438,16 @@ function EventRouter() {
       unsubTerminalEvent();
       unsubWelcome();
       unsubServerConfigUpdated();
+      clearRetryInitialSnapshot();
     };
   }, [
+    hasLoadedInitialSnapshot,
     navigate,
     queryClient,
     removeOrphanedTerminalStates,
+    retryInitialSnapshotRef,
+    setHasLoadedInitialSnapshot,
+    setInitialSnapshotError,
     setProjectExpanded,
     syncServerReadModel,
   ]);
