@@ -4,12 +4,36 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { selectThreadTerminalState, useTerminalStateStore } from "./terminalStateStore";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
+const storageBacking = new Map<string, string>();
+
+const storageMock: Storage = {
+  get length() {
+    return storageBacking.size;
+  },
+  clear() {
+    storageBacking.clear();
+  },
+  getItem(key) {
+    return storageBacking.get(key) ?? null;
+  },
+  key(index) {
+    return [...storageBacking.keys()][index] ?? null;
+  },
+  removeItem(key) {
+    storageBacking.delete(key);
+  },
+  setItem(key, value) {
+    storageBacking.set(key, value);
+  },
+};
 
 describe("terminalStateStore actions", () => {
   beforeEach(() => {
-    if (typeof localStorage !== "undefined") {
-      localStorage.clear();
-    }
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: storageMock,
+    });
+    localStorage.clear();
     useTerminalStateStore.setState({ terminalStateByThreadId: {} });
   });
 
