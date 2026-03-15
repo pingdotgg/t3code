@@ -19,6 +19,7 @@ github:hwanseoc
 github:jamesx0416
 github:jasonLaster
 github:JoeEverest
+github:maria-rcks
 github:nmggithub
 github:Noojuno
 github:notkainoa
@@ -26,3 +27,5 @@ github:PatrickBauer
 github:realAhmedRoach
 github:shiroyasha9
 github:Yash-Singh1
+github:eggfriedrice24
+github:Ymit24

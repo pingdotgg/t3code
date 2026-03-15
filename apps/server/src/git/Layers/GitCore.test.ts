@@ -97,7 +97,7 @@ const makeIsolatedGitCore = (gitService: GitServiceShape) =>
     return {
       status: (input) => core.status(input),
       statusDetails: (cwd) => core.statusDetails(cwd),
-      prepareCommitContext: (cwd) => core.prepareCommitContext(cwd),
+      prepareCommitContext: (cwd, filePaths?) => core.prepareCommitContext(cwd, filePaths),
       commit: (cwd, subject, body) => core.commit(cwd, subject, body),
       pushCurrentBranch: (cwd, fallbackBranch) => core.pushCurrentBranch(cwd, fallbackBranch),
       pullCurrentBranch: (cwd) => core.pullCurrentBranch(cwd),
@@ -1409,6 +1409,44 @@ it.layer(TestLayer)("git integration", (it) => {
         }),
     );
 
+    it.effect(
+      "computes ahead count against a non-origin remote-prefixed gh-merge-base candidate",
+      () =>
+        Effect.gen(function* () {
+          const remote = yield* makeTmpDir();
+          const source = yield* makeTmpDir();
+          const remoteName = "fork-seed";
+          yield* git(remote, ["init", "--bare"]);
+
+          yield* initRepoWithCommit(source);
+          const initialBranch = (yield* listGitBranches({ cwd: source })).branches.find(
+            (branch) => branch.current,
+          )!.name;
+          yield* git(source, ["remote", "add", remoteName, remote]);
+          yield* git(source, ["push", "-u", remoteName, initialBranch]);
+          yield* git(source, ["checkout", "-b", "feature/non-origin-merge-base"]);
+          yield* git(source, [
+            "config",
+            "branch.feature/non-origin-merge-base.gh-merge-base",
+            `${remoteName}/${initialBranch}`,
+          ]);
+          yield* writeTextFile(
+            path.join(source, "feature.txt"),
+            `ahead of ${remoteName}/${initialBranch}\n`,
+          );
+          yield* git(source, ["add", "feature.txt"]);
+          yield* git(source, ["commit", "-m", "feature commit"]);
+          yield* git(source, ["branch", "-D", initialBranch]);
+
+          const core = yield* GitCore;
+          const details = yield* core.statusDetails(source);
+          expect(details.branch).toBe("feature/non-origin-merge-base");
+          expect(details.hasUpstream).toBe(false);
+          expect(details.aheadCount).toBe(1);
+          expect(details.behindCount).toBe(0);
+        }),
+    );
+
     it.effect("skips push when no upstream is configured and branch is not ahead of base", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
@@ -1450,6 +1488,31 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("pushes with upstream setup to the only configured non-origin remote", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const remote = yield* makeTmpDir();
+        yield* git(tmp, ["init", "--initial-branch=main"]);
+        yield* git(tmp, ["config", "user.email", "test@test.com"]);
+        yield* git(tmp, ["config", "user.name", "Test"]);
+        yield* writeTextFile(path.join(tmp, "README.md"), "hello\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* git(tmp, ["commit", "-m", "initial"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(tmp, ["remote", "add", "fork", remote]);
+        yield* git(tmp, ["checkout", "-b", "feature/fork-only"]);
+
+        const core = yield* GitCore;
+        const pushed = yield* core.pushCurrentBranch(tmp, null);
+        expect(pushed.status).toBe("pushed");
+        expect(pushed.setUpstream).toBe(true);
+        expect(pushed.upstreamBranch).toBe("fork/feature/fork-only");
+        expect(yield* git(tmp, ["rev-parse", "--abbrev-ref", "@{upstream}"])).toBe(
+          "fork/feature/fork-only",
+        );
+      }),
+    );
+
     it.effect(
       "pushes with upstream setup when comparable base exists but remote branch is missing",
       () =>
@@ -1483,6 +1546,90 @@ it.layer(TestLayer)("git integration", (it) => {
           expect(yield* git(tmp, ["ls-remote", "--heads", "origin", featureBranch])).toContain(
             featureBranch,
           );
+        }),
+    );
+
+    it.effect("prefers branch pushRemote over origin when setting upstream", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const origin = yield* makeTmpDir();
+        const fork = yield* makeTmpDir();
+        yield* git(origin, ["init", "--bare"]);
+        yield* git(fork, ["init", "--bare"]);
+
+        yield* initRepoWithCommit(tmp);
+        const initialBranch = (yield* listGitBranches({ cwd: tmp })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+        yield* git(tmp, ["remote", "add", "origin", origin]);
+        yield* git(tmp, ["remote", "add", "fork", fork]);
+        yield* git(tmp, ["push", "-u", "origin", initialBranch]);
+
+        const featureBranch = "feature/push-remote";
+        yield* git(tmp, ["checkout", "-b", featureBranch]);
+        yield* git(tmp, ["config", `branch.${featureBranch}.pushRemote`, "fork"]);
+        yield* writeTextFile(path.join(tmp, "feature.txt"), "push to fork\n");
+        yield* git(tmp, ["add", "feature.txt"]);
+        yield* git(tmp, ["commit", "-m", "feature commit"]);
+
+        const core = yield* GitCore;
+        const pushed = yield* core.pushCurrentBranch(tmp, null);
+        expect(pushed.status).toBe("pushed");
+        expect(pushed.setUpstream).toBe(true);
+        expect(pushed.upstreamBranch).toBe(`fork/${featureBranch}`);
+        expect(yield* git(tmp, ["rev-parse", "--abbrev-ref", "@{upstream}"])).toBe(
+          `fork/${featureBranch}`,
+        );
+        expect(yield* git(tmp, ["ls-remote", "--heads", "fork", featureBranch])).toContain(
+          featureBranch,
+        );
+      }),
+    );
+
+    it.effect(
+      "pushes renamed PR worktree branches to their tracked upstream branch even when push.default is current",
+      () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          const fork = yield* makeTmpDir();
+          yield* git(fork, ["init", "--bare"]);
+
+          const { initialBranch } = yield* initRepoWithCommit(tmp);
+          yield* git(tmp, ["remote", "add", "jasonLaster", fork]);
+          yield* git(tmp, ["checkout", "-b", "statemachine"]);
+          yield* writeTextFile(path.join(tmp, "fork.txt"), "fork branch\n");
+          yield* git(tmp, ["add", "fork.txt"]);
+          yield* git(tmp, ["commit", "-m", "fork branch"]);
+          yield* git(tmp, ["push", "-u", "jasonLaster", "statemachine"]);
+          yield* git(tmp, ["checkout", initialBranch]);
+          yield* git(tmp, ["branch", "-D", "statemachine"]);
+          yield* git(tmp, [
+            "checkout",
+            "-b",
+            "t3code/pr-488/statemachine",
+            "--track",
+            "jasonLaster/statemachine",
+          ]);
+          yield* git(tmp, ["config", "push.default", "current"]);
+          yield* writeTextFile(path.join(tmp, "fork.txt"), "updated fork branch\n");
+          yield* git(tmp, ["add", "fork.txt"]);
+          yield* git(tmp, ["commit", "-m", "update reviewed PR branch"]);
+
+          const core = yield* GitCore;
+          const pushed = yield* core.pushCurrentBranch(tmp, null);
+
+          expect(pushed.status).toBe("pushed");
+          expect(pushed.setUpstream).toBe(false);
+          expect(pushed.upstreamBranch).toBe("jasonLaster/statemachine");
+          expect(yield* git(tmp, ["rev-parse", "--abbrev-ref", "@{upstream}"])).toBe(
+            "jasonLaster/statemachine",
+          );
+          expect(
+            yield* git(tmp, ["ls-remote", "--heads", "jasonLaster", "statemachine"]),
+          ).toContain("statemachine");
+          expect(
+            yield* git(tmp, ["ls-remote", "--heads", "jasonLaster", "t3code/pr-488/statemachine"]),
+          ).toBe("");
         }),
     );
 
@@ -1561,6 +1708,45 @@ it.layer(TestLayer)("git integration", (it) => {
         const created = yield* core.commit(tmp, "Add README update", "- include updated content");
         expect(created.commitSha.length).toBeGreaterThan(0);
         expect(yield* git(tmp, ["log", "-1", "--pretty=%s"])).toBe("Add README update");
+      }),
+    );
+
+    it.effect("prepareCommitContext stages only selected files when filePaths provided", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* writeTextFile(path.join(tmp, "a.txt"), "file a\n");
+        yield* writeTextFile(path.join(tmp, "b.txt"), "file b\n");
+
+        const context = yield* core.prepareCommitContext(tmp, ["a.txt"]);
+        expect(context).not.toBeNull();
+        expect(context!.stagedSummary).toContain("a.txt");
+        expect(context!.stagedSummary).not.toContain("b.txt");
+
+        yield* core.commit(tmp, "Add only a.txt", "");
+
+        // b.txt should still be untracked after commit
+        const statusAfter = yield* git(tmp, ["status", "--porcelain"]);
+        expect(statusAfter).toContain("b.txt");
+        expect(statusAfter).not.toContain("a.txt");
+      }),
+    );
+
+    it.effect("prepareCommitContext stages everything when filePaths is undefined", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* writeTextFile(path.join(tmp, "a.txt"), "file a\n");
+        yield* writeTextFile(path.join(tmp, "b.txt"), "file b\n");
+
+        const context = yield* core.prepareCommitContext(tmp);
+        expect(context).not.toBeNull();
+        expect(context!.stagedSummary).toContain("a.txt");
+        expect(context!.stagedSummary).toContain("b.txt");
       }),
     );
 

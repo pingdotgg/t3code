@@ -149,7 +149,7 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
     ]);
   });
 
-  it("dedupes remote refs for remotes whose names contain slashes", () => {
+  it("keeps non-origin remote refs visible even when a matching local branch exists", () => {
     const input: GitBranch[] = [
       {
         name: "feature/demo",
@@ -169,10 +169,11 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
 
     expect(dedupeRemoteBranchesWithLocalMatches(input).map((branch) => branch.name)).toEqual([
       "feature/demo",
+      "my-org/upstream/feature/demo",
     ]);
   });
 
-  it("dedupes remote refs when git tracks with first-slash local naming", () => {
+  it("keeps non-origin remote refs visible when git tracks with first-slash local naming", () => {
     const input: GitBranch[] = [
       {
         name: "upstream/feature",
@@ -192,6 +193,7 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
 
     expect(dedupeRemoteBranchesWithLocalMatches(input).map((branch) => branch.name)).toEqual([
       "upstream/feature",
+      "my-org/upstream/feature",
     ]);
   });
 });
