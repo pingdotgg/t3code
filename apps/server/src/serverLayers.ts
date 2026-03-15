@@ -1,8 +1,7 @@
 import path from "node:path";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Effect, FileSystem, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { Effect, FileSystem, Layer } from "effect";
 
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
@@ -127,5 +126,5 @@ export function makeServerRuntimeServicesLayer() {
     gitManagerLayer,
     terminalLayer,
     KeybindingsLive,
-  ).pipe(Layer.provideMerge(NodeServices.layer));
+  );
 }

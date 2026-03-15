@@ -7,18 +7,18 @@
     "directory": "apps/server"
   },
   "bin": {
-    "t3": "./dist/index.mjs"
+    "t3": "./dist/bin.mjs"
   },
   "files": [
     "dist"
   ],
   "type": "module",
   "scripts": {
-    "dev": "bun run src/index.ts",
+    "dev": "bun run src/bin.ts",
     "build": "node scripts/cli.ts build",
-    "start": "node dist/index.mjs",
+    "start": "node dist/bin.mjs",
     "prepare": "effect-language-service patch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node scripts/typecheck.mjs",
     "test": "vitest run"
   },
   "dependencies": {

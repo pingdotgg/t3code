@@ -1,0 +1,33 @@
+{
+  "name": "@effect-http-ws-cli/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect-http-ws-cli/server": "workspace:*",
+    "@effect/atom-react": "catalog:",
+    "@tanstack/react-router": "^1.166.2",
+    "effect": "catalog:",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@tanstack/router-plugin": "^1.166.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "@vitest/browser-playwright": "^4.0.18",
+    "playwright": "^1.58.2",
+    "typescript": "catalog:",
+    "vite": "^7.2.0",
+    "vitest": "catalog:",
+    "vitest-browser-react": "^2.0.5"
+  }
+}

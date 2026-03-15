@@ -121,6 +121,7 @@ const buildCmd = Command.make(
   "build",
   {
     verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
+    format: Flag.choice("format", ["esm", "cjs"]).pipe(Flag.withDefault("esm")),
   },
   (config) =>
     Effect.gen(function* () {
@@ -137,7 +138,7 @@ const buildCmd = Command.make(
           stderr: "inherit",
           // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
           shell: process.platform === "win32",
-        })`bun tsdown`,
+        })`bun tsdown --format ${config.format}`,
       );
 
       const webDist = path.join(repoRoot, "apps/web/dist");
@@ -177,7 +178,7 @@ const publishCmd = Command.make(
       const backupPath = `${packageJsonPath}.bak`;
 
       // Assert build assets exist
-      for (const relPath of ["dist/index.mjs", "dist/client/index.html"]) {
+      for (const relPath of ["dist/bin.mjs", "dist/client/index.html"]) {
         const abs = path.join(serverDir, relPath);
         if (!(yield* fs.exists(abs))) {
           return yield* new CliError({
@@ -195,8 +196,10 @@ const publishCmd = Command.make(
           const pkg = {
             name: serverPackageJson.name,
             repository: serverPackageJson.repository,
-            bin: serverPackageJson.bin,
             type: serverPackageJson.type,
+            bin: {
+              t3: "./dist/bin.mjs",
+            },
             version,
             engines: serverPackageJson.engines,
             files: serverPackageJson.files,

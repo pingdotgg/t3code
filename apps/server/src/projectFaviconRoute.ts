@@ -1,6 +1,4 @@
-import fs from "node:fs";
-import http from "node:http";
-import path from "node:path";
+import { Effect, FileSystem, Path } from "effect";
 
 const FAVICON_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -60,112 +58,124 @@ function extractIconHref(source: string): string | null {
   return null;
 }
 
-function resolveIconHref(projectCwd: string, href: string): string[] {
+export type ProjectFaviconRouteResult =
+  | {
+      readonly kind: "file";
+      readonly filePath: string;
+      readonly contentType: string;
+      readonly cacheControl: string;
+    }
+  | {
+      readonly kind: "body";
+      readonly statusCode: number;
+      readonly body: string;
+      readonly contentType: string;
+      readonly cacheControl?: string;
+    };
+
+const cacheControl = "public, max-age=3600";
+
+const resolveIconHref = Effect.fnUntraced(function* (
+  projectCwd: string,
+  href: string,
+): Effect.fn.Return<readonly [string, string], never, Path.Path> {
+  const path = yield* Path.Path;
   const clean = href.replace(/^\//, "");
   return [path.join(projectCwd, "public", clean), path.join(projectCwd, clean)];
-}
+});
 
-function isPathWithinProject(projectCwd: string, candidatePath: string): boolean {
+const isPathWithinProject = Effect.fnUntraced(function* (
+  projectCwd: string,
+  candidatePath: string,
+): Effect.fn.Return<boolean, never, Path.Path> {
+  const path = yield* Path.Path;
   const relative = path.relative(path.resolve(projectCwd), path.resolve(candidatePath));
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
+});
 
-function serveFaviconFile(filePath: string, res: http.ServerResponse): void {
+const toFileResult = Effect.fnUntraced(function* (
+  filePath: string,
+): Effect.fn.Return<ProjectFaviconRouteResult, never, Path.Path> {
+  const path = yield* Path.Path;
   const ext = path.extname(filePath).toLowerCase();
-  const contentType = FAVICON_MIME_TYPES[ext] ?? "application/octet-stream";
-  fs.readFile(filePath, (readErr, data) => {
-    if (readErr) {
-      res.writeHead(500, { "Content-Type": "text/plain" });
-      res.end("Read error");
-      return;
+  return {
+    kind: "file",
+    filePath,
+    contentType: FAVICON_MIME_TYPES[ext] ?? "application/octet-stream",
+    cacheControl,
+  };
+});
+
+const findExistingFile = Effect.fnUntraced(function* (
+  candidates: ReadonlyArray<string>,
+  projectCwd: string,
+): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  for (const candidate of candidates) {
+    if (!(yield* isPathWithinProject(projectCwd, candidate))) {
+      continue;
     }
-    res.writeHead(200, {
-      "Content-Type": contentType,
-      "Cache-Control": "public, max-age=3600",
-    });
-    res.end(data);
-  });
-}
+    const fileInfo = yield* fileSystem
+      .stat(candidate)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (fileInfo?.type === "File") {
+      return candidate;
+    }
+  }
+  return null;
+});
 
-function serveFallbackFavicon(res: http.ServerResponse): void {
-  res.writeHead(200, {
-    "Content-Type": "image/svg+xml",
-    "Cache-Control": "public, max-age=3600",
-  });
-  res.end(FALLBACK_FAVICON_SVG);
-}
+export const resolveProjectFaviconRoute = Effect.fnUntraced(function* (
+  url: URL,
+): Effect.fn.Return<ProjectFaviconRouteResult | null, never, Path.Path | FileSystem.FileSystem> {
+  const path = yield* Path.Path;
 
-export function tryHandleProjectFaviconRequest(url: URL, res: http.ServerResponse): boolean {
   if (url.pathname !== "/api/project-favicon") {
-    return false;
+    return null;
   }
 
   const projectCwd = url.searchParams.get("cwd");
   if (!projectCwd) {
-    res.writeHead(400, { "Content-Type": "text/plain" });
-    res.end("Missing cwd parameter");
-    return true;
+    return {
+      kind: "body",
+      statusCode: 400,
+      body: "Missing cwd parameter",
+      contentType: "text/plain",
+    };
   }
 
-  const tryResolvedPaths = (paths: string[], index: number, onExhausted: () => void): void => {
-    if (index >= paths.length) {
-      onExhausted();
-      return;
-    }
-    const candidate = paths[index]!;
-    if (!isPathWithinProject(projectCwd, candidate)) {
-      tryResolvedPaths(paths, index + 1, onExhausted);
-      return;
-    }
-    fs.stat(candidate, (err, stats) => {
-      if (err || !stats?.isFile()) {
-        tryResolvedPaths(paths, index + 1, onExhausted);
-        return;
-      }
-      serveFaviconFile(candidate, res);
-    });
-  };
+  const candidatePaths = FAVICON_CANDIDATES.map((candidate) => path.join(projectCwd, candidate));
+  const directFile = yield* findExistingFile(candidatePaths, projectCwd);
+  if (directFile) {
+    return yield* toFileResult(directFile);
+  }
 
-  const trySourceFiles = (index: number): void => {
-    if (index >= ICON_SOURCE_FILES.length) {
-      serveFallbackFavicon(res);
-      return;
+  const fileSystem = yield* FileSystem.FileSystem;
+  for (const sourceFile of ICON_SOURCE_FILES) {
+    const content = yield* fileSystem
+      .readFileString(path.join(projectCwd, sourceFile))
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!content) {
+      continue;
     }
-    const sourceFile = path.join(projectCwd, ICON_SOURCE_FILES[index]!);
-    fs.readFile(sourceFile, "utf8", (err, content) => {
-      if (err) {
-        trySourceFiles(index + 1);
-        return;
-      }
-      const href = extractIconHref(content);
-      if (!href) {
-        trySourceFiles(index + 1);
-        return;
-      }
-      const candidates = resolveIconHref(projectCwd, href);
-      tryResolvedPaths(candidates, 0, () => trySourceFiles(index + 1));
-    });
-  };
 
-  const tryCandidates = (index: number): void => {
-    if (index >= FAVICON_CANDIDATES.length) {
-      trySourceFiles(0);
-      return;
+    const href = extractIconHref(content);
+    if (!href) {
+      continue;
     }
-    const candidate = path.join(projectCwd, FAVICON_CANDIDATES[index]!);
-    if (!isPathWithinProject(projectCwd, candidate)) {
-      tryCandidates(index + 1);
-      return;
-    }
-    fs.stat(candidate, (err, stats) => {
-      if (err || !stats?.isFile()) {
-        tryCandidates(index + 1);
-        return;
-      }
-      serveFaviconFile(candidate, res);
-    });
-  };
 
-  tryCandidates(0);
-  return true;
-}
+    const iconHrefPaths = yield* resolveIconHref(projectCwd, href);
+    const resolvedFile = yield* findExistingFile(iconHrefPaths, projectCwd);
+    if (resolvedFile) {
+      return yield* toFileResult(resolvedFile);
+    }
+  }
+
+  return {
+    kind: "body",
+    statusCode: 200,
+    body: FALLBACK_FAVICON_SVG,
+    contentType: "image/svg+xml",
+    cacheControl,
+  };
+});

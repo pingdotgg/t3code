@@ -46,6 +46,18 @@ function asError(value: unknown, fallback: string): Error {
   return new Error(fallback);
 }
 
+function normalizeWsUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    if (url.pathname === "" || url.pathname === "/") {
+      url.pathname = "/ws";
+    }
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
 export class WsTransport {
   private ws: WebSocket | null = null;
   private nextId = 1;
@@ -62,13 +74,14 @@ export class WsTransport {
   constructor(url?: string) {
     const bridgeUrl = window.desktopBridge?.getWsUrl();
     const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-    this.url =
+    const resolvedUrl =
       url ??
       (bridgeUrl && bridgeUrl.length > 0
         ? bridgeUrl
         : envUrl && envUrl.length > 0
           ? envUrl
           : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`);
+    this.url = normalizeWsUrl(resolvedUrl);
     this.connect();
   }
 

@@ -1,0 +1,30 @@
+{
+  "name": "effect-http-ws-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.9",
+  "workspaces": {
+    "packages": ["server", "web"],
+    "catalog": {
+      "@effect/platform-node": "4.0.0-beta.27",
+      "@effect/sql-sqlite-node": "4.0.0-beta.27",
+      "@effect/atom-react": "4.0.0-beta.27",
+      "@effect/vitest": "4.0.0-beta.27",
+      "effect": "4.0.0-beta.27",
+      "typescript": "6.0.0-beta",
+      "vitest": "^4.0.18"
+    }
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start": "node server/src/bin.ts",
+    "web:dev": "bun run --filter @effect-http-ws-cli/web dev",
+    "web:build": "bun run --filter @effect-http-ws-cli/web build",
+    "web:preview": "bun run --filter @effect-http-ws-cli/web preview",
+    "test": "bun run --filter @effect-http-ws-cli/server test",
+    "test:web": "bun run --filter @effect-http-ws-cli/web test",
+    "test:all": "bun run --sequential --workspaces test",
+    "lint": "bun run --sequential --workspaces lint"
+  }
+}
