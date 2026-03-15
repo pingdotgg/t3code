@@ -1,4 +1,4 @@
-import { readPathFromLoginShell } from "@t3tools/shared/shell";
+import { ensureCommonMacPaths, readPathFromLoginShell } from "@t3tools/shared/shell";
 
 export function fixPath(): void {
   if (process.platform !== "darwin") return;
@@ -12,4 +12,8 @@ export function fixPath(): void {
   } catch {
     // Keep inherited PATH if shell lookup fails.
   }
+
+  // Ensure well-known macOS binary directories (e.g. Homebrew) are on PATH
+  // even when the login-shell probe fails or returns a partial result.
+  ensureCommonMacPaths();
 }

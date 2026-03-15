@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { extractPathFromShellOutput, readPathFromLoginShell } from "./shell";
+import { COMMON_MACOS_PATHS, ensureCommonMacPaths, extractPathFromShellOutput, readPathFromLoginShell } from "./shell";
 
 describe("extractPathFromShellOutput", () => {
   it("extracts the path between capture markers", () => {
@@ -53,5 +53,63 @@ describe("readPathFromLoginShell", () => {
     expect(args?.[1]).toContain("__T3CODE_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_PATH_END__");
     expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+  });
+});
+
+describe("ensureCommonMacPaths", () => {
+  const originalPlatform = process.platform;
+  const originalPath = process.env.PATH;
+
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+    process.env.PATH = originalPath;
+  });
+
+  it("appends missing Homebrew paths on darwin", () => {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    process.env.PATH = "/usr/bin:/bin";
+
+    ensureCommonMacPaths();
+
+    const dirs = process.env.PATH!.split(":");
+    for (const p of COMMON_MACOS_PATHS) {
+      expect(dirs).toContain(p);
+    }
+    // Original paths are still present at the start
+    expect(dirs[0]).toBe("/usr/bin");
+    expect(dirs[1]).toBe("/bin");
+  });
+
+  it("does not duplicate paths already present", () => {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    process.env.PATH = `/usr/bin:/bin:${COMMON_MACOS_PATHS.join(":")}`;
+
+    ensureCommonMacPaths();
+
+    const dirs = process.env.PATH!.split(":");
+    for (const p of COMMON_MACOS_PATHS) {
+      expect(dirs.filter((d) => d === p)).toHaveLength(1);
+    }
+  });
+
+  it("handles empty PATH", () => {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    process.env.PATH = "";
+
+    ensureCommonMacPaths();
+
+    const dirs = process.env.PATH!.split(":");
+    for (const p of COMMON_MACOS_PATHS) {
+      expect(dirs).toContain(p);
+    }
+  });
+
+  it("is a no-op on non-darwin platforms", () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    process.env.PATH = "/usr/bin:/bin";
+
+    ensureCommonMacPaths();
+
+    expect(process.env.PATH).toBe("/usr/bin:/bin");
   });
 });
