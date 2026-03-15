@@ -54,7 +54,6 @@ import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   findLatestProposedPlan,
-  deriveWorkLogEntries,
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
@@ -149,6 +148,7 @@ import {
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
+  deriveVisibleThreadWorkLogEntries,
   getCustomModelOptionsByProvider,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -578,8 +578,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
+    () => deriveVisibleThreadWorkLogEntries(threadActivities),
+    [threadActivities],
   );
   const latestTurnHasToolActivity = useMemo(
     () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
