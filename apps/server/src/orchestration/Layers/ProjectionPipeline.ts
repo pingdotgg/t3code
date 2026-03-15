@@ -1,4 +1,5 @@
 import {
+  type GitWorktreeBranchNaming,
   ApprovalRequestId,
   type ChatAttachment,
   type OrchestrationEvent,
@@ -60,6 +61,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
 } as const;
+const DEFAULT_WORKTREE_BRANCH_NAMING: GitWorktreeBranchNaming = { mode: "auto" };
 
 type ProjectorName =
   (typeof ORCHESTRATION_PROJECTOR_NAMES)[keyof typeof ORCHESTRATION_PROJECTOR_NAMES];
@@ -425,6 +427,8 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            worktreeBranchNaming:
+              event.payload.worktreeBranchNaming ?? DEFAULT_WORKTREE_BRANCH_NAMING,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,

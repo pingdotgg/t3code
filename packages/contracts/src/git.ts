@@ -20,6 +20,22 @@ const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
 
+export const GitWorktreeBranchNaming = Schema.Union([
+  Schema.Struct({
+    mode: Schema.Literal("auto"),
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("prefix"),
+    prefix: TrimmedNonEmptyStringSchema,
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("full"),
+    branchName: TrimmedNonEmptyStringSchema,
+  }),
+]);
+export type GitWorktreeBranchNaming = typeof GitWorktreeBranchNaming.Type;
+export type GitWorktreeBranchNamingMode = GitWorktreeBranchNaming["mode"];
+
 export const GitBranch = Schema.Struct({
   name: TrimmedNonEmptyStringSchema,
   isRemote: Schema.optional(Schema.Boolean),

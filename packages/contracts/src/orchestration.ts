@@ -1,5 +1,6 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
 import { ProviderModelOptions } from "./model";
+import { GitWorktreeBranchNaming } from "./git";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -261,6 +262,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  worktreeBranchNaming: Schema.optional(GitWorktreeBranchNaming),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -320,6 +322,7 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  worktreeBranchNaming: Schema.optional(GitWorktreeBranchNaming),
   createdAt: IsoDateTime,
 });
 
@@ -620,6 +623,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  worktreeBranchNaming: Schema.optional(GitWorktreeBranchNaming),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

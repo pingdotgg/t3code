@@ -159,6 +159,10 @@ import {
   SendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import {
+  resolveDraftWorktreeBranchNamingValidationError,
+  resolveWorktreeBranchNamingForThreadCreate,
+} from "../worktreeBranchNaming";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -1900,6 +1904,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     : isLocalDraftThread
       ? (draftThread?.envMode ?? "local")
       : "local";
+  const draftWorktreeBranchNaming = draftThread?.worktreeBranchNaming;
 
   useEffect(() => {
     if (phase !== "running") return;
@@ -2252,6 +2257,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       );
       return;
     }
+    if (shouldCreateWorktree) {
+      const worktreeBranchNamingError =
+        resolveDraftWorktreeBranchNamingValidationError(draftWorktreeBranchNaming);
+      if (worktreeBranchNamingError) {
+        setStoreThreadError(threadIdForSend, worktreeBranchNamingError);
+        return;
+      }
+    }
 
     sendInFlightRef.current = true;
     beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
@@ -2302,11 +2315,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     let turnStartSucceeded = false;
     let nextThreadBranch = activeThread.branch;
     let nextThreadWorktreePath = activeThread.worktreePath;
+    const worktreeBranchNaming = shouldCreateWorktree
+      ? resolveWorktreeBranchNamingForThreadCreate(draftWorktreeBranchNaming)
+      : undefined;
     await (async () => {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
         beginSendPhase("preparing-worktree");
-        const newBranch = buildTemporaryWorktreeBranchName();
+        const newBranch = buildTemporaryWorktreeBranchName(worktreeBranchNaming);
         const result = await createWorktreeMutation.mutateAsync({
           cwd: activeProject.cwd,
           branch: baseBranchForWorktree,
@@ -2359,6 +2375,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           interactionMode,
           branch: nextThreadBranch,
           worktreePath: nextThreadWorktreePath,
+          ...(worktreeBranchNaming ? { worktreeBranchNaming } : {}),
           createdAt: activeThread.createdAt,
         });
         createdServerThreadForLocalDraft = true;

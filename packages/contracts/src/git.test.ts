@@ -5,6 +5,7 @@ import {
   GitCreateWorktreeInput,
   GitPreparePullRequestThreadInput,
   GitResolvePullRequestResult,
+  GitWorktreeBranchNaming,
 } from "./git";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(GitCreateWorktreeInput);
@@ -12,6 +13,7 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadInput,
 );
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeWorktreeBranchNaming = Schema.decodeUnknownSync(GitWorktreeBranchNaming);
 
 describe("GitCreateWorktreeInput", () => {
   it("accepts omitted newBranch for existing-branch worktrees", () => {
@@ -54,5 +56,31 @@ describe("GitResolvePullRequestResult", () => {
 
     expect(parsed.pullRequest.number).toBe(42);
     expect(parsed.pullRequest.headBranch).toBe("feature/pr-threads");
+  });
+});
+
+describe("GitWorktreeBranchNaming", () => {
+  it("decodes custom prefix mode", () => {
+    const parsed = decodeWorktreeBranchNaming({
+      mode: "prefix",
+      prefix: "team-name",
+    });
+
+    expect(parsed).toEqual({
+      mode: "prefix",
+      prefix: "team-name",
+    });
+  });
+
+  it("decodes full branch name mode", () => {
+    const parsed = decodeWorktreeBranchNaming({
+      mode: "full",
+      branchName: "feature/custom-branch",
+    });
+
+    expect(parsed).toEqual({
+      mode: "full",
+      branchName: "feature/custom-branch",
+    });
   });
 });

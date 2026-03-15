@@ -7,6 +7,7 @@
  * @module ProjectionThreadRepository
  */
 import {
+  GitWorktreeBranchNaming,
   IsoDateTime,
   ProjectId,
   ProviderInteractionMode,
@@ -28,6 +29,7 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  worktreeBranchNaming: GitWorktreeBranchNaming,
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

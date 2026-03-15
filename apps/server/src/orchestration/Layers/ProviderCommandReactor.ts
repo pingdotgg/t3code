@@ -1,3 +1,4 @@
+import { buildFinalWorktreeBranchName, isTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import {
   type ChatAttachment,
   CommandId,
@@ -71,8 +72,6 @@ const serverCommandId = (tag: string): CommandId =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-const WORKTREE_BRANCH_PREFIX = "t3code";
-const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 
 function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
   const error = Cause.squash(cause);
@@ -88,33 +87,6 @@ function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderService
     message.includes("unknown pending approval request") ||
     message.includes("unknown pending permission request")
   );
-}
-
-function isTemporaryWorktreeBranch(branch: string): boolean {
-  return TEMP_WORKTREE_BRANCH_PATTERN.test(branch.trim().toLowerCase());
-}
-
-function buildGeneratedWorktreeBranchName(raw: string): string {
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/^refs\/heads\//, "")
-    .replace(/['"`]/g, "");
-
-  const withoutPrefix = normalized.startsWith(`${WORKTREE_BRANCH_PREFIX}/`)
-    ? normalized.slice(`${WORKTREE_BRANCH_PREFIX}/`.length)
-    : normalized;
-
-  const branchFragment = withoutPrefix
-    .replace(/[^a-z0-9/_-]+/g, "-")
-    .replace(/\/+/g, "/")
-    .replace(/-+/g, "-")
-    .replace(/^[./_-]+|[./_-]+$/g, "")
-    .slice(0, 64)
-    .replace(/[./_-]+$/g, "");
-
-  const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
-  return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
 }
 
 const make = Effect.gen(function* () {
@@ -369,12 +341,12 @@ const make = Effect.gen(function* () {
     if (!input.branch || !input.worktreePath) {
       return;
     }
-    if (!isTemporaryWorktreeBranch(input.branch)) {
-      return;
-    }
 
     const thread = yield* resolveThread(input.threadId);
     if (!thread) {
+      return;
+    }
+    if (!isTemporaryWorktreeBranchName(input.branch, thread.worktreeBranchNaming)) {
       return;
     }
 
@@ -402,7 +374,10 @@ const make = Effect.gen(function* () {
         Effect.flatMap((generated) => {
           if (!generated) return Effect.void;
 
-          const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
+          const targetBranch = buildFinalWorktreeBranchName(
+            generated.branch,
+            thread.worktreeBranchNaming,
+          );
           if (targetBranch === oldBranch) return Effect.void;
 
           return Effect.flatMap(
