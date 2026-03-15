@@ -134,7 +134,11 @@ function buildTrayContextMenu(): Menu {
       label: `${thread.needsAttention ? "·" : ""} ${truncateGraphemes(thread.name, MAX_THREAD_NAME_LENGTH)}`,
       click: () => {
         const mainWindow = getMainWindow();
-        if (!mainWindow) return;
+        if (!mainWindow) {
+          console.error("[tray] Failed to get (or create) main window");
+          return;
+        }
+        // TODO: Wait to ensure the window is ready?
         sendTrayMessage({ type: "thread-click", threadId: thread.id as ThreadId }, mainWindow);
         mainWindow.focus();
       },

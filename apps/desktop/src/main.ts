@@ -1394,6 +1394,9 @@ if (process.platform !== "win32") {
   });
 }
 
-export function getMainWindow(): BrowserWindow | null {
+export function getMainWindow(createIfNeeded: boolean = false): BrowserWindow | null {
+  if (createIfNeeded && mainWindow === null) {
+    mainWindow = createWindow();
+  }
   return mainWindow;
 }
