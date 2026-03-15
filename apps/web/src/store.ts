@@ -260,6 +260,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         codexThreadId: null,
         projectId: thread.projectId,
         title: thread.title,
+        pinned: thread.pinned,
         model: resolveModelSlugForProvider(
           inferProviderForThreadModel({
             model: thread.model,

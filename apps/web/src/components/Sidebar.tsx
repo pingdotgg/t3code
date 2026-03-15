@@ -3,6 +3,7 @@ import {
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  PinIcon,
   PlusIcon,
   RocketIcon,
   SettingsIcon,
@@ -87,6 +88,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  sortThreadsForSidebar,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -685,8 +687,11 @@ export default function Sidebar() {
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
+      const thread = threads.find((t) => t.id === threadId);
+      if (!thread) return;
       const clicked = await api.contextMenu.show(
         [
+          { id: "toggle-pin", label: thread.pinned ? "Unpin thread" : "Pin thread" },
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -694,8 +699,24 @@ export default function Sidebar() {
         ],
         position,
       );
-      const thread = threads.find((t) => t.id === threadId);
-      if (!thread) return;
+
+      if (clicked === "toggle-pin") {
+        try {
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
+            commandId: newCommandId(),
+            threadId,
+            pinned: !thread.pinned,
+          });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: `Failed to ${thread.pinned ? "unpin" : "pin"} thread`,
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+        return;
+      }
 
       if (clicked === "rename") {
         setRenamingThreadId(threadId);
@@ -1293,14 +1314,9 @@ export default function Sidebar() {
                 strategy={verticalListSortingStrategy}
               >
                 {projects.map((project) => {
-                  const projectThreads = threads
-                    .filter((thread) => thread.projectId === project.id)
-                    .toSorted((a, b) => {
-                      const byDate =
-                        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-                      if (byDate !== 0) return byDate;
-                      return b.id.localeCompare(a.id);
-                    });
+                  const projectThreads = sortThreadsForSidebar(
+                    threads.filter((thread) => thread.projectId === project.id),
+                  );
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
                   const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
                   const visibleThreads =
@@ -1451,6 +1467,12 @@ export default function Sidebar() {
                                       }}
                                     >
                                       <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                                        {thread.pinned && (
+                                          <PinIcon
+                                            aria-label="Pinned thread"
+                                            className="size-3 shrink-0 text-muted-foreground/60"
+                                          />
+                                        )}
                                         {prStatus && (
                                           <Tooltip>
                                             <TooltipTrigger
