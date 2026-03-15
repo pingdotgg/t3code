@@ -114,7 +114,7 @@ function truncateGraphemes(value: string, maxLength: number): string {
   return `${graphemes.slice(0, maxLength).join("")}...`;
 }
 
-const MAX_THREAD_NAME_LENGTH = 20;
+const MAX_THREAD_NAME_LENGTH = 40;
 const MAX_THREADS_IN_CONTEXT_MENU = 3;
 const MAX_VIEW_MORE_THREADS = 5;
 function buildTrayContextMenu(): Menu {
