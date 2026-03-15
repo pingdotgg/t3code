@@ -43,6 +43,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { setupTrayIpcHandlers, setTrayEnabled, setReadyToHandleTrayMessages } from "./tray";
 
 fixPath();
 
@@ -1330,6 +1331,8 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap backend start requested");
   mainWindow = createWindow();
   writeDesktopLogHeader("bootstrap main window created");
+  setupTrayIpcHandlers();
+  writeDesktopLogHeader("bootstrap tray ipc handlers registered");
 }
 
 app.on("before-quit", () => {
@@ -1337,6 +1340,7 @@ app.on("before-quit", () => {
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
   stopBackend();
+  setTrayEnabled(false);
   restoreStdIoCapture?.();
 });
 
@@ -1366,6 +1370,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+  setReadyToHandleTrayMessages(false);
 });
 
 if (process.platform !== "win32") {
@@ -1388,4 +1393,11 @@ if (process.platform !== "win32") {
     restoreStdIoCapture?.();
     app.quit();
   });
+}
+
+export function getMainWindow(createIfNeeded: boolean = false): BrowserWindow | null {
+  if (createIfNeeded && mainWindow === null) {
+    mainWindow = createWindow();
+  }
+  return mainWindow;
 }
