@@ -64,7 +64,6 @@ function terminalThemeFromApp(): ITheme {
       foreground,
       cursor: "rgb(180, 203, 255)",
       selectionBackground: "rgba(180, 203, 255, 0.25)",
-      selectionInactiveBackground: "rgba(180, 203, 255, 0.18)",
       scrollbarSliderBackground: "rgba(255, 255, 255, 0.1)",
       scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
       scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.22)",
@@ -92,7 +91,6 @@ function terminalThemeFromApp(): ITheme {
     foreground,
     cursor: "rgb(38, 56, 78)",
     selectionBackground: "rgba(37, 63, 99, 0.2)",
-    selectionInactiveBackground: "rgba(37, 63, 99, 0.14)",
     scrollbarSliderBackground: "rgba(0, 0, 0, 0.15)",
     scrollbarSliderHoverBackground: "rgba(0, 0, 0, 0.25)",
     scrollbarSliderActiveBackground: "rgba(0, 0, 0, 0.3)",
@@ -113,17 +111,6 @@ function terminalThemeFromApp(): ITheme {
     brightCyan: "rgb(70, 149, 164)",
     brightWhite: "rgb(236, 240, 246)",
   };
-}
-
-function terminalFontFamily(): string {
-  const platform = typeof navigator === "undefined" ? "" : navigator.platform;
-  if (platform.startsWith("Win")) {
-    return '"Cascadia Mono", Consolas, "Courier New", monospace';
-  }
-  if (platform.startsWith("Mac")) {
-    return '"SF Mono", "SFMono-Regular", Menlo, Monaco, monospace';
-  }
-  return '"JetBrains Mono", "Liberation Mono", "DejaVu Sans Mono", monospace';
 }
 
 interface TerminalViewportProps {
@@ -171,7 +158,7 @@ function TerminalViewport({
       lineHeight: 1.2,
       fontSize: 12,
       scrollback: 5_000,
-      fontFamily: terminalFontFamily(),
+      fontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
       theme: terminalThemeFromApp(),
     });
     terminal.loadAddon(fitAddon);
