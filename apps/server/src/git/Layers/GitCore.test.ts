@@ -98,6 +98,7 @@ const makeIsolatedGitCore = (gitService: GitServiceShape) =>
       status: (input) => core.status(input),
       statusDetails: (cwd) => core.statusDetails(cwd),
       prepareCommitContext: (cwd, filePaths?) => core.prepareCommitContext(cwd, filePaths),
+      readRecentCommitSubjects: (input) => core.readRecentCommitSubjects(input),
       commit: (cwd, subject, body) => core.commit(cwd, subject, body),
       pushCurrentBranch: (cwd, fallbackBranch) => core.pushCurrentBranch(cwd, fallbackBranch),
       pullCurrentBranch: (cwd) => core.pullCurrentBranch(cwd),
@@ -1747,6 +1748,50 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(context).not.toBeNull();
         expect(context!.stagedSummary).toContain("a.txt");
         expect(context!.stagedSummary).toContain("b.txt");
+      }),
+    );
+
+    it.effect("reads recent commit subjects from repository history", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        yield* commitWithDate(
+          tmp,
+          "feature.txt",
+          "feature one\n",
+          "2024-01-01T12:00:00Z",
+          "feat: add feature one",
+        );
+        yield* commitWithDate(
+          tmp,
+          "bugfix.txt",
+          "bugfix\n",
+          "2024-01-02T12:00:00Z",
+          "fix(web): patch regression",
+        );
+
+        const core = yield* GitCore;
+        const subjects = yield* core.readRecentCommitSubjects({
+          cwd: tmp,
+          limit: 2,
+        });
+
+        expect(subjects).toEqual(["fix(web): patch regression", "feat: add feature one"]);
+      }),
+    );
+
+    it.effect("returns an empty recent commit subject list for a repo with no commits yet", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initGitRepo({ cwd: tmp });
+        const core = yield* GitCore;
+
+        const subjects = yield* core.readRecentCommitSubjects({
+          cwd: tmp,
+          limit: 5,
+        });
+
+        expect(subjects).toEqual([]);
       }),
     );
 

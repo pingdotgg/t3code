@@ -52,6 +52,14 @@ export interface GitHubCliShape {
   }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
   /**
+   * List recent pull request titles to infer repository PR title style.
+   */
+  readonly listRecentPullRequestTitles: (input: {
+    readonly cwd: string;
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<string>, GitHubCliError>;
+
+  /**
    * Resolve a pull request by URL, number, or branch-ish identifier.
    */
   readonly getPullRequest: (input: {

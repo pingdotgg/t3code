@@ -11,6 +11,7 @@ import {
 } from "../Services/GitHubCli.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const STYLE_DISCOVERY_TIMEOUT_MS = 5_000;
 
 function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown): GitHubCliError {
   if (error instanceof Error) {
@@ -109,6 +110,12 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   sshUrl: TrimmedNonEmptyString,
 });
 
+const RawGitHubPullRequestTitleListSchema = Schema.Array(
+  Schema.Struct({
+    title: TrimmedNonEmptyString,
+  }),
+);
+
 function normalizePullRequestSummary(
   raw: Schema.Schema.Type<typeof RawGitHubPullRequestSchema>,
 ): GitHubPullRequestSummary {
@@ -146,7 +153,11 @@ function normalizeRepositoryCloneUrls(
 function decodeGitHubJson<S extends Schema.Top>(
   raw: string,
   schema: S,
-  operation: "listOpenPullRequests" | "getPullRequest" | "getRepositoryCloneUrls",
+  operation:
+    | "listOpenPullRequests"
+    | "listRecentPullRequestTitles"
+    | "getPullRequest"
+    | "getRepositoryCloneUrls",
   invalidDetail: string,
 ): Effect.Effect<S["Type"], GitHubCliError, S["DecodingServices"]> {
   return Schema.decodeEffect(Schema.fromJsonString(schema))(raw).pipe(
@@ -202,6 +213,34 @@ const makeGitHubCli = Effect.sync(() => {
               ),
         ),
         Effect.map((pullRequests) => pullRequests.map(normalizePullRequestSummary)),
+      ),
+    listRecentPullRequestTitles: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "list",
+          "--state",
+          "all",
+          "--limit",
+          String(input.limit ?? 10),
+          "--json",
+          "title",
+        ],
+        timeoutMs: STYLE_DISCOVERY_TIMEOUT_MS,
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed([])
+            : decodeGitHubJson(
+                raw,
+                RawGitHubPullRequestTitleListSchema,
+                "listRecentPullRequestTitles",
+                "GitHub CLI returned invalid PR title list JSON.",
+              ),
+        ),
+        Effect.map((pullRequests) => pullRequests.map((pullRequest) => pullRequest.title)),
       ),
     getPullRequest: (input) =>
       execute({

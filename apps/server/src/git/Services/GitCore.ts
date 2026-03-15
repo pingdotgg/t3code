@@ -33,6 +33,11 @@ export interface GitPreparedCommitContext {
   stagedPatch: string;
 }
 
+export interface GitRecentCommitSubjectsInput {
+  cwd: string;
+  limit?: number | undefined;
+}
+
 export interface GitPushResult {
   status: "pushed" | "skipped_up_to_date";
   branch: string;
@@ -103,6 +108,13 @@ export interface GitCoreShape {
     cwd: string,
     filePaths?: readonly string[],
   ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
+
+  /**
+   * Read recent commit subjects to infer the repository's preferred style.
+   */
+  readonly readRecentCommitSubjects: (
+    input: GitRecentCommitSubjectsInput,
+  ) => Effect.Effect<ReadonlyArray<string>, GitCommandError>;
 
   /**
    * Create a commit with provided subject/body.

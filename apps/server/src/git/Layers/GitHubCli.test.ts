@@ -106,6 +106,39 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 
+  it.effect("lists recent pull request titles for style discovery", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          { title: "feat(web): add command palette" },
+          { title: "Fix Linux desktop Codex CLI detection at startup" },
+        ]),
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.listRecentPullRequestTitles({
+          cwd: "/repo",
+          limit: 2,
+        });
+      });
+
+      assert.deepStrictEqual(result, [
+        "feat(web): add command palette",
+        "Fix Linux desktop Codex CLI detection at startup",
+      ]);
+      expect(mockedRunProcess).toHaveBeenCalledWith(
+        "gh",
+        ["pr", "list", "--state", "all", "--limit", "2", "--json", "title"],
+        expect.objectContaining({ cwd: "/repo", timeoutMs: 5_000 }),
+      );
+    }),
+  );
+
   it.effect("surfaces a friendly error when the pull request is not found", () =>
     Effect.gen(function* () {
       mockedRunProcess.mockRejectedValueOnce(
