@@ -118,7 +118,7 @@ const MAX_THREAD_NAME_LENGTH = 20;
 const MAX_THREADS_IN_CONTEXT_MENU = 3;
 const MAX_VIEW_MORE_THREADS = 5;
 function buildTrayContextMenu(): Menu {
-  const sortedThreads = trayState.threads.sort((a, b) => b.lastUpdated - a.lastUpdated);
+  const sortedThreads = trayState.threads.toSorted((a, b) => b.lastUpdated - a.lastUpdated);
   const topLevelThreads = sortedThreads.slice(0, MAX_THREADS_IN_CONTEXT_MENU);
   const viewMoreThreads = sortedThreads.slice(
     MAX_THREADS_IN_CONTEXT_MENU,
