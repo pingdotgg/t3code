@@ -755,6 +755,22 @@ describe("ProviderRuntimeIngestion", () => {
         createdAt: new Date().toISOString(),
       }),
     );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-plan-target-overlap"),
+        threadId: targetThreadId,
+        message: {
+          messageId: asMessageId("msg-plan-target-overlap"),
+          role: "user",
+          text: "follow-up before the first turn starts",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: new Date().toISOString(),
+      }),
+    );
 
     const sourceThreadBeforeStart = await waitForThread(
       harness.engine,
