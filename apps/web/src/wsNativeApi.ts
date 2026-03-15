@@ -1,10 +1,11 @@
 import {
-  ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   type ContextMenuItem,
   type NativeApi,
-  ServerConfigUpdatedPayload,
-  WS_CHANNELS,
+  type ServerConfig,
+  type ServerConfigStreamEvent,
+  type ServerConfigUpdatedPayload,
+  type ServerLifecycleStreamEvent,
   WS_METHODS,
   type WsWelcomePayload,
 } from "@t3tools/contracts";
@@ -14,22 +15,128 @@ import { WsTransport } from "./wsTransport";
 
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
-const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
+export type ServerConfigUpdateSource = ServerConfigStreamEvent["type"];
+
+interface ServerConfigUpdatedNotification {
+  readonly payload: ServerConfigUpdatedPayload;
+  readonly source: ServerConfigUpdateSource;
+}
+
+const serverConfigUpdatedListeners = new Set<
+  (payload: ServerConfigUpdatedPayload, source: ServerConfigUpdateSource) => void
+>();
+const pendingServerConfigResolvers = new Set<(config: ServerConfig) => void>();
+
+let latestWelcomePayload: WsWelcomePayload | null = null;
+let latestServerConfig: ServerConfig | null = null;
+let latestServerConfigUpdated: ServerConfigUpdatedNotification | null = null;
+
+function emitWelcome(payload: WsWelcomePayload) {
+  latestWelcomePayload = payload;
+  for (const listener of welcomeListeners) {
+    try {
+      listener(payload);
+    } catch {
+      // Swallow listener errors.
+    }
+  }
+}
+
+function resolveServerConfig(config: ServerConfig) {
+  latestServerConfig = config;
+  for (const resolve of pendingServerConfigResolvers) {
+    resolve(config);
+  }
+  pendingServerConfigResolvers.clear();
+}
+
+function emitServerConfigUpdated(
+  payload: ServerConfigUpdatedPayload,
+  source: ServerConfigUpdateSource,
+) {
+  latestServerConfigUpdated = { payload, source };
+  for (const listener of serverConfigUpdatedListeners) {
+    try {
+      listener(payload, source);
+    } catch {
+      // Swallow listener errors.
+    }
+  }
+}
+
+function applyServerConfigEvent(event: ServerConfigStreamEvent) {
+  switch (event.type) {
+    case "snapshot": {
+      resolveServerConfig(event.config);
+      emitServerConfigUpdated(
+        {
+          issues: event.config.issues,
+          providers: event.config.providers,
+        },
+        event.type,
+      );
+      return;
+    }
+    case "keybindingsUpdated": {
+      if (!latestServerConfig) {
+        return;
+      }
+      const nextConfig = {
+        ...latestServerConfig,
+        issues: event.payload.issues,
+      } satisfies ServerConfig;
+      resolveServerConfig(nextConfig);
+      emitServerConfigUpdated(
+        {
+          issues: nextConfig.issues,
+          providers: nextConfig.providers,
+        },
+        event.type,
+      );
+      return;
+    }
+    case "providerStatuses": {
+      if (!latestServerConfig) {
+        return;
+      }
+      const nextConfig = {
+        ...latestServerConfig,
+        providers: event.payload.providers,
+      } satisfies ServerConfig;
+      resolveServerConfig(nextConfig);
+      emitServerConfigUpdated(
+        {
+          issues: nextConfig.issues,
+          providers: nextConfig.providers,
+        },
+        event.type,
+      );
+      return;
+    }
+  }
+}
+
+function getServerConfigSnapshot(): Promise<ServerConfig> {
+  if (latestServerConfig) {
+    return Promise.resolve(latestServerConfig);
+  }
+  return new Promise<ServerConfig>((resolve) => {
+    pendingServerConfigResolvers.add(resolve);
+  });
+}
 
 /**
  * Subscribe to the server welcome message. If a welcome was already received
  * before this call, the listener fires synchronously with the cached payload.
- * This avoids the race between WebSocket connect and React effect registration.
  */
 export function onServerWelcome(listener: (payload: WsWelcomePayload) => void): () => void {
   welcomeListeners.add(listener);
 
-  const latestWelcome = instance?.transport.getLatestPush(WS_CHANNELS.serverWelcome)?.data ?? null;
-  if (latestWelcome) {
+  if (latestWelcomePayload) {
     try {
-      listener(latestWelcome);
+      listener(latestWelcomePayload);
     } catch {
-      // Swallow listener errors
+      // Swallow listener errors.
     }
   }
 
@@ -43,17 +150,15 @@ export function onServerWelcome(listener: (payload: WsWelcomePayload) => void): 
  * late subscribers to avoid missing config validation feedback.
  */
 export function onServerConfigUpdated(
-  listener: (payload: ServerConfigUpdatedPayload) => void,
+  listener: (payload: ServerConfigUpdatedPayload, source: ServerConfigUpdateSource) => void,
 ): () => void {
   serverConfigUpdatedListeners.add(listener);
 
-  const latestConfig =
-    instance?.transport.getLatestPush(WS_CHANNELS.serverConfigUpdated)?.data ?? null;
-  if (latestConfig) {
+  if (latestServerConfigUpdated) {
     try {
-      listener(latestConfig);
+      listener(latestServerConfigUpdated.payload, latestServerConfigUpdated.source);
     } catch {
-      // Swallow listener errors
+      // Swallow listener errors.
     }
   }
 
@@ -63,29 +168,23 @@ export function onServerConfigUpdated(
 }
 
 export function createWsNativeApi(): NativeApi {
-  if (instance) return instance.api;
+  if (instance) {
+    return instance.api;
+  }
 
   const transport = new WsTransport();
 
-  transport.subscribe(WS_CHANNELS.serverWelcome, (message) => {
-    const payload = message.data;
-    for (const listener of welcomeListeners) {
-      try {
-        listener(payload);
-      } catch {
-        // Swallow listener errors
+  transport.subscribe(
+    WS_METHODS.subscribeServerLifecycle,
+    {},
+    (event: ServerLifecycleStreamEvent) => {
+      if (event.type === "welcome") {
+        emitWelcome(event.payload);
       }
-    }
-  });
-  transport.subscribe(WS_CHANNELS.serverConfigUpdated, (message) => {
-    const payload = message.data;
-    for (const listener of serverConfigUpdatedListeners) {
-      try {
-        listener(payload);
-      } catch {
-        // Swallow listener errors
-      }
-    }
+    },
+  );
+  transport.subscribe(WS_METHODS.subscribeServerConfig, {}, (event: ServerConfigStreamEvent) => {
+    applyServerConfigEvent(event);
   });
 
   const api: NativeApi = {
@@ -108,8 +207,7 @@ export function createWsNativeApi(): NativeApi {
       clear: (input) => transport.request(WS_METHODS.terminalClear, input),
       restart: (input) => transport.request(WS_METHODS.terminalRestart, input),
       close: (input) => transport.request(WS_METHODS.terminalClose, input),
-      onEvent: (callback) =>
-        transport.subscribe(WS_CHANNELS.terminalEvent, (message) => callback(message.data)),
+      onEvent: (callback) => transport.subscribe(WS_METHODS.subscribeTerminalEvents, {}, callback),
     },
     projects: {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
@@ -127,8 +225,6 @@ export function createWsNativeApi(): NativeApi {
           return;
         }
 
-        // Some mobile browsers can return null here even when the tab opens.
-        // Avoid false negatives and let the browser handle popup policy.
         window.open(url, "_blank", "noopener,noreferrer");
       },
     },
@@ -158,22 +254,20 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     server: {
-      getConfig: () => transport.request(WS_METHODS.serverGetConfig),
+      getConfig: () => getServerConfigSnapshot(),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
     },
     orchestration: {
-      getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
+      getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot, {}),
       dispatchCommand: (command) =>
-        transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, { command }),
+        transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, command),
       getTurnDiff: (input) => transport.request(ORCHESTRATION_WS_METHODS.getTurnDiff, input),
       getFullThreadDiff: (input) =>
         transport.request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, input),
       replayEvents: (fromSequenceExclusive) =>
         transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
       onDomainEvent: (callback) =>
-        transport.subscribe(ORCHESTRATION_WS_CHANNELS.domainEvent, (message) =>
-          callback(message.data),
-        ),
+        transport.subscribe(WS_METHODS.subscribeOrchestrationDomainEvents, {}, callback),
     },
   };
 

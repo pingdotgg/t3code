@@ -149,3 +149,8 @@ export const TerminalEvent = Schema.Union([
   TerminalActivityEvent,
 ]);
 export type TerminalEvent = typeof TerminalEvent.Type;
+
+export class TerminalError extends Schema.TaggedErrorClass<TerminalError>()("TerminalError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect),
+}) {}

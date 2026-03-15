@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { Effect, Logger } from "effect";
+import { Effect, Logger, References } from "effect";
 import * as Layer from "effect/Layer";
 
 import { ServerConfig } from "./config";
@@ -17,8 +17,10 @@ export const ServerLoggerLive = Effect.gen(function* () {
   });
 
   const fileLogger = Logger.formatSimple.pipe(Logger.toFile(logPath));
-
-  return Logger.layer([Logger.defaultLogger, fileLogger], {
+  const minimumLogLevelLayer = Layer.succeed(References.MinimumLogLevel, config.logLevel);
+  const loggerLayer = Logger.layer([Logger.consolePretty(), fileLogger], {
     mergeWithExisting: false,
   });
+
+  return Layer.mergeAll(loggerLayer, minimumLogLevelLayer);
 }).pipe(Layer.unwrap);

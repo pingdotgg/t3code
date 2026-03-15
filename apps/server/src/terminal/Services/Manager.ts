@@ -10,6 +10,7 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalError,
   TerminalOpenInput,
   TerminalResizeInput,
   TerminalRestartInput,
@@ -18,12 +19,8 @@ import {
   TerminalWriteInput,
 } from "@t3tools/contracts";
 import { PtyProcess } from "./PTY";
-import { Effect, Schema, ServiceMap } from "effect";
-
-export class TerminalError extends Schema.TaggedErrorClass<TerminalError>()("TerminalError", {
-  message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
-}) {}
+import { Effect, ServiceMap } from "effect";
+export { TerminalError };
 
 export interface TerminalSessionState {
   threadId: string;

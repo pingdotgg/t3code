@@ -7,7 +7,9 @@ import {
   ProjectEntry,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ProjectWriteFileError,
 } from "@t3tools/contracts";
+import { Effect, Path } from "effect";
 
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
@@ -563,3 +565,40 @@ export async function searchWorkspaceEntries(
     truncated: index.truncated || matchedEntryCount > limit,
   };
 }
+
+function toPosixRelativePath(input: string): string {
+  return input.replaceAll("\\", "/");
+}
+
+export const resolveWorkspaceWritePath = Effect.fn(function* (params: {
+  workspaceRoot: string;
+  relativePath: string;
+}) {
+  const path = yield* Path.Path;
+
+  const normalizedInputPath = params.relativePath.trim();
+  if (path.isAbsolute(normalizedInputPath)) {
+    return yield* new ProjectWriteFileError({
+      message: "Workspace file path must be relative to the project root.",
+    });
+  }
+
+  const absolutePath = path.resolve(params.workspaceRoot, normalizedInputPath);
+  const relativeToRoot = toPosixRelativePath(path.relative(params.workspaceRoot, absolutePath));
+  if (
+    relativeToRoot.length === 0 ||
+    relativeToRoot === "." ||
+    relativeToRoot.startsWith("../") ||
+    relativeToRoot === ".." ||
+    path.isAbsolute(relativeToRoot)
+  ) {
+    return yield* new ProjectWriteFileError({
+      message: "Workspace file path must stay within the project root.",
+    });
+  }
+
+  return {
+    absolutePath,
+    relativePath: relativeToRoot,
+  };
+});

@@ -142,7 +142,9 @@ function EventRouter() {
   const pathnameRef = useRef(pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
 
-  pathnameRef.current = pathname;
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -259,9 +261,9 @@ function EventRouter() {
     // during subscribe. Skip the toast for that replay so effect re-runs
     // don't produce duplicate toasts.
     let subscribed = false;
-    const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
+    const unsubServerConfigUpdated = onServerConfigUpdated((payload, source) => {
       void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
-      if (!subscribed) return;
+      if (!subscribed || source !== "keybindingsUpdated") return;
       const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
       if (!issue) {
         toastManager.add({

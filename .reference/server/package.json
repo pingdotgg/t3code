@@ -1,0 +1,27 @@
+{
+  "name": "@effect-http-ws-cli/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": "./src/client.ts",
+    "./contracts": "./src/contracts.ts"
+  },
+  "scripts": {
+    "dev": "node src/bin.ts",
+    "start": "node src/bin.ts",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-sqlite-node": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "^24.10.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

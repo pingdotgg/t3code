@@ -10,17 +10,14 @@ import { spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
-import { EDITORS, type EditorId } from "@t3tools/contracts";
-import { ServiceMap, Schema, Effect, Layer } from "effect";
+import { EDITORS, OpenError, type EditorId } from "@t3tools/contracts";
+import { ServiceMap, Effect, Layer } from "effect";
 
 // ==============================
 // Definitions
 // ==============================
 
-export class OpenError extends Schema.TaggedErrorClass<OpenError>()("OpenError", {
-  message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
-}) {}
+export { OpenError };
 
 export interface OpenInEditorInput {
   readonly cwd: string;

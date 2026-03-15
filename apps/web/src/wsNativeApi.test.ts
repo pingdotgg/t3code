@@ -2,18 +2,15 @@ import {
   CommandId,
   type ContextMenuItem,
   EventId,
-  ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
-  type OrchestrationEvent,
   ProjectId,
-  ThreadId,
-  type WsPushChannel,
-  type WsPushData,
-  type WsPushMessage,
-  WS_CHANNELS,
-  WS_METHODS,
-  type WsPush,
+  type OrchestrationEvent,
+  type ServerConfig,
+  type ServerConfigStreamEvent,
+  type ServerLifecycleStreamEvent,
   type ServerProviderStatus,
+  ThreadId,
+  WS_METHODS,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,26 +22,17 @@ const showContextMenuFallbackMock =
       position?: { x: number; y: number },
     ) => Promise<T | null>
   >();
-const channelListeners = new Map<string, Set<(message: WsPush) => void>>();
-const latestPushByChannel = new Map<string, WsPush>();
+const streamListeners = new Map<string, Set<(event: unknown) => void>>();
 const subscribeMock = vi.fn<
-  (
-    channel: string,
-    listener: (message: WsPush) => void,
-    options?: { replayLatest?: boolean },
-  ) => () => void
->((channel, listener, options) => {
-  const listeners = channelListeners.get(channel) ?? new Set<(message: WsPush) => void>();
+  (method: string, params: unknown, listener: (event: unknown) => void) => () => void
+>((method, _params, listener) => {
+  const listeners = streamListeners.get(method) ?? new Set<(event: unknown) => void>();
   listeners.add(listener);
-  channelListeners.set(channel, listeners);
-  const latest = latestPushByChannel.get(channel);
-  if (latest && options?.replayLatest) {
-    listener(latest);
-  }
+  streamListeners.set(method, listeners);
   return () => {
     listeners.delete(listener);
     if (listeners.size === 0) {
-      channelListeners.delete(channel);
+      streamListeners.delete(method);
     }
   };
 });
@@ -54,9 +42,7 @@ vi.mock("./wsTransport", () => {
     WsTransport: class MockWsTransport {
       request = requestMock;
       subscribe = subscribeMock;
-      getLatestPush(channel: string) {
-        return latestPushByChannel.get(channel) ?? null;
-      }
+      dispose() {}
     },
   };
 });
@@ -65,21 +51,22 @@ vi.mock("./contextMenuFallback", () => ({
   showContextMenuFallback: showContextMenuFallbackMock,
 }));
 
-let nextPushSequence = 1;
-
-function emitPush<C extends WsPushChannel>(channel: C, data: WsPushData<C>): void {
-  const listeners = channelListeners.get(channel);
-  const message = {
-    type: "push" as const,
-    sequence: nextPushSequence++,
-    channel,
-    data,
-  } as WsPushMessage<C>;
-  latestPushByChannel.set(channel, message);
-  if (!listeners) return;
-  for (const listener of listeners) {
-    listener(message);
+function emitStreamEvent(method: string, event: unknown) {
+  const listeners = streamListeners.get(method);
+  if (!listeners) {
+    return;
   }
+  for (const listener of listeners) {
+    listener(event);
+  }
+}
+
+function emitLifecycleEvent(event: ServerLifecycleStreamEvent) {
+  emitStreamEvent(WS_METHODS.subscribeServerLifecycle, event);
+}
+
+function emitServerConfigEvent(event: ServerConfigStreamEvent) {
+  emitStreamEvent(WS_METHODS.subscribeServerConfig, event);
 }
 
 function getWindowForTest(): Window & typeof globalThis & { desktopBridge?: unknown } {
@@ -102,14 +89,21 @@ const defaultProviders: ReadonlyArray<ServerProviderStatus> = [
   },
 ];
 
+const baseServerConfig: ServerConfig = {
+  cwd: "/tmp/workspace",
+  keybindingsConfigPath: "/tmp/workspace/.config/keybindings.json",
+  keybindings: [],
+  issues: [],
+  providers: defaultProviders,
+  availableEditors: ["cursor"],
+};
+
 beforeEach(() => {
   vi.resetModules();
   requestMock.mockReset();
   showContextMenuFallbackMock.mockReset();
   subscribeMock.mockClear();
-  channelListeners.clear();
-  latestPushByChannel.clear();
-  nextPushSequence = 1;
+  streamListeners.clear();
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
 });
 
@@ -118,38 +112,53 @@ afterEach(() => {
 });
 
 describe("wsNativeApi", () => {
-  it("delivers and caches valid server.welcome payloads", async () => {
+  it("delivers and caches welcome lifecycle events", async () => {
     const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
 
     createWsNativeApi();
     const listener = vi.fn();
     onServerWelcome(listener);
 
-    const payload = { cwd: "/tmp/workspace", projectName: "t3-code" };
-    emitPush(WS_CHANNELS.serverWelcome, payload);
+    emitLifecycleEvent({
+      version: 1,
+      sequence: 1,
+      type: "welcome",
+      payload: { cwd: "/tmp/workspace", projectName: "t3-code" },
+    });
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(expect.objectContaining(payload));
+    expect(listener).toHaveBeenCalledWith({
+      cwd: "/tmp/workspace",
+      projectName: "t3-code",
+    });
 
     const lateListener = vi.fn();
     onServerWelcome(lateListener);
 
     expect(lateListener).toHaveBeenCalledTimes(1);
-    expect(lateListener).toHaveBeenCalledWith(expect.objectContaining(payload));
+    expect(lateListener).toHaveBeenCalledWith({
+      cwd: "/tmp/workspace",
+      projectName: "t3-code",
+    });
   });
 
-  it("preserves bootstrap ids from server.welcome payloads", async () => {
+  it("preserves bootstrap ids from welcome lifecycle events", async () => {
     const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
 
     createWsNativeApi();
     const listener = vi.fn();
     onServerWelcome(listener);
 
-    emitPush(WS_CHANNELS.serverWelcome, {
-      cwd: "/tmp/workspace",
-      projectName: "t3-code",
-      bootstrapProjectId: ProjectId.makeUnsafe("project-1"),
-      bootstrapThreadId: ThreadId.makeUnsafe("thread-1"),
+    emitLifecycleEvent({
+      version: 1,
+      sequence: 1,
+      type: "welcome",
+      payload: {
+        cwd: "/tmp/workspace",
+        projectName: "t3-code",
+        bootstrapProjectId: ProjectId.makeUnsafe("project-1"),
+        bootstrapThreadId: ThreadId.makeUnsafe("thread-1"),
+      },
     });
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -163,77 +172,112 @@ describe("wsNativeApi", () => {
     );
   });
 
-  it("delivers successive server.welcome payloads to active listeners", async () => {
-    const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
-
-    createWsNativeApi();
-    const listener = vi.fn();
-    onServerWelcome(listener);
-
-    emitPush(WS_CHANNELS.serverWelcome, { cwd: "/tmp/one", projectName: "one" });
-    emitPush(WS_CHANNELS.serverWelcome, { cwd: "/tmp/workspace", projectName: "t3-code" });
-
-    expect(listener).toHaveBeenCalledTimes(2);
-    expect(listener).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        cwd: "/tmp/workspace",
-        projectName: "t3-code",
-      }),
-    );
-  });
-
-  it("delivers and caches valid server.configUpdated payloads", async () => {
+  it("delivers and caches current server config from the config stream snapshot", async () => {
     const { createWsNativeApi, onServerConfigUpdated } = await import("./wsNativeApi");
 
-    createWsNativeApi();
+    const api = createWsNativeApi();
     const listener = vi.fn();
     onServerConfigUpdated(listener);
 
-    const payload = {
-      issues: [
-        {
-          kind: "keybindings.invalid-entry",
-          index: 1,
-          message: "Entry at index 1 is invalid.",
-        },
-      ],
-      providers: defaultProviders,
-    } as const;
-    emitPush(WS_CHANNELS.serverConfigUpdated, payload);
+    const pendingConfig = api.server.getConfig();
+    emitServerConfigEvent({
+      version: 1,
+      type: "snapshot",
+      config: baseServerConfig,
+    });
 
+    await expect(pendingConfig).resolves.toEqual(baseServerConfig);
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(payload);
+    expect(listener).toHaveBeenCalledWith(
+      {
+        issues: [],
+        providers: defaultProviders,
+      },
+      "snapshot",
+    );
 
     const lateListener = vi.fn();
     onServerConfigUpdated(lateListener);
+
     expect(lateListener).toHaveBeenCalledTimes(1);
-    expect(lateListener).toHaveBeenCalledWith(payload);
+    expect(lateListener).toHaveBeenCalledWith(
+      {
+        issues: [],
+        providers: defaultProviders,
+      },
+      "snapshot",
+    );
   });
 
-  it("delivers successive server.configUpdated payloads to active listeners", async () => {
+  it("merges config stream updates into the cached server config", async () => {
     const { createWsNativeApi, onServerConfigUpdated } = await import("./wsNativeApi");
 
-    createWsNativeApi();
+    const api = createWsNativeApi();
     const listener = vi.fn();
     onServerConfigUpdated(listener);
 
-    emitPush(WS_CHANNELS.serverConfigUpdated, {
-      issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
-      providers: defaultProviders,
+    emitServerConfigEvent({
+      version: 1,
+      type: "snapshot",
+      config: baseServerConfig,
     });
-    emitPush(WS_CHANNELS.serverConfigUpdated, {
-      issues: [],
-      providers: defaultProviders,
+    emitServerConfigEvent({
+      version: 1,
+      type: "keybindingsUpdated",
+      payload: {
+        issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
+      },
     });
 
-    expect(listener).toHaveBeenCalledTimes(2);
-    expect(listener).toHaveBeenLastCalledWith({
-      issues: [],
-      providers: defaultProviders,
+    const nextProviders: ReadonlyArray<ServerProviderStatus> = [
+      {
+        provider: "codex",
+        status: "warning",
+        available: true,
+        authStatus: "authenticated",
+        checkedAt: "2026-01-02T00:00:00.000Z",
+        message: "rate limited",
+      },
+    ];
+    emitServerConfigEvent({
+      version: 1,
+      type: "providerStatuses",
+      payload: {
+        providers: nextProviders,
+      },
     });
+
+    await expect(api.server.getConfig()).resolves.toEqual({
+      ...baseServerConfig,
+      issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
+      providers: nextProviders,
+    });
+    expect(listener).toHaveBeenNthCalledWith(
+      1,
+      {
+        issues: [],
+        providers: defaultProviders,
+      },
+      "snapshot",
+    );
+    expect(listener).toHaveBeenNthCalledWith(
+      2,
+      {
+        issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
+        providers: defaultProviders,
+      },
+      "keybindingsUpdated",
+    );
+    expect(listener).toHaveBeenLastCalledWith(
+      {
+        issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
+        providers: nextProviders,
+      },
+      "providerStatuses",
+    );
   });
 
-  it("forwards valid terminal and orchestration events", async () => {
+  it("forwards terminal and orchestration stream events", async () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
@@ -250,7 +294,7 @@ describe("wsNativeApi", () => {
       type: "output",
       data: "hello",
     } as const;
-    emitPush(WS_CHANNELS.terminalEvent, terminalEvent);
+    emitStreamEvent(WS_METHODS.subscribeTerminalEvents, terminalEvent);
 
     const orchestrationEvent = {
       sequence: 1,
@@ -273,7 +317,7 @@ describe("wsNativeApi", () => {
         updatedAt: "2026-02-24T00:00:00.000Z",
       },
     } satisfies Extract<OrchestrationEvent, { type: "project.created" }>;
-    emitPush(ORCHESTRATION_WS_CHANNELS.domainEvent, orchestrationEvent);
+    emitStreamEvent(WS_METHODS.subscribeOrchestrationDomainEvents, orchestrationEvent);
 
     expect(onTerminalEvent).toHaveBeenCalledTimes(1);
     expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
@@ -281,8 +325,8 @@ describe("wsNativeApi", () => {
     expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
   });
 
-  it("wraps orchestration dispatch commands in the command envelope", async () => {
-    requestMock.mockResolvedValue(undefined);
+  it("sends orchestration dispatch commands as the direct RPC payload", async () => {
+    requestMock.mockResolvedValue({ sequence: 1 });
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
@@ -297,12 +341,10 @@ describe("wsNativeApi", () => {
     } as const;
     await api.orchestration.dispatchCommand(command);
 
-    expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.dispatchCommand, {
-      command,
-    });
+    expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
   });
 
-  it("forwards workspace file writes to the websocket project method", async () => {
+  it("forwards workspace file writes to the project RPC", async () => {
     requestMock.mockResolvedValue({ relativePath: "plan.md" });
     const { createWsNativeApi } = await import("./wsNativeApi");
 
@@ -320,7 +362,7 @@ describe("wsNativeApi", () => {
     });
   });
 
-  it("forwards full-thread diff requests to the orchestration websocket method", async () => {
+  it("forwards full-thread diff requests to the orchestration RPC", async () => {
     requestMock.mockResolvedValue({ diff: "patch" });
     const { createWsNativeApi } = await import("./wsNativeApi");
 
@@ -336,7 +378,22 @@ describe("wsNativeApi", () => {
     });
   });
 
-  it("forwards context menu metadata to desktop bridge", async () => {
+  it("uses the config snapshot promise for server.getConfig consumers", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const configPromise = api.server.getConfig();
+
+    emitServerConfigEvent({
+      version: 1,
+      type: "snapshot",
+      config: baseServerConfig,
+    });
+
+    await expect(configPromise).resolves.toEqual(baseServerConfig);
+  });
+
+  it("forwards context menu metadata to the desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {
       configurable: true,
@@ -365,7 +422,7 @@ describe("wsNativeApi", () => {
     );
   });
 
-  it("uses fallback context menu when desktop bridge is unavailable", async () => {
+  it("uses the fallback context menu when the desktop bridge is unavailable", async () => {
     showContextMenuFallbackMock.mockResolvedValue("delete");
     Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
 

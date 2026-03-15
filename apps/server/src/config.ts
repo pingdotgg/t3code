@@ -6,7 +6,7 @@
  *
  * @module ServerConfig
  */
-import { Effect, FileSystem, Layer, Path, ServiceMap } from "effect";
+import { Effect, FileSystem, Layer, LogLevel, Path, ServiceMap } from "effect";
 
 export const DEFAULT_PORT = 3773;
 
@@ -16,6 +16,7 @@ export type RuntimeMode = "web" | "desktop";
  * ServerConfigShape - Process/runtime configuration required by the server.
  */
 export interface ServerConfigShape {
+  readonly logLevel: LogLevel.LogLevel;
   readonly mode: RuntimeMode;
   readonly port: number;
   readonly host: string | undefined;
@@ -42,6 +43,7 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
       Effect.gen(function* () {
         const path = yield* Path.Path;
         return {
+          logLevel: "Error",
           cwd,
           stateDir: statedir,
           mode: "web",

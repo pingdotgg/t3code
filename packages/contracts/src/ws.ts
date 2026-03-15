@@ -75,6 +75,13 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+
+  // Streaming subscriptions
+  subscribeOrchestrationDomainEvents: "subscribeOrchestrationDomainEvents",
+  subscribeTerminalEvents: "subscribeTerminalEvents",
+  subscribeServerConfig: "subscribeServerConfig",
+  subscribeServerConfigUpdates: "subscribeServerConfigUpdates",
+  subscribeServerLifecycle: "subscribeServerLifecycle",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -226,6 +233,22 @@ export const WsPushEnvelopeBase = Schema.Struct({
   data: Schema.Unknown,
 });
 export type WsPushEnvelopeBase = typeof WsPushEnvelopeBase.Type;
+
+export const SubscribeOrchestrationDomainEventsInput = Schema.Struct({});
+export type SubscribeOrchestrationDomainEventsInput =
+  typeof SubscribeOrchestrationDomainEventsInput.Type;
+
+export const SubscribeTerminalEventsInput = Schema.Struct({});
+export type SubscribeTerminalEventsInput = typeof SubscribeTerminalEventsInput.Type;
+
+export const SubscribeServerConfigInput = Schema.Struct({});
+export type SubscribeServerConfigInput = typeof SubscribeServerConfigInput.Type;
+
+export const SubscribeServerConfigUpdatesInput = Schema.Struct({});
+export type SubscribeServerConfigUpdatesInput = typeof SubscribeServerConfigUpdatesInput.Type;
+
+export const SubscribeServerLifecycleInput = Schema.Struct({});
+export type SubscribeServerLifecycleInput = typeof SubscribeServerLifecycleInput.Type;
 
 // ── Union of all server → client messages ─────────────────────────────
 

@@ -9,39 +9,27 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings";
 
-const decode = <S extends Schema.Top>(
-  schema: S,
-  input: unknown,
-): Effect.Effect<Schema.Schema.Type<S>, Schema.SchemaError, never> =>
-  Schema.decodeUnknownEffect(schema as never)(input) as Effect.Effect<
-    Schema.Schema.Type<S>,
-    Schema.SchemaError,
-    never
-  >;
-
-const decodeResolvedRule = Schema.decodeUnknownEffect(ResolvedKeybindingRule as never);
-
 it.effect("parses keybinding rules", () =>
   Effect.gen(function* () {
-    const parsed = yield* decode(KeybindingRule, {
+    const parsed = yield* Schema.decodeUnknownEffect(KeybindingRule)({
       key: "mod+j",
       command: "terminal.toggle",
     });
     assert.strictEqual(parsed.command, "terminal.toggle");
 
-    const parsedClose = yield* decode(KeybindingRule, {
+    const parsedClose = yield* Schema.decodeUnknownEffect(KeybindingRule)({
       key: "mod+w",
       command: "terminal.close",
     });
     assert.strictEqual(parsedClose.command, "terminal.close");
 
-    const parsedDiffToggle = yield* decode(KeybindingRule, {
+    const parsedDiffToggle = yield* Schema.decodeUnknownEffect(KeybindingRule)({
       key: "mod+d",
       command: "diff.toggle",
     });
     assert.strictEqual(parsedDiffToggle.command, "diff.toggle");
 
-    const parsedLocal = yield* decode(KeybindingRule, {
+    const parsedLocal = yield* Schema.decodeUnknownEffect(KeybindingRule)({
       key: "mod+shift+n",
       command: "chat.newLocal",
     });
@@ -50,20 +38,19 @@ it.effect("parses keybinding rules", () =>
 );
 
 it.effect("rejects invalid command values", () =>
+  // oxlint-disable-next-line require-yield
   Effect.gen(function* () {
-    const result = yield* Effect.exit(
-      decode(KeybindingRule, {
-        key: "mod+j",
-        command: "script.Test.run",
-      }),
-    );
+    const result = Schema.decodeUnknownExit(KeybindingRule)({
+      key: "mod+j",
+      command: "script.Test.run",
+    });
     assert.strictEqual(result._tag, "Failure");
   }),
 );
 
 it.effect("accepts dynamic script run commands", () =>
   Effect.gen(function* () {
-    const parsed = yield* decode(KeybindingRule, {
+    const parsed = yield* Schema.decodeUnknownExit(KeybindingRule)({
       key: "mod+r",
       command: "script.setup.run",
     });
@@ -73,7 +60,7 @@ it.effect("accepts dynamic script run commands", () =>
 
 it.effect("parses keybindings array payload", () =>
   Effect.gen(function* () {
-    const parsed = yield* decode(KeybindingsConfig, [
+    const parsed = yield* Schema.decodeUnknownExit(KeybindingsConfig)([
       { key: "mod+j", command: "terminal.toggle" },
       { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
     ]);
@@ -83,7 +70,7 @@ it.effect("parses keybindings array payload", () =>
 
 it.effect("parses resolved keybinding rules", () =>
   Effect.gen(function* () {
-    const parsed = yield* decode(ResolvedKeybindingRule, {
+    const parsed = yield* Schema.decodeUnknownExit(ResolvedKeybindingRule)({
       command: "terminal.split",
       shortcut: {
         key: "d",
@@ -108,7 +95,7 @@ it.effect("parses resolved keybinding rules", () =>
 
 it.effect("parses resolved keybindings arrays", () =>
   Effect.gen(function* () {
-    const parsed = yield* decode(ResolvedKeybindingsConfig, [
+    const parsed = yield* Schema.decodeUnknownExit(ResolvedKeybindingsConfig)([
       {
         command: "terminal.toggle",
         shortcut: {
@@ -126,7 +113,7 @@ it.effect("parses resolved keybindings arrays", () =>
 );
 
 it.effect("drops unknown fields in resolved keybinding rules", () =>
-  decodeResolvedRule({
+  Schema.decodeUnknownExit(ResolvedKeybindingRule)({
     command: "terminal.toggle",
     shortcut: {
       key: "j",
@@ -139,9 +126,8 @@ it.effect("drops unknown fields in resolved keybinding rules", () =>
     key: "mod+j",
   }).pipe(
     Effect.map((parsed) => {
-      const view = parsed as Record<string, unknown>;
-      assert.strictEqual("key" in view, false);
-      assert.strictEqual(view.command, "terminal.toggle");
+      assert.strictEqual("key" in parsed, false);
+      assert.strictEqual(parsed.command, "terminal.toggle");
     }),
   ),
 );
