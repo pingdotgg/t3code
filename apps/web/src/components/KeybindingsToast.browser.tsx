@@ -14,8 +14,13 @@ import {
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { ws, http, HttpResponse } from "msw";
 import { setupWorker } from "msw/browser";
+import type { ReactNode } from "react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
+
+vi.mock("../components/DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children ?? null,
+}));
 
 import { useComposerDraftStore } from "../composerDraftStore";
 import { getRouter } from "../router";
@@ -26,6 +31,7 @@ const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 
 interface TestFixture {
+  openInEditorErrorMessage: string | null;
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
   welcome: WsWelcomePayload;
@@ -116,6 +122,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
 
 function buildFixture(): TestFixture {
   return {
+    openInEditorErrorMessage: null,
     snapshot: createMinimalSnapshot(),
     serverConfig: createBaseServerConfig(),
     welcome: {
@@ -181,6 +188,17 @@ const worker = setupWorker(
       }
       const method = request.body?._tag;
       if (typeof method !== "string") return;
+      if (method === WS_METHODS.shellOpenInEditor && fixture.openInEditorErrorMessage) {
+        client.send(
+          JSON.stringify({
+            id: request.id,
+            error: {
+              message: fixture.openInEditorErrorMessage,
+            },
+          }),
+        );
+        return;
+      }
       client.send(
         JSON.stringify({
           id: request.id,
@@ -212,6 +230,10 @@ function queryToastTitles(): string[] {
   return Array.from(document.querySelectorAll('[data-slot="toast-title"]')).map(
     (el) => el.textContent ?? "",
   );
+}
+
+function queryDismissButtons(): HTMLButtonElement[] {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>('[data-slot="toast-close"]'));
 }
 
 async function waitForElement<T extends Element>(
@@ -293,6 +315,7 @@ describe("Keybindings update toast", () => {
   });
 
   beforeEach(() => {
+    fixture = buildFixture();
     localStorage.clear();
     document.body.innerHTML = "";
     pushSequence = 1;
@@ -340,8 +363,45 @@ describe("Keybindings update toast", () => {
     }
   });
 
+  it("lets users dismiss the follow-up error toast from the keybindings warning action", async () => {
+    fixture.openInEditorErrorMessage = "Editor unavailable";
+    const mounted = await mountApp();
+
+    try {
+      sendServerConfigUpdatedPush([
+        { kind: "keybindings.malformed-config", message: "Expected JSON array" },
+      ]);
+      await waitForToast("Invalid keybindings configuration");
+      expect(queryDismissButtons()).toHaveLength(0);
+
+      const openButton = await waitForElement(
+        () =>
+          Array.from(
+            document.querySelectorAll<HTMLButtonElement>('[data-slot="toast-action"]'),
+          ).find((element) => element.textContent === "Open keybindings.json") ?? null,
+        "Warning toast should render its action button",
+      );
+      openButton.click();
+
+      await waitForToast("Unable to open keybindings file");
+      await vi.waitFor(
+        () => {
+          expect(queryDismissButtons()).toHaveLength(1);
+        },
+        { timeout: 4_000, interval: 16 },
+      );
+
+      queryDismissButtons()[0]?.click();
+      await waitForNoToast("Unable to open keybindings file");
+    } finally {
+      fixture.openInEditorErrorMessage = null;
+      await mounted.cleanup();
+    }
+  });
+
   it("does not show a toast from the replayed cached value on subscribe", async () => {
     const mounted = await mountApp();
+    let remounted: Awaited<ReturnType<typeof mountApp>> | null = null;
 
     try {
       sendServerConfigUpdatedPush([]);
@@ -351,7 +411,7 @@ describe("Keybindings update toast", () => {
       // Remount the app — onServerConfigUpdated replays the cached value
       // synchronously on subscribe. This should NOT produce a toast.
       await mounted.cleanup();
-      const remounted = await mountApp();
+      remounted = await mountApp();
 
       // Give it a moment to process the replayed value
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -363,7 +423,9 @@ describe("Keybindings update toast", () => {
       ).toBe(0);
 
       await remounted.cleanup();
+      remounted = null;
     } catch (error) {
+      await remounted?.cleanup().catch(() => {});
       await mounted.cleanup().catch(() => {});
       throw error;
     }
