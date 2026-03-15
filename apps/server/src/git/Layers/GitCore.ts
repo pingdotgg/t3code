@@ -3,6 +3,7 @@ import { Cache, Data, Duration, Effect, Exit, FileSystem, Layer, Path } from "ef
 import { GitCommandError } from "../Errors.ts";
 import { GitService } from "../Services/GitService.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
+import { ServerConfig } from "../../config.ts";
 
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
@@ -221,6 +222,8 @@ const makeGitCore = Effect.gen(function* () {
   const git = yield* GitService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const { baseDir } = yield* ServerConfig;
+  const worktreesDir = path.join(baseDir, "worktrees");
 
   const executeGit = (
     operation: string,
@@ -1186,9 +1189,7 @@ const makeGitCore = Effect.gen(function* () {
       const targetBranch = input.newBranch ?? input.branch;
       const sanitizedBranch = targetBranch.replace(/\//g, "-");
       const repoName = path.basename(input.cwd);
-      const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
-      const worktreePath =
-        input.path ?? path.join(homeDir, ".t3", "worktrees", repoName, sanitizedBranch);
+      const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
       const args = input.newBranch
         ? ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch]
         : ["worktree", "add", worktreePath, input.branch];

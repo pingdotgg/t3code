@@ -60,13 +60,11 @@ const runCli = (
   args: ReadonlyArray<string>,
   env: Record<string, string> = { T3CODE_NO_BROWSER: "true" },
 ) => {
-  const uniqueStateDir = `/tmp/t3-cli-state-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   return Command.runWith(t3Cli, { version: "0.0.0-test" })(args).pipe(
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
           env: {
-            T3CODE_STATE_DIR: uniqueStateDir,
             ...env,
           },
         }),
@@ -93,8 +91,8 @@ it.layer(testLayer)("server CLI command", (it) => {
         "4010",
         "--host",
         "0.0.0.0",
-        "--state-dir",
-        "/tmp/t3-cli-state",
+        "--home-dir",
+        "/tmp/t3-cli-home",
         "--dev-url",
         "http://127.0.0.1:5173",
         "--no-browser",
@@ -106,7 +104,8 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.mode, "desktop");
       assert.equal(resolvedConfig?.port, 4010);
       assert.equal(resolvedConfig?.host, "0.0.0.0");
-      assert.equal(resolvedConfig?.stateDir, "/tmp/t3-cli-state");
+      assert.equal(resolvedConfig?.baseDir, "/tmp/t3-cli-home");
+      assert.equal(resolvedConfig?.stateDir, "/tmp/t3-cli-home/userdata");
       assert.equal(resolvedConfig?.devUrl?.toString(), "http://127.0.0.1:5173/");
       assert.equal(resolvedConfig?.noBrowser, true);
       assert.equal(resolvedConfig?.authToken, "auth-secret");
@@ -131,7 +130,7 @@ it.layer(testLayer)("server CLI command", (it) => {
         T3CODE_MODE: "desktop",
         T3CODE_PORT: "4999",
         T3CODE_HOST: "100.88.10.4",
-        T3CODE_STATE_DIR: "/tmp/t3-env-state",
+        T3CODE_HOME: "/tmp/t3-env-home",
         VITE_DEV_SERVER_URL: "http://localhost:5173",
         T3CODE_NO_BROWSER: "true",
         T3CODE_AUTH_TOKEN: "env-token",
@@ -141,7 +140,8 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.mode, "desktop");
       assert.equal(resolvedConfig?.port, 4999);
       assert.equal(resolvedConfig?.host, "100.88.10.4");
-      assert.equal(resolvedConfig?.stateDir, "/tmp/t3-env-state");
+      assert.equal(resolvedConfig?.baseDir, "/tmp/t3-env-home");
+      assert.equal(resolvedConfig?.stateDir, "/tmp/t3-env-home/userdata");
       assert.equal(resolvedConfig?.devUrl?.toString(), "http://localhost:5173/");
       assert.equal(resolvedConfig?.noBrowser, true);
       assert.equal(resolvedConfig?.authToken, "env-token");

@@ -27,10 +27,18 @@ export const expandHomePath = Effect.fn(function* (input: string) {
   return input;
 });
 
-export const resolveStateDir = Effect.fn(function* (raw: string | undefined) {
+export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
   const { join, resolve } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return join(OS.homedir(), ".t3", "userdata");
+    return join(OS.homedir(), ".t3");
   }
   return resolve(yield* expandHomePath(raw.trim()));
+});
+
+export const resolveStateDir = Effect.fn(function* (baseDir: string, devUrl: URL | undefined) {
+  const { join } = yield* Path.Path;
+  if (devUrl !== undefined) {
+    return join(baseDir, "dev");
+  }
+  return join(baseDir, "userdata");
 });

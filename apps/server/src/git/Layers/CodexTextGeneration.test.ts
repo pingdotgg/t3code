@@ -2,15 +2,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 import { expect } from "vitest";
+import path from "node:path";
 
 import { ServerConfig } from "../../config.ts";
 import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
 import { TextGenerationError } from "../Errors.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 
-const makeCodexTextGenerationTestLayer = (stateDir: string) =>
+const makeCodexTextGenerationTestLayer = (baseDir: string) =>
   CodexTextGenerationLive.pipe(
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), stateDir)),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), path.join(baseDir, "userdata"), baseDir)),
     Layer.provideMerge(NodeServices.layer),
   );
 

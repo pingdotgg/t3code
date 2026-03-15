@@ -19,6 +19,7 @@ import { GitServiceLive } from "./GitService.ts";
 import { GitService } from "../Services/GitService.ts";
 import { GitCoreLive } from "./GitCore.ts";
 import { makeGitManager } from "./GitManager.ts";
+import { ServerConfig } from "../../config.ts";
 
 interface FakeGhScenario {
   prListSequence?: string[];
@@ -474,17 +475,20 @@ function makeManager(input?: {
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
+  const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), process.cwd(), process.cwd());
 
   const gitCoreLayer = GitCoreLive.pipe(
     Layer.provideMerge(GitServiceLive),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(ServerConfigLayer),
   );
 
   const managerLayer = Layer.mergeAll(
     Layer.succeed(GitHubCli, gitHubCli),
     Layer.succeed(TextGeneration, textGeneration),
     gitCoreLayer,
-    NodeServices.layer,
+  ).pipe(
+    Layer.provideMerge(NodeServices.layer),
   );
 
   return makeGitManager.pipe(

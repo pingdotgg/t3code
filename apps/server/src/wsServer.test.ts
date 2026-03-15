@@ -474,6 +474,7 @@ describe("WebSocket Server", () => {
       logWebSocketEvents?: boolean;
       devUrl?: string;
       authToken?: string;
+      baseDir?: string;
       stateDir?: string;
       staticDir?: string;
       providerLayer?: Layer.Layer<ProviderService, never>;
@@ -488,6 +489,7 @@ describe("WebSocket Server", () => {
       throw new Error("Test server is already running");
     }
 
+    const baseDir = options.baseDir ?? makeTempDir("t3code-ws-base-");
     const stateDir = options.stateDir ?? makeTempDir("t3code-ws-state-");
     const scope = await Effect.runPromise(Scope.make("sequential"));
     const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
@@ -503,6 +505,7 @@ describe("WebSocket Server", () => {
       host: undefined,
       cwd: options.cwd ?? "/test/project",
       keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
+      baseDir,
       stateDir,
       staticDir: options.staticDir,
       devUrl: options.devUrl ? new URL(options.devUrl) : undefined,

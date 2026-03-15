@@ -21,6 +21,7 @@ export interface ServerConfigShape {
   readonly host: string | undefined;
   readonly cwd: string;
   readonly keybindingsConfigPath: string;
+  readonly baseDir: string;
   readonly stateDir: string;
   readonly staticDir: string | undefined;
   readonly devUrl: URL | undefined;
@@ -36,13 +37,14 @@ export interface ServerConfigShape {
 export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigShape>()(
   "t3/config/ServerConfig",
 ) {
-  static readonly layerTest = (cwd: string, statedir: string) =>
+  static readonly layerTest = (cwd: string, statedir: string, baseDir: string) =>
     Layer.effect(
       ServerConfig,
       Effect.gen(function* () {
         const path = yield* Path.Path;
         return {
           cwd,
+          baseDir,
           stateDir: statedir,
           mode: "web",
           autoBootstrapProjectFromCwd: false,

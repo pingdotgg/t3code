@@ -67,6 +67,7 @@ describe("ProviderCommandReactor", () => {
   > | null = null;
   let scope: Scope.Closeable | null = null;
   const createdStateDirs = new Set<string>();
+  const createdBaseDirs = new Set<string>();
 
   afterEach(async () => {
     if (scope) {
@@ -81,11 +82,17 @@ describe("ProviderCommandReactor", () => {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
     createdStateDirs.clear();
+    for (const baseDir of createdBaseDirs) {
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    }
+    createdBaseDirs.clear();
   });
 
-  async function createHarness(input?: { readonly stateDir?: string }) {
+  async function createHarness(input?: { readonly baseDir?: string; readonly stateDir?: string }) {
     const now = new Date().toISOString();
-    const stateDir = input?.stateDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
+    const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
+    createdBaseDirs.add(baseDir);
+    const stateDir = input?.stateDir ?? path.join(baseDir, "state-file");
     createdStateDirs.add(stateDir);
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
@@ -210,7 +217,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(
         Layer.succeed(TextGeneration, { generateBranchName } as unknown as TextGenerationShape),
       ),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), stateDir)),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), stateDir, baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
     const runtime = ManagedRuntime.make(layer);
