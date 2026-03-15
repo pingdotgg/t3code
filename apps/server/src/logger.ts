@@ -1,103 +1,121 @@
-import util from "node:util";
+import { createRequire } from "node:module";
 
-type LogLevel = "info" | "warn" | "error" | "event";
+import pino, { type DestinationStream, type Logger as PinoLogger, type LoggerOptions } from "pino";
 
 type LogContext = Record<string, unknown>;
 
-const ANSI = {
-  reset: "\u001b[0m",
-  dim: "\u001b[2m",
-  cyan: "\u001b[36m",
-  yellow: "\u001b[33m",
-  red: "\u001b[31m",
-  magenta: "\u001b[35m",
-} as const;
-
-const LEVEL_LABEL: Record<LogLevel, string> = {
-  info: "INFO",
-  warn: "WARN",
-  error: "ERROR",
-  event: "EVENT",
+type PrettyFactory = ((options: PrettyOptions) => DestinationStream) & {
+  readonly isColorSupported?: boolean;
 };
 
-const LEVEL_COLOR: Record<LogLevel, string> = {
-  info: ANSI.cyan,
-  warn: ANSI.yellow,
-  error: ANSI.red,
-  event: ANSI.magenta,
-};
-
-function useColors() {
-  return Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
+interface PrettyOptions {
+  readonly colorize?: boolean;
+  readonly ignore: string;
+  readonly messageFormat: string;
+  readonly singleLine: boolean;
+  readonly translateTime: string;
 }
 
-function colorize(value: string, color: string, enabled: boolean) {
-  return enabled ? `${color}${value}${ANSI.reset}` : value;
+export interface CreateLoggerOptions {
+  readonly destination?: DestinationStream;
+  readonly isTty?: boolean;
+  readonly nodeEnv?: string | undefined;
+  readonly prettyFactory?: PrettyFactory | null;
 }
 
-function timeStamp() {
-  return new Date().toISOString().slice(11, 23);
+const requireForLogger = createRequire(import.meta.url);
+let sharedLogger: PinoLogger | null = null;
+
+function createPinoLogger(options: CreateLoggerOptions = {}): PinoLogger {
+  const loggerOptions: LoggerOptions = {
+    level: "info",
+    timestamp: pino.stdTimeFunctions.isoTime,
+  };
+  const destination = options.destination ?? resolvePrettyDestination(options);
+  return destination ? pino(loggerOptions, destination) : pino(loggerOptions);
 }
 
-function formatValue(value: unknown) {
-  if (typeof value === "string") {
-    return JSON.stringify(value);
+function getSharedLogger() {
+  sharedLogger ??= createPinoLogger();
+  return sharedLogger;
+}
+
+function resolvePrettyDestination(options: CreateLoggerOptions): DestinationStream | null {
+  const isTty = options.isTty ?? process.stdout.isTTY === true;
+  const nodeEnv = options.nodeEnv ?? process.env.NODE_ENV;
+  if (!isTty || nodeEnv === "production") {
+    return null;
   }
-  if (
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    value === null ||
-    value === undefined
-  ) {
-    return String(value);
+
+  const prettyFactory = options.prettyFactory ?? loadPrettyFactory();
+  if (!prettyFactory) {
+    return null;
   }
-  return util.inspect(value, {
-    depth: 4,
-    breakLength: Infinity,
-    compact: true,
-    maxArrayLength: 25,
-    maxStringLength: 320,
-  });
+
+  const colorize = prettyFactory.isColorSupported;
+  const prettyOptions: PrettyOptions = {
+    ...(typeof colorize === "boolean" ? { colorize } : {}),
+    ignore: "pid,hostname,scope",
+    messageFormat: "{if scope}[{scope}] {end}{msg}",
+    singleLine: true,
+    translateTime: "SYS:HH:MM:ss.l",
+  };
+  return prettyFactory(prettyOptions);
 }
 
-function formatContext(context: LogContext | undefined) {
-  if (!context) return "";
-  const entries = Object.entries(context).filter(([, value]) => value !== undefined);
-  if (entries.length === 0) return "";
-  return entries.map(([key, value]) => `${key}=${formatValue(value)}`).join(" ");
+function loadPrettyFactory(): PrettyFactory | null {
+  try {
+    return requireForLogger("pino-pretty") as PrettyFactory;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "MODULE_NOT_FOUND" &&
+      error.message.includes("'pino-pretty'")
+    ) {
+      return null;
+    }
+    throw error;
+  }
 }
 
-function write(level: LogLevel, scope: string, message: string, context?: LogContext) {
-  const colorEnabled = useColors();
-  const ts = colorize(timeStamp(), ANSI.dim, colorEnabled);
-  const levelLabel = colorize(LEVEL_LABEL[level], LEVEL_COLOR[level], colorEnabled);
-  const contextText = formatContext(context);
-  const line = `${ts} ${levelLabel} [${scope}] ${message}${contextText ? ` ${contextText}` : ""}`;
-
-  if (level === "warn") {
-    console.warn(line);
+function write(
+  logger: PinoLogger,
+  level: "info" | "warn" | "error",
+  message: string,
+  context?: LogContext,
+) {
+  if (context && Object.keys(context).length > 0) {
+    logger[level](context, message);
     return;
   }
-  if (level === "error") {
-    console.error(line);
-    return;
-  }
-  console.log(line);
+  logger[level](message);
 }
 
-export function createLogger(scope: string) {
+function writeEvent(logger: PinoLogger, message: string, context?: LogContext) {
+  logger.info(
+    {
+      ...context,
+      type: "event",
+    },
+    message,
+  );
+}
+
+export function createLogger(scope: string, options?: CreateLoggerOptions) {
+  const logger = (options ? createPinoLogger(options) : getSharedLogger()).child({ scope });
   return {
     info(message: string, context?: LogContext) {
-      write("info", scope, message, context);
+      write(logger, "info", message, context);
     },
     warn(message: string, context?: LogContext) {
-      write("warn", scope, message, context);
+      write(logger, "warn", message, context);
     },
     error(message: string, context?: LogContext) {
-      write("error", scope, message, context);
+      write(logger, "error", message, context);
     },
     event(message: string, context?: LogContext) {
-      write("event", scope, message, context);
+      writeEvent(logger, message, context);
     },
   };
 }
