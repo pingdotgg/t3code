@@ -79,12 +79,10 @@ describe("readEnvironmentFromLoginShell", () => {
       ].join("\n"),
     );
 
-    expect(readEnvironmentFromLoginShell("/bin/zsh", ["PATH", "SSH_AUTH_SOCK"], execFile)).toEqual(
-      {
-        PATH: "/a:/b",
-        SSH_AUTH_SOCK: "/tmp/secretive.sock",
-      },
-    );
+    expect(readEnvironmentFromLoginShell("/bin/zsh", ["PATH", "SSH_AUTH_SOCK"], execFile)).toEqual({
+      PATH: "/a:/b",
+      SSH_AUTH_SOCK: "/tmp/secretive.sock",
+    });
     expect(execFile).toHaveBeenCalledTimes(1);
   });
 
@@ -105,11 +103,9 @@ describe("readEnvironmentFromLoginShell", () => {
       ].join("\n"),
     );
 
-    expect(readEnvironmentFromLoginShell("/bin/zsh", ["PATH", "SSH_AUTH_SOCK"], execFile)).toEqual(
-      {
-        PATH: "/a:/b",
-      },
-    );
+    expect(readEnvironmentFromLoginShell("/bin/zsh", ["PATH", "SSH_AUTH_SOCK"], execFile)).toEqual({
+      PATH: "/a:/b",
+    });
   });
 
   it("preserves surrounding whitespace in captured values", () => {
@@ -120,11 +116,9 @@ describe("readEnvironmentFromLoginShell", () => {
         options: { encoding: "utf8"; timeout: number },
       ) => string
     >(() =>
-      [
-        "__T3CODE_ENV_CUSTOM_VAR_START__",
-        "  padded value  ",
-        "__T3CODE_ENV_CUSTOM_VAR_END__",
-      ].join("\n"),
+      ["__T3CODE_ENV_CUSTOM_VAR_START__", "  padded value  ", "__T3CODE_ENV_CUSTOM_VAR_END__"].join(
+        "\n",
+      ),
     );
 
     expect(readEnvironmentFromLoginShell("/bin/zsh", ["CUSTOM_VAR"], execFile)).toEqual({
