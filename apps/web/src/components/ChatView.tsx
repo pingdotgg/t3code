@@ -36,12 +36,14 @@ import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { isElectron } from "../env";
+import { resolveComposerPathMenuEntries } from "../composer-path-menu";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
   detectComposerTrigger,
+  detectComposerTriggerFromSnapshot,
   expandCollapsedComposerCursor,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
@@ -922,7 +924,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       limit: 80,
     }),
   );
-  const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const workspaceEntries = resolveComposerPathMenuEntries({
+    query: pathTriggerQuery,
+    isDebouncing: composerPathQueryDebouncer.state.isPending,
+    isFetching: workspaceEntriesQuery.isFetching,
+    isLoading: workspaceEntriesQuery.isLoading,
+    entries: workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES,
+  });
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -3103,6 +3111,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           nextCursor,
           expandedCursor,
           cursorAdjacentToMention,
+          nextExpandedCursor,
         );
         return;
       }

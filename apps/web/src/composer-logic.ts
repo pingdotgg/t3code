@@ -10,6 +10,12 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
+export interface ComposerTriggerSnapshot {
+  value: string;
+  cursor: number;
+  expandedCursor?: number;
+}
+
 const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default"];
 
 function clampCursor(text: string, cursor: number): number {
@@ -202,6 +208,14 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
     rangeStart: tokenStart,
     rangeEnd: cursor,
   };
+}
+
+export function detectComposerTriggerFromSnapshot(
+  snapshot: ComposerTriggerSnapshot,
+): ComposerTrigger | null {
+  const triggerCursor =
+    snapshot.expandedCursor ?? expandCollapsedComposerCursor(snapshot.value, snapshot.cursor);
+  return detectComposerTrigger(snapshot.value, triggerCursor);
 }
 
 export function parseStandaloneComposerSlashCommand(

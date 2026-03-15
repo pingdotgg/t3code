@@ -4,6 +4,7 @@ import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
   detectComposerTrigger,
+  detectComposerTriggerFromSnapshot,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToMention,
   parseStandaloneComposerSlashCommand,
@@ -97,6 +98,25 @@ describe("detectComposerTrigger", () => {
     expect(trigger).not.toBeNull();
     expect(trigger?.kind).toBe("path");
     expect(trigger?.query).toBe("");
+  });
+});
+
+describe("detectComposerTriggerFromSnapshot", () => {
+  it("uses the editor expanded cursor for revisited @tokens", () => {
+    const text = "@HEAD please review @src/components before sending";
+
+    expect(
+      detectComposerTriggerFromSnapshot({
+        value: text,
+        cursor: 31,
+        expandedCursor: "@HEAD please review @src/components".length,
+      }),
+    ).toEqual({
+      kind: "path",
+      query: "src/components",
+      rangeStart: "@HEAD please review ".length,
+      rangeEnd: "@HEAD please review @src/components".length,
+    });
   });
 });
 
