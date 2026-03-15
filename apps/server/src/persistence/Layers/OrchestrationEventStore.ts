@@ -13,7 +13,7 @@ import {
 } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer, Schema, Stream } from "effect";
+import { Effect, Layer, Option, Schema, Stream } from "effect";
 
 import {
   toPersistenceDecodeError,
@@ -231,26 +231,31 @@ const makeEventStore = Effect.gen(function* () {
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) =>
               decodeEvent(row).pipe(
-                Effect.mapError(
-                  toPersistenceDecodeError("OrchestrationEventStore.readFromSequence:rowToEvent"),
+                Effect.map(Option.some),
+                Effect.catch((cause) =>
+                  Effect.logWarning(
+                    `OrchestrationEventStore.readFromSequence: dropping event sequence=${row.sequence} due to decode error: ${String(cause)}`,
+                  ).pipe(Effect.as(Option.none<OrchestrationEvent>())),
                 ),
               ),
+            ).pipe(
+              Effect.map((events) => ({
+                events: events.flatMap((event) => (Option.isSome(event) ? [event.value] : [])),
+                lastSequence: rows.length > 0 ? rows[rows.length - 1]!.sequence : null,
+              })),
             ),
           ),
         ),
       ).pipe(
-        Stream.flatMap((events) => {
-          if (events.length === 0) {
+        Stream.flatMap(({ events, lastSequence }) => {
+          if (lastSequence === null) {
             return Stream.empty;
           }
           const nextRemaining = remaining - events.length;
           if (nextRemaining <= 0) {
             return Stream.fromIterable(events);
           }
-          return Stream.concat(
-            Stream.fromIterable(events),
-            readPage(events[events.length - 1]!.sequence, nextRemaining),
-          );
+          return Stream.concat(Stream.fromIterable(events), readPage(lastSequence, nextRemaining));
         }),
       );
 
