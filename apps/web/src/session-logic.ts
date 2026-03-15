@@ -7,6 +7,7 @@ import {
   type ProviderKind,
   type ToolLifecycleItemType,
   type UserInputQuestion,
+  type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 
@@ -72,6 +73,8 @@ export interface LatestProposedPlanState {
   updatedAt: string;
   turnId: TurnId | null;
   planMarkdown: string;
+  implementedAt: string | null;
+  implementationThreadId: ThreadId | null;
 }
 
 export type TimelineEntry =
@@ -380,6 +383,8 @@ export function findLatestProposedPlan(
         updatedAt: matchingTurnPlan.updatedAt,
         turnId: matchingTurnPlan.turnId,
         planMarkdown: matchingTurnPlan.planMarkdown,
+        implementedAt: matchingTurnPlan.implementedAt,
+        implementationThreadId: matchingTurnPlan.implementationThreadId,
       };
     }
   }
@@ -400,7 +405,15 @@ export function findLatestProposedPlan(
     updatedAt: latestPlan.updatedAt,
     turnId: latestPlan.turnId,
     planMarkdown: latestPlan.planMarkdown,
+    implementedAt: latestPlan.implementedAt,
+    implementationThreadId: latestPlan.implementationThreadId,
   };
+}
+
+export function hasActionableProposedPlan(
+  proposedPlan: LatestProposedPlanState | Pick<ProposedPlan, "implementedAt"> | null,
+): boolean {
+  return proposedPlan !== null && proposedPlan.implementedAt === null;
 }
 
 export function deriveWorkLogEntries(

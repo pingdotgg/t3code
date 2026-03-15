@@ -304,6 +304,8 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           id: proposedPlan.id,
           turnId: proposedPlan.turnId,
           planMarkdown: proposedPlan.planMarkdown,
+          implementedAt: proposedPlan.implementedAt,
+          implementationThreadId: proposedPlan.implementationThreadId,
           createdAt: proposedPlan.createdAt,
           updatedAt: proposedPlan.updatedAt,
         })),

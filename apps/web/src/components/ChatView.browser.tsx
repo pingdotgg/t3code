@@ -345,6 +345,8 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
                 id: "plan-browser-test",
                 turnId: null,
                 planMarkdown,
+                implementedAt: null,
+                implementationThreadId: null,
                 createdAt: isoAt(1_000),
                 updatedAt: isoAt(1_001),
               },
