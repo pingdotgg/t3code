@@ -355,12 +355,15 @@ describe("composerDraftStore codex fast mode", () => {
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.codexFastMode).toBe(true);
   });
 
-  it("clears codex fast mode when reset to the default", () => {
+  it("keeps an explicit codex fast mode override when reset to false", () => {
     const store = useComposerDraftStore.getState();
     store.setCodexFastMode(threadId, true);
     store.setCodexFastMode(threadId, false);
 
-    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+      codexFastMode: false,
+      hasCodexFastModeOverride: true,
+    });
   });
 });
 
