@@ -1,0 +1,52 @@
+{
+  "name": "@t3tools/native",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "dist/",
+    "types/binding.d.ts",
+    "build/Release/native.node"
+  ],
+  "type": "module",
+  "imports": {
+    "#t3tools_native": {
+      "types": "./types/binding.d.ts",
+      "default": "./build/Release/native.node"
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build:native": "node-gyp build",
+    "build:js": "tsc --project src/ts/tsconfig.json",
+    "prebuild": "node-gyp clean && node-gyp configure",
+    "build": "bun run build:native && bun run build:js",
+    "test:native": "bun scripts/test-native-code.ts",
+    "test:js": "bun scripts/test-js-code.ts",
+    "test": "bun run test:native && bun run test:js",
+    "typecheck:native": "tsc --noEmit --project src/ts/tsconfig.json",
+    "typecheck:scripts": "tsc --noEmit --project scripts/tsconfig.json",
+    "typecheck:js": "tsc --noEmit --project src/ts/tsconfig.json",
+    "typecheck": "bun run typecheck:native && bun run typecheck:scripts && bun run typecheck:js",
+    "lint:native": "oxlint --project src/ts/tsconfig.json",
+    "lint:scripts": "oxlint --project scripts/tsconfig.json",
+    "lint:js": "oxlint --project src/ts/tsconfig.json",
+    "lint": "bun run lint:native && bun run lint:scripts && bun run lint:js",
+    "format:native": "oxfmt --project src/ts/tsconfig.json",
+    "format:scripts": "oxfmt --project scripts/tsconfig.json",
+    "format:js": "oxfmt --project src/ts/tsconfig.json",
+    "format": "bun run format:native && bun run format:scripts && bun run format:js",
+    "make-clangd-config": "bun scripts/make-clangd-config.ts"
+  },
+  "devDependencies": {
+    "node-addon-api": "^8.6.0",
+    "node-gyp": "^12.2.0",
+    "oxlint": "^1.55.0",
+    "typescript": "^5.9.3"
+  },
+  "gypfile": true
+}

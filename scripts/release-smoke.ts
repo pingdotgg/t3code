@@ -16,6 +16,7 @@ const workspaceFiles = [
   "packages/contracts/package.json",
   "packages/shared/package.json",
   "scripts/package.json",
+  "packages/native/package.json",
 ] as const;
 
 function copyWorkspaceManifestFixture(targetRoot: string): void {
