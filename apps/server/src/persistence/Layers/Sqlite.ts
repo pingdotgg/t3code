@@ -16,11 +16,38 @@ const defaultSqliteClientLoaders = {
   node: () => import("../NodeSqliteClient.ts"),
 } satisfies Record<string, () => Promise<Loader>>;
 
+/**
+ * Verify that the current Node.js version includes the `node:sqlite` APIs
+ * used by `NodeSqliteClient` — specifically `StatementSync.columns()` (added
+ * in Node 22.16.0 / 23.11.0).
+ *
+ * @see https://github.com/nodejs/node/pull/57490
+ */
+function checkNodeSqliteCompat(): void {
+  const parts = process.versions.node.split(".").map(Number);
+  const major = parts[0] ?? 0;
+  const minor = parts[1] ?? 0;
+  const supported =
+    (major === 22 && minor >= 16) ||
+    (major === 23 && minor >= 11) ||
+    major >= 24;
+
+  if (!supported) {
+    throw new Error(
+      `Node.js ${process.versions.node} is missing required node:sqlite APIs ` +
+        `(StatementSync.columns). Upgrade to Node.js >=22.16, >=23.11, or >=24.`,
+    );
+  }
+}
+
 const makeRuntimeSqliteLayer = (
   config: RuntimeSqliteLayerConfig,
 ): Layer.Layer<SqlClient.SqlClient> =>
   Effect.gen(function* () {
     const runtime = process.versions.bun !== undefined ? "bun" : "node";
+    if (runtime === "node") {
+      checkNodeSqliteCompat();
+    }
     const loader = defaultSqliteClientLoaders[runtime];
     const clientModule = yield* Effect.promise<Loader>(loader);
     return clientModule.layer(config);
@@ -41,7 +68,10 @@ export const makeSqlitePersistenceLive = (dbPath: string) =>
     const path = yield* Path.Path;
     yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
 
-    return Layer.provideMerge(setup, makeRuntimeSqliteLayer({ filename: dbPath }));
+    return Layer.provideMerge(
+      setup,
+      makeRuntimeSqliteLayer({ filename: dbPath }),
+    );
   }).pipe(Layer.unwrap);
 
 export const SqlitePersistenceMemory = Layer.provideMerge(
