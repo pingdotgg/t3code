@@ -12,6 +12,7 @@ import { extname, join } from "node:path";
 
 import { EDITORS, type EditorId } from "@t3tools/contracts";
 import { ServiceMap, Schema, Effect, Layer } from "effect";
+import { resolveShellCommand } from "./windowsShell";
 
 // ==============================
 // Definitions
@@ -234,10 +235,12 @@ export const launchDetached = (launch: EditorLaunch) =>
     yield* Effect.callback<void, OpenError>((resume) => {
       let child;
       try {
-        child = spawn(launch.command, [...launch.args], {
+        const resolvedCommand = resolveShellCommand(launch.command, launch.args);
+        child = spawn(resolvedCommand.command, [...resolvedCommand.args], {
+          cwd: resolvedCommand.cwd,
           detached: true,
           stdio: "ignore",
-          shell: process.platform === "win32",
+          shell: resolvedCommand.shell,
         });
       } catch (error) {
         return resume(

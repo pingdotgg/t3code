@@ -27,6 +27,7 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "./provider/codexCliVersion";
+import { resolveShellCommand } from "./windowsShell";
 
 type PendingRequestKey = string;
 
@@ -420,7 +421,7 @@ function buildCodexCollaborationMode(input: {
   readonly effort?: string;
 }):
   | {
-      mode: "default" | "plan";
+      mode: "code" | "plan";
       settings: {
         model: string;
         reasoning_effort: string;
@@ -433,7 +434,7 @@ function buildCodexCollaborationMode(input: {
   }
   const model = normalizeCodexModelSlug(input.model) ?? "gpt-5.3-codex";
   return {
-    mode: input.interactionMode,
+    mode: input.interactionMode === "plan" ? "plan" : "code",
     settings: {
       model,
       reasoning_effort: input.effort ?? "medium",
@@ -548,14 +549,18 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
-      const child = spawn(codexBinaryPath, ["app-server"], {
+      const launchCommand = resolveShellCommand(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
+      });
+      const child = spawn(launchCommand.command, launchCommand.args, {
+        cwd: launchCommand.cwd,
         env: {
           ...process.env,
           ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+          ...(launchCommand.env ?? {}),
         },
         stdio: ["pipe", "pipe", "pipe"],
-        shell: process.platform === "win32",
+        shell: launchCommand.shell,
       });
       const output = readline.createInterface({ input: child.stdout });
 
@@ -1526,14 +1531,18 @@ function assertSupportedCodexCliVersion(input: {
   readonly cwd: string;
   readonly homePath?: string;
 }): void {
-  const result = spawnSync(input.binaryPath, ["--version"], {
+  const versionCommand = resolveShellCommand(input.binaryPath, ["--version"], {
     cwd: input.cwd,
+  });
+  const result = spawnSync(versionCommand.command, versionCommand.args, {
+    cwd: versionCommand.cwd,
     env: {
       ...process.env,
       ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
+      ...(versionCommand.env ?? {}),
     },
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: versionCommand.shell,
     stdio: ["ignore", "pipe", "pipe"],
     timeout: CODEX_VERSION_CHECK_TIMEOUT_MS,
     maxBuffer: 1024 * 1024,

@@ -495,7 +495,7 @@ describe("sendTurn", () => {
       ],
       model: "gpt-5.3-codex",
       collaborationMode: {
-        mode: "default",
+        mode: "code",
         settings: {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",

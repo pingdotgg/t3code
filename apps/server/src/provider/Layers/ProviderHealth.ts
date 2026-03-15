@@ -22,6 +22,7 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "../codexCliVersion";
+import { resolveShellCommand } from "../../windowsShell.ts";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
@@ -246,8 +247,11 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
 const runCodexCommand = (args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make("codex", [...args], {
-      shell: process.platform === "win32",
+    const resolvedCommand = resolveShellCommand("codex", args);
+    const command = ChildProcess.make(resolvedCommand.command, [...resolvedCommand.args], {
+      cwd: resolvedCommand.cwd,
+      ...(resolvedCommand.env ? { env: resolvedCommand.env } : {}),
+      shell: resolvedCommand.shell,
     });
 
     const child = yield* spawner.spawn(command);

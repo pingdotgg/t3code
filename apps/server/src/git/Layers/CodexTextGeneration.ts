@@ -7,6 +7,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveShellCommand } from "../../windowsShell.ts";
 import { TextGenerationError } from "../Errors.ts";
 import {
   type BranchNameGenerationInput,
@@ -204,7 +205,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       const outputPath = yield* writeTempFile(operation, "codex-output", "");
 
       const runCodexCommand = Effect.gen(function* () {
-        const command = ChildProcess.make(
+        const resolvedCommand = resolveShellCommand(
           "codex",
           [
             "exec",
@@ -222,9 +223,17 @@ const makeCodexTextGeneration = Effect.gen(function* () {
             ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
             "-",
           ],
+          { cwd },
+        );
+        const command = ChildProcess.make(
+          resolvedCommand.command,
+          [...resolvedCommand.args],
           {
-            cwd,
-            shell: process.platform === "win32",
+            cwd: resolvedCommand.cwd,
+            ...(resolvedCommand.env
+              ? { env: { ...process.env, ...resolvedCommand.env } }
+              : {}),
+            shell: resolvedCommand.shell,
             stdin: {
               stream: Stream.make(new TextEncoder().encode(prompt)),
             },
