@@ -356,6 +356,45 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithPendingUserInputAndPlan(): OrchestrationReadModel {
+  const snapshot = createSnapshotWithLongProposedPlan();
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? Object.assign({}, thread, {
+            interactionMode: "plan",
+            activities: [
+              {
+                id: "activity-user-input-requested",
+                threadId: THREAD_ID,
+                turnId: null,
+                kind: "user-input.requested",
+                createdAt: isoAt(1_010),
+                order: 1,
+                payload: {
+                  requestId: "request-browser-test",
+                  questions: [
+                    {
+                      id: "question-browser-test",
+                      header: "Need an answer",
+                      question: "Pick an option or type a custom answer.",
+                      options: [
+                        { label: "Yes", description: "Confirm." },
+                        { label: "No", description: "Decline." },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+            updatedAt: isoAt(1_010),
+          })
+        : thread,
+    ),
+  };
+}
+
 function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   const tag = body._tag;
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
@@ -529,6 +568,23 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
   );
+}
+
+function composerTextContent(): string {
+  return document.querySelector<HTMLElement>('[data-testid="composer-editor"]')?.textContent ?? "";
+}
+
+async function waitForPendingUserInputComposerEditor(expectedValue?: string): Promise<HTMLElement> {
+  return waitForElement(() => {
+    const editor = document.querySelector<HTMLElement>('[data-testid="composer-editor"]');
+    if (!editor) {
+      return null;
+    }
+    if (expectedValue !== undefined && editor.textContent !== expectedValue) {
+      return null;
+    }
+    return editor;
+  }, "Unable to find pending user-input composer editor.");
 }
 
 async function waitForInteractionModeButton(
@@ -1243,6 +1299,66 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("routes pending custom-answer typing through the composer while preserving the main draft", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInputAndPlan(),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      document.execCommand("insertText", false, "main composer draft");
+
+      await vi.waitFor(
+        () => {
+          expect(composerTextContent()).toContain("main composer draft");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      composerEditor.focus();
+      document.execCommand("selectAll", false);
+      document.execCommand("insertText", false, "custom follow-up answer");
+
+      await vi.waitFor(
+        () => {
+          expect(composerTextContent()).toBe("custom follow-up answer");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      wsRequests.length = 0;
+      composerEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "2", bubbles: true }));
+      document.execCommand("insertText", false, "custom follow-up answer2");
+
+      await vi.waitFor(
+        () => {
+          expect(composerTextContent()).toBe("custom follow-up answer2");
+          expect(wsRequests.some((request) => request._tag === "thread.user-input.respond")).toBe(
+            false,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const { syncServerReadModel } = useStore.getState();
+      syncServerReadModel(createSnapshotWithLongProposedPlan());
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Add feedback to refine the plan");
+          expect(composerTextContent()).toContain("main composer draft");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await waitForPendingUserInputComposerEditor("main composer draft");
     } finally {
       await mounted.cleanup();
     }

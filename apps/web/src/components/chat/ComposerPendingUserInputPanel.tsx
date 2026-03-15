@@ -96,11 +96,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
         return;
       }
-      // If the user has started typing a custom answer in the contenteditable
-      // composer, let digit keys pass through so they can type numbers.
-      if (target instanceof HTMLElement && target.isContentEditable) {
-        const hasCustomText = progress.customAnswer.length > 0;
-        if (hasCustomText) return;
+      if (
+        target instanceof HTMLElement &&
+        target.isContentEditable &&
+        progress.customAnswer.length > 0
+      ) {
+        return;
       }
       const digit = Number.parseInt(event.key, 10);
       if (Number.isNaN(digit) || digit < 1 || digit > 9) return;

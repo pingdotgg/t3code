@@ -123,3 +123,10 @@ export function getCustomModelOptionsByProvider(settings: {
     codex: getAppModelOptions("codex", settings.customCodexModels),
   };
 }
+
+export function resolveComposerDraftText(options: {
+  prompt: string;
+  pendingCustomAnswer: string | null;
+}): string {
+  return options.pendingCustomAnswer ?? options.prompt;
+}
