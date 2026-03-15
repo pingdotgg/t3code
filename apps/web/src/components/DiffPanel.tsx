@@ -3,7 +3,14 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@t3tools/contracts";
-import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  Columns2Icon,
+  Rows3Icon,
+} from "lucide-react";
 import {
   type WheelEvent as ReactWheelEvent,
   useCallback,
@@ -20,6 +27,13 @@ import { readNativeApi } from "../nativeApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
+import {
+  buildFileDiffRenderKey,
+  expandCollapsedDiffFileForPath,
+  resetCollapsedDiffFiles,
+  resolveFileDiffPath,
+  toggleCollapsedDiffFile,
+} from "../lib/diffPanelCollapse";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -94,6 +108,11 @@ const DIFF_PANEL_UNSAFE_CSS = `
   color: color-mix(in srgb, var(--foreground) 84%, var(--primary)) !important;
   text-decoration-color: currentColor;
 }
+
+:host(.diff-file-collapsed) pre,
+:host(.diff-file-collapsed) [data-virtualizer-buffer] {
+  display: none !important;
+}
 `;
 
 type RenderablePatch =
@@ -139,18 +158,6 @@ function getRenderablePatch(
   }
 }
 
-function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
-  const raw = fileDiff.name ?? fileDiff.prevName ?? "";
-  if (raw.startsWith("a/") || raw.startsWith("b/")) {
-    return raw.slice(2);
-  }
-  return raw;
-}
-
-function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
-  return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
-}
-
 interface DiffPanelProps {
   mode?: DiffPanelMode;
 }
@@ -162,6 +169,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const { settings } = useAppSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
+  const [collapsedFileKeys, setCollapsedFileKeys] =
+    useState<ReadonlySet<string>>(resetCollapsedDiffFiles);
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
@@ -294,14 +303,40 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, [renderablePatch]);
 
   useEffect(() => {
+    setCollapsedFileKeys(resetCollapsedDiffFiles());
+  }, [selectedPatch]);
+
+  useEffect(() => {
+    if (!selectedFilePath) {
+      return;
+    }
+
+    setCollapsedFileKeys((current) =>
+      expandCollapsedDiffFileForPath(current, renderableFiles, selectedFilePath),
+    );
+  }, [renderableFiles, selectedFilePath]);
+
+  useEffect(() => {
     if (!selectedFilePath || !patchViewportRef.current) {
       return;
     }
+
+    const selectedFile = renderableFiles.find(
+      (fileDiff) => resolveFileDiffPath(fileDiff) === selectedFilePath,
+    );
+    if (!selectedFile) {
+      return;
+    }
+
+    if (collapsedFileKeys.has(buildFileDiffRenderKey(selectedFile))) {
+      return;
+    }
+
     const target = Array.from(
       patchViewportRef.current.querySelectorAll<HTMLElement>("[data-diff-file-path]"),
     ).find((element) => element.dataset.diffFilePath === selectedFilePath);
     target?.scrollIntoView({ block: "nearest" });
-  }, [selectedFilePath, renderableFiles]);
+  }, [collapsedFileKeys, renderableFiles, selectedFilePath]);
 
   const openDiffFileInEditor = useCallback(
     (filePath: string) => {
@@ -561,6 +596,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   const filePath = resolveFileDiffPath(fileDiff);
                   const fileKey = buildFileDiffRenderKey(fileDiff);
                   const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                  const isCollapsed = collapsedFileKeys.has(fileKey);
                   return (
                     <div
                       key={themedFileKey}
@@ -573,19 +609,46 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           if (!(node instanceof Element)) return false;
                           return node.hasAttribute("data-title");
                         });
-                        if (!clickedHeader) return;
+                        const clickedCollapseToggle = composedPath.some((node) => {
+                          if (!(node instanceof Element)) return false;
+                          return node.hasAttribute("data-diff-collapse-toggle");
+                        });
+                        if (!clickedHeader || clickedCollapseToggle) return;
                         openDiffFileInEditor(filePath);
                       }}
                     >
                       <FileDiff
+                        className={cn(isCollapsed && "diff-file-collapsed")}
                         fileDiff={fileDiff}
                         options={{
                           diffStyle: diffRenderMode === "split" ? "split" : "unified",
+                          disableFileHeader: false,
                           lineDiffType: "none",
                           theme: resolveDiffThemeName(resolvedTheme),
                           themeType: resolvedTheme as DiffThemeType,
                           unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                         }}
+                        renderHeaderMetadata={() => (
+                          <button
+                            type="button"
+                            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground/75 transition-colors hover:bg-accent/50 hover:text-foreground"
+                            data-diff-collapse-toggle=""
+                            aria-label={isCollapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
+                            aria-expanded={!isCollapsed}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setCollapsedFileKeys((current) =>
+                                toggleCollapsedDiffFile(current, fileKey),
+                              );
+                            }}
+                          >
+                            {isCollapsed ? (
+                              <ChevronUpIcon className="size-3.5" />
+                            ) : (
+                              <ChevronDownIcon className="size-3.5" />
+                            )}
+                          </button>
+                        )}
                       />
                     </div>
                   );
