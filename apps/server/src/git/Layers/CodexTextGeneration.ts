@@ -8,6 +8,8 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "../Errors.ts";
+import { GitCore } from "../Services/GitCore.ts";
+import { GitHubCli } from "../Services/GitHubCli.ts";
 import {
   type BranchNameGenerationInput,
   type BranchNameGenerationResult,
@@ -20,6 +22,8 @@ import {
 const CODEX_MODEL = "gpt-5.3-codex";
 const CODEX_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
+const COMMIT_STYLE_EXAMPLE_LIMIT = 10;
+const PR_STYLE_EXAMPLE_LIMIT = 10;
 
 function toCodexOutputJsonSchema(schema: Schema.Top): unknown {
   const document = Schema.toJsonSchemaDocument(schema);
@@ -74,6 +78,84 @@ function limitSection(value: string, maxChars: number): string {
   return `${truncated}\n\n[truncated]`;
 }
 
+function dedupeStyleExamples(values: ReadonlyArray<string>, limit: number): ReadonlyArray<string> {
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    deduped.push(trimmed);
+    if (deduped.length >= limit) {
+      break;
+    }
+  }
+
+  return deduped;
+}
+
+function buildCommitStyleGuidance(commitSubjects: ReadonlyArray<string>): string {
+  if (commitSubjects.length === 0) {
+    return [
+      "Repository commit style guidance:",
+      "- No recent commit subjects are available from this repository.",
+      "- Default to Conventional Commits: type(scope): summary",
+      "- Common Conventional Commit types include feat, fix, docs, refactor, perf, test, chore, ci, build, and revert",
+    ].join("\n");
+  }
+
+  return [
+    "Repository commit style guidance:",
+    "- Infer the dominant style from these recent commit subjects and continue it.",
+    "- Common styles to recognize include Conventional Commits, emoji/gitmoji prefixes, emoji + conventional hybrids, and plain imperative summaries.",
+    "- Ignore trailing PR references like (#123); they are merge metadata, not something to invent.",
+    "- If the examples are mixed or unclear, default to Conventional Commits.",
+    "Recent commit subjects:",
+    ...commitSubjects.map((subject) => `- ${subject}`),
+  ].join("\n");
+}
+
+function buildPrStyleGuidance(input: {
+  commitSubjects: ReadonlyArray<string>;
+  prTitles: ReadonlyArray<string>;
+}): string {
+  if (input.prTitles.length === 0 && input.commitSubjects.length === 0) {
+    return [
+      "Repository PR title style guidance:",
+      "- No recent pull request titles or commit subjects are available from this repository.",
+      "- Default the PR title to Conventional Commits: type(scope): summary",
+    ].join("\n");
+  }
+
+  const sections = [
+    "Repository PR title style guidance:",
+    "- Follow the dominant repository title style shown below.",
+    "- Common styles to recognize include Conventional Commits, emoji/gitmoji prefixes, emoji + conventional hybrids, and plain imperative summaries.",
+    "- Do not invent PR numbers, issue numbers, or ticket IDs just because examples contain them.",
+    "- If the examples are mixed or unclear, default to Conventional Commits.",
+  ];
+
+  if (input.prTitles.length > 0) {
+    sections.push("Recent pull request titles:", ...input.prTitles.map((title) => `- ${title}`));
+  } else {
+    sections.push(
+      "- No recent pull request titles are available, so infer the style from recent commit subjects.",
+    );
+  }
+
+  if (input.commitSubjects.length > 0) {
+    sections.push(
+      "Recent commit subjects (supporting context):",
+      ...input.commitSubjects.map((subject) => `- ${subject}`),
+    );
+  }
+
+  return sections.join("\n");
+}
+
 function sanitizeCommitSubject(raw: string): string {
   const singleLine = raw.trim().split(/\r?\n/g)[0]?.trim() ?? "";
   const withoutTrailingPeriod = singleLine.replace(/[.]+$/g, "").trim();
@@ -100,6 +182,8 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* Effect.service(ServerConfig);
+  const gitCore = yield* GitCore;
+  const gitHubCli = yield* GitHubCli;
 
   type MaterializedImageAttachments = {
     readonly imagePaths: ReadonlyArray<string>;
@@ -312,102 +396,136 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       }).pipe(Effect.ensuring(cleanup));
     });
 
-  const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = (input) => {
-    const wantsBranch = input.includeBranch === true;
+  const readRecentCommitStyleExamples = (cwd: string) =>
+    gitCore
+      .readRecentCommitSubjects({
+        cwd,
+        limit: COMMIT_STYLE_EXAMPLE_LIMIT,
+      })
+      .pipe(
+        Effect.map((subjects) => dedupeStyleExamples(subjects, COMMIT_STYLE_EXAMPLE_LIMIT)),
+        Effect.catch(() => Effect.succeed([])),
+      );
 
-    const prompt = [
-      "You write concise git commit messages.",
-      wantsBranch
-        ? "Return a JSON object with keys: subject, body, branch."
-        : "Return a JSON object with keys: subject, body.",
-      "Rules:",
-      "- subject must be imperative, <= 72 chars, and no trailing period",
-      "- body can be empty string or short bullet points",
-      ...(wantsBranch
-        ? ["- branch must be a short semantic git branch fragment for this change"]
-        : []),
-      "- capture the primary user-visible or developer-visible change",
-      "",
-      `Branch: ${input.branch ?? "(detached)"}`,
-      "",
-      "Staged files:",
-      limitSection(input.stagedSummary, 6_000),
-      "",
-      "Staged patch:",
-      limitSection(input.stagedPatch, 40_000),
-    ].join("\n");
+  const readRecentPrTitleExamples = (cwd: string) =>
+    gitHubCli
+      .listRecentPullRequestTitles({
+        cwd,
+        limit: PR_STYLE_EXAMPLE_LIMIT,
+      })
+      .pipe(
+        Effect.map((titles) => dedupeStyleExamples(titles, PR_STYLE_EXAMPLE_LIMIT)),
+        Effect.catch(() => Effect.succeed([])),
+      );
 
-    const outputSchemaJson = wantsBranch
-      ? Schema.Struct({
-          subject: Schema.String,
+  const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = (input) =>
+    Effect.gen(function* () {
+      const wantsBranch = input.includeBranch === true;
+      const commitStyleExamples = yield* readRecentCommitStyleExamples(input.cwd);
+
+      const prompt = [
+        "You write concise git commit messages.",
+        wantsBranch
+          ? "Return a JSON object with keys: subject, body, branch."
+          : "Return a JSON object with keys: subject, body.",
+        "Rules:",
+        "- subject must be imperative, <= 72 chars, and no trailing period",
+        "- body can be empty string or short bullet points",
+        ...(wantsBranch
+          ? ["- branch must be a short semantic git branch fragment for this change"]
+          : []),
+        "- capture the primary user-visible or developer-visible change",
+        "- do not invent PR numbers, issue numbers, or ticket IDs unless the user explicitly supplied them",
+        "",
+        buildCommitStyleGuidance(commitStyleExamples),
+        "",
+        `Branch: ${input.branch ?? "(detached)"}`,
+        "",
+        "Staged files:",
+        limitSection(input.stagedSummary, 6_000),
+        "",
+        "Staged patch:",
+        limitSection(input.stagedPatch, 40_000),
+      ].join("\n");
+
+      const outputSchemaJson = wantsBranch
+        ? Schema.Struct({
+            subject: Schema.String,
+            body: Schema.String,
+            branch: Schema.String,
+          })
+        : Schema.Struct({
+            subject: Schema.String,
+            body: Schema.String,
+          });
+
+      const generated = yield* runCodexJson({
+        operation: "generateCommitMessage",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson,
+      });
+
+      return {
+        subject: sanitizeCommitSubject(generated.subject),
+        body: generated.body.trim(),
+        ...("branch" in generated && typeof generated.branch === "string"
+          ? { branch: sanitizeFeatureBranchName(generated.branch) }
+          : {}),
+      } satisfies CommitMessageGenerationResult;
+    });
+
+  const generatePrContent: TextGenerationShape["generatePrContent"] = (input) =>
+    Effect.gen(function* () {
+      const [commitStyleExamples, prTitleExamples] = yield* Effect.all(
+        [readRecentCommitStyleExamples(input.cwd), readRecentPrTitleExamples(input.cwd)],
+        {
+          concurrency: "unbounded",
+        },
+      );
+
+      const prompt = [
+        "You write GitHub pull request content.",
+        "Return a JSON object with keys: title, body.",
+        "Rules:",
+        "- title should be concise and specific",
+        "- body must be markdown and include headings '## Summary' and '## Testing'",
+        "- under Summary, provide short bullet points",
+        "- under Testing, include bullet points with concrete checks or 'Not run' where appropriate",
+        "",
+        buildPrStyleGuidance({
+          commitSubjects: commitStyleExamples,
+          prTitles: prTitleExamples,
+        }),
+        "",
+        `Base branch: ${input.baseBranch}`,
+        `Head branch: ${input.headBranch}`,
+        "",
+        "Commits:",
+        limitSection(input.commitSummary, 12_000),
+        "",
+        "Diff stat:",
+        limitSection(input.diffSummary, 12_000),
+        "",
+        "Diff patch:",
+        limitSection(input.diffPatch, 40_000),
+      ].join("\n");
+
+      const generated = yield* runCodexJson({
+        operation: "generatePrContent",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: Schema.Struct({
+          title: Schema.String,
           body: Schema.String,
-          branch: Schema.String,
-        })
-      : Schema.Struct({
-          subject: Schema.String,
-          body: Schema.String,
-        });
+        }),
+      });
 
-    return runCodexJson({
-      operation: "generateCommitMessage",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson,
-    }).pipe(
-      Effect.map(
-        (generated) =>
-          ({
-            subject: sanitizeCommitSubject(generated.subject),
-            body: generated.body.trim(),
-            ...("branch" in generated && typeof generated.branch === "string"
-              ? { branch: sanitizeFeatureBranchName(generated.branch) }
-              : {}),
-          }) satisfies CommitMessageGenerationResult,
-      ),
-    );
-  };
-
-  const generatePrContent: TextGenerationShape["generatePrContent"] = (input) => {
-    const prompt = [
-      "You write GitHub pull request content.",
-      "Return a JSON object with keys: title, body.",
-      "Rules:",
-      "- title should be concise and specific",
-      "- body must be markdown and include headings '## Summary' and '## Testing'",
-      "- under Summary, provide short bullet points",
-      "- under Testing, include bullet points with concrete checks or 'Not run' where appropriate",
-      "",
-      `Base branch: ${input.baseBranch}`,
-      `Head branch: ${input.headBranch}`,
-      "",
-      "Commits:",
-      limitSection(input.commitSummary, 12_000),
-      "",
-      "Diff stat:",
-      limitSection(input.diffSummary, 12_000),
-      "",
-      "Diff patch:",
-      limitSection(input.diffPatch, 40_000),
-    ].join("\n");
-
-    return runCodexJson({
-      operation: "generatePrContent",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: Schema.Struct({
-        title: Schema.String,
-        body: Schema.String,
-      }),
-    }).pipe(
-      Effect.map(
-        (generated) =>
-          ({
-            title: sanitizePrTitle(generated.title),
-            body: generated.body.trim(),
-          }) satisfies PrContentGenerationResult,
-      ),
-    );
-  };
+      return {
+        title: sanitizePrTitle(generated.title),
+        body: generated.body.trim(),
+      } satisfies PrContentGenerationResult;
+    });
 
   const generateBranchName: TextGenerationShape["generateBranchName"] = (input) => {
     return Effect.gen(function* () {

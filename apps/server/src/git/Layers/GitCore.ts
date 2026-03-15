@@ -8,6 +8,7 @@ const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
+const STYLE_DISCOVERY_TIMEOUT_MS = 5_000;
 
 class StatusUpstreamRefreshCacheKey extends Data.Class<{
   cwd: string;
@@ -289,6 +290,47 @@ const makeGitCore = Effect.gen(function* () {
         timeoutMs: 5_000,
       },
     ).pipe(Effect.map((result) => result.code === 0));
+
+  const remoteRefExists = (cwd: string, refName: string): Effect.Effect<boolean, GitCommandError> =>
+    executeGit(
+      "GitCore.remoteRefExists",
+      cwd,
+      ["show-ref", "--verify", "--quiet", `refs/remotes/${refName}`],
+      {
+        allowNonZeroExit: true,
+        timeoutMs: STYLE_DISCOVERY_TIMEOUT_MS,
+      },
+    ).pipe(Effect.map((result) => result.code === 0));
+
+  const resolveCommitStyleHistoryRef = (cwd: string): Effect.Effect<string, GitCommandError> =>
+    Effect.gen(function* () {
+      const defaultRemoteHeadRef = yield* executeGit(
+        "GitCore.readRecentCommitSubjects.defaultRemoteHeadRef",
+        cwd,
+        ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        {
+          allowNonZeroExit: true,
+          timeoutMs: STYLE_DISCOVERY_TIMEOUT_MS,
+        },
+      ).pipe(Effect.map((result) => result.stdout.trim()));
+
+      if (defaultRemoteHeadRef.length > 0) {
+        return defaultRemoteHeadRef;
+      }
+
+      for (const branchCandidate of DEFAULT_BASE_BRANCH_CANDIDATES) {
+        if (yield* branchExists(cwd, branchCandidate)) {
+          return branchCandidate;
+        }
+
+        const remoteCandidate = `origin/${branchCandidate}`;
+        if (yield* remoteRefExists(cwd, remoteCandidate)) {
+          return remoteCandidate;
+        }
+      }
+
+      return "HEAD";
+    });
 
   const resolveAvailableBranchName = (
     cwd: string,
@@ -994,6 +1036,41 @@ const makeGitCore = Effect.gen(function* () {
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
+  const readRecentCommitSubjects: GitCoreShape["readRecentCommitSubjects"] = (input) =>
+    Effect.gen(function* () {
+      const limit = Math.max(1, input.limit ?? 10);
+      const historyRef = yield* resolveCommitStyleHistoryRef(input.cwd).pipe(
+        Effect.catch(() => Effect.succeed("HEAD")),
+      );
+      const args = ["log", "--format=%s", "--no-merges", "--max-count", String(limit), historyRef];
+      const result = yield* executeGit("GitCore.readRecentCommitSubjects", input.cwd, args, {
+        allowNonZeroExit: true,
+        timeoutMs: STYLE_DISCOVERY_TIMEOUT_MS,
+      });
+
+      if (result.code !== 0) {
+        const stderr = result.stderr.trim();
+        const lower = stderr.toLowerCase();
+        if (
+          lower.includes("does not have any commits yet") ||
+          lower.includes("unknown revision or path not in the working tree")
+        ) {
+          return [];
+        }
+        return yield* createGitCommandError(
+          "GitCore.readRecentCommitSubjects",
+          input.cwd,
+          args,
+          stderr || "git log failed",
+        );
+      }
+
+      return result.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    });
+
   const listBranches: GitCoreShape["listBranches"] = (input) =>
     Effect.gen(function* () {
       const branchRecencyPromise = readBranchRecency(input.cwd).pipe(
@@ -1405,6 +1482,7 @@ const makeGitCore = Effect.gen(function* () {
     status,
     statusDetails,
     prepareCommitContext,
+    readRecentCommitSubjects,
     commit,
     pushCurrentBranch,
     pullCurrentBranch,

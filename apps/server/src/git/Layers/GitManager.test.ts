@@ -23,6 +23,7 @@ import { makeGitManager } from "./GitManager.ts";
 interface FakeGhScenario {
   prListSequence?: string[];
   prListByHeadSelector?: Record<string, string>;
+  recentPrTitles?: string[];
   createdPrUrl?: string;
   defaultBranch?: string;
   pullRequest?: {
@@ -222,6 +223,21 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     }
 
     if (args[0] === "pr" && args[1] === "list") {
+      if (!args.includes("--head")) {
+        return Effect.succeed({
+          stdout:
+            JSON.stringify(
+              (scenario.recentPrTitles ?? []).map((title) => ({
+                title,
+              })),
+            ) + "\n",
+          stderr: "",
+          code: 0,
+          signal: null,
+          timedOut: false,
+        });
+      }
+
       const headSelectorIndex = args.findIndex((value) => value === "--head");
       const headSelector =
         headSelectorIndex >= 0 && headSelectorIndex < args.length - 1
@@ -390,6 +406,26 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         }).pipe(
           Effect.map(
             (result) => JSON.parse(result.stdout) as ReadonlyArray<GitHubPullRequestSummary>,
+          ),
+        ),
+      listRecentPullRequestTitles: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--limit",
+            String(input.limit ?? 10),
+            "--json",
+            "title",
+          ],
+        }).pipe(
+          Effect.map((result) =>
+            (JSON.parse(result.stdout) as ReadonlyArray<{ title: string }>).map(
+              (pullRequest) => pullRequest.title,
+            ),
           ),
         ),
       createPullRequest: (input) =>
