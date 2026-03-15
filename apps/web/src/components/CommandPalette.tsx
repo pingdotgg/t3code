@@ -3,7 +3,7 @@
 import { type KeybindingCommand } from "@t3tools/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { MessageSquareIcon, SettingsIcon, SquarePenIcon } from "lucide-react";
+import { FolderIcon, MessageSquareIcon, SettingsIcon, SquarePenIcon } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -22,6 +22,7 @@ import {
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { cn } from "../lib/utils";
 import { shortcutLabelForCommand } from "../keybindings";
+import { formatRelativeTime } from "../relativeTime";
 import { useStore } from "../store";
 import { Kbd, KbdGroup } from "./ui/kbd";
 import {
@@ -54,6 +55,8 @@ interface CommandPaletteItem {
   readonly label: string;
   readonly title: string;
   readonly description?: string;
+  readonly searchText?: string;
+  readonly timestamp?: string;
   readonly icon: ReactNode;
   readonly shortcutCommand?: KeybindingCommand;
   readonly run: () => Promise<void>;
@@ -69,6 +72,17 @@ const CommandPaletteContext = createContext<CommandPaletteState | null>(null);
 
 function iconClassName() {
   return "size-4 text-muted-foreground/80";
+}
+
+function compareThreadsByCreatedAtDesc(
+  left: { id: string; createdAt: string },
+  right: { id: string; createdAt: string },
+): number {
+  const byTimestamp = Date.parse(right.createdAt) - Date.parse(left.createdAt);
+  if (!Number.isNaN(byTimestamp) && byTimestamp !== 0) {
+    return byTimestamp;
+  }
+  return right.id.localeCompare(left.id);
 }
 
 function normalizeSearchText(value: string): string {
@@ -147,6 +161,7 @@ function OpenCommandPaletteDialog() {
         description: activeProjectTitle
           ? `Create a draft thread in ${activeProjectTitle}`
           : "Create a new draft thread",
+        searchText: "new thread chat create draft",
         icon: <SquarePenIcon className={iconClassName()} />,
         shortcutCommand: "chat.new",
         run: async () => {
@@ -166,6 +181,7 @@ function OpenCommandPaletteDialog() {
         description: activeProjectTitle
           ? `Create a fresh ${settings.defaultThreadEnvMode} thread in ${activeProjectTitle}`
           : "Create a fresh thread using the default environment",
+        searchText: "new local thread chat create fresh default environment",
         icon: <SquarePenIcon className={iconClassName()} />,
         shortcutCommand: "chat.newLocal",
         run: async () => {
@@ -191,26 +207,21 @@ function OpenCommandPaletteDialog() {
       },
     });
 
+    const projectItems = projects.map<CommandPaletteItem>((project) => ({
+      value: `project:${project.id}`,
+      label: `${project.name} ${project.cwd}`.trim(),
+      title: project.name,
+      description: project.cwd,
+      icon: <FolderIcon className={iconClassName()} />,
+      run: async () => {
+        await handleNewThread(project.id, {
+          envMode: settings.defaultThreadEnvMode,
+        });
+      },
+    }));
+
     const recentThreadItems = threads
-      .toSorted((left, right) => {
-        const rightTimestamp = Date.parse(
-          right.latestTurn?.completedAt ??
-            right.latestTurn?.startedAt ??
-            right.latestTurn?.requestedAt ??
-            right.createdAt,
-        );
-        const leftTimestamp = Date.parse(
-          left.latestTurn?.completedAt ??
-            left.latestTurn?.startedAt ??
-            left.latestTurn?.requestedAt ??
-            left.createdAt,
-        );
-        const byTimestamp = rightTimestamp - leftTimestamp;
-        if (byTimestamp !== 0) {
-          return byTimestamp;
-        }
-        return right.id.localeCompare(left.id);
-      })
+      .toSorted(compareThreadsByCreatedAtDesc)
       .slice(0, RECENT_THREAD_LIMIT)
       .map<CommandPaletteItem>((thread) => {
         const projectTitle = projectTitleById.get(thread.projectId);
@@ -225,6 +236,7 @@ function OpenCommandPaletteDialog() {
           label: `${thread.title} ${projectTitle ?? ""} ${thread.branch ?? ""}`.trim(),
           title: thread.title,
           description: descriptionParts.join(" · "),
+          timestamp: formatRelativeTime(thread.createdAt),
           icon: <MessageSquareIcon className={iconClassName()} />,
           run: async () => {
             await navigate({
@@ -241,6 +253,13 @@ function OpenCommandPaletteDialog() {
         value: "actions",
         label: "Actions",
         items: actionItems,
+      });
+    }
+    if (projectItems.length > 0) {
+      nextGroups.push({
+        value: "projects",
+        label: "Projects",
+        items: projectItems,
       });
     }
     if (recentThreadItems.length > 0) {
@@ -273,7 +292,11 @@ function OpenCommandPaletteDialog() {
         ...group,
         items: group.items.filter((item) => {
           const haystack = normalizeSearchText(
-            [item.label, item.title, item.description ?? ""].join(" "),
+            [
+              item.title,
+              item.searchText ?? item.label,
+              item.searchText ? "" : (item.description ?? ""),
+            ].join(" "),
           );
           return haystack.includes(normalizedQuery);
         }),
@@ -302,7 +325,7 @@ function OpenCommandPaletteDialog() {
       data-testid="command-palette"
     >
       <Command aria-label="Command palette" mode="none" onValueChange={setQuery} value={query}>
-        <CommandInput placeholder="Search commands and threads..." />
+        <CommandInput placeholder="Search commands, projects, and threads..." />
         <CommandPanel className="max-h-[min(28rem,70vh)]">
           <CommandList>
             {filteredGroups.map((group) => (
@@ -335,6 +358,11 @@ function OpenCommandPaletteDialog() {
                             </span>
                           ) : null}
                         </span>
+                        {item.timestamp ? (
+                          <span className="min-w-12 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground/70">
+                            {item.timestamp}
+                          </span>
+                        ) : null}
                         {shortcutLabel ? <CommandShortcut>{shortcutLabel}</CommandShortcut> : null}
                       </CommandItem>
                     );
@@ -343,10 +371,14 @@ function OpenCommandPaletteDialog() {
               </CommandGroup>
             ))}
           </CommandList>
-          <CommandEmpty className="py-10 text-sm">No matching commands or threads.</CommandEmpty>
+          <CommandEmpty className="py-10 text-sm">
+            No matching commands, projects, or threads.
+          </CommandEmpty>
         </CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
-          <span>Search actions and jump back into recent threads.</span>
+          <span>
+            Search actions, start a thread in any project, or jump back into recent threads.
+          </span>
           <div className="flex items-center gap-3">
             <KbdGroup className="items-center gap-1.5">
               <Kbd>Enter</Kbd>

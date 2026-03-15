@@ -41,6 +41,7 @@ import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import { formatRelativeTime } from "../relativeTime";
 import { useStore } from "../store";
 import { shortcutLabelForCommand } from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
@@ -96,16 +97,6 @@ import { CommandDialogTrigger } from "./ui/command";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
-
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
 
 interface TerminalStatusIndicator {
   label: "Terminal process running";
@@ -1581,7 +1572,11 @@ export default function Sidebar() {
                                               : "text-muted-foreground/40"
                                           }`}
                                         >
-                                          {formatRelativeTime(thread.createdAt)}
+                                          {formatRelativeTime(
+                                            thread.createdAt,
+                                            Date.now(),
+                                            "short",
+                                          )}
                                         </span>
                                       </div>
                                     </SidebarMenuSubButton>
