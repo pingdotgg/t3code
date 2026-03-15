@@ -154,7 +154,11 @@ function OpenCommandPaletteDialog() {
   const { setOpen } = useCommandPalette();
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
-  const isBrowsing = query.startsWith("/") || query.startsWith("~/") || query.startsWith("./");
+  const isBrowsing =
+    query.startsWith("/") ||
+    query.startsWith("~/") ||
+    query.startsWith("./") ||
+    /^[a-zA-Z]:[/\\]/.test(query);
   const [debouncedBrowsePath] = useDebouncedValue(query, { wait: 200 });
   const { settings } = useAppSettings();
   const { activeDraftThread, activeThread, handleNewThread, projects } = useHandleNewThread();
@@ -397,6 +401,8 @@ function OpenCommandPaletteDialog() {
 
   const displayedGroups = !isBrowsing ? filteredGroups : browseGroups;
 
+  const isDebounceStale = isBrowsing && query !== debouncedBrowsePath;
+
   const handleBrowseKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (!isBrowsing) return;
@@ -406,12 +412,14 @@ function OpenCommandPaletteDialog() {
         if (fullPath) {
           setQuery(fullPath.endsWith("/") ? fullPath : fullPath + "/");
         }
+      } else if (event.key === "Enter" && isDebounceStale) {
+        event.preventDefault();
       } else if (event.key === "Enter" && browseEntries.length === 0) {
         event.preventDefault();
         void handleAddProject(query.trim());
       }
     },
-    [isBrowsing, query, browseEntries.length, handleAddProject],
+    [isBrowsing, query, browseEntries.length, isDebounceStale, handleAddProject],
   );
 
   const executeItem = useCallback(
