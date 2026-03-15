@@ -97,7 +97,7 @@ const makeIsolatedGitCore = (gitService: GitServiceShape) =>
     return {
       status: (input) => core.status(input),
       statusDetails: (cwd) => core.statusDetails(cwd),
-      prepareCommitContext: (cwd) => core.prepareCommitContext(cwd),
+      prepareCommitContext: (cwd, filePaths?) => core.prepareCommitContext(cwd, filePaths),
       commit: (cwd, subject, body) => core.commit(cwd, subject, body),
       pushCurrentBranch: (cwd, fallbackBranch) => core.pushCurrentBranch(cwd, fallbackBranch),
       pullCurrentBranch: (cwd) => core.pullCurrentBranch(cwd),
@@ -1708,6 +1708,45 @@ it.layer(TestLayer)("git integration", (it) => {
         const created = yield* core.commit(tmp, "Add README update", "- include updated content");
         expect(created.commitSha.length).toBeGreaterThan(0);
         expect(yield* git(tmp, ["log", "-1", "--pretty=%s"])).toBe("Add README update");
+      }),
+    );
+
+    it.effect("prepareCommitContext stages only selected files when filePaths provided", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* writeTextFile(path.join(tmp, "a.txt"), "file a\n");
+        yield* writeTextFile(path.join(tmp, "b.txt"), "file b\n");
+
+        const context = yield* core.prepareCommitContext(tmp, ["a.txt"]);
+        expect(context).not.toBeNull();
+        expect(context!.stagedSummary).toContain("a.txt");
+        expect(context!.stagedSummary).not.toContain("b.txt");
+
+        yield* core.commit(tmp, "Add only a.txt", "");
+
+        // b.txt should still be untracked after commit
+        const statusAfter = yield* git(tmp, ["status", "--porcelain"]);
+        expect(statusAfter).toContain("b.txt");
+        expect(statusAfter).not.toContain("a.txt");
+      }),
+    );
+
+    it.effect("prepareCommitContext stages everything when filePaths is undefined", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* writeTextFile(path.join(tmp, "a.txt"), "file a\n");
+        yield* writeTextFile(path.join(tmp, "b.txt"), "file b\n");
+
+        const context = yield* core.prepareCommitContext(tmp);
+        expect(context).not.toBeNull();
+        expect(context!.stagedSummary).toContain("a.txt");
+        expect(context!.stagedSummary).toContain("b.txt");
       }),
     );
 

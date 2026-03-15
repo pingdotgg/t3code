@@ -451,6 +451,7 @@ function runStackedAction(
     action: "commit" | "commit_push" | "commit_push_pr";
     commitMessage?: string;
     featureBranch?: boolean;
+    filePaths?: readonly string[];
   },
 ) {
   return manager.runStackedAction(input);
@@ -764,6 +765,31 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           Effect.map((result) => result.stdout.trim()),
         ),
       ).toContain("- details from user");
+    }),
+  );
+
+  it.effect("commits only selected files when filePaths is provided", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "a.txt"), "file a\n");
+      fs.writeFileSync(path.join(repoDir, "b.txt"), "file b\n");
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        filePaths: ["a.txt"],
+      });
+
+      expect(result.commit.status).toBe("created");
+
+      // b.txt should remain in the working tree
+      const statusStdout = yield* runGit(repoDir, ["status", "--porcelain"]).pipe(
+        Effect.map((r) => r.stdout),
+      );
+      expect(statusStdout).toContain("b.txt");
+      expect(statusStdout).not.toContain("a.txt");
     }),
   );
 

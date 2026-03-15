@@ -1,0 +1,75 @@
+name: Issue Labels
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/ISSUE_TEMPLATE/**
+      - .github/workflows/issue-labels.yml
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    name: Sync issue labels
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Ensure managed issue labels exist
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const managedLabels = [
+              {
+                name: "bug",
+                color: "d73a4a",
+                description: "Something is broken or behaving incorrectly.",
+              },
+              {
+                name: "enhancement",
+                color: "a2eeef",
+                description: "Requested improvement or new capability.",
+              },
+              {
+                name: "needs-triage",
+                color: "fbca04",
+                description: "Issue needs maintainer review and initial categorization.",
+              },
+            ];
+
+            for (const label of managedLabels) {
+              try {
+                const { data: existing } = await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label.name,
+                });
+
+                if (
+                  existing.color !== label.color ||
+                  (existing.description ?? "") !== label.description
+                ) {
+                  await github.rest.issues.updateLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name: label.name,
+                    color: label.color,
+                    description: label.description,
+                  });
+                }
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label.name,
+                  color: label.color,
+                  description: label.description,
+                });
+              }
+            }

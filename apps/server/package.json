@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "repository": {
     "type": "git",
     "url": "https://github.com/pingdotgg/t3code",
@@ -44,6 +44,6 @@
     "vitest": "catalog:"
   },
   "engines": {
-    "node": "^22.13 || ^23.4 || >=24.10"
+    "node": "^22.16 || ^23.11 || >=24.10"
   }
 }
