@@ -194,7 +194,6 @@ function sendTrayMessage(message: DesktopTrayMessage, window: BrowserWindow): vo
 }
 
 async function configureTray(): Promise<void> {
-  // TODO: Add a context menu to the tray
   await createTray();
 }
 
