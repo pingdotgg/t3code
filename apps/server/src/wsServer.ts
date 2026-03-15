@@ -20,7 +20,9 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProjectId,
   ThreadId,
+  type WsError,
   WS_CHANNELS,
+  WS_ERROR_CODES,
   WS_METHODS,
   WebSocketRequest,
   type WsResponse as WsResponseMessage,
@@ -230,6 +232,40 @@ export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycl
 class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("RouteRequestError", {
   message: Schema.String,
 }) {}
+
+function buildWsErrorForClient(cause: Cause.Cause<unknown>): WsError {
+  const defect = Cause.squash(cause);
+  const rawMessage = defect instanceof Error ? defect.message : Cause.pretty(cause);
+  const firstLine = rawMessage.split("\n")[0]?.trim() ?? rawMessage;
+  const message = firstLine.replace(/^Error:\s*/i, "");
+
+  const dirNotExistPrefix = "Project directory does not exist: ";
+  const pathNotDirPrefix = "Project path is not a directory: ";
+  if (message.startsWith(dirNotExistPrefix)) {
+    return {
+      code: WS_ERROR_CODES.projectDirNotExist,
+      message: "Project directory does not exist",
+      path: message.slice(dirNotExistPrefix.length).trim() || undefined,
+    };
+  }
+  if (message.startsWith(pathNotDirPrefix)) {
+    return {
+      code: WS_ERROR_CODES.projectPathNotDirectory,
+      message: "Project path is not a directory",
+      path: message.slice(pathNotDirPrefix.length).trim() || undefined,
+    };
+  }
+  if (Schema.is(RouteRequestError)(defect)) {
+    return {
+      code: WS_ERROR_CODES.routeRequest,
+      message,
+    };
+  }
+  return {
+    code: WS_ERROR_CODES.unknown,
+    message,
+  };
+}
 
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
   http.Server,
@@ -903,7 +939,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (messageText === null) {
       return yield* sendWsResponse({
         id: "unknown",
-        error: { message: "Invalid request format: Failed to read message" },
+        error: {
+          code: WS_ERROR_CODES.invalidRequest,
+          message: "Invalid request format: Failed to read message",
+        },
       });
     }
 
@@ -911,7 +950,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (Result.isFailure(request)) {
       return yield* sendWsResponse({
         id: "unknown",
-        error: { message: `Invalid request format: ${formatSchemaError(request.failure)}` },
+        error: {
+          code: WS_ERROR_CODES.invalidRequest,
+          message: `Invalid request format: ${formatSchemaError(request.failure)}`,
+        },
       });
     }
 
@@ -919,7 +961,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (Exit.isFailure(result)) {
       return yield* sendWsResponse({
         id: request.success.id,
-        error: { message: Cause.pretty(result.cause) },
+        error: buildWsErrorForClient(result.cause),
       });
     }
 
