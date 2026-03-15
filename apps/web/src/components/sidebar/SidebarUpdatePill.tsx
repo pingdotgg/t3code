@@ -17,66 +17,48 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function SidebarUpdatePill() {
-  // TODO: REMOVE - hardcoded for testing arm64 warning
-  const [state, setState] = useState<DesktopUpdateState | null>({
-    enabled: true,
-    status: "available",
-    currentVersion: "1.0.0",
-    availableVersion: "1.2.3",
-    downloadedVersion: null,
-    downloadPercent: null,
-    checkedAt: new Date().toISOString(),
-    message: null,
-    errorContext: null,
-    hostArch: "arm64",
-    appArch: "x64",
-    runningUnderArm64Translation: true,
-    canRetry: false,
-  });
+  const [state, setState] = useState<DesktopUpdateState | null>(null);
   const [dismissed, setDismissed] = useState(false);
 
-  // TODO: REMOVE - disabled for testing
-  // useEffect(() => {
-  //   if (!isElectron) return;
-  //   const bridge = window.desktopBridge;
-  //   if (
-  //     !bridge ||
-  //     typeof bridge.getUpdateState !== "function" ||
-  //     typeof bridge.onUpdateState !== "function"
-  //   ) {
-  //     return;
-  //   }
-  //
-  //   let disposed = false;
-  //   let receivedSubscriptionUpdate = false;
-  //   const unsubscribe = bridge.onUpdateState((nextState) => {
-  //     if (disposed) return;
-  //     receivedSubscriptionUpdate = true;
-  //     setState(nextState);
-  //   });
-  //
-  //   void bridge
-  //     .getUpdateState()
-  //     .then((nextState) => {
-  //       if (disposed || receivedSubscriptionUpdate) return;
-  //       setState(nextState);
-  //     })
-  //     .catch(() => undefined);
-  //
-  //   return () => {
-  //     disposed = true;
-  //     unsubscribe();
-  //   };
-  // }, []);
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = window.desktopBridge;
+    if (
+      !bridge ||
+      typeof bridge.getUpdateState !== "function" ||
+      typeof bridge.onUpdateState !== "function"
+    ) {
+      return;
+    }
 
-  // TODO: REMOVE - bypassed isElectron for testing
-  const visible = /* isElectron && */ shouldShowDesktopUpdateButton(state) && !dismissed;
+    let disposed = false;
+    let receivedSubscriptionUpdate = false;
+    const unsubscribe = bridge.onUpdateState((nextState) => {
+      if (disposed) return;
+      receivedSubscriptionUpdate = true;
+      setState(nextState);
+    });
+
+    void bridge
+      .getUpdateState()
+      .then((nextState) => {
+        if (disposed || receivedSubscriptionUpdate) return;
+        setState(nextState);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const visible = isElectron && shouldShowDesktopUpdateButton(state) && !dismissed;
   const tooltip = state ? getDesktopUpdateButtonTooltip(state) : "Update available";
   const disabled = isDesktopUpdateButtonDisabled(state);
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
 
-  // TODO: REMOVE - bypassed isElectron for testing
-  const showArm64Warning = /* isElectron && */ shouldShowArm64IntelBuildWarning(state);
+  const showArm64Warning = isElectron && shouldShowArm64IntelBuildWarning(state);
   const arm64Description =
     state && showArm64Warning ? getArm64IntelBuildWarningDescription(state) : null;
 
