@@ -68,6 +68,15 @@ export interface GitHubCliShape {
   }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
   /**
+   * Create a GitHub repository from the current local repository.
+   */
+  readonly createRepository: (input: {
+    readonly cwd: string;
+    readonly visibility: "private" | "public" | "internal";
+    readonly remote?: string;
+  }) => Effect.Effect<void, GitHubCliError>;
+
+  /**
    * Create a pull request from branch context and body file.
    */
   readonly createPullRequest: (input: {

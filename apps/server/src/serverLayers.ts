@@ -124,6 +124,7 @@ export function makeServerRuntimeServicesLayer() {
   return Layer.mergeAll(
     orchestrationReactorLayer,
     gitCoreLayer,
+    GitHubCliLive,
     gitManagerLayer,
     terminalLayer,
     KeybindingsLive,
