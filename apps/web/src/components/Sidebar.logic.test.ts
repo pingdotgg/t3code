@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasUnseenCompletion,
+  resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -197,5 +198,55 @@ describe("resolveThreadRowClassName", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
     expect(className).toContain("bg-accent/85");
     expect(className).toContain("hover:bg-accent");
+  });
+});
+
+describe("resolveProjectStatusIndicator", () => {
+  it("returns null when no threads have a notable status", () => {
+    expect(resolveProjectStatusIndicator([null, null])).toBeNull();
+  });
+
+  it("surfaces the highest-priority actionable state across project threads", () => {
+    expect(
+      resolveProjectStatusIndicator([
+        {
+          label: "Completed",
+          colorClass: "text-emerald-600",
+          dotClass: "bg-emerald-500",
+          pulse: false,
+        },
+        {
+          label: "Pending Approval",
+          colorClass: "text-amber-600",
+          dotClass: "bg-amber-500",
+          pulse: false,
+        },
+        {
+          label: "Working",
+          colorClass: "text-sky-600",
+          dotClass: "bg-sky-500",
+          pulse: true,
+        },
+      ]),
+    ).toMatchObject({ label: "Pending Approval", dotClass: "bg-amber-500" });
+  });
+
+  it("prefers plan-ready over completed when no stronger action is needed", () => {
+    expect(
+      resolveProjectStatusIndicator([
+        {
+          label: "Completed",
+          colorClass: "text-emerald-600",
+          dotClass: "bg-emerald-500",
+          pulse: false,
+        },
+        {
+          label: "Plan Ready",
+          colorClass: "text-violet-600",
+          dotClass: "bg-violet-500",
+          pulse: false,
+        },
+      ]),
+    ).toMatchObject({ label: "Plan Ready", dotClass: "bg-violet-500" });
   });
 });

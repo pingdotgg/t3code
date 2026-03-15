@@ -84,6 +84,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -1301,13 +1302,22 @@ export default function Sidebar() {
                       if (byDate !== 0) return byDate;
                       return b.id.localeCompare(a.id);
                     });
+                  const projectStatus = resolveProjectStatusIndicator(
+                    projectThreads.map((thread) =>
+                      resolveThreadStatusPill({
+                        thread,
+                        hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
+                        hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
+                      }),
+                    ),
+                  );
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
                   const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
                   const visibleThreads =
                     hasHiddenThreads && !isThreadListExpanded
                       ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
                       : projectThreads;
-                  const orderedProjectThreadIds = projectThreads.map((t) => t.id);
+                  const orderedProjectThreadIds = projectThreads.map((thread) => thread.id);
 
                   return (
                     <SortableProjectItem key={project.id} projectId={project.id}>
@@ -1330,11 +1340,25 @@ export default function Sidebar() {
                                 });
                               }}
                             >
-                              <ChevronRightIcon
-                                className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
-                                  project.expanded ? "rotate-90" : ""
-                                }`}
-                              />
+                              {!project.expanded && projectStatus ? (
+                                <span
+                                  aria-hidden="true"
+                                  title={projectStatus.label}
+                                  className={`-ml-0.5 inline-flex size-3.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
+                                >
+                                  <span
+                                    className={`size-2 rounded-full ${projectStatus.dotClass} ${
+                                      projectStatus.pulse ? "animate-pulse" : ""
+                                    }`}
+                                  />
+                                </span>
+                              ) : (
+                                <ChevronRightIcon
+                                  className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
+                                    project.expanded ? "rotate-90" : ""
+                                  }`}
+                                />
+                              )}
                               <ProjectFavicon cwd={project.cwd} />
                               <span className="flex-1 truncate text-xs font-medium text-foreground/90">
                                 {project.name}
