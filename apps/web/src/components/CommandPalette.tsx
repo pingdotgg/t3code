@@ -1,9 +1,16 @@
 "use client";
 
-import { type KeybindingCommand } from "@t3tools/contracts";
+import { DEFAULT_MODEL_BY_PROVIDER, type KeybindingCommand } from "@t3tools/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { FolderIcon, MessageSquareIcon, SettingsIcon, SquarePenIcon } from "lucide-react";
+import { useDebouncedValue } from "@tanstack/react-pacer";
+import {
+  FolderIcon,
+  FolderPlusIcon,
+  MessageSquareIcon,
+  SettingsIcon,
+  SquarePenIcon,
+} from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -20,8 +27,9 @@ import {
   startNewThreadFromContext,
 } from "../lib/chatThreadActions";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
-import { cn } from "../lib/utils";
+import { cn, newCommandId, newProjectId } from "../lib/utils";
 import { shortcutLabelForCommand } from "../keybindings";
+import { readNativeApi } from "../nativeApi";
 import { formatRelativeTime } from "../relativeTime";
 import { useStore } from "../store";
 import { Kbd, KbdGroup } from "./ui/kbd";
@@ -59,6 +67,7 @@ interface CommandPaletteItem {
   readonly timestamp?: string;
   readonly icon: ReactNode;
   readonly shortcutCommand?: KeybindingCommand;
+  readonly keepOpen?: boolean;
   readonly run: () => Promise<void>;
 }
 
@@ -87,6 +96,15 @@ function compareThreadsByCreatedAtDesc(
 
 function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function getHighlightedEntryPath(): string | null {
+  const item = document.querySelector(
+    "[data-testid='command-palette'] [data-slot='autocomplete-item'][data-highlighted]",
+  );
+  if (!item) return null;
+  const description = item.querySelector("[class*='text-xs']");
+  return description?.textContent ?? null;
 }
 
 export function useCommandPalette() {
@@ -136,11 +154,25 @@ function OpenCommandPaletteDialog() {
   const { setOpen } = useCommandPalette();
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
+  const isBrowsing = query.startsWith("/") || query.startsWith("~/") || query.startsWith("./");
+  const [debouncedBrowsePath] = useDebouncedValue(query, { wait: 200 });
   const { settings } = useAppSettings();
   const { activeDraftThread, activeThread, handleNewThread, projects } = useHandleNewThread();
   const threads = useStore((store) => store.threads);
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const keybindings = serverConfigQuery.data?.keybindings ?? [];
+
+  const { data: browseEntries = [] } = useQuery({
+    queryKey: ["filesystemBrowse", debouncedBrowsePath],
+    queryFn: async () => {
+      const api = readNativeApi();
+      if (!api) return [];
+      const result = await api.projects.browseFilesystem({ partialPath: debouncedBrowsePath });
+      return result.entries;
+    },
+    enabled: isBrowsing && debouncedBrowsePath.length > 0,
+  });
+
   const projectTitleById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.name] as const)),
     [projects],
@@ -195,6 +227,18 @@ function OpenCommandPaletteDialog() {
         },
       });
     }
+
+    actionItems.push({
+      value: "action:add-project",
+      label: "add project folder directory browse",
+      title: "Add project",
+      description: "Browse filesystem and add a project directory",
+      icon: <FolderPlusIcon className={iconClassName()} />,
+      keepOpen: true,
+      run: async () => {
+        setQuery("~/");
+      },
+    });
 
     actionItems.push({
       value: "action:settings",
@@ -304,9 +348,77 @@ function OpenCommandPaletteDialog() {
       .filter((group) => group.items.length > 0);
   }, [allGroups, deferredQuery]);
 
+  const handleAddProject = useCallback(
+    async (cwd: string) => {
+      const api = readNativeApi();
+      if (!api) return;
+      const existing = projects.find((p) => p.cwd === cwd);
+      if (existing) {
+        setOpen(false);
+        return;
+      }
+      const projectId = newProjectId();
+      const segments = cwd.split(/[/\\]/);
+      const title = segments.findLast(Boolean) ?? cwd;
+      await api.orchestration.dispatchCommand({
+        type: "project.create",
+        commandId: newCommandId(),
+        projectId,
+        title,
+        workspaceRoot: cwd,
+        defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
+        createdAt: new Date().toISOString(),
+      });
+      await handleNewThread(projectId, { envMode: settings.defaultThreadEnvMode }).catch(() => {});
+      setOpen(false);
+    },
+    [handleNewThread, projects, setOpen, settings.defaultThreadEnvMode],
+  );
+
+  const browseGroups = useMemo<CommandPaletteGroup[]>(() => {
+    if (browseEntries.length === 0) return [];
+    return [
+      {
+        value: "directories",
+        label: "Directories",
+        items: browseEntries.map((entry) => ({
+          value: `dir:${entry.fullPath}`,
+          label: entry.name,
+          title: entry.name,
+          description: entry.fullPath,
+          icon: <FolderIcon className={iconClassName()} />,
+          run: async () => {
+            await handleAddProject(entry.fullPath);
+          },
+        })),
+      },
+    ];
+  }, [browseEntries, handleAddProject]);
+
+  const displayedGroups = !isBrowsing ? filteredGroups : browseGroups;
+
+  const handleBrowseKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (!isBrowsing) return;
+      if (event.key === "Tab") {
+        event.preventDefault();
+        const fullPath = getHighlightedEntryPath();
+        if (fullPath) {
+          setQuery(fullPath.endsWith("/") ? fullPath : fullPath + "/");
+        }
+      } else if (event.key === "Enter" && browseEntries.length === 0) {
+        event.preventDefault();
+        void handleAddProject(query.trim());
+      }
+    },
+    [isBrowsing, query, browseEntries.length, handleAddProject],
+  );
+
   const executeItem = useCallback(
     (item: CommandPaletteItem) => {
-      setOpen(false);
+      if (!item.keepOpen) {
+        setOpen(false);
+      }
       void item.run().catch((error: unknown) => {
         toastManager.add({
           type: "error",
@@ -325,10 +437,18 @@ function OpenCommandPaletteDialog() {
       data-testid="command-palette"
     >
       <Command aria-label="Command palette" mode="none" onValueChange={setQuery} value={query}>
-        <CommandInput placeholder="Search commands, projects, and threads..." />
+        <CommandInput
+          placeholder={
+            !isBrowsing
+              ? "Search commands, projects, and threads..."
+              : "Enter project path (e.g. ~/projects/my-app)"
+          }
+          startAddon={isBrowsing ? <FolderPlusIcon /> : undefined}
+          onKeyDown={handleBrowseKeyDown}
+        />
         <CommandPanel className="max-h-[min(28rem,70vh)]">
           <CommandList>
-            {filteredGroups.map((group) => (
+            {displayedGroups.map((group) => (
               <CommandGroup items={group.items} key={group.value}>
                 <CommandGroupLabel>{group.label}</CommandGroupLabel>
                 <CommandCollection>
@@ -372,23 +492,37 @@ function OpenCommandPaletteDialog() {
             ))}
           </CommandList>
           <CommandEmpty className="py-10 text-sm">
-            No matching commands, projects, or threads.
+            {!isBrowsing
+              ? "No matching commands, projects, or threads."
+              : "No directories found. Press Enter to add the typed path."}
           </CommandEmpty>
         </CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
-          <span>
-            Search actions, start a thread in any project, or jump back into recent threads.
-          </span>
-          <div className="flex items-center gap-3">
-            <KbdGroup className="items-center gap-1.5">
-              <Kbd>Enter</Kbd>
-              <span className={cn("text-muted-foreground/80")}>Open</span>
-            </KbdGroup>
-            <KbdGroup className="items-center gap-1.5">
-              <Kbd>Esc</Kbd>
-              <span className={cn("text-muted-foreground/80")}>Close</span>
-            </KbdGroup>
-          </div>
+          {!isBrowsing ? (
+            <>
+              <span>
+                Search actions, start a thread in any project, or jump back into recent threads.
+              </span>
+              <div className="flex items-center gap-3">
+                <KbdGroup className="items-center gap-1.5">
+                  <Kbd>Enter</Kbd>
+                  <span className={cn("text-muted-foreground/80")}>Open</span>
+                </KbdGroup>
+                <KbdGroup className="items-center gap-1.5">
+                  <Kbd>Esc</Kbd>
+                  <span className={cn("text-muted-foreground/80")}>Close</span>
+                </KbdGroup>
+              </div>
+            </>
+          ) : (
+            <>
+              <span>Type a path to browse &middot; Tab to autocomplete</span>
+              <KbdGroup className="items-center gap-1.5">
+                <Kbd>Enter</Kbd>
+                <span className={cn("text-muted-foreground/80")}>Add project</span>
+              </KbdGroup>
+            </>
+          )}
         </CommandFooter>
       </Command>
     </CommandDialogPopup>
