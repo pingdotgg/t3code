@@ -270,7 +270,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
-  // Used by "Implement in new thread" to carry the sidebar-open intent across navigation.
+  // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
@@ -3729,7 +3729,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                     disabled={isSendBusy || isConnecting}
                                     onClick={() => void onImplementPlanInNewThread()}
                                   >
-                                    Implement in new thread
+                                    Implement in a new thread
                                   </MenuItem>
                                 </MenuPopup>
                               </Menu>
