@@ -80,6 +80,8 @@ interface PersistedComposerThreadDraftState {
   interactionMode?: ProviderInteractionMode | null;
   effort?: CodexReasoningEffort | null;
   codexFastMode?: boolean | null;
+  hasEffortOverride?: boolean | null;
+  hasCodexFastModeOverride?: boolean | null;
   serviceTier?: string | null;
 }
 
@@ -110,6 +112,8 @@ interface ComposerThreadDraftState {
   interactionMode: ProviderInteractionMode | null;
   effort: CodexReasoningEffort | null;
   codexFastMode: boolean;
+  hasEffortOverride: boolean;
+  hasCodexFastModeOverride: boolean;
 }
 
 export interface DraftThreadState {
@@ -204,6 +208,8 @@ const EMPTY_THREAD_DRAFT = Object.freeze({
   interactionMode: null,
   effort: null,
   codexFastMode: false,
+  hasEffortOverride: false,
+  hasCodexFastModeOverride: false,
 }) as ComposerThreadDraftState;
 
 const REASONING_EFFORT_VALUES = new Set<CodexReasoningEffort>(
@@ -222,6 +228,8 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     interactionMode: null,
     effort: null,
     codexFastMode: false,
+    hasEffortOverride: false,
+    hasCodexFastModeOverride: false,
   };
 }
 
@@ -241,7 +249,9 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.runtimeMode === null &&
     draft.interactionMode === null &&
     draft.effort === null &&
-    draft.codexFastMode === false
+    draft.codexFastMode === false &&
+    draft.hasEffortOverride === false &&
+    draft.hasCodexFastModeOverride === false
   );
 }
 
@@ -427,6 +437,9 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
     const codexFastMode =
       draftCandidate.codexFastMode === true ||
       (typeof draftCandidate.serviceTier === "string" && draftCandidate.serviceTier === "fast");
+    const hasEffortOverride = draftCandidate.hasEffortOverride === true || effort !== null;
+    const hasCodexFastModeOverride =
+      draftCandidate.hasCodexFastModeOverride === true || codexFastMode;
     if (
       prompt.length === 0 &&
       attachments.length === 0 &&
@@ -435,7 +448,9 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       !runtimeMode &&
       !interactionMode &&
       !effort &&
-      !codexFastMode
+      !codexFastMode &&
+      !hasEffortOverride &&
+      !hasCodexFastModeOverride
     ) {
       continue;
     }
@@ -448,6 +463,8 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       ...(interactionMode ? { interactionMode } : {}),
       ...(effort ? { effort } : {}),
       ...(codexFastMode ? { codexFastMode } : {}),
+      ...(hasEffortOverride ? { hasEffortOverride } : {}),
+      ...(hasCodexFastModeOverride ? { hasCodexFastModeOverride } : {}),
     };
   }
   return {
@@ -554,6 +571,8 @@ function toHydratedThreadDraft(
     interactionMode: persistedDraft.interactionMode ?? null,
     effort: persistedDraft.effort ?? null,
     codexFastMode: persistedDraft.codexFastMode === true,
+    hasEffortOverride: persistedDraft.hasEffortOverride === true,
+    hasCodexFastModeOverride: persistedDraft.hasCodexFastModeOverride === true,
   };
 }
 
@@ -939,16 +958,14 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             : null;
         set((state) => {
           const existing = state.draftsByThreadId[threadId];
-          if (!existing && nextEffort === null) {
-            return state;
-          }
           const base = existing ?? createEmptyThreadDraft();
-          if (base.effort === nextEffort) {
+          if (base.effort === nextEffort && base.hasEffortOverride) {
             return state;
           }
           const nextDraft: ComposerThreadDraftState = {
             ...base,
             effort: nextEffort,
+            hasEffortOverride: true,
           };
           const nextDraftsByThreadId = { ...state.draftsByThreadId };
           if (shouldRemoveDraft(nextDraft)) {
@@ -966,16 +983,14 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         const nextCodexFastMode = enabled === true;
         set((state) => {
           const existing = state.draftsByThreadId[threadId];
-          if (!existing && nextCodexFastMode === false) {
-            return state;
-          }
           const base = existing ?? createEmptyThreadDraft();
-          if (base.codexFastMode === nextCodexFastMode) {
+          if (base.codexFastMode === nextCodexFastMode && base.hasCodexFastModeOverride) {
             return state;
           }
           const nextDraft: ComposerThreadDraftState = {
             ...base,
             codexFastMode: nextCodexFastMode,
+            hasCodexFastModeOverride: true,
           };
           const nextDraftsByThreadId = { ...state.draftsByThreadId };
           if (shouldRemoveDraft(nextDraft)) {
@@ -1223,7 +1238,9 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             draft.runtimeMode === null &&
             draft.interactionMode === null &&
             draft.effort === null &&
-            draft.codexFastMode === false
+            draft.codexFastMode === false &&
+            draft.hasEffortOverride === false &&
+            draft.hasCodexFastModeOverride === false
           ) {
             continue;
           }
@@ -1248,6 +1265,12 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           if (draft.codexFastMode) {
             persistedDraft.codexFastMode = true;
+          }
+          if (draft.hasEffortOverride) {
+            persistedDraft.hasEffortOverride = true;
+          }
+          if (draft.hasCodexFastModeOverride) {
+            persistedDraft.hasCodexFastModeOverride = true;
           }
           persistedDraftsByThreadId[threadId as ThreadId] = persistedDraft;
         }
