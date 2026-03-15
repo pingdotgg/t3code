@@ -1,6 +1,6 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer, Option, Schema } from "effect";
+import { Effect, Layer, Option, Schema, Struct } from "effect";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -12,38 +12,16 @@ import {
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
 
-const ProjectionThreadDbRowSchema = Schema.Struct({
-  threadId: ProjectionThread.fields.threadId,
-  projectId: ProjectionThread.fields.projectId,
-  title: ProjectionThread.fields.title,
-  pinned: Schema.Number,
-  model: ProjectionThread.fields.model,
-  runtimeMode: ProjectionThread.fields.runtimeMode,
-  interactionMode: ProjectionThread.fields.interactionMode,
-  branch: ProjectionThread.fields.branch,
-  worktreePath: ProjectionThread.fields.worktreePath,
-  latestTurnId: ProjectionThread.fields.latestTurnId,
-  createdAt: ProjectionThread.fields.createdAt,
-  updatedAt: ProjectionThread.fields.updatedAt,
-  deletedAt: ProjectionThread.fields.deletedAt,
-});
+const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
+  Struct.assign({
+    pinned: Schema.Number,
+  }),
+);
 
-function normalizeProjectionThreadRow(row: Schema.Schema.Type<typeof ProjectionThreadDbRowSchema>) {
-  return {
-    threadId: row.threadId,
-    projectId: row.projectId,
-    title: row.title,
-    pinned: row.pinned === 1,
-    model: row.model,
-    runtimeMode: row.runtimeMode,
-    interactionMode: row.interactionMode,
-    branch: row.branch,
-    worktreePath: row.worktreePath,
-    latestTurnId: row.latestTurnId,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    deletedAt: row.deletedAt,
-  } satisfies ProjectionThread;
+function normalizeProjectionThreadRow(
+  row: Schema.Schema.Type<typeof ProjectionThreadDbRowSchema>,
+): ProjectionThread {
+  return { ...row, pinned: row.pinned === 1 };
 }
 
 const makeProjectionThreadRepository = Effect.gen(function* () {
