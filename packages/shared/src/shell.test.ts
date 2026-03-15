@@ -4,8 +4,6 @@ import {
   extractPathFromShellOutput,
   readPathForDesktopRuntime,
   readPathFromLoginShell,
-  resolveLoginShell,
-  shouldHydratePathFromLoginShell,
 } from "./shell";
 
 describe("extractPathFromShellOutput", () => {
@@ -62,28 +60,8 @@ describe("readPathFromLoginShell", () => {
   });
 });
 
-describe("shouldHydratePathFromLoginShell", () => {
-  it("enables login-shell PATH hydration on macOS and Linux", () => {
-    expect(shouldHydratePathFromLoginShell("darwin")).toBe(true);
-    expect(shouldHydratePathFromLoginShell("linux")).toBe(true);
-    expect(shouldHydratePathFromLoginShell("win32")).toBe(false);
-  });
-});
-
-describe("resolveLoginShell", () => {
-  it("prefers the configured shell when present", () => {
-    expect(resolveLoginShell("linux", "/usr/bin/fish")).toBe("/usr/bin/fish");
-  });
-
-  it("falls back to platform defaults when shell is missing", () => {
-    expect(resolveLoginShell("darwin", undefined)).toBe("/bin/zsh");
-    expect(resolveLoginShell("linux", undefined)).toBe("/bin/bash");
-    expect(resolveLoginShell("win32", undefined)).toBeUndefined();
-  });
-});
-
 describe("readPathForDesktopRuntime", () => {
-  it("hydrates PATH from the resolved Linux login shell", () => {
+  it("hydrates PATH using the Linux fallback shell when SHELL is missing", () => {
     const execFile = vi.fn<
       (
         file: string,
@@ -104,5 +82,21 @@ describe("readPathForDesktopRuntime", () => {
 
     expect(readPathForDesktopRuntime("win32", undefined, execFile)).toBeUndefined();
     expect(execFile).not.toHaveBeenCalled();
+  });
+
+  it("prefers the configured shell when present", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "__T3CODE_PATH_START__\n/a:/b\n__T3CODE_PATH_END__\n");
+
+    expect(readPathForDesktopRuntime("linux", "/usr/bin/fish", execFile)).toBe("/a:/b");
+    expect(execFile).toHaveBeenCalledWith("/usr/bin/fish", expect.any(Array), {
+      encoding: "utf8",
+      timeout: 5000,
+    });
   });
 });

@@ -14,30 +14,6 @@ type ExecFileSyncLike = (
   options: { encoding: "utf8"; timeout: number },
 ) => string;
 
-export function shouldHydratePathFromLoginShell(platform: NodeJS.Platform): boolean {
-  return platform === "darwin" || platform === "linux";
-}
-
-export function resolveLoginShell(
-  platform: NodeJS.Platform,
-  shell: string | undefined,
-): string | undefined {
-  const trimmedShell = shell?.trim();
-  if (trimmedShell) {
-    return trimmedShell;
-  }
-
-  if (platform === "darwin") {
-    return "/bin/zsh";
-  }
-
-  if (platform === "linux") {
-    return "/bin/bash";
-  }
-
-  return undefined;
-}
-
 export function extractPathFromShellOutput(output: string): string | null {
   const startIndex = output.indexOf(PATH_CAPTURE_START);
   if (startIndex === -1) return null;
@@ -66,14 +42,11 @@ export function readPathForDesktopRuntime(
   shell: string | undefined,
   execFile: ExecFileSyncLike = execFileSync,
 ): string | undefined {
-  if (!shouldHydratePathFromLoginShell(platform)) {
+  if (platform !== "darwin" && platform !== "linux") {
     return undefined;
   }
 
-  const resolvedShell = resolveLoginShell(platform, shell);
-  if (!resolvedShell) {
-    return undefined;
-  }
+  const resolvedShell = shell?.trim() || (platform === "linux" ? "/bin/bash" : "/bin/zsh");
 
   return readPathFromLoginShell(resolvedShell, execFile);
 }
