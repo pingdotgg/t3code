@@ -320,16 +320,10 @@ export const checkCodexProviderStatus: Effect.Effect<
   }
 
   const parsedVersion = parseCodexCliVersion(`${version.stdout}\n${version.stderr}`);
-  if (parsedVersion && !isCodexCliVersionSupported(parsedVersion)) {
-    return {
-      provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: formatCodexCliUpgradeMessage(parsedVersion),
-    };
-  }
+  const versionWarningMessage =
+    parsedVersion && !isCodexCliVersionSupported(parsedVersion)
+      ? formatCodexCliUpgradeMessage(parsedVersion)
+      : null;
 
   // Probe 2: `codex login status` — is the user authenticated?
   //
@@ -380,13 +374,14 @@ export const checkCodexProviderStatus: Effect.Effect<
   }
 
   const parsed = parseAuthStatusFromOutput(authProbe.success.value);
+  const message = parsed.message ?? versionWarningMessage ?? undefined;
   return {
     provider: CODEX_PROVIDER,
-    status: parsed.status,
+    status: versionWarningMessage && parsed.status === "ready" ? "warning" : parsed.status,
     available: true,
     authStatus: parsed.authStatus,
     checkedAt,
-    ...(parsed.message ? { message: parsed.message } : {}),
+    ...(message ? { message } : {}),
   } satisfies ServerProviderStatus;
 });
 
