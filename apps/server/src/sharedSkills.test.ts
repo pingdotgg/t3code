@@ -155,7 +155,7 @@ describe("sharedSkills", () => {
     ]);
   });
 
-  it("initializes nested Codex skills such as .system skills", async () => {
+  it("leaves Codex system skills outside shared skill management", async () => {
     await useIsolatedHome();
     const codexHomePath = await makeTempDir("t3-codex-home-");
     const sharedSkillsPath = path.join(await makeTempDir("t3-shared-skills-"), "skills");
@@ -167,24 +167,45 @@ describe("sharedSkills", () => {
       sharedSkillsPath,
     });
 
-    expect(result.skills).toEqual([
-      expect.objectContaining({
-        name: ".system/skill-creator",
-        status: "managed",
-        enabled: true,
-        codexPathExists: true,
-        sharedPathExists: true,
-        symlinkedToSharedPath: true,
-      }),
-    ]);
+    expect(result.skills).toEqual([]);
 
     const codexSkillPath = path.join(codexHomePath, "skills", ".system", "skill-creator");
-    expect(await fs.realpath(codexSkillPath)).toBe(
-      await fs.realpath(path.join(sharedSkillsPath, ".system", "skill-creator")),
-    );
+    const codexStat = await fs.lstat(codexSkillPath);
+    expect(codexStat.isSymbolicLink()).toBe(false);
+    await expect(
+      fs.lstat(path.join(sharedSkillsPath, ".system", "skill-creator")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     await expect(
       fs.readFile(path.join(codexHomePath, "skills", ".system", ".codex-system-skills.marker")),
     ).resolves.toBeDefined();
+  });
+
+  it("ignores legacy shared copies of Codex system skills when refreshing state", async () => {
+    await useIsolatedHome();
+    const codexHomePath = await makeTempDir("t3-codex-home-");
+    const sharedSkillsPath = path.join(await makeTempDir("t3-shared-skills-"), "skills");
+
+    await initializeSharedSkills({
+      codexHomePath,
+      sharedSkillsPath,
+    });
+
+    await writeSystemSkill(codexHomePath, "skill-installer", "system skill");
+    await writeSkill(
+      path.join(sharedSkillsPath, ".system"),
+      "skill-installer",
+      "stale shared system skill",
+    );
+
+    const state = await getSharedSkillsState({
+      codexHomePath,
+      sharedSkillsPath,
+    });
+
+    expect(state.skills).toEqual([]);
+    expect(state.warnings).toEqual([]);
   });
 
   it("finds and initializes user-installed skills from ~/.agents/skills", async () => {

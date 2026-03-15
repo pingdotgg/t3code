@@ -56,7 +56,11 @@ function toSkillName(rootPath: string, entryPath: string): string {
 
 function normalizeDisabledSkillNames(values: readonly string[] | undefined): string[] {
   return [
-    ...new Set((values ?? []).map((value) => value.trim()).filter((value) => value.length)),
+    ...new Set(
+      (values ?? [])
+        .map((value) => value.trim())
+        .filter((value) => value.length && !isSystemSkillName(value)),
+    ),
   ].toSorted((left, right) => left.localeCompare(right));
 }
 
@@ -445,6 +449,12 @@ async function readHarnessSkillEntries(
   return merged;
 }
 
+function filterManagedSkillEntries(
+  entries: Map<string, DiskSkillEntry>,
+): Map<string, DiskSkillEntry> {
+  return new Map(Array.from(entries.entries()).filter(([name]) => !isSystemSkillName(name)));
+}
+
 function toSharedSkillSummary(input: {
   name: string;
   paths: ResolvedSharedSkillsPaths;
@@ -501,8 +511,8 @@ async function buildSharedSkillsState(
   },
 ): Promise<SharedSkillsState> {
   const [sharedEntries, codexEntries] = await Promise.all([
-    readSkillEntries(paths.sharedSkillsPath),
-    readHarnessSkillEntries(paths),
+    readSkillEntries(paths.sharedSkillsPath).then(filterManagedSkillEntries),
+    readHarnessSkillEntries(paths).then(filterManagedSkillEntries),
   ]);
 
   const skillNames = new Set([...sharedEntries.keys(), ...codexEntries.keys()]);
@@ -593,8 +603,8 @@ async function reconcileSharedSkills(
 
   const warnings: string[] = [];
   const [sharedEntries, codexEntries] = await Promise.all([
-    readSkillEntries(paths.sharedSkillsPath),
-    readHarnessSkillEntries(paths),
+    readSkillEntries(paths.sharedSkillsPath).then(filterManagedSkillEntries),
+    readHarnessSkillEntries(paths).then(filterManagedSkillEntries),
   ]);
 
   for (const [name, sharedEntry] of sharedEntries) {
@@ -693,8 +703,8 @@ async function reconcileSharedSkills(
 
 async function findSkillEntries(paths: ResolvedSharedSkillsPaths, skillName: string) {
   const [sharedEntries, codexEntries] = await Promise.all([
-    readSkillEntries(paths.sharedSkillsPath),
-    readHarnessSkillEntries(paths),
+    readSkillEntries(paths.sharedSkillsPath).then(filterManagedSkillEntries),
+    readHarnessSkillEntries(paths).then(filterManagedSkillEntries),
   ]);
 
   return {
