@@ -6,6 +6,7 @@ import {
   createDebouncedStorage,
   useComposerDraftStore,
 } from "./composerDraftStore";
+import { type TerminalContextDraft } from "./lib/terminalContext";
 
 function makeImage(input: {
   id: string;
@@ -31,6 +32,26 @@ function makeImage(input: {
     sizeBytes: file.size,
     previewUrl: input.previewUrl,
     file,
+  };
+}
+
+function makeTerminalContext(input: {
+  id: string;
+  text?: string;
+  terminalId?: string;
+  terminalLabel?: string;
+  lineStart?: number;
+  lineEnd?: number;
+}): TerminalContextDraft {
+  return {
+    id: input.id,
+    threadId: ThreadId.makeUnsafe("thread-dedupe"),
+    terminalId: input.terminalId ?? "default",
+    terminalLabel: input.terminalLabel ?? "Terminal 1",
+    lineStart: input.lineStart ?? 4,
+    lineEnd: input.lineEnd ?? 5,
+    text: input.text ?? "git status\nOn branch main",
+    createdAt: "2026-03-13T12:00:00.000Z",
   };
 }
 
@@ -155,6 +176,38 @@ describe("composerDraftStore clearComposerContent", () => {
     const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
     expect(draft).toBeUndefined();
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:optimistic");
+  });
+});
+
+describe("composerDraftStore terminal contexts", () => {
+  const threadId = ThreadId.makeUnsafe("thread-dedupe");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("deduplicates identical terminal contexts by selection signature", () => {
+    const first = makeTerminalContext({ id: "ctx-1" });
+    const duplicate = makeTerminalContext({ id: "ctx-2" });
+
+    useComposerDraftStore.getState().addTerminalContexts(threadId, [first, duplicate]);
+
+    const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
+    expect(draft?.terminalContexts.map((context) => context.id)).toEqual(["ctx-1"]);
+  });
+
+  it("clears terminal contexts when clearing composer content", () => {
+    useComposerDraftStore
+      .getState()
+      .addTerminalContext(threadId, makeTerminalContext({ id: "ctx-1" }));
+
+    useComposerDraftStore.getState().clearComposerContent(threadId);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });
 });
 
