@@ -74,11 +74,17 @@ function extractEnvironmentValue(output: string, name: string): string | undefin
   return value.length > 0 ? value : undefined;
 }
 
-export function readEnvironmentFromLoginShell(
+export type ShellEnvironmentReader = (
   shell: string,
   names: ReadonlyArray<string>,
-  execFile: ExecFileSyncLike = execFileSync,
-): Partial<Record<string, string>> {
+  execFile?: ExecFileSyncLike,
+) => Partial<Record<string, string>>;
+
+export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
+  shell,
+  names,
+  execFile = execFileSync,
+) => {
   if (names.length === 0) {
     return {};
   }
@@ -97,4 +103,4 @@ export function readEnvironmentFromLoginShell(
   }
 
   return environment;
-}
+};
