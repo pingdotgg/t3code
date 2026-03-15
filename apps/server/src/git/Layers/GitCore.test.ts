@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1354,6 +1354,31 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* writeTextFile(path.join(tmp, "README.md"), "updated\n");
         const dirty = yield* core.statusDetails(tmp);
         expect(dirty.hasWorkingTreeChanges).toBe(true);
+      }),
+    );
+
+    it.effect("preserves full target path for brace-style renames in numstat output", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        const oldDir = path.join(tmp, "src", "old");
+        yield* Effect.sync(() => {
+          mkdirSync(oldDir, { recursive: true });
+        });
+
+        yield* writeTextFile(path.join(oldDir, "file.ts"), "export const value = 1;\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add old path"]);
+
+        yield* git(tmp, ["mv", "src/old", "src/new"]);
+
+        const details = yield* core.statusDetails(tmp);
+        const filePaths = details.workingTree.files.map((file) => file.path);
+
+        expect(filePaths).toContain("src/new/file.ts");
+        expect(filePaths).not.toContain("new}/file.ts");
       }),
     );
 
