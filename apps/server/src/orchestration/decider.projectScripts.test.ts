@@ -202,7 +202,7 @@ describe("decider project scripts", () => {
     });
   });
 
-  it("marks the source proposed plan implemented when starting a new implementation thread", async () => {
+  it("carries the source proposed plan reference in turn-start-requested", async () => {
     const now = new Date().toISOString();
     const initial = createEmptyReadModel(now);
     const withProject = await Effect.runPromise(
@@ -333,16 +333,14 @@ describe("decider project scripts", () => {
 
     expect(Array.isArray(result)).toBe(true);
     const events = Array.isArray(result) ? result : [result];
-    expect(events).toHaveLength(3);
-    expect(events[2]?.type).toBe("thread.proposed-plan-upserted");
-    expect(events[2]?.aggregateId).toBe("thread-plan");
-    if (events[2]?.type !== "thread.proposed-plan-upserted") {
+    expect(events).toHaveLength(2);
+    expect(events[1]?.type).toBe("thread.turn-start-requested");
+    if (events[1]?.type !== "thread.turn-start-requested") {
       return;
     }
-    expect(events[2].payload.proposedPlan).toMatchObject({
-      id: "plan-1",
-      implementedAt: now,
-      implementationThreadId: "thread-implement",
+    expect(events[1].payload.sourceProposedPlan).toMatchObject({
+      threadId: "thread-plan",
+      planId: "plan-1",
     });
   });
 

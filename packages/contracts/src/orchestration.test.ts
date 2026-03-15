@@ -225,7 +225,26 @@ it.effect(
       assert.strictEqual(parsed.provider, undefined);
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+      assert.strictEqual(parsed.sourceProposedPlan, undefined);
     }),
+);
+
+it.effect("decodes thread.turn-start-requested source proposed plan metadata when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-2",
+      messageId: "msg-2",
+      sourceProposedPlan: {
+        threadId: "thread-1",
+        planId: "plan-1",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-1",
+      planId: "plan-1",
+    });
+  }),
 );
 
 it.effect("decodes orchestration session runtime mode defaults", () =>

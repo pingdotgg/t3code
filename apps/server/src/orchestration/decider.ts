@@ -326,33 +326,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
           runtimeMode: targetThread.runtimeMode,
           interactionMode: targetThread.interactionMode,
+          ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
           createdAt: command.createdAt,
         },
       };
-      if (!sourcePlan || !sourceThread) {
-        return [userMessageEvent, turnStartRequestedEvent];
-      }
-
-      const sourcePlanUpsertEvent: Omit<OrchestrationEvent, "sequence"> = {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: sourceThread.id,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        }),
-        causationEventId: turnStartRequestedEvent.eventId,
-        type: "thread.proposed-plan-upserted",
-        payload: {
-          threadId: sourceThread.id,
-          proposedPlan: {
-            ...sourcePlan,
-            implementedAt: command.createdAt,
-            implementationThreadId: command.threadId,
-            updatedAt: command.createdAt,
-          },
-        },
-      };
-      return [userMessageEvent, turnStartRequestedEvent, sourcePlanUpsertEvent];
+      return [userMessageEvent, turnStartRequestedEvent];
     }
 
     case "thread.turn.interrupt": {

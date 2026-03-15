@@ -15,6 +15,8 @@ import { Cache, Cause, Duration, Effect, Layer, Option, Ref, Stream } from "effe
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -480,6 +482,7 @@ function runtimeEventToActivities(
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
+  const projectionTurnRepository = yield* ProjectionTurnRepository;
 
   const assistantDeliveryModeRef = yield* Ref.make<AssistantDeliveryMode>(
     DEFAULT_ASSISTANT_DELIVERY_MODE,
@@ -778,6 +781,46 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.asVoid);
     });
 
+  const markSourceProposedPlanImplementedForStartedTurn = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    implementedAt: string,
+  ) {
+    const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+      threadId,
+    });
+    if (Option.isNone(pendingTurnStart)) {
+      return;
+    }
+
+    const sourceThreadId = pendingTurnStart.value.sourceProposedPlanThreadId;
+    const sourcePlanId = pendingTurnStart.value.sourceProposedPlanId;
+    if (sourceThreadId === null || sourcePlanId === null) {
+      return;
+    }
+
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const sourceThread = readModel.threads.find((entry) => entry.id === sourceThreadId);
+    const sourcePlan = sourceThread?.proposedPlans.find((entry) => entry.id === sourcePlanId);
+    if (!sourceThread || !sourcePlan || sourcePlan.implementedAt !== null) {
+      return;
+    }
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.proposed-plan.upsert",
+      commandId: CommandId.makeUnsafe(
+        `provider:source-proposed-plan-implemented:${threadId}:${crypto.randomUUID()}`,
+      ),
+      threadId: sourceThread.id,
+      proposedPlan: {
+        ...sourcePlan,
+        implementedAt,
+        implementationThreadId: threadId,
+        updatedAt: implementedAt,
+      },
+      createdAt: implementedAt,
+    });
+  });
+
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
       const readModel = yield* orchestrationEngine.getReadModel();
@@ -787,6 +830,10 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
+
+      if (event.type === "turn.started") {
+        yield* markSourceProposedPlanImplementedForStartedTurn(thread.id, now);
+      }
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -1150,4 +1197,7 @@ const make = Effect.gen(function* () {
   } satisfies ProviderRuntimeIngestionShape;
 });
 
-export const ProviderRuntimeIngestionLive = Layer.effect(ProviderRuntimeIngestionService, make);
+export const ProviderRuntimeIngestionLive = Layer.effect(
+  ProviderRuntimeIngestionService,
+  make,
+).pipe(Layer.provide(ProjectionTurnRepositoryLive));
