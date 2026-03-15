@@ -94,8 +94,24 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export type DesktopConnectionMode = "local" | "remote";
+
+export interface DesktopConnectionInfo {
+  mode: DesktopConnectionMode;
+}
+
+export interface DesktopConnectionSettings {
+  mode: DesktopConnectionMode;
+  remoteUrl: string;
+  remoteAuthToken: string;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
+  getConnectionInfo: () => Promise<DesktopConnectionInfo>;
+  getConnectionSettings: () => Promise<DesktopConnectionSettings>;
+  saveConnectionSettings: (settings: DesktopConnectionSettings) => Promise<DesktopConnectionSettings>;
+  restartApp: () => Promise<void>;
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;

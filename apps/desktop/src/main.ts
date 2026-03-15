@@ -18,6 +18,7 @@ import {
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type {
+  DesktopConnectionSettings,
   DesktopTheme,
   DesktopUpdateActionResult,
   DesktopUpdateState,
@@ -43,6 +44,14 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import {
+  buildDesktopRemoteWsUrl,
+  getDefaultDesktopConnectionSettings,
+  getDesktopConnectionInfo,
+  readDesktopConnectionSettings,
+  resolveDesktopConnectionConfigPath,
+  writeDesktopConnectionSettings,
+} from "./connection-config";
 
 fixPath();
 
@@ -56,6 +65,10 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
+const CONNECTION_INFO_CHANNEL = "desktop:connection-info";
+const CONNECTION_SETTINGS_GET_CHANNEL = "desktop:connection-settings:get";
+const CONNECTION_SETTINGS_SAVE_CHANNEL = "desktop:connection-settings:save";
+const RESTART_APP_CHANNEL = "desktop:restart-app";
 const STATE_DIR =
   process.env.T3CODE_STATE_DIR?.trim() || Path.join(OS.homedir(), ".t3", "userdata");
 const DESKTOP_SCHEME = "t3";
@@ -83,6 +96,7 @@ let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendAuthToken = "";
 let backendWsUrl = "";
+let desktopConnectionSettings: DesktopConnectionSettings = getDefaultDesktopConnectionSettings();
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
@@ -686,6 +700,20 @@ function resolveUserDataPath(): string {
   return Path.join(appDataBase, USER_DATA_DIR_NAME);
 }
 
+function resolveDesktopConnectionSettingsPath(): string {
+  return resolveDesktopConnectionConfigPath(app.getPath("userData"));
+}
+
+function loadDesktopConnectionSettings(): DesktopConnectionSettings {
+  return readDesktopConnectionSettings(resolveDesktopConnectionSettingsPath());
+}
+
+function saveDesktopConnectionSettings(
+  settings: DesktopConnectionSettings,
+): DesktopConnectionSettings {
+  return writeDesktopConnectionSettings(resolveDesktopConnectionSettingsPath(), settings);
+}
+
 function configureAppIdentity(): void {
   app.setName(APP_DISPLAY_NAME);
   const commitHash = resolveAboutCommitHash();
@@ -1072,6 +1100,26 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.removeHandler(CONNECTION_INFO_CHANNEL);
+  ipcMain.handle(CONNECTION_INFO_CHANNEL, async () => getDesktopConnectionInfo(desktopConnectionSettings));
+
+  ipcMain.removeHandler(CONNECTION_SETTINGS_GET_CHANNEL);
+  ipcMain.handle(CONNECTION_SETTINGS_GET_CHANNEL, async () => desktopConnectionSettings);
+
+  ipcMain.removeHandler(CONNECTION_SETTINGS_SAVE_CHANNEL);
+  ipcMain.handle(CONNECTION_SETTINGS_SAVE_CHANNEL, async (_event, input: unknown) => {
+    desktopConnectionSettings = saveDesktopConnectionSettings(
+      input as DesktopConnectionSettings,
+    );
+    return desktopConnectionSettings;
+  });
+
+  ipcMain.removeHandler(RESTART_APP_CHANNEL);
+  ipcMain.handle(RESTART_APP_CHANNEL, async () => {
+    app.relaunch();
+    app.exit(0);
+  });
+
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
   ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
@@ -1304,15 +1352,18 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-// Override Electron's userData path before the `ready` event so that
-// Chromium session data uses a filesystem-friendly directory name.
-// Must be called synchronously at the top level — before `app.whenReady()`.
-app.setPath("userData", resolveUserDataPath());
+async function resolveDesktopConnection(): Promise<void> {
+  desktopConnectionSettings = loadDesktopConnectionSettings();
 
-configureAppIdentity();
+  if (desktopConnectionSettings.mode === "remote") {
+    backendPort = 0;
+    backendAuthToken = "";
+    backendWsUrl = buildDesktopRemoteWsUrl(desktopConnectionSettings);
+    process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;
+    writeDesktopLogHeader(`bootstrap resolved remote websocket url=${backendWsUrl}`);
+    return;
+  }
 
-async function bootstrap(): Promise<void> {
-  writeDesktopLogHeader("bootstrap start");
   backendPort = await Effect.service(NetService).pipe(
     Effect.flatMap((net) => net.reserveLoopbackPort()),
     Effect.provide(NetService.layer),
@@ -1323,11 +1374,27 @@ async function bootstrap(): Promise<void> {
   backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
   process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;
   writeDesktopLogHeader(`bootstrap resolved websocket url=${backendWsUrl}`);
+}
+
+// Override Electron's userData path before the `ready` event so that
+// Chromium session data uses a filesystem-friendly directory name.
+// Must be called synchronously at the top level — before `app.whenReady()`.
+app.setPath("userData", resolveUserDataPath());
+
+configureAppIdentity();
+
+async function bootstrap(): Promise<void> {
+  writeDesktopLogHeader("bootstrap start");
+  await resolveDesktopConnection();
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");
-  startBackend();
-  writeDesktopLogHeader("bootstrap backend start requested");
+  if (desktopConnectionSettings.mode === "local") {
+    startBackend();
+    writeDesktopLogHeader("bootstrap backend start requested");
+  } else {
+    writeDesktopLogHeader("bootstrap running in remote connection mode");
+  }
   mainWindow = createWindow();
   writeDesktopLogHeader("bootstrap main window created");
 }

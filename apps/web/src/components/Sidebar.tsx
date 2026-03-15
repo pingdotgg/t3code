@@ -84,9 +84,11 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  type DesktopConnectionMode,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  shouldBrowseForProjectImmediately,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -299,14 +301,19 @@ export default function Sidebar() {
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const [desktopConnectionMode, setDesktopConnectionMode] =
+    useState<DesktopConnectionMode>("local");
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
-  const shouldBrowseForProjectImmediately = isElectron;
-  const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
+  const browseForProjectImmediately = shouldBrowseForProjectImmediately({
+    isElectron,
+    connectionMode: desktopConnectionMode,
+  });
+  const shouldShowProjectPathEntry = addingProject && !browseForProjectImmediately;
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
@@ -320,6 +327,26 @@ export default function Sidebar() {
       })),
     [projectCwdById, threads],
   );
+
+  useEffect(() => {
+    if (!isElectron || !window.desktopBridge?.getConnectionInfo) {
+      return;
+    }
+
+    let cancelled = false;
+    void window.desktopBridge
+      .getConnectionInfo()
+      .then((info) => {
+        if (!cancelled) {
+          setDesktopConnectionMode(info.mode);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const threadGitStatusCwds = useMemo(
     () => [
       ...new Set(
@@ -442,7 +469,7 @@ export default function Sidebar() {
         const description =
           error instanceof Error ? error.message : "An error occurred while adding the project.";
         setIsAddingProject(false);
-        if (shouldBrowseForProjectImmediately) {
+        if (browseForProjectImmediately) {
           toastManager.add({
             type: "error",
             title: "Failed to add project",
@@ -460,7 +487,7 @@ export default function Sidebar() {
       handleNewThread,
       isAddingProject,
       projects,
-      shouldBrowseForProjectImmediately,
+      browseForProjectImmediately,
       appSettings.defaultThreadEnvMode,
     ],
   );
@@ -483,7 +510,7 @@ export default function Sidebar() {
     }
     if (pickedPath) {
       await addProjectFromPath(pickedPath);
-    } else if (!shouldBrowseForProjectImmediately) {
+    } else if (!browseForProjectImmediately) {
       addProjectInputRef.current?.focus();
     }
     setIsPickingFolder(false);
@@ -491,7 +518,7 @@ export default function Sidebar() {
 
   const handleStartAddProject = () => {
     setAddProjectError(null);
-    if (shouldBrowseForProjectImmediately) {
+    if (browseForProjectImmediately) {
       void handlePickFolder();
       return;
     }
@@ -1227,6 +1254,12 @@ export default function Sidebar() {
                   {isPickingFolder ? "Picking folder..." : "Browse for folder"}
                 </button>
               )}
+              {isElectron && desktopConnectionMode === "remote" ? (
+                <p className="mb-1.5 text-[11px] text-muted-foreground">
+                  Remote mode uses paths from the connected machine. Enter the remote project path
+                  manually.
+                </p>
+              ) : null}
               <div className="flex gap-1.5">
                 <input
                   ref={addProjectInputRef}
@@ -1235,7 +1268,11 @@ export default function Sidebar() {
                       ? "border-red-500/70 focus:border-red-500"
                       : "border-border focus:border-ring"
                   }`}
-                  placeholder="/path/to/project"
+                  placeholder={
+                    desktopConnectionMode === "remote"
+                      ? "/remote/path/to/project"
+                      : "/path/to/project"
+                  }
                   value={newCwd}
                   onChange={(event) => {
                     setNewCwd(event.target.value);

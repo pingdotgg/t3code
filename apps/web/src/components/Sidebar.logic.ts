@@ -4,6 +4,7 @@ import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export type DesktopConnectionMode = "local" | "remote";
 
 export interface ThreadStatusPill {
   label:
@@ -44,6 +45,13 @@ export function resolveSidebarNewThreadEnvMode(input: {
   defaultEnvMode: SidebarNewThreadEnvMode;
 }): SidebarNewThreadEnvMode {
   return input.requestedEnvMode ?? input.defaultEnvMode;
+}
+
+export function shouldBrowseForProjectImmediately(input: {
+  isElectron: boolean;
+  connectionMode: DesktopConnectionMode;
+}): boolean {
+  return input.isElectron && input.connectionMode !== "remote";
 }
 
 export function resolveThreadRowClassName(input: {
