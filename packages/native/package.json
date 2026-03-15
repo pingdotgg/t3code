@@ -2,6 +2,11 @@
   "name": "@t3tools/native",
   "version": "0.0.0",
   "private": true,
+  "files": [
+    "dist/",
+    "types/binding.d.ts",
+    "build/Release/native.node"
+  ],
   "type": "module",
   "imports": {
     "#t3tools_native": {
@@ -19,11 +24,6 @@
       "default": "./dist/binding.js"
     }
   },
-  "files": [
-    "dist/",
-    "types/binding.d.ts",
-    "build/Release/native.node"
-  ],
   "scripts": {
     "build:native": "node-gyp build",
     "build:js": "tsc --project src/ts/tsconfig.json",
