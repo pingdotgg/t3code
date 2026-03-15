@@ -671,6 +671,8 @@ const make = Effect.gen(function* () {
     threadProposedPlans: ReadonlyArray<{
       id: string;
       createdAt: string;
+      implementedAt: string | null;
+      implementationThreadId: ThreadId | null;
     }>;
     planId: string;
     turnId?: TurnId;
@@ -693,6 +695,8 @@ const make = Effect.gen(function* () {
           id: input.planId,
           turnId: input.turnId ?? null,
           planMarkdown,
+          implementedAt: existingPlan?.implementedAt ?? null,
+          implementationThreadId: existingPlan?.implementationThreadId ?? null,
           createdAt: existingPlan?.createdAt ?? input.createdAt,
           updatedAt: input.updatedAt,
         },
@@ -706,6 +710,8 @@ const make = Effect.gen(function* () {
     threadProposedPlans: ReadonlyArray<{
       id: string;
       createdAt: string;
+      implementedAt: string | null;
+      implementationThreadId: ThreadId | null;
     }>;
     planId: string;
     turnId?: TurnId;

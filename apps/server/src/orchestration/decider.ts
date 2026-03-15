@@ -262,11 +262,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
-      yield* requireThread({
+      const targetThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const sourceProposedPlan = command.sourceProposedPlan;
+      const sourceThread = sourceProposedPlan
+        ? yield* requireThread({
+            readModel,
+            command,
+            threadId: sourceProposedPlan.threadId,
+          })
+        : null;
+      const sourcePlan =
+        sourceProposedPlan && sourceThread
+          ? sourceThread.proposedPlans.find((entry) => entry.id === sourceProposedPlan.planId)
+          : null;
+      if (sourceProposedPlan && !sourcePlan) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Proposed plan '${sourceProposedPlan.planId}' does not exist on thread '${sourceProposedPlan.threadId}'.`,
+        });
+      }
       const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -306,16 +324,35 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { providerOptions: command.providerOptions }
             : {}),
           assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
-          runtimeMode:
-            readModel.threads.find((entry) => entry.id === command.threadId)?.runtimeMode ??
-            command.runtimeMode,
-          interactionMode:
-            readModel.threads.find((entry) => entry.id === command.threadId)?.interactionMode ??
-            command.interactionMode,
+          runtimeMode: targetThread.runtimeMode,
+          interactionMode: targetThread.interactionMode,
           createdAt: command.createdAt,
         },
       };
-      return [userMessageEvent, turnStartRequestedEvent];
+      if (!sourcePlan || !sourceThread) {
+        return [userMessageEvent, turnStartRequestedEvent];
+      }
+
+      const sourcePlanUpsertEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: sourceThread.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: turnStartRequestedEvent.eventId,
+        type: "thread.proposed-plan-upserted",
+        payload: {
+          threadId: sourceThread.id,
+          proposedPlan: {
+            ...sourcePlan,
+            implementedAt: command.createdAt,
+            implementationThreadId: command.threadId,
+            updatedAt: command.createdAt,
+          },
+        },
+      };
+      return [userMessageEvent, turnStartRequestedEvent, sourcePlanUpsertEvent];
     }
 
     case "thread.turn.interrupt": {
