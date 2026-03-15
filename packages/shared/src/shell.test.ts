@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { extractPathFromShellOutput, readPathFromLoginShell } from "./shell";
+import {
+  extractPathFromShellOutput,
+  readPathForDesktopRuntime,
+  readPathFromLoginShell,
+  resolveLoginShell,
+  shouldHydratePathFromLoginShell,
+} from "./shell";
 
 describe("extractPathFromShellOutput", () => {
   it("extracts the path between capture markers", () => {
@@ -53,5 +59,50 @@ describe("readPathFromLoginShell", () => {
     expect(args?.[1]).toContain("__T3CODE_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_PATH_END__");
     expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+  });
+});
+
+describe("shouldHydratePathFromLoginShell", () => {
+  it("enables login-shell PATH hydration on macOS and Linux", () => {
+    expect(shouldHydratePathFromLoginShell("darwin")).toBe(true);
+    expect(shouldHydratePathFromLoginShell("linux")).toBe(true);
+    expect(shouldHydratePathFromLoginShell("win32")).toBe(false);
+  });
+});
+
+describe("resolveLoginShell", () => {
+  it("prefers the configured shell when present", () => {
+    expect(resolveLoginShell("linux", "/usr/bin/fish")).toBe("/usr/bin/fish");
+  });
+
+  it("falls back to platform defaults when shell is missing", () => {
+    expect(resolveLoginShell("darwin", undefined)).toBe("/bin/zsh");
+    expect(resolveLoginShell("linux", undefined)).toBe("/bin/bash");
+    expect(resolveLoginShell("win32", undefined)).toBeUndefined();
+  });
+});
+
+describe("readPathForDesktopRuntime", () => {
+  it("hydrates PATH from the resolved Linux login shell", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "__T3CODE_PATH_START__\n/a:/b\n__T3CODE_PATH_END__\n");
+
+    expect(readPathForDesktopRuntime("linux", undefined, execFile)).toBe("/a:/b");
+    expect(execFile).toHaveBeenCalledWith("/bin/bash", expect.any(Array), {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  });
+
+  it("skips PATH hydration on unsupported platforms", () => {
+    const execFile = vi.fn();
+
+    expect(readPathForDesktopRuntime("win32", undefined, execFile)).toBeUndefined();
+    expect(execFile).not.toHaveBeenCalled();
   });
 });

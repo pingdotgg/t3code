@@ -193,10 +193,18 @@ const ServerConfigLive = (input: CliInput) =>
     }),
   );
 
+const PathHydrationLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const cliConfig = yield* CliConfig;
+    yield* cliConfig.fixPath;
+  }),
+);
+
 const LayerLive = (input: CliInput) =>
   Layer.empty.pipe(
     Layer.provideMerge(makeServerRuntimeServicesLayer()),
     Layer.provideMerge(makeServerProviderLayer()),
+    Layer.provideMerge(PathHydrationLive),
     Layer.provideMerge(ProviderHealthLive),
     Layer.provideMerge(SqlitePersistence.layerConfig),
     Layer.provideMerge(ServerLoggerLive),
@@ -237,10 +245,8 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
 
 const makeServerProgram = (input: CliInput) =>
   Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
     const openDeps = yield* Open;
-    yield* cliConfig.fixPath;
 
     const config = yield* ServerConfig;
 
