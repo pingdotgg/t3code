@@ -1901,15 +1901,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ? (draftThread?.envMode ?? "local")
       : "local";
 
+  const shouldTickNow = !!activeWorkStartedAt && (isWorking || !latestTurnSettled);
+
   useEffect(() => {
-    if (phase !== "running") return;
+    if (!shouldTickNow) return;
+    setNowTick(Date.now());
     const timer = window.setInterval(() => {
       setNowTick(Date.now());
     }, 1000);
     return () => {
       window.clearInterval(timer);
     };
-  }, [phase]);
+  }, [shouldTickNow]);
 
   const beginSendPhase = useCallback((nextPhase: Exclude<SendPhase, "idle">) => {
     setSendStartedAt((current) => current ?? new Date().toISOString());
