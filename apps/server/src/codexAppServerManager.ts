@@ -523,6 +523,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
     const threadId = input.threadId;
+    if (this.sessions.has(threadId)) {
+      this.stopSession(threadId);
+    }
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
 
