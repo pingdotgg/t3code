@@ -245,9 +245,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     rowVirtualizer.measure();
   }, [rowVirtualizer, timelineWidthPx]);
   useEffect(() => {
-    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
+    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
       const viewportHeight = instance.scrollRect?.height ?? 0;
       const scrollOffset = instance.scrollOffset ?? 0;
+      const itemIntersectsViewport =
+        item.end > scrollOffset && item.start < scrollOffset + viewportHeight;
+      if (itemIntersectsViewport) {
+        return false;
+      }
       const remainingDistance = instance.getTotalSize() - (scrollOffset + viewportHeight);
       return remainingDistance > AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
     };
@@ -458,6 +463,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                             type="button"
                             size="xs"
                             variant="outline"
+                            data-scroll-anchor-ignore
                             onClick={() => onToggleAllDirectories(turnSummary.turnId)}
                           >
                             {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
