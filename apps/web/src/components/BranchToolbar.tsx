@@ -27,7 +27,7 @@ const envModeItems = [
 const worktreeBranchNamingModeItems = [
   { value: "auto", label: "Auto Branch Name" },
   { value: "prefix", label: "Prefix" },
-  { value: "full", label: "Full Branch Name" },
+  { value: "full", label: "Custom Branch Name" },
 ] as const;
 
 interface BranchToolbarProps {
@@ -200,7 +200,7 @@ export default function BranchToolbar({
               <SelectPopup>
                 <SelectItem value="auto">Auto Branch Name</SelectItem>
                 <SelectItem value="prefix">Prefix</SelectItem>
-                <SelectItem value="full">Full Branch Name</SelectItem>
+                <SelectItem value="full">Custom Branch Name</SelectItem>
               </SelectPopup>
             </Select>
 
