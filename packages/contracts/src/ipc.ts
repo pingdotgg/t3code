@@ -47,12 +47,6 @@ import type {
 } from "./orchestration";
 import { EditorId } from "./editor";
 
-export interface ContextMenuItem<T extends string = string> {
-  id: T;
-  label: string;
-  destructive?: boolean;
-}
-
 export type DesktopUpdateStatus =
   | "disabled"
   | "idle"
@@ -99,10 +93,6 @@ export interface DesktopBridge {
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
-  showContextMenu: <T extends string>(
-    items: readonly ContextMenuItem<T>[],
-    position?: { x: number; y: number },
-  ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
@@ -149,12 +139,6 @@ export interface NativeApi {
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
     runStackedAction: (input: GitRunStackedActionInput) => Promise<GitRunStackedActionResult>;
-  };
-  contextMenu: {
-    show: <T extends string>(
-      items: readonly ContextMenuItem<T>[],
-      position?: { x: number; y: number },
-    ) => Promise<T | null>;
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
