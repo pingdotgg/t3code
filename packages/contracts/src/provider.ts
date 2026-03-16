@@ -59,9 +59,6 @@ const ClaudeCodeProviderStartOptions = Schema.Struct({
   maxThinkingTokens: Schema.optional(NonNegativeInt),
   experimentalAgentTeams: Schema.optional(Schema.Boolean),
   agentProgressSummaries: Schema.optional(Schema.Boolean),
-  teammateMode: Schema.optional(Schema.Literals(["auto", "tmux", "in-process"] as const)),
-  teamTaskDelegation: Schema.optional(Schema.Literals(["lead-assigns", "self-claim"] as const)),
-  defaultAgent: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 
 export const ProviderStartOptions = Schema.Struct({

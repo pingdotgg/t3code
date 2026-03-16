@@ -44,15 +44,6 @@ const AppSettingsSchema = Schema.Struct({
   claudeAgentProgressSummaries: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
-  claudeTeammateMode: Schema.Literals(["auto", "tmux", "in-process"]).pipe(
-    Schema.withConstructorDefault(() => Option.some("auto")),
-  ),
-  claudeTeamTaskDelegation: Schema.Literals(["lead-assigns", "self-claim"]).pipe(
-    Schema.withConstructorDefault(() => Option.some("self-claim")),
-  ),
-  claudeDefaultAgent: Schema.String.check(Schema.isMaxLength(256)).pipe(
-    Schema.withConstructorDefault(() => Option.some("")),
-  ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {

@@ -53,9 +53,6 @@ describe("ProviderSessionStartInput", () => {
           maxThinkingTokens: 4000,
           experimentalAgentTeams: true,
           agentProgressSummaries: true,
-          teammateMode: "in-process",
-          teamTaskDelegation: "lead-assigns",
-          defaultAgent: "code-review-lead",
         },
       },
     });
@@ -67,9 +64,6 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.providerOptions?.claudeCode?.maxThinkingTokens).toBe(4000);
     expect(parsed.providerOptions?.claudeCode?.experimentalAgentTeams).toBe(true);
     expect(parsed.providerOptions?.claudeCode?.agentProgressSummaries).toBe(true);
-    expect(parsed.providerOptions?.claudeCode?.teammateMode).toBe("in-process");
-    expect(parsed.providerOptions?.claudeCode?.teamTaskDelegation).toBe("lead-assigns");
-    expect(parsed.providerOptions?.claudeCode?.defaultAgent).toBe("code-review-lead");
   });
 
   it("rejects payloads without runtime mode", () => {

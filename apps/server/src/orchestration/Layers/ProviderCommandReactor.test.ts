@@ -485,6 +485,68 @@ describe("ProviderCommandReactor", () => {
     expect(harness.stopSession.mock.calls.length).toBe(0);
   });
 
+  it("reuses the same Claude session across turns when provider options are unchanged", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-claude-reuse-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-claude-reuse-1"),
+          role: "user",
+          text: "first claude team turn",
+          attachments: [],
+        },
+        provider: "claudeCode",
+        model: "claude-sonnet-4-6",
+        providerOptions: {
+          claudeCode: {
+            experimentalAgentTeams: true,
+            agentProgressSummaries: true,
+          },
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-claude-reuse-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-claude-reuse-2"),
+          role: "user",
+          text: "second claude team turn",
+          attachments: [],
+        },
+        provider: "claudeCode",
+        model: "claude-sonnet-4-6",
+        providerOptions: {
+          claudeCode: {
+            experimentalAgentTeams: true,
+            agentProgressSummaries: true,
+          },
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls.length).toBe(1);
+    expect(harness.stopSession.mock.calls.length).toBe(0);
+  });
+
   it("restarts existing claude threads on the claude provider when a session restart is needed", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -658,7 +720,6 @@ describe("ProviderCommandReactor", () => {
           claudeCode: {
             experimentalAgentTeams: true,
             agentProgressSummaries: true,
-            defaultAgent: "code-review-lead",
           },
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -675,7 +736,6 @@ describe("ProviderCommandReactor", () => {
         claudeCode: {
           experimentalAgentTeams: true,
           agentProgressSummaries: true,
-          defaultAgent: "code-review-lead",
         },
       },
     });

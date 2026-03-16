@@ -552,7 +552,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedCodexFastModeEnabled =
     selectedProvider === "codex" ? composerDraft.codexFastMode : false;
   const isClaudeUltrathink = selectedClaudeEffort === "ultrathink";
-  const claudeDefaultAgent = settings.claudeDefaultAgent.trim() || null;
   const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
   const activeProvider = activeThread?.session?.provider ?? "codex";
   const activeProviderStatus = useMemo(
@@ -598,9 +597,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         claudeCode: {
           experimentalAgentTeams: claudeAgentTeamsEnabledForDispatch,
           agentProgressSummaries: settings.claudeAgentProgressSummaries,
-          teammateMode: settings.claudeTeammateMode,
-          teamTaskDelegation: settings.claudeTeamTaskDelegation,
-          ...(claudeDefaultAgent ? { defaultAgent: claudeDefaultAgent } : {}),
         },
       };
     }
@@ -615,11 +611,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
   }, [
     claudeAgentTeamsEnabledForDispatch,
-    claudeDefaultAgent,
     selectedProvider,
     settings.claudeAgentProgressSummaries,
-    settings.claudeTeammateMode,
-    settings.claudeTeamTaskDelegation,
     settings.codexBinaryPath,
     settings.codexHomePath,
   ]);
@@ -667,8 +660,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeLatestTurn?.turnId, threadActivities],
   );
   const agentTeamsState = useMemo(
-    () => deriveAgentTeamsState(threadActivities, claudeDefaultAgent),
-    [claudeDefaultAgent, threadActivities],
+    () => deriveAgentTeamsState(threadActivities),
+    [threadActivities],
   );
   const showAgentTeamsPanel =
     (selectedProvider === "claudeCode" || activeThread?.session?.provider === "claudeCode") &&
@@ -903,8 +896,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [serverMessages, attachmentPreviewHandoffByMessageId, optimisticUserMessages]);
   const timelineEntries = useMemo(
     () =>
-      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
-    [activeThread?.proposedPlans, timelineMessages, workLogEntries],
+      deriveTimelineEntries(
+        timelineMessages,
+        activeThread?.proposedPlans ?? [],
+        workLogEntries,
+        threadActivities,
+      ),
+    [activeThread?.proposedPlans, threadActivities, timelineMessages, workLogEntries],
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);

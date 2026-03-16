@@ -69,37 +69,6 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
-const CLAUDE_TEAMMATE_MODE_OPTIONS = [
-  {
-    value: "auto",
-    label: "Auto",
-    description: "Use split panes inside tmux when possible, otherwise run teammates inline.",
-  },
-  {
-    value: "in-process",
-    label: "In-process",
-    description: "Keep teammates inside the main terminal session.",
-  },
-  {
-    value: "tmux",
-    label: "Split panes",
-    description: "Prefer tmux or iTerm pane layouts for each teammate.",
-  },
-] as const;
-
-const CLAUDE_TEAM_TASK_DELEGATION_OPTIONS = [
-  {
-    value: "self-claim",
-    label: "Self-claim",
-    description: "Let teammates pick the next unassigned task after they finish work.",
-  },
-  {
-    value: "lead-assigns",
-    label: "Lead assigns",
-    description: "Tell the lead to hand tasks to named teammates explicitly.",
-  },
-] as const;
-
 function getCustomModelsForProvider(
   settings: ReturnType<typeof useAppSettings>["settings"],
   provider: ProviderKind,
@@ -501,84 +470,6 @@ function SettingsRouteView() {
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-foreground">Teammate display mode</span>
-                  <Select
-                    value={settings.claudeTeammateMode}
-                    onValueChange={(value) =>
-                      updateSettings({
-                        claudeTeammateMode:
-                          value as (typeof CLAUDE_TEAMMATE_MODE_OPTIONS)[number]["value"],
-                      })
-                    }
-                  >
-                    <SelectTrigger className="w-full justify-between">
-                      <SelectValue placeholder="Select teammate mode" />
-                    </SelectTrigger>
-                    <SelectPopup>
-                      {CLAUDE_TEAMMATE_MODE_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          <div className="flex flex-col items-start">
-                            <span>{option.label}</span>
-                            <span className="text-[11px] text-muted-foreground">
-                              {option.description}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                  <span className="text-xs text-muted-foreground">
-                    Forwarded to Claude as <code>teammateMode</code>.
-                  </span>
-                </div>
-
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-foreground">Task delegation</span>
-                  <Select
-                    value={settings.claudeTeamTaskDelegation}
-                    onValueChange={(value) =>
-                      updateSettings({
-                        claudeTeamTaskDelegation:
-                          value as (typeof CLAUDE_TEAM_TASK_DELEGATION_OPTIONS)[number]["value"],
-                      })
-                    }
-                  >
-                    <SelectTrigger className="w-full justify-between">
-                      <SelectValue placeholder="Select delegation mode" />
-                    </SelectTrigger>
-                    <SelectPopup>
-                      {CLAUDE_TEAM_TASK_DELEGATION_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          <div className="flex flex-col items-start">
-                            <span>{option.label}</span>
-                            <span className="text-[11px] text-muted-foreground">
-                              {option.description}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                  <span className="text-xs text-muted-foreground">
-                    This is a lead guidance preference T3 Code injects into new Claude turns.
-                  </span>
-                </div>
-
-                <label htmlFor="claude-default-agent" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Default lead agent</span>
-                  <Input
-                    id="claude-default-agent"
-                    value={settings.claudeDefaultAgent}
-                    onChange={(event) => updateSettings({ claudeDefaultAgent: event.target.value })}
-                    placeholder="code-review-lead"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Optional Claude <code>agent</code> session option for the main thread.
-                  </span>
-                </label>
-
                 {settings.claudeExperimentalAgentTeams &&
                 claudeAgentTeamsCapability?.state !== "available" ? (
                   <div className="rounded-lg border border-orange-500/25 bg-orange-500/8 px-3 py-2 text-xs text-orange-800 dark:text-orange-100">
@@ -596,10 +487,8 @@ function SettingsRouteView() {
                 </div>
 
                 {(settings.claudeExperimentalAgentTeams !== defaults.claudeExperimentalAgentTeams ||
-                  settings.claudeAgentProgressSummaries !== defaults.claudeAgentProgressSummaries ||
-                  settings.claudeTeammateMode !== defaults.claudeTeammateMode ||
-                  settings.claudeTeamTaskDelegation !== defaults.claudeTeamTaskDelegation ||
-                  settings.claudeDefaultAgent !== defaults.claudeDefaultAgent) && (
+                  settings.claudeAgentProgressSummaries !==
+                    defaults.claudeAgentProgressSummaries) && (
                   <div className="flex justify-end">
                     <Button
                       size="xs"
@@ -608,9 +497,6 @@ function SettingsRouteView() {
                         updateSettings({
                           claudeExperimentalAgentTeams: defaults.claudeExperimentalAgentTeams,
                           claudeAgentProgressSummaries: defaults.claudeAgentProgressSummaries,
-                          claudeTeammateMode: defaults.claudeTeammateMode,
-                          claudeTeamTaskDelegation: defaults.claudeTeamTaskDelegation,
-                          claudeDefaultAgent: defaults.claudeDefaultAgent,
                         })
                       }
                     >

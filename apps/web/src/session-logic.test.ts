@@ -284,9 +284,9 @@ describe("deriveAgentTeamsState", () => {
       }),
     ];
 
-    const state = deriveAgentTeamsState(activities, "code-review-lead");
+    const state = deriveAgentTeamsState(activities);
 
-    expect(state.leadLabel).toBe("code-review-lead");
+    expect(state.leadLabel).toBe("Lead");
     expect(state.hasTeamActivity).toBe(true);
     expect(state.activeRunId).toBeNull();
     expect(state.runs).toHaveLength(1);
@@ -359,6 +359,43 @@ describe("deriveAgentTeamsState", () => {
     expect(state.runs).toHaveLength(1);
     expect(state.runs[0]?.members).toHaveLength(1);
     expect(state.runs[0]?.members[0]?.status).toBe("stopped");
+  });
+
+  it("does not let later placeholder updates overwrite a known teammate name", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "named-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "teammate.started",
+        summary: "db-reviewer started",
+        tone: "info",
+        payload: {
+          agentId: "agent-db-reviewer",
+          teammateName: "db-reviewer",
+          teamName: "release-squad",
+        },
+      }),
+      makeActivity({
+        id: "generic-progress",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "teammate.progress",
+        summary: "Teammate update",
+        tone: "info",
+        payload: {
+          agentId: "agent-db-reviewer",
+          agentType: "code-reviewer",
+          teamName: "release-squad",
+          summary: "Still reviewing",
+        },
+      }),
+    ];
+
+    const state = deriveAgentTeamsState(activities);
+    expect(state.runs[0]?.members[0]).toMatchObject({
+      label: "db-reviewer",
+      teammateName: "db-reviewer",
+      agentType: "code-reviewer",
+    });
   });
 
   it("surfaces teammate activity even when Claude only provides free-text detail", () => {
@@ -488,6 +525,221 @@ describe("deriveAgentTeamsState", () => {
     expect(state.runs[0]?.members.map((member) => member.label).toSorted()).toEqual([
       "executor",
       "researcher",
+    ]);
+  });
+
+  it("does not treat SendMessage tool calls as extra teammates", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "team-create",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "File change - TeamCreate: {}",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "file_change",
+          detail: "TeamCreate: {}",
+        },
+      }),
+      makeActivity({
+        id: "subagent-task-1",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Subagent task - Agent: {}",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          detail: "Agent: {}",
+        },
+      }),
+      makeActivity({
+        id: "subagent-task-2",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.updated",
+        summary: "Subagent task - Agent: {}",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          detail: "Agent: {}",
+        },
+      }),
+      makeActivity({
+        id: "send-message-1",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.updated",
+        summary: "Tool call - SendMessage: {}",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "dynamic_tool_call",
+          data: {
+            input: {
+              name: "researcher",
+              team_name: "test-team",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "send-message-2",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "tool.updated",
+        summary: "Tool call - SendMessage: {}",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "dynamic_tool_call",
+          data: {
+            input: {
+              name: "tester",
+              team_name: "test-team",
+            },
+          },
+        },
+      }),
+    ];
+
+    const state = deriveAgentTeamsState(activities);
+
+    expect(state.hasTeamActivity).toBe(true);
+    expect(state.runs).toHaveLength(1);
+    expect(state.runs[0]?.members).toHaveLength(2);
+    expect(state.runs[0]?.members.map((member) => member.label)).toEqual(["Agent", "Agent"]);
+  });
+
+  it("hydrates Claude artifact roster names without counting dynamic teammate tools as members", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "team-run-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "team.run.started",
+        summary: "test-team team started",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          runId: "team-run:turn-turn-team:1",
+          teamKey: "turn-turn-team",
+          startedAt: "2026-02-23T00:00:01.000Z",
+          teamName: "test-team",
+        },
+      }),
+      makeActivity({
+        id: "team-run-updated",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "team.run.updated",
+        summary: "test-team team updated",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          runId: "team-run:turn-turn-team:1",
+          teamKey: "turn-turn-team",
+          startedAt: "2026-02-23T00:00:01.000Z",
+          teamName: "test-team",
+          statusSource: "claude-files",
+          members: [
+            {
+              agentId: "researcher@test-team",
+              teammateName: "researcher",
+              agentColor: "blue",
+              agentType: "general-purpose",
+            },
+            {
+              agentId: "tester@test-team",
+              teammateName: "tester",
+              agentColor: "green",
+              agentType: "general-purpose",
+            },
+          ],
+          tasks: [
+            {
+              taskId: "1",
+              teammateName: "researcher",
+              status: "running",
+            },
+            {
+              taskId: "2",
+              teammateName: "tester",
+              status: "running",
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "subagent-task-1",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.updated",
+        summary: "Subagent task - Agent: {}",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          runId: "team-run:turn-turn-team:1",
+          teamKey: "turn-turn-team",
+          toolUseId: "tool-task-1",
+          detail: "Agent: {}",
+        },
+      }),
+      makeActivity({
+        id: "subagent-task-2",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.updated",
+        summary: "Subagent task - Agent: {}",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          runId: "team-run:turn-turn-team:1",
+          teamKey: "turn-turn-team",
+          toolUseId: "tool-task-2",
+          detail: "Agent: {}",
+        },
+      }),
+      makeActivity({
+        id: "send-message-1",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "tool.updated",
+        summary: "Tool call - SendMessage: {}",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "dynamic_tool_call",
+          runId: "team-run:turn-turn-team:1",
+          teamKey: "turn-turn-team",
+          teamName: "test-team",
+          toolUseId: "tool-send-1",
+        },
+      }),
+      makeActivity({
+        id: "send-message-2",
+        createdAt: "2026-02-23T00:00:06.000Z",
+        kind: "tool.updated",
+        summary: "Tool call - SendMessage: {}",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "dynamic_tool_call",
+          runId: "team-run:turn-turn-team:1",
+          teamKey: "turn-turn-team",
+          teamName: "test-team",
+          toolUseId: "tool-send-2",
+        },
+      }),
+    ];
+
+    const state = deriveAgentTeamsState(activities);
+
+    expect(state.runs).toHaveLength(1);
+    expect(state.runs[0]?.members).toHaveLength(2);
+    expect(state.runs[0]?.members.map((member) => member.label).toSorted()).toEqual([
+      "researcher",
+      "tester",
+    ]);
+    expect(state.runs[0]?.members.map((member) => member.agentColor).toSorted()).toEqual([
+      "blue",
+      "green",
     ]);
   });
 });
@@ -813,6 +1065,7 @@ describe("deriveTimelineEntries", () => {
           tone: "tool",
         },
       ],
+      [],
     );
 
     expect(entries.map((entry) => entry.kind)).toEqual(["message", "proposed-plan", "work"]);

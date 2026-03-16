@@ -210,6 +210,7 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       emit: provider.emit,
       drain,
+      workspaceRoot,
     };
   }
 
@@ -749,6 +750,236 @@ describe("ProviderRuntimeIngestion", () => {
         }),
       ]),
     );
+  });
+
+  it("prefers Claude artifact teammate names over opaque runtime ids", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const teamsDir = path.join(harness.workspaceRoot, ".claude", "teams");
+    const tasksDir = path.join(harness.workspaceRoot, ".claude", "tasks");
+    fs.mkdirSync(teamsDir, { recursive: true });
+    fs.mkdirSync(tasksDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(teamsDir, "release-squad.json"),
+      JSON.stringify({
+        teamName: "release-squad",
+        members: [
+          {
+            id: "agent-db-reviewer",
+            displayName: "DB Reviewer",
+            color: "blue",
+            type: "code-reviewer",
+          },
+        ],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(tasksDir, "task-team-opaque.json"),
+      JSON.stringify({
+        taskId: "task-team-opaque",
+        teammateName: "DB Reviewer",
+        status: "running",
+      }),
+    );
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-team-artifact-name"),
+      provider: "claudeCode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-team-artifact"),
+      payload: {
+        taskId: "task-team-opaque",
+        toolUseId: "tool-task-opaque",
+        teamName: "release-squad",
+        agentId: "agent-db-reviewer",
+        agentName: "agent-db-reviewer",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.kind === "teammate.started" &&
+          (activity.payload as Record<string, unknown> | null)?.taskId === "task-team-opaque",
+      ),
+    );
+    const started = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.kind === "teammate.started" &&
+        (activity.payload as Record<string, unknown> | null)?.taskId === "task-team-opaque",
+    );
+
+    expect(started).toMatchObject({
+      summary: "DB Reviewer started",
+      payload: expect.objectContaining({
+        agentId: "agent-db-reviewer",
+        teammateName: "DB Reviewer",
+        agentName: "DB Reviewer",
+        agentColor: "blue",
+        agentType: "code-reviewer",
+        teamName: "release-squad",
+      }),
+    });
+  });
+
+  it("hydrates real Claude team config/task artifacts and reuses one run for sparse subagent launches", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const teamDir = path.join(harness.workspaceRoot, ".claude", "teams", "test-team");
+    const tasksDir = path.join(harness.workspaceRoot, ".claude", "tasks", "test-team");
+    fs.mkdirSync(teamDir, { recursive: true });
+    fs.mkdirSync(tasksDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(teamDir, "config.json"),
+      JSON.stringify({
+        name: "test-team",
+        leadAgentId: "team-lead@test-team",
+        members: [
+          {
+            agentId: "team-lead@test-team",
+            name: "team-lead",
+            agentType: "general-purpose",
+          },
+          {
+            agentId: "researcher@test-team",
+            name: "researcher",
+            agentType: "general-purpose",
+            color: "blue",
+          },
+          {
+            agentId: "tester@test-team",
+            name: "tester",
+            agentType: "general-purpose",
+            color: "green",
+          },
+        ],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(tasksDir, "1.json"),
+      JSON.stringify({
+        id: "1",
+        subject: "researcher",
+        status: "in_progress",
+      }),
+    );
+    fs.writeFileSync(
+      path.join(tasksDir, "2.json"),
+      JSON.stringify({
+        id: "2",
+        subject: "tester",
+        status: "in_progress",
+      }),
+    );
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-team-sparse-tool"),
+      provider: "claudeCode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-team-sparse"),
+      itemId: asItemId("tool-task-1"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        title: "Subagent task",
+        detail: "Agent: {}",
+      },
+    });
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-team-sparse-task"),
+      provider: "claudeCode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-team-sparse"),
+      payload: {
+        taskId: "1",
+        toolUseId: "tool-task-1",
+        teamName: "test-team",
+        agentId: "researcher@test-team",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.kind === "team.run.updated" &&
+          (activity.payload as Record<string, unknown> | null)?.teamName === "test-team" &&
+          Array.isArray((activity.payload as Record<string, unknown> | null)?.members),
+      ),
+    );
+
+    const runStartedActivities = thread.activities.filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "team.run.started",
+    );
+    const runUpdated = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.kind === "team.run.updated" &&
+        (activity.payload as Record<string, unknown> | null)?.teamName === "test-team" &&
+        Array.isArray((activity.payload as Record<string, unknown> | null)?.members),
+    );
+    const teammateStarted = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.kind === "teammate.started" &&
+        (activity.payload as Record<string, unknown> | null)?.taskId === "1",
+    );
+    const sparseTool = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-team-sparse-tool",
+    );
+
+    expect(runStartedActivities).toHaveLength(1);
+    expect(runUpdated).toMatchObject({
+      payload: expect.objectContaining({
+        teamName: "test-team",
+        members: [
+          expect.objectContaining({
+            agentId: "researcher@test-team",
+            teammateName: "researcher",
+            agentColor: "blue",
+          }),
+          expect.objectContaining({
+            agentId: "tester@test-team",
+            teammateName: "tester",
+            agentColor: "green",
+          }),
+        ],
+        tasks: [
+          expect.objectContaining({
+            taskId: "1",
+            teammateName: "researcher",
+            status: "running",
+          }),
+          expect.objectContaining({
+            taskId: "2",
+            teammateName: "tester",
+            status: "running",
+          }),
+        ],
+      }),
+    });
+    expect(
+      (runUpdated?.payload as Record<string, unknown> | undefined)?.members as
+        | unknown[]
+        | undefined,
+    ).toHaveLength(2);
+    expect(teammateStarted).toMatchObject({
+      summary: "researcher started",
+      payload: expect.objectContaining({
+        runId: (runStartedActivities[0]?.payload as Record<string, unknown>)?.runId,
+        teamName: "test-team",
+        teammateName: "researcher",
+        agentColor: "blue",
+      }),
+    });
+    expect(sparseTool).toMatchObject({
+      payload: expect.objectContaining({
+        runId: (runStartedActivities[0]?.payload as Record<string, unknown>)?.runId,
+      }),
+    });
   });
 
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {

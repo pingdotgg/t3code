@@ -84,11 +84,8 @@ describe("timestamp format defaults", () => {
 });
 
 describe("Claude teams defaults", () => {
-  it("defaults Claude agent teams settings to disabled, self-claim, and blank agent", () => {
+  it("defaults Claude agent teams settings to disabled", () => {
     expect(DEFAULT_APP_SETTINGS.claudeExperimentalAgentTeams).toBe(false);
     expect(DEFAULT_APP_SETTINGS.claudeAgentProgressSummaries).toBe(false);
-    expect(DEFAULT_APP_SETTINGS.claudeTeammateMode).toBe("auto");
-    expect(DEFAULT_APP_SETTINGS.claudeTeamTaskDelegation).toBe("self-claim");
-    expect(DEFAULT_APP_SETTINGS.claudeDefaultAgent).toBe("");
   });
 });

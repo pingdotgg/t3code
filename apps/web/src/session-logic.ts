@@ -90,9 +90,27 @@ export interface AgentTeamsActivity {
   label: string;
   detail?: string;
   status?: Exclude<AgentTeamsTaskStatus, "lead">;
+  runId?: string;
+  statusSource?: string;
   taskId?: string;
   toolUseId?: string;
   lastToolName?: string;
+}
+
+export interface AgentTeamsTaskSnapshot {
+  taskId?: string;
+  teammateName?: string;
+  summary?: string;
+  status?: string;
+  updatedAt?: string;
+}
+
+interface AgentTeamsMemberSnapshot {
+  agentId?: string;
+  teammateName?: string;
+  agentName?: string;
+  agentColor?: string;
+  agentType?: string;
 }
 
 export interface AgentTeamsMember {
@@ -111,6 +129,7 @@ export interface AgentTeamsMember {
   toolUseId?: string;
   teammateName?: string;
   teammateMode?: string;
+  statusSource?: string;
   planModeRequired?: boolean;
   awaitingLeaderApproval?: boolean;
   activities: AgentTeamsActivity[];
@@ -126,6 +145,8 @@ export interface AgentTeamsRun {
   endedActivityId?: string;
   teamName?: string;
   teammateMode?: string;
+  statusSource?: string;
+  tasks?: AgentTeamsTaskSnapshot[];
   members: AgentTeamsMember[];
   activeCount: number;
   pendingApprovalCount: number;
@@ -146,6 +167,18 @@ export type TimelineEntry =
       kind: "message";
       createdAt: string;
       message: ChatMessage;
+    }
+  | {
+      id: string;
+      kind: "team-run";
+      createdAt: string;
+      run: {
+        runId: string;
+        label: string;
+        startedAt: string;
+        endedAt?: string;
+        summary: string;
+      };
     }
   | {
       id: string;
@@ -675,6 +708,9 @@ type AgentTeamMetadata = {
   readonly agentId?: string;
   readonly agentName?: string;
   readonly agentColor?: string;
+  readonly runId?: string;
+  readonly teamKey?: string;
+  readonly statusSource?: string;
   readonly taskId?: string;
   readonly toolUseId?: string;
   readonly teammateName?: string;
@@ -686,20 +722,48 @@ type AgentTeamMetadata = {
   readonly awaitingLeaderApproval?: boolean;
 };
 
+type AgentTeamRunSnapshot = {
+  readonly runId: string;
+  readonly teamKey?: string;
+  readonly label: string;
+  readonly startedAt: string;
+  readonly startedActivityId: string;
+  readonly endedAt?: string;
+  readonly endedActivityId?: string;
+  readonly statusSource?: string;
+  readonly teamName?: string;
+  readonly teammateMode?: string;
+  readonly members?: AgentTeamsMemberSnapshot[];
+  readonly tasks?: AgentTeamsTaskSnapshot[];
+};
+
+type AgentTeamRunSnapshotIndex = {
+  readonly byRunId: Map<string, AgentTeamRunSnapshot>;
+  readonly byTeamKey: Map<string, AgentTeamRunSnapshot>;
+};
+
 function extractAgentTeamMetadata(payload: Record<string, unknown> | null): AgentTeamMetadata {
+  const itemType = asTrimmedString(payload?.itemType);
+  const allowToolInputTeamMetadata = itemType === "collab_agent_tool_call";
   const toolInput = asRecord(asRecord(payload?.data)?.input);
   const agentId = asTrimmedString(payload?.agentId);
   const agentName = asTrimmedString(payload?.agentName);
   const agentColor = asTrimmedString(payload?.agentColor);
+  const runId = asTrimmedString(payload?.runId);
+  const teamKey = asTrimmedString(payload?.teamKey);
+  const statusSource = asTrimmedString(payload?.statusSource);
   const taskId = asTrimmedString(payload?.taskId);
   const toolUseId = asTrimmedString(payload?.toolUseId);
   const teammateName =
     asTrimmedString(payload?.teammateName) ??
     asTrimmedString(payload?.agentName) ??
-    asTrimmedString(toolInput?.name);
-  const teamName = asTrimmedString(payload?.teamName) ?? asTrimmedString(toolInput?.team_name);
+    (allowToolInputTeamMetadata ? asTrimmedString(toolInput?.name) : undefined);
+  const teamName =
+    asTrimmedString(payload?.teamName) ??
+    (allowToolInputTeamMetadata ? asTrimmedString(toolInput?.team_name) : undefined);
   const agentType =
-    asTrimmedString(payload?.agentType) ?? asTrimmedString(toolInput?.subagent_type);
+    asTrimmedString(payload?.agentType) ??
+    (allowToolInputTeamMetadata ? asTrimmedString(toolInput?.subagent_type) : undefined);
   const parentSessionId = asTrimmedString(payload?.parentSessionId);
   const teammateMode = asTrimmedString(payload?.teammateMode);
   const planModeRequired =
@@ -712,6 +776,9 @@ function extractAgentTeamMetadata(payload: Record<string, unknown> | null): Agen
     ...(agentId ? { agentId } : {}),
     ...(agentName ? { agentName } : {}),
     ...(agentColor ? { agentColor } : {}),
+    ...(runId ? { runId } : {}),
+    ...(teamKey ? { teamKey } : {}),
+    ...(statusSource ? { statusSource } : {}),
     ...(taskId ? { taskId } : {}),
     ...(toolUseId ? { toolUseId } : {}),
     ...(teammateName ? { teammateName } : {}),
@@ -725,7 +792,9 @@ function extractAgentTeamMetadata(payload: Record<string, unknown> | null): Agen
 }
 
 function isAgentTeamMetadata(metadata: AgentTeamMetadata): boolean {
-  return Boolean(metadata.teamName ?? metadata.teammateName ?? metadata.agentName);
+  return Boolean(
+    metadata.runId ?? metadata.teamName ?? metadata.teammateName ?? metadata.agentName,
+  );
 }
 
 function mergeAgentTeamMetadata(
@@ -738,14 +807,151 @@ function mergeAgentTeamMetadata(
   };
 }
 
+function extractAgentTeamRunSnapshots(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): AgentTeamRunSnapshotIndex {
+  const byRunId = new Map<string, AgentTeamRunSnapshot>();
+  const byTeamKey = new Map<string, AgentTeamRunSnapshot>();
+  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+
+  for (const activity of ordered) {
+    if (
+      activity.kind !== "team.run.started" &&
+      activity.kind !== "team.run.updated" &&
+      activity.kind !== "team.run.ended"
+    ) {
+      continue;
+    }
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const runId = asTrimmedString(payload?.runId);
+    if (!runId) {
+      continue;
+    }
+    const existing = byRunId.get(runId);
+    const teamKey = asTrimmedString(payload?.teamKey) ?? existing?.teamKey;
+    const label =
+      asTrimmedString(payload?.teamName) ??
+      asTrimmedString(payload?.teammateName) ??
+      existing?.label ??
+      "Team";
+    const members = Array.isArray(payload?.members)
+      ? payload.members
+          .map((member) => asRecord(member))
+          .filter((member): member is Record<string, unknown> => member !== null)
+          .map((member) => {
+            const snapshot: AgentTeamsMemberSnapshot = {};
+            const agentId = asTrimmedString(member.agentId);
+            const teammateName = asTrimmedString(member.teammateName);
+            const agentName = asTrimmedString(member.agentName);
+            const agentColor = asTrimmedString(member.agentColor);
+            const agentType = asTrimmedString(member.agentType);
+            if (agentId) {
+              snapshot.agentId = agentId;
+            }
+            if (teammateName) {
+              snapshot.teammateName = teammateName;
+            }
+            if (agentName) {
+              snapshot.agentName = agentName;
+            }
+            if (agentColor) {
+              snapshot.agentColor = agentColor;
+            }
+            if (agentType) {
+              snapshot.agentType = agentType;
+            }
+            return snapshot;
+          })
+          .filter(
+            (member) =>
+              member.agentId !== undefined ||
+              member.teammateName !== undefined ||
+              member.agentName !== undefined ||
+              member.agentColor !== undefined ||
+              member.agentType !== undefined,
+          )
+      : existing?.members;
+    const tasks = Array.isArray(payload?.tasks)
+      ? payload.tasks
+          .map((task) => asRecord(task))
+          .filter((task): task is Record<string, unknown> => task !== null)
+          .map((task) => {
+            const snapshot: AgentTeamsTaskSnapshot = {};
+            const taskId = asTrimmedString(task.taskId);
+            const teammateName = asTrimmedString(task.teammateName);
+            const summary = asTrimmedString(task.summary);
+            const status = asTrimmedString(task.status);
+            const updatedAt = asTrimmedString(task.updatedAt);
+            if (taskId) {
+              snapshot.taskId = taskId;
+            }
+            if (teammateName) {
+              snapshot.teammateName = teammateName;
+            }
+            if (summary) {
+              snapshot.summary = summary;
+            }
+            if (status) {
+              snapshot.status = status;
+            }
+            if (updatedAt) {
+              snapshot.updatedAt = updatedAt;
+            }
+            return snapshot;
+          })
+      : existing?.tasks;
+    const snapshot: AgentTeamRunSnapshot = {
+      runId,
+      ...(teamKey ? { teamKey } : {}),
+      label,
+      startedAt: asTrimmedString(payload?.startedAt) ?? existing?.startedAt ?? activity.createdAt,
+      startedActivityId: existing?.startedActivityId ?? activity.id,
+      ...(activity.kind === "team.run.ended"
+        ? {
+            endedAt: asTrimmedString(payload?.endedAt) ?? activity.createdAt,
+            endedActivityId: activity.id,
+          }
+        : existing?.endedAt
+          ? {
+              endedAt: existing.endedAt,
+              ...(existing.endedActivityId ? { endedActivityId: existing.endedActivityId } : {}),
+            }
+          : {}),
+      ...(asTrimmedString(payload?.statusSource)
+        ? { statusSource: asTrimmedString(payload?.statusSource)! }
+        : existing?.statusSource
+          ? { statusSource: existing.statusSource }
+          : {}),
+      ...(asTrimmedString(payload?.teamName)
+        ? { teamName: asTrimmedString(payload?.teamName)! }
+        : existing?.teamName
+          ? { teamName: existing.teamName }
+          : {}),
+      ...(asTrimmedString(payload?.teammateMode)
+        ? { teammateMode: asTrimmedString(payload?.teammateMode)! }
+        : existing?.teammateMode
+          ? { teammateMode: existing.teammateMode }
+          : {}),
+      ...(members && members.length > 0 ? { members } : {}),
+      ...(tasks && tasks.length > 0 ? { tasks } : {}),
+    };
+    byRunId.set(runId, snapshot);
+    if (teamKey) {
+      byTeamKey.set(teamKey, snapshot);
+    }
+  }
+
+  return {
+    byRunId,
+    byTeamKey,
+  };
+}
+
 function teamMemberLabel(metadata: AgentTeamMetadata): string {
-  return (
-    metadata.teammateName ??
-    metadata.agentName ??
-    metadata.agentType ??
-    metadata.teamName ??
-    "Teammate"
-  );
+  return metadata.teammateName ?? metadata.agentName ?? "Teammate";
 }
 
 function isPlaceholderAgentTeamsLabel(value: string | undefined): boolean {
@@ -785,6 +991,29 @@ function inferTeammateLabelFromActivity(
   }
 
   return undefined;
+}
+
+function choosePreferredTeamMemberLabel(input: {
+  readonly currentLabel: string | undefined;
+  readonly nextLabel: string;
+  readonly metadata: AgentTeamMetadata;
+}): string {
+  const { currentLabel, nextLabel, metadata } = input;
+  if (!currentLabel) {
+    return nextLabel;
+  }
+  const currentIsPlaceholder = isPlaceholderAgentTeamsLabel(currentLabel);
+  const nextIsPlaceholder = isPlaceholderAgentTeamsLabel(nextLabel);
+  if (currentIsPlaceholder && !nextIsPlaceholder) {
+    return nextLabel;
+  }
+  if (!currentIsPlaceholder && nextIsPlaceholder) {
+    return currentLabel;
+  }
+  if (metadata.teammateName || metadata.agentName) {
+    return nextLabel;
+  }
+  return currentLabel;
 }
 
 function agentTeamsMemberKey(metadata: AgentTeamMetadata, fallbackId: string): string {
@@ -845,6 +1074,9 @@ function shouldTrackAgentTeamsActivity(
   activity: OrchestrationThreadActivity,
   metadata: AgentTeamMetadata,
 ): boolean {
+  if (activity.kind.startsWith("team.run.")) {
+    return false;
+  }
   if (isAgentTeamMetadata(metadata)) {
     return true;
   }
@@ -873,10 +1105,205 @@ type MutableAgentTeamsRun = Omit<
   order: string[];
 };
 
+function snapshotTeamMetadata(
+  run: Pick<MutableAgentTeamsRun, "teamName" | "statusSource" | "teammateMode">,
+  member: AgentTeamsMemberSnapshot,
+  task?: AgentTeamsTaskSnapshot,
+): AgentTeamMetadata {
+  return {
+    ...(member.agentId ? { agentId: member.agentId } : {}),
+    ...(member.agentName ? { agentName: member.agentName } : {}),
+    ...(member.agentColor ? { agentColor: member.agentColor } : {}),
+    ...(member.agentType ? { agentType: member.agentType } : {}),
+    ...(member.teammateName ? { teammateName: member.teammateName } : {}),
+    ...(run.teamName ? { teamName: run.teamName } : {}),
+    ...(run.statusSource ? { statusSource: run.statusSource } : {}),
+    ...(run.teammateMode ? { teammateMode: run.teammateMode } : {}),
+    ...(task?.taskId ? { taskId: task.taskId } : {}),
+  };
+}
+
+function statusFromTaskSnapshot(
+  status: string | undefined,
+): Exclude<AgentTeamsTaskStatus, "lead"> | undefined {
+  switch (status) {
+    case "running":
+      return "running";
+    case "idle":
+      return "idle";
+    case "awaitingApproval":
+      return "awaitingApproval";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "stopped":
+      return "stopped";
+    default:
+      return undefined;
+  }
+}
+
+function seedRunMembersFromSnapshot(
+  run: MutableAgentTeamsRun,
+  snapshot: AgentTeamRunSnapshot | undefined,
+): void {
+  if (!snapshot) {
+    return;
+  }
+
+  const taskByMemberLabel = new Map<string, AgentTeamsTaskSnapshot>();
+  for (const task of snapshot.tasks ?? []) {
+    const key = task.teammateName?.trim().toLowerCase();
+    if (!key || taskByMemberLabel.has(key)) {
+      continue;
+    }
+    taskByMemberLabel.set(key, task);
+  }
+
+  const touchMemberFromSnapshot = (
+    metadata: AgentTeamMetadata,
+    task: AgentTeamsTaskSnapshot | undefined,
+  ) => {
+    const labelKey = (metadata.teammateName ?? metadata.agentName)?.trim().toLowerCase();
+    const memberId = agentTeamsMemberKey(metadata, `snapshot:${run.id}:${run.order.length + 1}`);
+    let member = run.members.get(memberId) ?? matchingMemberForMetadata(run, metadata);
+    const detail = task?.summary;
+    const status = statusFromTaskSnapshot(task?.status) ?? (run.endedAt ? "completed" : "running");
+    const updatedAt = task?.updatedAt ?? run.startedAt;
+    const nextLabel = teamMemberLabel(metadata);
+
+    if (!member) {
+      member = {
+        id: memberId,
+        label: nextLabel,
+        status,
+        updatedAt,
+        startedAt: run.startedAt,
+        ...(detail ? { detail } : {}),
+        ...(metadata.agentId ? { agentId: metadata.agentId } : {}),
+        ...(metadata.agentName ? { agentName: metadata.agentName } : {}),
+        ...(metadata.agentColor ? { agentColor: metadata.agentColor } : {}),
+        ...(metadata.agentType ? { agentType: metadata.agentType } : {}),
+        ...(metadata.teamName ? { teamName: metadata.teamName } : {}),
+        ...(metadata.taskId ? { taskId: metadata.taskId } : {}),
+        ...(metadata.teammateName ? { teammateName: metadata.teammateName } : {}),
+        ...(metadata.teammateMode ? { teammateMode: metadata.teammateMode } : {}),
+        ...(metadata.statusSource ? { statusSource: metadata.statusSource } : {}),
+        activities: [],
+      };
+      run.members.set(memberId, member);
+      run.order.push(memberId);
+    } else {
+      member.label = choosePreferredTeamMemberLabel({
+        currentLabel: member.label,
+        nextLabel,
+        metadata,
+      });
+      member.status = isTerminalAgentTeamsStatus(member.status) ? member.status : status;
+      member.updatedAt =
+        member.updatedAt.localeCompare(updatedAt) > 0 ? member.updatedAt : updatedAt;
+      if (!member.detail && detail) {
+        member.detail = detail;
+      }
+    }
+
+    if (metadata.agentId) {
+      member.agentId = metadata.agentId;
+    }
+    if (metadata.agentName) {
+      member.agentName = metadata.agentName;
+    }
+    if (metadata.agentColor) {
+      member.agentColor = metadata.agentColor;
+    }
+    if (metadata.agentType) {
+      member.agentType = metadata.agentType;
+    }
+    if (metadata.teamName) {
+      member.teamName = metadata.teamName;
+    }
+    if (metadata.taskId) {
+      member.taskId = metadata.taskId;
+    }
+    if (metadata.teammateName) {
+      member.teammateName = metadata.teammateName;
+    }
+    if (metadata.teammateMode) {
+      member.teammateMode = metadata.teammateMode;
+    }
+    if (metadata.statusSource) {
+      member.statusSource = metadata.statusSource;
+    }
+
+    if (labelKey) {
+      taskByMemberLabel.delete(labelKey);
+    }
+  };
+
+  for (const memberSnapshot of snapshot.members ?? []) {
+    const labelKey = (memberSnapshot.teammateName ?? memberSnapshot.agentName)
+      ?.trim()
+      .toLowerCase();
+    const matchingTask =
+      snapshot.tasks?.find((task) => {
+        if (labelKey && task.teammateName?.trim().toLowerCase() === labelKey) {
+          return true;
+        }
+        return false;
+      }) ?? (labelKey ? taskByMemberLabel.get(labelKey) : undefined);
+    touchMemberFromSnapshot(snapshotTeamMetadata(run, memberSnapshot, matchingTask), matchingTask);
+  }
+
+  for (const task of taskByMemberLabel.values()) {
+    if (!task.teammateName) {
+      continue;
+    }
+    touchMemberFromSnapshot(
+      {
+        teammateName: task.teammateName,
+        ...(run.teamName ? { teamName: run.teamName } : {}),
+        ...(run.statusSource ? { statusSource: run.statusSource } : {}),
+        ...(run.teammateMode ? { teammateMode: run.teammateMode } : {}),
+        ...(task.taskId ? { taskId: task.taskId } : {}),
+      },
+      task,
+    );
+  }
+}
+
+function canCreateAgentTeamsMember(
+  activity: OrchestrationThreadActivity,
+  payload: Record<string, unknown>,
+  metadata: AgentTeamMetadata,
+): boolean {
+  if (activity.kind.startsWith("teammate.")) {
+    return true;
+  }
+  if (
+    (activity.kind === "tool.started" ||
+      activity.kind === "tool.updated" ||
+      activity.kind === "tool.completed") &&
+    payload.itemType === "collab_agent_tool_call"
+  ) {
+    return true;
+  }
+  return Boolean(
+    metadata.agentId ??
+    metadata.taskId ??
+    (!isPlaceholderAgentTeamsLabel(metadata.teammateName ?? metadata.agentName)
+      ? (metadata.teammateName ?? metadata.agentName)
+      : undefined),
+  );
+}
+
 function matchingMemberForMetadata(
   run: MutableAgentTeamsRun,
   metadata: AgentTeamMetadata,
 ): MutableAgentTeamsMember | undefined {
+  const candidateNames = [metadata.teammateName, metadata.agentName].filter(
+    (value): value is string => value !== undefined,
+  );
   for (const member of run.members.values()) {
     if (metadata.agentId && member.agentId === metadata.agentId) {
       return member;
@@ -890,10 +1317,10 @@ function matchingMemberForMetadata(
     if (
       metadata.teamName &&
       member.teamName === metadata.teamName &&
-      (metadata.teammateName || metadata.agentName) &&
-      (member.teammateName === metadata.teammateName ||
-        member.teammateName === metadata.agentName ||
-        member.agentName === metadata.agentName)
+      candidateNames.some(
+        (candidateName) =>
+          member.teammateName === candidateName || member.agentName === candidateName,
+      )
     ) {
       return member;
     }
@@ -903,9 +1330,9 @@ function matchingMemberForMetadata(
 
 export function deriveAgentTeamsState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
-  defaultAgent?: string | null,
 ): AgentTeamsState {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const explicitRunSnapshots = extractAgentTeamRunSnapshots(ordered);
   const toolMetadataByToolUseId = new Map<string, AgentTeamMetadata>();
 
   for (const activity of ordered) {
@@ -955,8 +1382,19 @@ export function deriveAgentTeamsState(
         : metadata;
 
     const explicitTeamKey =
-      metadataWithFallbackLabel.teamName ?? metadataWithFallbackLabel.parentSessionId;
+      metadataWithFallbackLabel.teamKey ??
+      metadataWithFallbackLabel.runId ??
+      metadataWithFallbackLabel.teamName ??
+      metadataWithFallbackLabel.parentSessionId;
     const teamKey = explicitTeamKey ?? (activity.turnId ? `turn:${activity.turnId}` : "agent-team");
+    const explicitRunSnapshot =
+      (metadataWithFallbackLabel.runId
+        ? explicitRunSnapshots.byRunId.get(metadataWithFallbackLabel.runId)
+        : undefined) ??
+      (metadataWithFallbackLabel.teamKey
+        ? explicitRunSnapshots.byTeamKey.get(metadataWithFallbackLabel.teamKey)
+        : undefined) ??
+      explicitRunSnapshots.byTeamKey.get(teamKey);
     const status = agentTeamsStatusFromKind(activity.kind);
 
     let run = activeRunByTeamKey.get(teamKey);
@@ -964,29 +1402,56 @@ export function deriveAgentTeamsState(
       const runNumber = (runCountByTeamKey.get(teamKey) ?? 0) + 1;
       runCountByTeamKey.set(teamKey, runNumber);
       run = {
-        id: `${teamKey}:${runNumber}`,
-        label: metadataWithFallbackLabel.teamName ?? inferredLabel ?? `Team ${runNumber}`,
-        startedAt: activity.createdAt,
-        startedActivityId: activity.id,
-        ...(metadataWithFallbackLabel.teamName
-          ? { teamName: metadataWithFallbackLabel.teamName }
-          : {}),
-        ...(metadataWithFallbackLabel.teammateMode
-          ? { teammateMode: metadataWithFallbackLabel.teammateMode }
-          : {}),
+        id: explicitRunSnapshot?.runId ?? `${teamKey}:${runNumber}`,
+        label:
+          explicitRunSnapshot?.label ??
+          metadataWithFallbackLabel.teamName ??
+          inferredLabel ??
+          `Team ${runNumber}`,
+        startedAt: explicitRunSnapshot?.startedAt ?? activity.createdAt,
+        startedActivityId: explicitRunSnapshot?.startedActivityId ?? activity.id,
+        ...(explicitRunSnapshot?.teamName
+          ? { teamName: explicitRunSnapshot.teamName }
+          : metadataWithFallbackLabel.teamName
+            ? { teamName: metadataWithFallbackLabel.teamName }
+            : {}),
+        ...(explicitRunSnapshot?.teammateMode
+          ? { teammateMode: explicitRunSnapshot.teammateMode }
+          : metadataWithFallbackLabel.teammateMode
+            ? { teammateMode: metadataWithFallbackLabel.teammateMode }
+            : {}),
+        ...(explicitRunSnapshot?.statusSource
+          ? { statusSource: explicitRunSnapshot.statusSource }
+          : metadataWithFallbackLabel.statusSource
+            ? { statusSource: metadataWithFallbackLabel.statusSource }
+            : {}),
+        ...(explicitRunSnapshot?.tasks ? { tasks: explicitRunSnapshot.tasks } : {}),
         members: new Map<string, MutableAgentTeamsMember>(),
         order: [],
       };
+      seedRunMembersFromSnapshot(run, explicitRunSnapshot);
       runs.push(run);
       activeRunByTeamKey.set(teamKey, run);
-    } else if (!run.teamName && metadataWithFallbackLabel.teamName) {
-      run.teamName = metadataWithFallbackLabel.teamName;
-      run.label = metadataWithFallbackLabel.teamName;
+    } else {
+      if (explicitRunSnapshot && run.id !== explicitRunSnapshot.runId) {
+        run.id = explicitRunSnapshot.runId;
+      }
+      if (!run.teamName && metadataWithFallbackLabel.teamName) {
+        run.teamName = metadataWithFallbackLabel.teamName;
+        run.label = metadataWithFallbackLabel.teamName;
+      }
     }
 
     if (!run.teammateMode && metadataWithFallbackLabel.teammateMode) {
       run.teammateMode = metadataWithFallbackLabel.teammateMode;
     }
+    if (!run.statusSource && metadataWithFallbackLabel.statusSource) {
+      run.statusSource = metadataWithFallbackLabel.statusSource;
+    }
+    if (!run.tasks && explicitRunSnapshot?.tasks) {
+      run.tasks = explicitRunSnapshot.tasks;
+    }
+    seedRunMembersFromSnapshot(run, explicitRunSnapshot);
 
     const memberId = agentTeamsMemberKey(metadataWithFallbackLabel, activity.id);
     const detail = agentTeamsActivityDetail(activity, payload);
@@ -995,6 +1460,9 @@ export function deriveAgentTeamsState(
     let member =
       run.members.get(memberId) ?? matchingMemberForMetadata(run, metadataWithFallbackLabel);
     if (!member) {
+      if (!canCreateAgentTeamsMember(activity, payload, metadataWithFallbackLabel)) {
+        continue;
+      }
       member = {
         id: memberId,
         label: nextLabel,
@@ -1027,6 +1495,9 @@ export function deriveAgentTeamsState(
         ...(metadataWithFallbackLabel.teammateMode
           ? { teammateMode: metadataWithFallbackLabel.teammateMode }
           : {}),
+        ...(metadataWithFallbackLabel.statusSource
+          ? { statusSource: metadataWithFallbackLabel.statusSource }
+          : {}),
         ...(metadataWithFallbackLabel.planModeRequired !== undefined
           ? { planModeRequired: metadataWithFallbackLabel.planModeRequired }
           : {}),
@@ -1056,7 +1527,11 @@ export function deriveAgentTeamsState(
         ? member.status
         : "running");
 
-    member.label = nextLabel;
+    member.label = choosePreferredTeamMemberLabel({
+      currentLabel: member.label,
+      nextLabel,
+      metadata: metadataWithFallbackLabel,
+    });
     member.status = nextStatus;
     member.updatedAt = activity.createdAt;
     if (detail) {
@@ -1089,6 +1564,9 @@ export function deriveAgentTeamsState(
     if (metadataWithFallbackLabel.teammateMode) {
       member.teammateMode = metadataWithFallbackLabel.teammateMode;
     }
+    if (metadataWithFallbackLabel.statusSource) {
+      member.statusSource = metadataWithFallbackLabel.statusSource;
+    }
     if (metadataWithFallbackLabel.planModeRequired !== undefined) {
       member.planModeRequired = metadataWithFallbackLabel.planModeRequired;
     }
@@ -1106,6 +1584,10 @@ export function deriveAgentTeamsState(
       label: activity.summary,
       ...(detail ? { detail } : {}),
       ...(status ? { status } : {}),
+      ...(metadataWithFallbackLabel.runId ? { runId: metadataWithFallbackLabel.runId } : {}),
+      ...(metadataWithFallbackLabel.statusSource
+        ? { statusSource: metadataWithFallbackLabel.statusSource }
+        : {}),
       ...(metadataWithFallbackLabel.taskId ? { taskId: metadataWithFallbackLabel.taskId } : {}),
       ...(metadataWithFallbackLabel.toolUseId
         ? { toolUseId: metadataWithFallbackLabel.toolUseId }
@@ -1125,9 +1607,9 @@ export function deriveAgentTeamsState(
     }
   }
 
-  const leadLabel = asTrimmedString(defaultAgent) ?? "Lead";
   const finalizedRuns = runs
     .map<AgentTeamsRun>((run) => {
+      const explicitRunSnapshot = explicitRunSnapshots.byRunId.get(run.id);
       const orderedMembers = run.order
         .map((memberId) => run.members.get(memberId))
         .filter((member): member is MutableAgentTeamsMember => member !== undefined)
@@ -1173,17 +1655,33 @@ export function deriveAgentTeamsState(
         activeCount,
         pendingApprovalCount,
       };
-      if (run.endedAt) {
-        finalizedRun.endedAt = run.endedAt;
+      if (run.statusSource) {
+        finalizedRun.statusSource = run.statusSource;
       }
-      if (run.endedActivityId) {
-        finalizedRun.endedActivityId = run.endedActivityId;
+      if (run.tasks) {
+        finalizedRun.tasks = run.tasks;
       }
-      if (run.teamName) {
-        finalizedRun.teamName = run.teamName;
+      const endedAt = explicitRunSnapshot?.endedAt ?? run.endedAt;
+      if (endedAt) {
+        finalizedRun.endedAt = endedAt;
       }
-      if (run.teammateMode) {
-        finalizedRun.teammateMode = run.teammateMode;
+      const endedActivityId = explicitRunSnapshot?.endedActivityId ?? run.endedActivityId;
+      if (endedActivityId) {
+        finalizedRun.endedActivityId = endedActivityId;
+      }
+      const teamName = explicitRunSnapshot?.teamName ?? run.teamName;
+      if (teamName) {
+        finalizedRun.teamName = teamName;
+      }
+      const teammateMode = explicitRunSnapshot?.teammateMode ?? run.teammateMode;
+      if (teammateMode) {
+        finalizedRun.teammateMode = teammateMode;
+      }
+      if (explicitRunSnapshot?.statusSource && !finalizedRun.statusSource) {
+        finalizedRun.statusSource = explicitRunSnapshot.statusSource;
+      }
+      if (explicitRunSnapshot?.tasks && !finalizedRun.tasks) {
+        finalizedRun.tasks = explicitRunSnapshot.tasks;
       }
       return finalizedRun;
     })
@@ -1197,7 +1695,7 @@ export function deriveAgentTeamsState(
   const activeRunId = finalizedRuns.find((run) => run.activeCount > 0)?.id ?? null;
 
   return {
-    leadLabel,
+    leadLabel: "Lead",
     runs: finalizedRuns,
     activeRunId,
     hasTeamActivity: finalizedRuns.length > 0,
@@ -1235,6 +1733,7 @@ export function deriveTimelineEntries(
   messages: ChatMessage[],
   proposedPlans: ProposedPlan[],
   workEntries: WorkLogEntry[],
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): TimelineEntry[] {
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
@@ -1254,7 +1753,23 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
+  const teamRunRows: TimelineEntry[] = [
+    ...extractAgentTeamRunSnapshots(activities).byRunId.values(),
+  ].map((run) => ({
+    id: `team-run-timeline:${run.runId}`,
+    kind: "team-run",
+    createdAt: run.endedAt ?? run.startedAt,
+    run: {
+      runId: run.runId,
+      label: run.label,
+      startedAt: run.startedAt,
+      ...(run.endedAt ? { endedAt: run.endedAt } : {}),
+      summary: run.endedAt
+        ? `Used ${run.label} from ${run.startedAt} to ${run.endedAt}`
+        : `${run.label} started at ${run.startedAt}`,
+    },
+  }));
+  return [...messageRows, ...proposedPlanRows, ...workRows, ...teamRunRows].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );
 }

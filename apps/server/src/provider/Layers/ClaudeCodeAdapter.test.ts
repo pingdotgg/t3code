@@ -289,15 +289,11 @@ describe("ClaudeCodeAdapterLive", () => {
           claudeCode: {
             experimentalAgentTeams: true,
             agentProgressSummaries: true,
-            teammateMode: "in-process",
-            teamTaskDelegation: "lead-assigns",
-            defaultAgent: "code-review-lead",
           },
         },
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.agent, "code-review-lead");
       assert.equal(createInput?.options.agentProgressSummaries, true);
       assert.deepEqual(createInput?.options.settings, { teammateMode: "in-process" });
       assert.equal(createInput?.options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, "1");
@@ -306,43 +302,6 @@ describe("ClaudeCodeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
-
-  it.effect(
-    "prefixes Claude turns with the team delegation preference when teams are enabled",
-    () => {
-      const harness = makeHarness();
-      return Effect.gen(function* () {
-        const adapter = yield* ClaudeCodeAdapter;
-        const session = yield* adapter.startSession({
-          threadId: THREAD_ID,
-          provider: "claudeCode",
-          runtimeMode: "full-access",
-          providerOptions: {
-            claudeCode: {
-              experimentalAgentTeams: true,
-              teamTaskDelegation: "lead-assigns",
-            },
-          },
-        });
-
-        yield* adapter.sendTurn({
-          threadId: session.threadId,
-          input: "Create a team for a quick review.",
-          attachments: [],
-        });
-
-        const createInput = harness.getLastCreateQueryInput();
-        const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
-        assert.equal(
-          promptText,
-          "Agent Teams preference: the lead should assign tasks explicitly to named teammates.\n\nCreate a team for a quick review.",
-        );
-      }).pipe(
-        Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
-      );
-    },
-  );
 
   it.effect("maps ultrathink to max effort and prefixes the prompt", () => {
     const harness = makeHarness();

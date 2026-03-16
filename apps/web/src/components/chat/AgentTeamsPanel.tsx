@@ -172,13 +172,14 @@ function formatRunSpan(run: AgentTeamsRun): string {
 }
 
 function panelSummary(run: AgentTeamsRun): string {
+  const idleMembers = run.members.filter((member) => member.status === "idle").length;
   const activeMembers = run.members.filter(
     (member) =>
       member.status === "running" ||
       member.status === "idle" ||
       member.status === "awaitingApproval",
   ).length;
-  return `${run.members.length} agent${run.members.length === 1 ? "" : "s"} • ${activeMembers} active`;
+  return `${run.members.length} agent${run.members.length === 1 ? "" : "s"} • ${activeMembers} active${idleMembers > 0 ? ` • ${idleMembers} idle` : ""}`;
 }
 
 export function AgentTeamsPanel({
@@ -308,21 +309,11 @@ export function AgentTeamsPanel({
                     {statusLabel(subjectRun.status)}
                   </span>
                   <span className="shrink-0 text-[11px] text-muted-foreground">
-                    {activeRun ? "Active team" : "Recent team"}
+                    {activeRun ? "Active team" : formatRunSpan(subjectRun)}
                   </span>
                   <span className="shrink-0 text-[11px] text-muted-foreground">
                     {panelSummary(subjectRun)}
                   </span>
-                  {subjectRun.teammateMode ? (
-                    <span className="shrink-0 text-[11px] text-muted-foreground">
-                      {subjectRun.teammateMode}
-                    </span>
-                  ) : null}
-                  {state.leadLabel ? (
-                    <span className="shrink-0 truncate text-[11px] text-muted-foreground">
-                      Lead: {state.leadLabel}
-                    </span>
-                  ) : null}
                   <span className="flex min-w-0 items-center gap-2 overflow-hidden text-[11px] text-muted-foreground">
                     {subjectRun.members.map((member) => {
                       const preset = colorPresetForMember(member);
@@ -360,8 +351,7 @@ export function AgentTeamsPanel({
             <div className="mt-3 space-y-3">
               <p className="text-xs text-muted-foreground">
                 {formatRunSpan(subjectRun)}
-                {subjectRun.teammateMode ? ` • ${subjectRun.teammateMode}` : ""}
-                {state.leadLabel ? ` • Lead thread: ${state.leadLabel}` : ""}
+                {subjectRun.endedAt ? " • shut down" : ""}
               </p>
 
               {showWarning ? (
@@ -452,7 +442,6 @@ export function AgentTeamsPanel({
                       <p className="text-xs text-muted-foreground">
                         {selectedMember.agentType ? `${selectedMember.agentType} • ` : ""}
                         {selectedMember.teamName ?? subjectRun.label}
-                        {selectedMember.teammateMode ? ` • ${selectedMember.teammateMode}` : ""}
                       </p>
                       <p className="text-sm text-foreground">
                         {selectedMember.detail ??
@@ -498,6 +487,41 @@ export function AgentTeamsPanel({
                           ))}
                       </div>
                     </div>
+
+                    {subjectRun.tasks && subjectRun.tasks.length > 0 ? (
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium text-foreground">Claude task history</p>
+                        <div className="space-y-2">
+                          {subjectRun.tasks.map((task) => (
+                            <div
+                              key={`${
+                                selectedMember.id
+                              }:task:${task.taskId ?? task.summary ?? task.updatedAt ?? task.teammateName ?? "task"}`}
+                              className="rounded-lg border border-border bg-background/75 px-3 py-2"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm text-foreground">
+                                  {task.summary ?? task.taskId ?? "Task"}
+                                </p>
+                                {task.status ? (
+                                  <span className="text-[11px] text-muted-foreground">
+                                    {task.status}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {[
+                                  task.teammateName,
+                                  task.updatedAt ? formatTimestamp(task.updatedAt) : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" • ")}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 

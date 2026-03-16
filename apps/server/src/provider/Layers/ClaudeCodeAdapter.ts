@@ -104,7 +104,6 @@ interface ClaudeSessionContext {
     items: Array<unknown>;
   }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
-  readonly teamPreferences: ClaudeTeamPreferences;
   turnState: ClaudeTurnState | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
@@ -142,10 +141,7 @@ interface ClaudeAgentMetadata {
   awaitingLeaderApproval?: boolean;
 }
 
-interface ClaudeTeamPreferences {
-  readonly experimentalAgentTeams: boolean;
-  readonly teamTaskDelegation?: "lead-assigns" | "self-claim";
-}
+const CLAUDE_AGENT_TEAMS_TEAMMATE_MODE = "in-process" as const;
 
 interface ParsedClaudeTeammateUserEvent {
   readonly hookEvent: "TeammateIdle" | "SubagentStop";
@@ -482,6 +478,39 @@ function parseTeammateMessageAttributes(rawAttributes: string): Record<string, s
   return attributes;
 }
 
+function explicitTeammateNameFromRecord(
+  record: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const nestedTeammate = record.teammate;
+  const nestedAgent = record.agent;
+  const teammateRecord =
+    nestedTeammate && typeof nestedTeammate === "object"
+      ? (nestedTeammate as Record<string, unknown>)
+      : undefined;
+  const agentRecord =
+    nestedAgent && typeof nestedAgent === "object"
+      ? (nestedAgent as Record<string, unknown>)
+      : undefined;
+  return (
+    asTrimmedString(record.teammateName) ??
+    asTrimmedString(record.teammate_name) ??
+    asTrimmedString(record.agentName) ??
+    asTrimmedString(record.agent_name) ??
+    asTrimmedString(record.displayName) ??
+    asTrimmedString(record.display_name) ??
+    asTrimmedString(record.name) ??
+    asTrimmedString(teammateRecord?.displayName) ??
+    asTrimmedString(teammateRecord?.display_name) ??
+    asTrimmedString(teammateRecord?.name) ??
+    asTrimmedString(agentRecord?.displayName) ??
+    asTrimmedString(agentRecord?.display_name) ??
+    asTrimmedString(agentRecord?.name)
+  );
+}
+
 function teammateNameFromTerminationMessage(value: unknown): string | undefined {
   const message = asTrimmedString(value);
   if (!message) {
@@ -529,19 +558,26 @@ function parseClaudeTeammateUserEvents(
     const eventType = asTrimmedString(bodyRecord?.type);
     const from = asTrimmedString(bodyRecord?.from);
     const terminatedTeammate = teammateNameFromTerminationMessage(bodyRecord?.message);
+    const explicitTeammateName = explicitTeammateNameFromRecord(bodyRecord);
     const teammateNameCandidate =
+      explicitTeammateName ??
       terminatedTeammate ??
       (from && from !== "team-lead" && from !== "system" ? from : undefined) ??
+      undefined;
+    const agentIdCandidate =
+      asTrimmedString(bodyRecord?.agentId) ??
+      asTrimmedString(bodyRecord?.agent_id) ??
       (teammateId && teammateId !== "team-lead" && teammateId !== "system"
         ? teammateId
-        : undefined);
+        : undefined) ??
+      teammateNameCandidate;
     const metadata = mergeClaudeAgentMetadata(
       baseMetadata,
       extractAgentMetadataFromRecord(bodyRecord),
       {
+        ...(agentIdCandidate ? { agentId: agentIdCandidate } : {}),
         ...(teammateNameCandidate
           ? {
-              agentId: teammateNameCandidate,
               agentName: teammateNameCandidate,
               teammateName: teammateNameCandidate,
             }
@@ -581,7 +617,7 @@ function parseClaudeTeammateUserEvents(
   return parsedEvents;
 }
 
-function buildUserMessage(input: ProviderSendTurnInput): SDKUserMessage {
+function buildUserMessage(input: ProviderSendTurnInput, sessionId?: string): SDKUserMessage {
   const fragments: string[] = [];
 
   if (input.input && input.input.trim().length > 0) {
@@ -603,26 +639,13 @@ function buildUserMessage(input: ProviderSendTurnInput): SDKUserMessage {
 
   return {
     type: "user",
-    session_id: "",
+    session_id: sessionId ?? "",
     parent_tool_use_id: null,
     message: {
       role: "user",
       content: [{ type: "text", text }],
     },
   } as SDKUserMessage;
-}
-
-function applyClaudeTeamPromptPreference(text: string, preferences: ClaudeTeamPreferences): string {
-  if (!preferences.experimentalAgentTeams || !preferences.teamTaskDelegation) {
-    return text;
-  }
-
-  const delegationInstruction =
-    preferences.teamTaskDelegation === "lead-assigns"
-      ? "Agent Teams preference: the lead should assign tasks explicitly to named teammates."
-      : "Agent Teams preference: teammates may self-claim the next unassigned, unblocked task after finishing work.";
-
-  return `${delegationInstruction}\n\n${text}`;
 }
 
 function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
@@ -1944,12 +1967,6 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         const providerOptions = input.providerOptions?.claudeCode;
         const effort = input.modelOptions?.claudeCode?.effort;
         const effectiveEffort = getEffectiveClaudeCodeEffort(effort);
-        const teamPreferences: ClaudeTeamPreferences = {
-          experimentalAgentTeams: providerOptions?.experimentalAgentTeams === true,
-          ...(providerOptions?.teamTaskDelegation
-            ? { teamTaskDelegation: providerOptions.teamTaskDelegation }
-            : {}),
-        };
         const permissionMode =
           toPermissionMode(providerOptions?.permissionMode) ??
           (input.runtimeMode === "full-access" ? "bypassPermissions" : undefined);
@@ -1974,12 +1991,11 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           ...(providerOptions?.maxThinkingTokens !== undefined
             ? { maxThinkingTokens: providerOptions.maxThinkingTokens }
             : {}),
-          ...(providerOptions?.defaultAgent ? { agent: providerOptions.defaultAgent } : {}),
           ...(providerOptions?.agentProgressSummaries !== undefined
             ? { agentProgressSummaries: providerOptions.agentProgressSummaries }
             : {}),
-          ...(providerOptions?.teammateMode
-            ? { settings: { teammateMode: providerOptions.teammateMode } }
+          ...(providerOptions?.experimentalAgentTeams
+            ? { settings: { teammateMode: CLAUDE_AGENT_TEAMS_TEAMMATE_MODE } }
             : {}),
           ...(resumeState?.resume ? { resume: resumeState.resume } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
@@ -2033,7 +2049,6 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           pendingApprovals,
           turns: [],
           inFlightTools,
-          teamPreferences,
           turnState: undefined,
           lastAssistantUuid: resumeState?.resumeSessionAt,
           lastThreadStartedId: undefined,
@@ -2073,14 +2088,8 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               ...(providerOptions?.agentProgressSummaries !== undefined
                 ? { agentProgressSummaries: providerOptions.agentProgressSummaries }
                 : {}),
-              ...(providerOptions?.teammateMode
-                ? { teammateMode: providerOptions.teammateMode }
-                : {}),
-              ...(providerOptions?.teamTaskDelegation
-                ? { teamTaskDelegation: providerOptions.teamTaskDelegation }
-                : {}),
-              ...(providerOptions?.defaultAgent
-                ? { defaultAgent: providerOptions.defaultAgent }
+              ...(providerOptions?.experimentalAgentTeams
+                ? { teammateMode: CLAUDE_AGENT_TEAMS_TEAMMATE_MODE }
                 : {}),
             },
           },
@@ -2160,10 +2169,13 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           },
         });
 
-        const message = buildUserMessage({
-          ...input,
-          input: applyClaudeTeamPromptPreference(input.input ?? "", context.teamPreferences),
-        });
+        const message = buildUserMessage(
+          {
+            ...input,
+            input: input.input ?? "",
+          },
+          context.resumeSessionId,
+        );
 
         yield* Queue.offer(context.promptQueue, {
           type: "message",

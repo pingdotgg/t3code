@@ -156,6 +156,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         continue;
       }
 
+      if (timelineEntry.kind === "team-run") {
+        nextRows.push({
+          kind: "team-run",
+          id: timelineEntry.id,
+          createdAt: timelineEntry.createdAt,
+          run: timelineEntry.run,
+        });
+        continue;
+      }
+
       nextRows.push({
         kind: "message",
         id: timelineEntry.id,
@@ -233,6 +243,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       if (!row) return 96;
       if (row.kind === "work") return 112;
       if (row.kind === "proposed-plan") return estimateTimelineProposedPlanHeight(row.proposedPlan);
+      if (row.kind === "team-run") return 72;
       if (row.kind === "working") return 40;
       return estimateTimelineMessageHeight(row.message, { timelineWidthPx });
     },
@@ -509,6 +520,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         </div>
       )}
 
+      {row.kind === "team-run" && (
+        <div className="px-1 py-0.5">
+          <div className="rounded-lg border border-border/70 bg-card/45 px-3 py-2">
+            <p className="text-sm text-foreground">{row.run.label}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {row.run.endedAt
+                ? `${formatTimestamp(row.run.startedAt, timestampFormat)} to ${formatTimestamp(
+                    row.run.endedAt,
+                    timestampFormat,
+                  )}`
+                : `Started ${formatTimestamp(row.run.startedAt, timestampFormat)}`}
+            </p>
+          </div>
+        </div>
+      )}
+
       {row.kind === "working" && (
         <div className="py-0.5 pl-1.5">
           <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
@@ -575,6 +602,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineProposedPlan = Extract<TimelineEntry, { kind: "proposed-plan" }>["proposedPlan"];
+type TimelineTeamRun = Extract<TimelineEntry, { kind: "team-run" }>["run"];
 type TimelineWorkEntry = Extract<TimelineEntry, { kind: "work" }>["entry"];
 type TimelineRow =
   | {
@@ -596,6 +624,12 @@ type TimelineRow =
       id: string;
       createdAt: string;
       proposedPlan: TimelineProposedPlan;
+    }
+  | {
+      kind: "team-run";
+      id: string;
+      createdAt: string;
+      run: TimelineTeamRun;
     }
   | { kind: "working"; id: string; createdAt: string | null };
 
