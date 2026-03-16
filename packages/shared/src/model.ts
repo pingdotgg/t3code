@@ -1,4 +1,6 @@
 import {
+  CLAUDE_1M_BETA_ELIGIBLE_MODEL_SLUGS,
+  CLAUDE_1M_NATIVE_MODEL_SLUGS,
   CODEX_REASONING_EFFORT_OPTIONS,
   CURSOR_MODEL_FAMILY_OPTIONS,
   CURSOR_REASONING_OPTIONS,
@@ -278,3 +280,29 @@ export function getDefaultReasoningEffort(
 }
 
 export { CODEX_REASONING_EFFORT_OPTIONS };
+
+/** Describes a Claude model's relationship to the 1M-token context window. */
+export type ClaudeContextWindowMode =
+  /** Model has a native 1M-token context window — no special flag needed. */
+  | "1m-native"
+  /** Model supports 1M tokens via the `context-1m-2025-08-07` beta header. */
+  | "1m-beta"
+  /** Model is limited to 200k tokens and does not support 1M context. */
+  | "200k";
+
+/**
+ * Returns the context window mode for a given Claude model slug.
+ *
+ * - `"1m-native"` — Opus 4.6, Sonnet 4.6 (1M by default, no opt-in needed)
+ * - `"1m-beta"` — Sonnet 4/4.5 (200k default, 1M via beta header)
+ * - `"200k"` — Haiku 4.5 and all other models (200k only)
+ */
+export function getClaudeContextWindowMode(
+  model: string | null | undefined,
+): ClaudeContextWindowMode {
+  if (!model) return "200k";
+  const slug = model.trim();
+  if (CLAUDE_1M_NATIVE_MODEL_SLUGS.has(slug)) return "1m-native";
+  if (CLAUDE_1M_BETA_ELIGIBLE_MODEL_SLUGS.has(slug)) return "1m-beta";
+  return "200k";
+}

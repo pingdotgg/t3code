@@ -15,6 +15,10 @@ export type CodexModelOptions = typeof CodexModelOptions.Type;
 
 export const ClaudeCodeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
+  /** Enable the 1M-token context window via the `context-1m-2025-08-07` beta header.
+   *  Only relevant for models that require the beta to unlock 1M context (e.g. Sonnet 4/4.5).
+   *  Models that already have native 1M context (Opus 4.6, Sonnet 4.6) ignore this flag. */
+  largeContext: Schema.optional(Schema.Boolean),
 });
 export type ClaudeCodeModelOptions = typeof ClaudeCodeModelOptions.Type;
 
@@ -35,6 +39,8 @@ export type ProviderModelOptions = typeof ProviderModelOptions.Type;
 type ModelOption = {
   readonly slug: string;
   readonly name: string;
+  /** Context window size in tokens (if known). */
+  readonly contextWindow?: number;
 };
 
 type CursorModelFamilyOption = {
@@ -65,9 +71,9 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
   claudeCode: [
-    { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
-    { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-    { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+    { slug: "claude-opus-4-6", name: "Claude Opus 4.6", contextWindow: 1_000_000 },
+    { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", contextWindow: 1_000_000 },
+    { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5", contextWindow: 200_000 },
   ],
   cursor: [
     { slug: "auto", name: "Auto" },
@@ -105,6 +111,27 @@ export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, ModelSlug> = {
 // Backward compatibility for existing Codex-only call sites.
 export const MODEL_OPTIONS = MODEL_OPTIONS_BY_PROVIDER.codex;
 export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
+
+/**
+ * Claude models that have a 1M-token context window natively (no beta header required).
+ * Source: https://platform.claude.com/docs/en/about-claude/models/overview
+ */
+export const CLAUDE_1M_NATIVE_MODEL_SLUGS = new Set<string>([
+  "claude-opus-4-6",
+  "claude-sonnet-4-6",
+]);
+
+/**
+ * Claude models that can unlock 1M-token context via the `context-1m-2025-08-07` beta header.
+ * These models default to 200k but support 1M for organizations in usage tier 4+.
+ * Source: https://platform.claude.com/docs/en/about-claude/models/overview
+ */
+export const CLAUDE_1M_BETA_ELIGIBLE_MODEL_SLUGS = new Set<string>([
+  "claude-sonnet-4-5",
+  "claude-sonnet-4-5-20250929",
+  "claude-sonnet-4-20250514",
+  "claude-sonnet-4-0",
+]);
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, ModelSlug>> = {
   codex: {

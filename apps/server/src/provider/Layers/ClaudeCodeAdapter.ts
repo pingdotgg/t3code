@@ -46,6 +46,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { resolveEnabledPlugins } from "@t3tools/shared/claude-plugins";
+import { getClaudeContextWindowMode } from "@t3tools/shared/model";
 import { ClaudeCodeAdapter, type ClaudeCodeAdapterShape } from "../Services/ClaudeCodeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -1848,6 +1849,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           );
 
         const providerOptions = input.providerOptions?.claudeCode;
+        const modelOptions = input.modelOptions?.claudeCode;
         // We intentionally do NOT set permissionMode to "bypassPermissions" here even for
         // full-access mode. Instead, tool permissions are handled by the canUseTool callback
         // which auto-allows in full-access mode. This ensures that setPermissionMode("plan")
@@ -1857,6 +1859,11 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
 
         const resolvedPlugins = resolveEnabledPlugins(input.cwd ? { cwd: input.cwd } : undefined);
         const sdkPlugins = resolvedPlugins.map((p) => ({ type: "local" as const, path: p.path }));
+
+        // Enable the 1M-token context beta for models that require it (e.g. Sonnet 4/4.5).
+        // Native 1M models (Opus 4.6, Sonnet 4.6) don't need this header — they have 1M by default.
+        const contextWindowMode = getClaudeContextWindowMode(input.model);
+        const use1MBeta = modelOptions?.largeContext === true && contextWindowMode === "1m-beta";
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -1871,6 +1878,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           ...(providerOptions?.maxThinkingTokens !== undefined
             ? { maxThinkingTokens: providerOptions.maxThinkingTokens }
             : {}),
+          ...(use1MBeta ? { betas: ["context-1m-2025-08-07" as const] } : {}),
           ...(resumeState?.resume ? { resume: resumeState.resume } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
           settingSources: ["user", "project", "local"],

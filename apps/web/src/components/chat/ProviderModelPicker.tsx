@@ -1,5 +1,5 @@
 import { type ModelSlug, type ProviderKind } from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+import { getClaudeContextWindowMode, normalizeModelSlug } from "@t3tools/shared/model";
 import { memo, useState } from "react";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
 import { ChevronDownIcon } from "lucide-react";
@@ -153,15 +153,38 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       setIsMenuOpen(false);
                     }}
                   >
-                    {props.modelOptionsByProvider[option.value].map((modelOption) => (
-                      <MenuRadioItem
-                        key={`${option.value}:${modelOption.slug}`}
-                        value={modelOption.slug}
-                        onClick={() => setIsMenuOpen(false)}
-                      >
-                        {modelOption.name}
-                      </MenuRadioItem>
-                    ))}
+                    {props.modelOptionsByProvider[option.value].map((modelOption) => {
+                      const ctxMode =
+                        option.value === "claudeCode"
+                          ? getClaudeContextWindowMode(modelOption.slug)
+                          : null;
+                      return (
+                        <MenuRadioItem
+                          key={`${option.value}:${modelOption.slug}`}
+                          value={modelOption.slug}
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                            <span className="truncate">{modelOption.name}</span>
+                            {ctxMode === "1m-native" && (
+                              <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-none bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 tabular-nums">
+                                1M
+                              </span>
+                            )}
+                            {ctxMode === "1m-beta" && (
+                              <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-none bg-sky-500/15 text-sky-600 dark:text-sky-400 tabular-nums">
+                                1M*
+                              </span>
+                            )}
+                            {ctxMode === "200k" && (
+                              <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-none bg-muted text-muted-foreground tabular-nums">
+                                200k
+                              </span>
+                            )}
+                          </span>
+                        </MenuRadioItem>
+                      );
+                    })}
                   </MenuRadioGroup>
                 </MenuGroup>
               </MenuSubPopup>

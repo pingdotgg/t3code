@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import {
   getDefaultModel,
+  getClaudeContextWindowMode,
   getDefaultReasoningEffort,
   getReasoningEffortOptions,
   normalizeModelSlug,
@@ -140,6 +141,7 @@ import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/Expanded
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalActions";
+import { ClaudeTraitsPicker } from "./chat/ClaudeTraitsPicker";
 import { CodexTraitsPicker } from "./chat/CodexTraitsPicker";
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
@@ -222,6 +224,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const setComposerDraftEffort = useComposerDraftStore((store) => store.setEffort);
   const setComposerDraftCodexFastMode = useComposerDraftStore((store) => store.setCodexFastMode);
+  const setComposerDraftClaudeLargeContext = useComposerDraftStore(
+    (store) => store.setClaudeLargeContext,
+  );
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
@@ -520,16 +525,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
   const selectedCodexFastModeEnabled =
     selectedProvider === "codex" ? composerDraft.codexFastMode : false;
+  // Claude large-context: only show toggle for models that need the beta header to unlock 1M.
+  // Native 1M models (Opus 4.6, Sonnet 4.6) already have 1M context — no opt-in needed.
+  const claudeContextWindowMode =
+    selectedProvider === "claudeCode" ? getClaudeContextWindowMode(selectedModel) : null;
+  const selectedClaudeLargeContextEnabled =
+    selectedProvider === "claudeCode" ? composerDraft.claudeLargeContext : false;
   const selectedModelOptionsForDispatch = useMemo(() => {
-    if (selectedProvider !== "codex") {
-      return undefined;
+    if (selectedProvider === "codex") {
+      const codexOptions = {
+        ...(supportsReasoningEffort && selectedEffort ? { reasoningEffort: selectedEffort } : {}),
+        ...(selectedCodexFastModeEnabled ? { fastMode: true } : {}),
+      };
+      return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
     }
-    const codexOptions = {
-      ...(supportsReasoningEffort && selectedEffort ? { reasoningEffort: selectedEffort } : {}),
-      ...(selectedCodexFastModeEnabled ? { fastMode: true } : {}),
-    };
-    return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
-  }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
+    if (selectedProvider === "claudeCode") {
+      const claudeOptions = {
+        ...(selectedClaudeLargeContextEnabled ? { largeContext: true } : {}),
+      };
+      return Object.keys(claudeOptions).length > 0 ? { claudeCode: claudeOptions } : undefined;
+    }
+    return undefined;
+  }, [
+    selectedCodexFastModeEnabled,
+    selectedClaudeLargeContextEnabled,
+    selectedEffort,
+    selectedProvider,
+    supportsReasoningEffort,
+  ]);
   const providerOptionsForDispatch = useMemo(() => {
     const hasCodexOptions = settings.codexBinaryPath || settings.codexHomePath;
     const hasClaudeOptions = settings.claudeBinaryPath;
@@ -2987,6 +3010,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [scheduleComposerFocus, setComposerDraftCodexFastMode, threadId],
   );
+  const onClaudeLargeContextChange = useCallback(
+    (enabled: boolean) => {
+      setComposerDraftClaudeLargeContext(threadId, enabled);
+      scheduleComposerFocus();
+    },
+    [scheduleComposerFocus, setComposerDraftClaudeLargeContext, threadId],
+  );
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
       if (isLocalDraftThread) {
@@ -3631,9 +3661,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           selectedEffort={selectedEffort}
                           selectedProvider={selectedProvider}
                           selectedCodexFastModeEnabled={selectedCodexFastModeEnabled}
+                          claudeContextWindowMode={claudeContextWindowMode}
+                          selectedClaudeLargeContextEnabled={selectedClaudeLargeContextEnabled}
                           reasoningOptions={reasoningOptions}
                           onEffortSelect={onEffortSelect}
                           onCodexFastModeChange={onCodexFastModeChange}
+                          onClaudeLargeContextChange={onClaudeLargeContextChange}
                           onToggleInteractionMode={toggleInteractionMode}
                           onTogglePlanSidebar={togglePlanSidebar}
                           onToggleRuntimeMode={toggleRuntimeMode}
@@ -3652,6 +3685,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 options={reasoningOptions}
                                 onEffortChange={onEffortSelect}
                                 onFastModeChange={onCodexFastModeChange}
+                              />
+                            </>
+                          ) : null}
+
+                          {selectedProvider === "claudeCode" && claudeContextWindowMode !== null ? (
+                            <>
+                              <Separator
+                                orientation="vertical"
+                                className="mx-0.5 hidden h-4 sm:block"
+                              />
+                              <ClaudeTraitsPicker
+                                contextWindowMode={claudeContextWindowMode}
+                                largeContextEnabled={selectedClaudeLargeContextEnabled}
+                                onLargeContextChange={onClaudeLargeContextChange}
                               />
                             </>
                           ) : null}

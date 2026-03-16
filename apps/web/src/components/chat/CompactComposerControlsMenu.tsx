@@ -4,7 +4,7 @@ import {
   RuntimeMode,
   ProviderInteractionMode,
 } from "@t3tools/contracts";
-import { getDefaultReasoningEffort } from "@t3tools/shared/model";
+import { type ClaudeContextWindowMode, getDefaultReasoningEffort } from "@t3tools/shared/model";
 import { memo } from "react";
 import { EllipsisIcon, ListTodoIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -27,9 +27,12 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   selectedEffort: CodexReasoningEffort | null;
   selectedProvider: ProviderKind;
   selectedCodexFastModeEnabled: boolean;
+  claudeContextWindowMode: ClaudeContextWindowMode | null;
+  selectedClaudeLargeContextEnabled: boolean;
   reasoningOptions: ReadonlyArray<CodexReasoningEffort>;
   onEffortSelect: (effort: CodexReasoningEffort) => void;
   onCodexFastModeChange: (enabled: boolean) => void;
+  onClaudeLargeContextChange: (enabled: boolean) => void;
   onToggleInteractionMode: () => void;
   onTogglePlanSidebar: () => void;
   onToggleRuntimeMode: () => void;
@@ -89,6 +92,25 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
               >
                 <MenuRadioItem value="off">off</MenuRadioItem>
                 <MenuRadioItem value="on">on</MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuGroup>
+            <MenuDivider />
+          </>
+        ) : null}
+        {props.selectedProvider === "claudeCode" && props.claudeContextWindowMode === "1m-beta" ? (
+          <>
+            <MenuGroup>
+              <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+                Context Window
+              </div>
+              <MenuRadioGroup
+                value={props.selectedClaudeLargeContextEnabled ? "1m" : "200k"}
+                onValueChange={(value) => {
+                  props.onClaudeLargeContextChange(value === "1m");
+                }}
+              >
+                <MenuRadioItem value="200k">200k (default)</MenuRadioItem>
+                <MenuRadioItem value="1m">1M (beta, tier 4+)</MenuRadioItem>
               </MenuRadioGroup>
             </MenuGroup>
             <MenuDivider />
