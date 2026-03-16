@@ -88,8 +88,9 @@ interface ToolInFlight {
   readonly itemType: CanonicalItemType;
   readonly toolName: string;
   readonly title: string;
-  readonly detail?: string;
-  readonly metadata: ClaudeAgentMetadata;
+  detail?: string;
+  metadata: ClaudeAgentMetadata;
+  inputJsonFragments: string[];
 }
 
 interface ClaudeSessionContext {
@@ -163,6 +164,17 @@ function toMessage(cause: unknown, fallback: string): string {
     return cause.message;
   }
   return fallback;
+}
+
+function safeParseJson(json: string): Record<string, unknown> | null {
+  const parsed = (() => {
+    try {
+      return JSON.parse(json);
+    } catch {
+      return null;
+    }
+  })();
+  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
 }
 
 function asRuntimeItemId(value: string): RuntimeItemId {
@@ -298,7 +310,8 @@ function extractCollabAgentMetadata(
   const base = extractAgentMetadataFromRecord(toolInput, {
     toolUseId,
   });
-  const teammateName = asTrimmedString(toolInput.name);
+  const teammateName =
+    asTrimmedString(toolInput.name) ?? asTrimmedString(toolInput.recipient);
   const agentType = asTrimmedString(toolInput.subagent_type);
 
   return mergeClaudeAgentMetadata(base, {
@@ -364,7 +377,14 @@ function classifyToolItemType(toolName: string): CanonicalItemType {
     normalized === "task" ||
     normalized === "agent" ||
     normalized.includes("subagent") ||
-    normalized.includes("sub-agent")
+    normalized.includes("sub-agent") ||
+    normalized === "teamcreate" ||
+    normalized === "teamdelete" ||
+    normalized === "teamupdate" ||
+    normalized === "sendmessage" ||
+    normalized === "taskcreate" ||
+    normalized === "taskupdate" ||
+    normalized === "taskdelete"
   ) {
     return "collab_agent_tool_call";
   }
@@ -408,6 +428,33 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
   const command = typeof commandValue === "string" ? commandValue : undefined;
   if (command && command.trim().length > 0) {
     return `${toolName}: ${command.trim().slice(0, 400)}`;
+  }
+
+  // Extract meaningful info from team tools
+  const normalizedName = toolName.toLowerCase();
+  if (normalizedName === "sendmessage") {
+    // SDK schema: { type, recipient, content, summary }
+    const recipient =
+      typeof input.recipient === "string" ? input.recipient
+        : typeof input.to === "string" ? input.to
+          : undefined;
+    const content =
+      typeof input.content === "string" ? input.content
+        : typeof input.summary === "string" ? input.summary
+          : typeof input.message === "string" ? input.message
+            : undefined;
+    if (recipient && content) {
+      return `${toolName} to ${recipient}: ${content.slice(0, 300)}`;
+    }
+    if (recipient) {
+      return `${toolName} to ${recipient}`;
+    }
+  }
+  if (normalizedName === "teamcreate" || normalizedName === "teamdelete") {
+    const teamName = typeof input.team_name === "string" ? input.team_name : undefined;
+    if (teamName) {
+      return `${toolName}: ${teamName}`;
+    }
   }
 
   const serialized = JSON.stringify(input);
@@ -1008,6 +1055,8 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       result?: SDKResultMessage,
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
+        // Clear any stale in-flight tools from interrupted content blocks
+        context.inFlightTools.clear();
         const turnState = context.turnState;
         if (!turnState) {
           const stamp = yield* makeEventStamp();
@@ -1130,6 +1179,19 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         const { event } = message;
 
         if (event.type === "content_block_delta") {
+          // Accumulate tool input JSON fragments for later use
+          if (
+            (event.delta as { type?: string }).type === "input_json_delta" &&
+            typeof (event.delta as { partial_json?: unknown }).partial_json === "string"
+          ) {
+            const tool = context.inFlightTools.get(event.index);
+            if (tool) {
+              tool.inputJsonFragments.push(
+                (event.delta as { partial_json: string }).partial_json,
+              );
+            }
+          }
+
           if (
             event.delta.type === "text_delta" &&
             event.delta.text.length > 0 &&
@@ -1196,6 +1258,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             title: titleForTool(itemType),
             detail,
             metadata,
+            inputJsonFragments: [],
           };
           context.inFlightTools.set(index, tool);
 
@@ -1241,6 +1304,17 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           }
           context.inFlightTools.delete(index);
 
+          // Re-compute detail and metadata from accumulated input JSON
+          if (tool.inputJsonFragments.length > 0) {
+            const parsedInput = safeParseJson(tool.inputJsonFragments.join(""));
+            if (parsedInput) {
+              tool.detail = summarizeToolRequest(tool.toolName, parsedInput);
+              if (tool.itemType === "collab_agent_tool_call") {
+                tool.metadata = extractCollabAgentMetadata(tool.itemType, parsedInput, tool.itemId);
+              }
+            }
+          }
+
           const stamp = yield* makeEventStamp();
           yield* offerRuntimeEvent({
             type: "item.completed",
@@ -1278,6 +1352,48 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       Effect.gen(function* () {
         if (message.type !== "assistant") {
           return;
+        }
+
+        // Auto-start a synthetic turn for assistant messages that arrive without
+        // an active turn (e.g., teammate responses between user prompts).
+        if (!context.turnState) {
+          const turnId = TurnId.makeUnsafe(yield* Random.nextUUIDv4);
+          const assistantItemId = yield* Random.nextUUIDv4;
+          const startedAt = yield* nowIso;
+          context.turnState = {
+            turnId,
+            assistantItemId,
+            startedAt,
+            items: [],
+            messageCompleted: false,
+            emittedTextDelta: false,
+            fallbackAssistantText: "",
+          };
+          context.session = {
+            ...context.session,
+            status: "running",
+            activeTurnId: turnId,
+            updatedAt: startedAt,
+          };
+          const turnStartedStamp = yield* makeEventStamp();
+          yield* offerRuntimeEvent({
+            type: "turn.started",
+            eventId: turnStartedStamp.eventId,
+            provider: PROVIDER,
+            createdAt: turnStartedStamp.createdAt,
+            threadId: context.session.threadId,
+            turnId,
+            payload: {},
+            providerRefs: {
+              ...providerThreadRef(context),
+              providerTurnId: turnId,
+            },
+            raw: {
+              source: "claude.sdk.message",
+              method: "claude/synthetic-turn-start",
+              payload: {},
+            },
+          });
         }
 
         if (context.turnState) {
@@ -1995,7 +2111,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             ? { agentProgressSummaries: providerOptions.agentProgressSummaries }
             : {}),
           ...(providerOptions?.experimentalAgentTeams
-            ? { settings: { teammateMode: CLAUDE_AGENT_TEAMS_TEAMMATE_MODE } }
+            ? { settings: { teammateMode: (providerOptions.teammateMode && providerOptions.teammateMode !== "auto" ? providerOptions.teammateMode : undefined) ?? CLAUDE_AGENT_TEAMS_TEAMMATE_MODE } }
             : {}),
           ...(resumeState?.resume ? { resume: resumeState.resume } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
@@ -2089,7 +2205,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                 ? { agentProgressSummaries: providerOptions.agentProgressSummaries }
                 : {}),
               ...(providerOptions?.experimentalAgentTeams
-                ? { teammateMode: CLAUDE_AGENT_TEAMS_TEAMMATE_MODE }
+                ? { teammateMode: providerOptions.teammateMode ?? CLAUDE_AGENT_TEAMS_TEAMMATE_MODE }
                 : {}),
             },
           },
@@ -2121,11 +2237,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         const context = yield* requireSession(input.threadId);
 
         if (context.turnState) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "sendTurn",
-            issue: `Thread '${input.threadId}' already has an active turn '${context.turnState.turnId}'.`,
-          });
+          // Auto-close a stale synthetic turn (from teammate messages between user prompts)
+          // to prevent blocking the user's next turn.
+          yield* completeTurn(context, "completed");
         }
 
         if (input.model) {

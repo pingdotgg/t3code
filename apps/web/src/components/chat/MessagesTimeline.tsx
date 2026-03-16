@@ -18,6 +18,7 @@ import {
   GlobeIcon,
   HammerIcon,
   type LucideIcon,
+  SquareDashedBottomCodeIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -521,17 +522,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       )}
 
       {row.kind === "team-run" && (
-        <div className="px-1 py-0.5">
-          <div className="rounded-lg border border-border/70 bg-card/45 px-3 py-2">
-            <p className="text-sm text-foreground">{row.run.label}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {row.run.endedAt
-                ? `${formatTimestamp(row.run.startedAt, timestampFormat)} to ${formatTimestamp(
-                    row.run.endedAt,
-                    timestampFormat,
-                  )}`
-                : `Started ${formatTimestamp(row.run.startedAt, timestampFormat)}`}
-            </p>
+        <div className="px-1 py-1.5">
+          <div className="rounded-xl border border-border/70 bg-card/50">
+            <div className="flex items-center gap-3 px-3 py-2">
+              <SquareDashedBottomCodeIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-foreground">{row.run.label}</p>
+                <p className="text-[11px] text-muted-foreground">{row.run.summary}</p>
+              </div>
+              <span className="shrink-0 rounded-full border border-border/50 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground">
+                {row.run.endedAt
+                  ? formatElapsed(row.run.startedAt, row.run.endedAt) ?? "ended"
+                  : "active"}
+              </span>
+            </div>
           </div>
         </div>
       )}

@@ -44,6 +44,9 @@ const AppSettingsSchema = Schema.Struct({
   claudeAgentProgressSummaries: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
+  claudeTeammateMode: Schema.Literals(["in-process", "tmux", "auto"]).pipe(
+    Schema.withConstructorDefault(() => Option.some("auto" as const)),
+  ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {

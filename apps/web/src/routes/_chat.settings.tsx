@@ -470,6 +470,34 @@ function SettingsRouteView() {
                   />
                 </div>
 
+                {settings.claudeExperimentalAgentTeams ? (
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Teammate mode</p>
+                      <p className="text-xs text-muted-foreground">
+                        How teammates are displayed. Tmux requires tmux or iTerm2 for split panes.
+                      </p>
+                    </div>
+                    <Select
+                      value={settings.claudeTeammateMode}
+                      onValueChange={(value) =>
+                        updateSettings({
+                          claudeTeammateMode: value as "in-process" | "tmux" | "auto",
+                        })
+                      }
+                    >
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectPopup>
+                        <SelectItem value="auto">Auto</SelectItem>
+                        <SelectItem value="in-process">In-process</SelectItem>
+                        <SelectItem value="tmux">Tmux</SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </div>
+                ) : null}
+
                 {settings.claudeExperimentalAgentTeams &&
                 claudeAgentTeamsCapability?.state !== "available" ? (
                   <div className="rounded-lg border border-orange-500/25 bg-orange-500/8 px-3 py-2 text-xs text-orange-800 dark:text-orange-100">
@@ -488,7 +516,8 @@ function SettingsRouteView() {
 
                 {(settings.claudeExperimentalAgentTeams !== defaults.claudeExperimentalAgentTeams ||
                   settings.claudeAgentProgressSummaries !==
-                    defaults.claudeAgentProgressSummaries) && (
+                    defaults.claudeAgentProgressSummaries ||
+                  settings.claudeTeammateMode !== defaults.claudeTeammateMode) && (
                   <div className="flex justify-end">
                     <Button
                       size="xs"
@@ -497,6 +526,7 @@ function SettingsRouteView() {
                         updateSettings({
                           claudeExperimentalAgentTeams: defaults.claudeExperimentalAgentTeams,
                           claudeAgentProgressSummaries: defaults.claudeAgentProgressSummaries,
+                          claudeTeammateMode: defaults.claudeTeammateMode,
                         })
                       }
                     >

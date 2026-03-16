@@ -59,6 +59,7 @@ const ClaudeCodeProviderStartOptions = Schema.Struct({
   maxThinkingTokens: Schema.optional(NonNegativeInt),
   experimentalAgentTeams: Schema.optional(Schema.Boolean),
   agentProgressSummaries: Schema.optional(Schema.Boolean),
+  teammateMode: Schema.optional(Schema.Literals(["in-process", "tmux", "auto"])),
 });
 
 export const ProviderStartOptions = Schema.Struct({

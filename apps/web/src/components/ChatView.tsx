@@ -597,6 +597,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         claudeCode: {
           experimentalAgentTeams: claudeAgentTeamsEnabledForDispatch,
           agentProgressSummaries: settings.claudeAgentProgressSummaries,
+          teammateMode: settings.claudeTeammateMode,
         },
       };
     }
@@ -613,6 +614,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     claudeAgentTeamsEnabledForDispatch,
     selectedProvider,
     settings.claudeAgentProgressSummaries,
+    settings.claudeTeammateMode,
     settings.codexBinaryPath,
     settings.codexHomePath,
   ]);
@@ -665,7 +667,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const showAgentTeamsPanel =
     (selectedProvider === "claudeCode" || activeThread?.session?.provider === "claudeCode") &&
-    agentTeamsState.hasTeamActivity;
+    agentTeamsState.hasTeamActivity &&
+    agentTeamsState.activeRunId !== null;
   const latestTurnHasToolActivity = useMemo(
     () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
     [activeLatestTurn?.turnId, threadActivities],

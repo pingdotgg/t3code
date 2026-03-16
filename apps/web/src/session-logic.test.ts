@@ -742,6 +742,321 @@ describe("deriveAgentTeamsState", () => {
       "green",
     ]);
   });
+  it("does not count TeamCreate, TeamDelete, or SendMessage tool calls as team members", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "team-run-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "team.run.started",
+        summary: "my-team team started",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+          startedAt: "2026-02-23T00:00:01.000Z",
+          teamName: "my-team",
+        },
+      }),
+      makeActivity({
+        id: "team-create-started",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.started",
+        summary: "Subagent task started",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          detail: "TeamCreate: {}",
+          toolUseId: "tool-tc-1",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+        },
+      }),
+      makeActivity({
+        id: "team-create-done",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          detail: "TeamCreate: my-team",
+          toolUseId: "tool-tc-1",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+          teamName: "my-team",
+        },
+      }),
+      makeActivity({
+        id: "teammate-explorer-started",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "teammate.started",
+        summary: "explorer started",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          taskId: "task-1",
+          taskType: "in_process_teammate",
+          teammateName: "explorer",
+          agentName: "explorer",
+          agentColor: "blue",
+          agentType: "Explore",
+          teamName: "my-team",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+          toolUseId: "tool-agent-1",
+        },
+      }),
+      makeActivity({
+        id: "teammate-analyst-started",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "teammate.started",
+        summary: "analyst started",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          taskId: "task-2",
+          taskType: "in_process_teammate",
+          teammateName: "analyst",
+          agentName: "analyst",
+          agentColor: "green",
+          agentType: "general-purpose",
+          teamName: "my-team",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+          toolUseId: "tool-agent-2",
+        },
+      }),
+      makeActivity({
+        id: "sendmessage-started",
+        createdAt: "2026-02-23T00:00:06.000Z",
+        kind: "tool.started",
+        summary: "Subagent task started",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          detail: "SendMessage: {}",
+          toolUseId: "tool-send-1",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+        },
+      }),
+      makeActivity({
+        id: "sendmessage-done",
+        createdAt: "2026-02-23T00:00:07.000Z",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          detail: "SendMessage to explorer: Research NextJS vs Vite",
+          toolUseId: "tool-send-1",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+        },
+      }),
+    ];
+
+    const state = deriveAgentTeamsState(activities);
+    expect(state.runs).toHaveLength(1);
+    // Should only have 2 real members (explorer + analyst), NOT TeamCreate or SendMessage
+    expect(state.runs[0]?.members).toHaveLength(2);
+    const labels = state.runs[0]!.members.map((m) => m.label).toSorted();
+    expect(labels).toEqual(["analyst", "explorer"]);
+  });
+
+  it("marks run as ended when TeamDelete tool.completed fires", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "team-run-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "team.run.started",
+        summary: "my-team started",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+          startedAt: "2026-02-23T00:00:01.000Z",
+        },
+      }),
+      makeActivity({
+        id: "teammate-started",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "teammate.started",
+        summary: "explorer started",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          taskId: "task-1",
+          teammateName: "explorer",
+          teamName: "my-team",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+        },
+      }),
+      makeActivity({
+        id: "team-delete-completed",
+        createdAt: "2026-02-23T00:00:10.000Z",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          detail: "TeamDelete: my-team",
+          toolUseId: "tool-delete-1",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+        },
+      }),
+    ];
+
+    const state = deriveAgentTeamsState(activities);
+    expect(state.runs).toHaveLength(1);
+    expect(state.runs[0]?.endedAt).toBeDefined();
+    expect(state.runs[0]?.activeCount).toBe(0);
+    expect(state.runs[0]?.status).toBe("completed");
+  });
+
+  it("tracks task.progress for known teammate taskIds and updates member status to running", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "team-run-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "team.run.started",
+        summary: "team started",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+          startedAt: "2026-02-23T00:00:01.000Z",
+        },
+      }),
+      makeActivity({
+        id: "teammate-started",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "teammate.started",
+        summary: "explorer started",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          taskId: "task-explorer-1",
+          taskType: "in_process_teammate",
+          teammateName: "explorer",
+          teamName: "my-team",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+        },
+      }),
+      makeActivity({
+        id: "task-progress",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "task.progress",
+        summary: "Reasoning update",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          taskId: "task-explorer-1",
+          summary: "Searching for test files...",
+          lastToolName: "Grep",
+        },
+      }),
+    ];
+
+    const state = deriveAgentTeamsState(activities);
+    expect(state.runs).toHaveLength(1);
+    const explorer = state.runs[0]?.members.find((m) => m.label === "explorer");
+    expect(explorer).toBeDefined();
+    expect(explorer?.status).toBe("running");
+    expect(explorer?.activities.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("marks member completed when task.completed arrives for a teammate taskId", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "teammate-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "teammate.started",
+        summary: "explorer started",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          taskId: "task-e1",
+          taskType: "in_process_teammate",
+          teammateName: "explorer",
+          teamName: "my-team",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+        },
+      }),
+      makeActivity({
+        id: "task-completed",
+        createdAt: "2026-02-23T00:00:10.000Z",
+        kind: "task.completed",
+        summary: "Task completed",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          taskId: "task-e1",
+          status: "completed",
+          summary: "Search complete. Found 3 test files.",
+        },
+      }),
+    ];
+
+    const state = deriveAgentTeamsState(activities);
+    expect(state.runs).toHaveLength(1);
+    const explorer = state.runs[0]?.members.find((m) => m.label === "explorer");
+    expect(explorer).toBeDefined();
+    expect(explorer?.status).toBe("completed");
+  });
+
+  it("associates SendMessage tool.completed with the target teammate's activity feed", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "teammate-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "teammate.started",
+        summary: "explorer started",
+        tone: "info",
+        turnId: "turn-team",
+        payload: {
+          taskId: "task-e1",
+          teammateName: "explorer",
+          teamName: "my-team",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+          toolUseId: "tool-agent-1",
+        },
+      }),
+      makeActivity({
+        id: "sendmsg-done",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        tone: "tool",
+        turnId: "turn-team",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          detail: "SendMessage to explorer: Research NextJS vs Vite",
+          toolUseId: "tool-send-1",
+          runId: "team-run:turn-team:1",
+          teamKey: "turn-team",
+        },
+      }),
+    ];
+
+    const state = deriveAgentTeamsState(activities);
+    // SendMessage should NOT create a separate member
+    expect(state.runs[0]?.members).toHaveLength(1);
+    expect(state.runs[0]?.members[0]?.label).toBe("explorer");
+  });
 });
 
 describe("deriveActivePlanState", () => {

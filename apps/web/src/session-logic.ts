@@ -177,6 +177,7 @@ export type TimelineEntry =
         label: string;
         startedAt: string;
         endedAt?: string;
+        memberCount?: number;
         summary: string;
       };
     }
@@ -1039,6 +1040,8 @@ function agentTeamsStatusFromKind(kind: string): Exclude<AgentTeamsTaskStatus, "
     case "tool.started":
     case "tool.updated":
       return "running";
+    case "tool.completed":
+      return "idle";
     case "teammate.idle":
       return "idle";
     case "teammate.awaiting-approval":
@@ -1050,6 +1053,8 @@ function agentTeamsStatusFromKind(kind: string): Exclude<AgentTeamsTaskStatus, "
     case "teammate.stopped":
       return "stopped";
     default:
+      // For task.progress/task.completed of known teammate tasks (checked via
+      // shouldTrackAgentTeamsActivity), derive status from the payload
       return undefined;
   }
 }
@@ -1073,6 +1078,7 @@ function agentTeamsActivityDetail(
 function shouldTrackAgentTeamsActivity(
   activity: OrchestrationThreadActivity,
   metadata: AgentTeamMetadata,
+  teammateTaskIds?: Set<string>,
 ): boolean {
   if (activity.kind.startsWith("team.run.")) {
     return false;
@@ -1089,6 +1095,18 @@ function shouldTrackAgentTeamsActivity(
     (activity.payload as Record<string, unknown>).itemType === "collab_agent_tool_call"
   ) {
     return true;
+  }
+  // Recognize task.progress/task.completed for known teammate tasks
+  if (
+    teammateTaskIds &&
+    (activity.kind === "task.progress" || activity.kind === "task.completed") &&
+    typeof activity.payload === "object" &&
+    activity.payload !== null
+  ) {
+    const taskId = asTrimmedString((activity.payload as Record<string, unknown>).taskId);
+    if (taskId && teammateTaskIds.has(taskId)) {
+      return true;
+    }
   }
   return activity.kind.startsWith("teammate.");
 }
@@ -1272,11 +1290,30 @@ function seedRunMembersFromSnapshot(
   }
 }
 
+function isLeadCoordinationTool(payload: Record<string, unknown>): boolean {
+  const detail = asTrimmedString(payload.detail);
+  if (!detail) return false;
+  return (
+    detail.startsWith("TeamCreate") ||
+    detail.startsWith("TeamDelete") ||
+    detail.startsWith("TeamUpdate") ||
+    detail.startsWith("SendMessage") ||
+    detail.startsWith("TaskCreate") ||
+    detail.startsWith("TaskUpdate") ||
+    detail.startsWith("TaskDelete")
+  );
+}
+
 function canCreateAgentTeamsMember(
   activity: OrchestrationThreadActivity,
   payload: Record<string, unknown>,
   metadata: AgentTeamMetadata,
 ): boolean {
+  // Lead coordination tools (TeamCreate, TeamDelete, SendMessage) should
+  // NOT create new team members — they are actions by the lead, not teammates.
+  if (isLeadCoordinationTool(payload)) {
+    return false;
+  }
   if (activity.kind.startsWith("teammate.")) {
     return true;
   }
@@ -1334,12 +1371,32 @@ export function deriveAgentTeamsState(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const explicitRunSnapshots = extractAgentTeamRunSnapshots(ordered);
   const toolMetadataByToolUseId = new Map<string, AgentTeamMetadata>();
+  const teammateTaskIds = new Set<string>();
+  const taskIdToMetadata = new Map<string, AgentTeamMetadata>();
 
   for (const activity of ordered) {
     if (!activity.payload || typeof activity.payload !== "object") {
       continue;
     }
     const payload = activity.payload as Record<string, unknown>;
+
+    // Track taskIds that belong to teammate tasks (any mode: in_process, tmux, etc.)
+    // Only trust taskType-based detection for task.started to avoid false positives
+    // from regular tasks that happen to carry team-like metadata fields.
+    if (
+      activity.kind === "teammate.started" ||
+      (activity.kind === "task.started" &&
+        (asTrimmedString(payload.taskType) === "in_process_teammate" ||
+          asTrimmedString(payload.taskType) === "external_teammate"))
+    ) {
+      const taskId = asTrimmedString(payload.taskId);
+      if (taskId) {
+        teammateTaskIds.add(taskId);
+        const meta = extractAgentTeamMetadata(payload);
+        taskIdToMetadata.set(taskId, meta);
+      }
+    }
+
     if (
       !(
         (activity.kind === "tool.started" ||
@@ -1367,11 +1424,91 @@ export function deriveAgentTeamsState(
     }
     const payload = activity.payload as Record<string, unknown>;
     const directMetadata = extractAgentTeamMetadata(payload);
+    // For task.progress/task.completed (not teammate.*) of known teammate tasks, merge original metadata
+    const taskId = asTrimmedString(payload.taskId);
+    const taskOriginalMeta =
+      taskId &&
+      teammateTaskIds.has(taskId) &&
+      !activity.kind.startsWith("teammate.")
+        ? taskIdToMetadata.get(taskId)
+        : undefined;
     const metadata = mergeAgentTeamMetadata(
       directMetadata,
-      directMetadata.toolUseId ? toolMetadataByToolUseId.get(directMetadata.toolUseId) : undefined,
+      taskOriginalMeta ??
+        (directMetadata.toolUseId
+          ? toolMetadataByToolUseId.get(directMetadata.toolUseId)
+          : undefined),
     );
-    if (!shouldTrackAgentTeamsActivity(activity, metadata)) {
+    // Treat TeamDelete tool.completed as a team shutdown signal
+    const isTeamDeleteCompleted =
+      activity.kind === "tool.completed" &&
+      asTrimmedString(payload.detail)?.startsWith("TeamDelete");
+
+    // Handle explicit team.run.ended (and TeamDelete) before the shouldTrack filter
+    if (activity.kind === "team.run.ended" || isTeamDeleteCompleted) {
+      const endRunId = asTrimmedString(payload.runId);
+      const endTeamKey =
+        metadata.teamKey ?? metadata.runId ?? metadata.teamName ?? metadata.parentSessionId;
+      const endingRun =
+        (endTeamKey ? activeRunByTeamKey.get(endTeamKey) : undefined) ??
+        [...activeRunByTeamKey.values()].find((r) => endRunId && r.id === endRunId);
+      if (endingRun) {
+        endingRun.endedAt = asTrimmedString(payload.endedAt) ?? activity.createdAt;
+        endingRun.endedActivityId = activity.id;
+        for (const member of endingRun.members.values()) {
+          if (!isTerminalAgentTeamsStatus(member.status)) {
+            member.status = "completed";
+            member.updatedAt = activity.createdAt;
+          }
+        }
+        for (const [key, run] of activeRunByTeamKey) {
+          if (run === endingRun) {
+            activeRunByTeamKey.delete(key);
+          }
+        }
+      }
+      continue;
+    }
+
+    if (!shouldTrackAgentTeamsActivity(activity, metadata, teammateTaskIds)) {
+      continue;
+    }
+
+    // Skip lead coordination tools — they don't represent teammates
+    if (isLeadCoordinationTool(payload)) {
+      // For SendMessage, try to route the activity to the target member
+      const sendDetail = asTrimmedString(payload.detail);
+      if (sendDetail?.startsWith("SendMessage to ")) {
+        const sendTarget = sendDetail.slice("SendMessage to ".length).split(":")[0]?.trim();
+        if (sendTarget) {
+          const teamKey =
+            metadata.teamKey ??
+            metadata.runId ??
+            metadata.teamName ??
+            metadata.parentSessionId ??
+            (activity.turnId ? `turn:${activity.turnId}` : "agent-team");
+          const run = activeRunByTeamKey.get(teamKey);
+          if (run) {
+            for (const member of run.members.values()) {
+              if (
+                member.teammateName === sendTarget ||
+                member.agentName === sendTarget ||
+                member.label === sendTarget
+              ) {
+                member.activities.push({
+                  id: activity.id,
+                  kind: activity.kind,
+                  updatedAt: activity.createdAt,
+                  label: sendDetail,
+                  detail: sendDetail,
+                });
+                member.updatedAt = activity.createdAt;
+                break;
+              }
+            }
+          }
+        }
+      }
       continue;
     }
 
@@ -1397,7 +1534,11 @@ export function deriveAgentTeamsState(
       explicitRunSnapshots.byTeamKey.get(teamKey);
     const status = agentTeamsStatusFromKind(activity.kind);
 
-    let run = activeRunByTeamKey.get(teamKey);
+    let run =
+      activeRunByTeamKey.get(teamKey) ??
+      (metadataWithFallbackLabel.runId
+        ? runs.find((r) => r.endedAt && r.id === metadataWithFallbackLabel.runId)
+        : undefined);
     if (!run) {
       const runNumber = (runCountByTeamKey.get(teamKey) ?? 0) + 1;
       runCountByTeamKey.set(teamKey, runNumber);
@@ -1521,18 +1662,27 @@ export function deriveAgentTeamsState(
       member = run.members.get(memberId)!;
     }
 
-    const nextStatus =
-      status ??
-      (member.status === "awaitingApproval" || isTerminalAgentTeamsStatus(member.status)
-        ? member.status
-        : "running");
+    // For task.progress/task.completed of known teammate tasks, derive status from the payload
+    const taskPayloadStatus =
+      status === undefined && taskId && teammateTaskIds.has(taskId)
+        ? activity.kind === "task.completed"
+          ? (asTrimmedString(payload.status) === "failed"
+              ? "failed"
+              : asTrimmedString(payload.status) === "stopped"
+                ? "stopped"
+                : "completed")
+          : activity.kind === "task.progress"
+            ? "running"
+            : undefined
+        : undefined;
+    const nextStatus = status ?? taskPayloadStatus ?? member.status;
 
     member.label = choosePreferredTeamMemberLabel({
       currentLabel: member.label,
       nextLabel,
       metadata: metadataWithFallbackLabel,
     });
-    member.status = nextStatus;
+    member.status = isTerminalAgentTeamsStatus(member.status) ? member.status : nextStatus;
     member.updatedAt = activity.createdAt;
     if (detail) {
       member.detail = detail;
@@ -1627,23 +1777,33 @@ export function deriveAgentTeamsState(
               member.activities.some((activity) => !activity.kind.startsWith("tool.")),
           )
         : orderedMembers;
-      const activeCount = members.filter(
-        (member) =>
-          member.status === "running" ||
-          member.status === "idle" ||
-          member.status === "awaitingApproval",
-      ).length;
-      const pendingApprovalCount = members.filter(
-        (member) => member.status === "awaitingApproval",
-      ).length;
-      const status =
-        members.find((member) => member.status === "awaitingApproval")?.status ??
-        members.find((member) => member.status === "running")?.status ??
-        members.find((member) => member.status === "idle")?.status ??
-        members.find((member) => member.status === "failed")?.status ??
-        members.find((member) => member.status === "stopped")?.status ??
-        members.find((member) => member.status === "completed")?.status ??
-        "completed";
+      // Compute endedAt first so status can account for it
+      const endedAt = explicitRunSnapshot?.endedAt ?? run.endedAt;
+      const endedActivityId = explicitRunSnapshot?.endedActivityId ?? run.endedActivityId;
+      const runIsEnded = Boolean(endedAt);
+
+      const activeCount = runIsEnded
+        ? 0
+        : members.filter(
+            (member) =>
+              member.status === "running" ||
+              member.status === "idle" ||
+              member.status === "awaitingApproval",
+          ).length;
+      const pendingApprovalCount = runIsEnded
+        ? 0
+        : members.filter((member) => member.status === "awaitingApproval").length;
+      const status = runIsEnded
+        ? (members.find((member) => member.status === "failed")?.status ??
+          members.find((member) => member.status === "stopped")?.status ??
+          "completed")
+        : (members.find((member) => member.status === "awaitingApproval")?.status ??
+          members.find((member) => member.status === "running")?.status ??
+          members.find((member) => member.status === "idle")?.status ??
+          members.find((member) => member.status === "failed")?.status ??
+          members.find((member) => member.status === "stopped")?.status ??
+          members.find((member) => member.status === "completed")?.status ??
+          "completed");
 
       const finalizedRun: AgentTeamsRun = {
         id: run.id,
@@ -1661,11 +1821,9 @@ export function deriveAgentTeamsState(
       if (run.tasks) {
         finalizedRun.tasks = run.tasks;
       }
-      const endedAt = explicitRunSnapshot?.endedAt ?? run.endedAt;
       if (endedAt) {
         finalizedRun.endedAt = endedAt;
       }
-      const endedActivityId = explicitRunSnapshot?.endedActivityId ?? run.endedActivityId;
       if (endedActivityId) {
         finalizedRun.endedActivityId = endedActivityId;
       }
@@ -1755,20 +1913,25 @@ export function deriveTimelineEntries(
   }));
   const teamRunRows: TimelineEntry[] = [
     ...extractAgentTeamRunSnapshots(activities).byRunId.values(),
-  ].map((run) => ({
-    id: `team-run-timeline:${run.runId}`,
-    kind: "team-run",
-    createdAt: run.endedAt ?? run.startedAt,
-    run: {
-      runId: run.runId,
-      label: run.label,
-      startedAt: run.startedAt,
-      ...(run.endedAt ? { endedAt: run.endedAt } : {}),
-      summary: run.endedAt
-        ? `Used ${run.label} from ${run.startedAt} to ${run.endedAt}`
-        : `${run.label} started at ${run.startedAt}`,
-    },
-  }));
+  ].map((run) => {
+    const memberCount = run.members?.length ?? 0;
+    const memberSuffix = memberCount > 0 ? ` with ${memberCount} agent${memberCount === 1 ? "" : "s"}` : "";
+    return {
+      id: `team-run-timeline:${run.runId}`,
+      kind: "team-run" as const,
+      createdAt: run.endedAt ?? run.startedAt,
+      run: {
+        runId: run.runId,
+        label: run.label,
+        startedAt: run.startedAt,
+        ...(run.endedAt ? { endedAt: run.endedAt } : {}),
+        memberCount,
+        summary: run.endedAt
+          ? `${run.label} completed${memberSuffix}`
+          : `${run.label} in progress${memberSuffix}`,
+      },
+    };
+  });
   return [...messageRows, ...proposedPlanRows, ...workRows, ...teamRunRows].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );

@@ -191,12 +191,19 @@ function teamMetadataPayload(payload: Record<string, unknown>): Record<string, u
   };
 }
 
+function extractTeammateNameFromDetail(detail: unknown): string | undefined {
+  if (typeof detail !== "string") return undefined;
+  const match = /^([^:]+):\s/.exec(detail);
+  return match?.[1]?.trim();
+}
+
 function hasTeamMetadata(payload: Record<string, unknown>): boolean {
   return (
     asString(payload.runId) !== undefined ||
     asString(payload.teamName) !== undefined ||
     asString(payload.teammateName) !== undefined ||
-    asString(payload.agentName) !== undefined
+    asString(payload.agentName) !== undefined ||
+    payload.taskType === "in_process_teammate"
   );
 }
 
@@ -204,6 +211,9 @@ function teammateActivityLabel(payload: Record<string, unknown>): string {
   return (
     asString(payload.teammateName) ??
     asString(payload.agentName) ??
+    (payload.taskType === "in_process_teammate"
+      ? extractTeammateNameFromDetail(payload.detail ?? payload.description)
+      : undefined) ??
     asString(payload.agentType) ??
     asString(payload.teamName) ??
     "Teammate"
@@ -758,9 +768,14 @@ function runtimeEventToActivities(
     }
 
     case "task.started": {
-      const metadata = teamMetadataPayload(event.payload as Record<string, unknown>);
-      const teammateLabel = teammateActivityLabel(event.payload as Record<string, unknown>);
-      const isTeamTask = hasTeamMetadata(event.payload as Record<string, unknown>);
+      const rawPayload = event.payload as Record<string, unknown>;
+      const metadata = teamMetadataPayload(rawPayload);
+      const teammateLabel = teammateActivityLabel(rawPayload);
+      const isTeamTask = hasTeamMetadata(rawPayload);
+      const inferredName =
+        isTeamTask && !metadata.teammateName && !metadata.agentName
+          ? extractTeammateNameFromDetail(rawPayload.detail ?? rawPayload.description)
+          : undefined;
       return [
         {
           id: event.eventId,
@@ -780,6 +795,7 @@ function runtimeEventToActivities(
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
               : {}),
+            ...(inferredName ? { teammateName: inferredName } : {}),
             ...metadata,
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -789,10 +805,19 @@ function runtimeEventToActivities(
     }
 
     case "task.progress": {
-      const metadata = teamMetadataPayload(event.payload as Record<string, unknown>);
-      const teammateLabel = teammateActivityLabel(event.payload as Record<string, unknown>);
-      const isTeamTask = hasTeamMetadata(event.payload as Record<string, unknown>);
+      const rawProgressPayload = event.payload as Record<string, unknown>;
+      const metadata = teamMetadataPayload(rawProgressPayload);
+      const teammateLabel = teammateActivityLabel(rawProgressPayload);
+      const isTeamTask = hasTeamMetadata(rawProgressPayload);
       const awaitingLeaderApproval = event.payload.awaitingLeaderApproval === true;
+      const inferredProgressName =
+        isTeamTask && !metadata.teammateName && !metadata.agentName
+          ? extractTeammateNameFromDetail(
+              rawProgressPayload.detail ??
+                rawProgressPayload.summary ??
+                rawProgressPayload.description,
+            )
+          : undefined;
       return [
         {
           id: event.eventId,
@@ -814,6 +839,7 @@ function runtimeEventToActivities(
             ...(event.payload.summary ? { summary: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.lastToolName ? { lastToolName: event.payload.lastToolName } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+            ...(inferredProgressName ? { teammateName: inferredProgressName } : {}),
             ...metadata,
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -823,9 +849,18 @@ function runtimeEventToActivities(
     }
 
     case "task.completed": {
-      const metadata = teamMetadataPayload(event.payload as Record<string, unknown>);
-      const teammateLabel = teammateActivityLabel(event.payload as Record<string, unknown>);
-      const isTeamTask = hasTeamMetadata(event.payload as Record<string, unknown>);
+      const rawCompletedPayload = event.payload as Record<string, unknown>;
+      const metadata = teamMetadataPayload(rawCompletedPayload);
+      const teammateLabel = teammateActivityLabel(rawCompletedPayload);
+      const isTeamTask = hasTeamMetadata(rawCompletedPayload);
+      const inferredCompletedName =
+        isTeamTask && !metadata.teammateName && !metadata.agentName
+          ? extractTeammateNameFromDetail(
+              rawCompletedPayload.detail ??
+                rawCompletedPayload.summary ??
+                rawCompletedPayload.description,
+            )
+          : undefined;
       return [
         {
           id: event.eventId,
@@ -853,6 +888,7 @@ function runtimeEventToActivities(
             taskId: event.payload.taskId,
             status: event.payload.status,
             ...(event.payload.summary ? { detail: truncateDetail(event.payload.summary) } : {}),
+            ...(inferredCompletedName ? { teammateName: inferredCompletedName } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
             ...metadata,
           },

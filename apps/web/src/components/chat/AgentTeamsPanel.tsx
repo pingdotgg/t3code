@@ -11,9 +11,11 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import type {
+  AgentTeamsActivity,
   AgentTeamsMember,
   AgentTeamsRun,
   AgentTeamsState,
+  AgentTeamsTaskSnapshot,
   AgentTeamsTaskStatus,
 } from "../../session-logic";
 import { cn } from "~/lib/utils";
@@ -63,6 +65,24 @@ const FALLBACK_TEAM_COLORS = [
     dot: "bg-fuchsia-500",
   },
 ] as const;
+
+const COLOR_NAME_MAP: Record<string, number> = {
+  red: 0,
+  rose: 0,
+  orange: 1,
+  amber: 1,
+  green: 2,
+  emerald: 2,
+  blue: 3,
+  sky: 3,
+  cyan: 3,
+  violet: 4,
+  purple: 4,
+  indigo: 4,
+  fuchsia: 5,
+  pink: 5,
+  magenta: 5,
+};
 
 function statusLabel(status: Exclude<AgentTeamsTaskStatus, "lead">): string {
   switch (status) {
@@ -125,27 +145,14 @@ function hashValue(value: string): number {
 function colorPresetForMember(member: AgentTeamsMember): (typeof FALLBACK_TEAM_COLORS)[number] {
   const rawColor = member.agentColor?.trim().toLowerCase();
   if (rawColor) {
-    const direct = FALLBACK_TEAM_COLORS.find((preset) => preset.accent.includes(rawColor));
-    if (direct) {
-      return direct;
+    const directIndex = COLOR_NAME_MAP[rawColor];
+    if (directIndex !== undefined) {
+      return FALLBACK_TEAM_COLORS[directIndex]!;
     }
-    if (rawColor.includes("purple") || rawColor.includes("violet")) {
-      return FALLBACK_TEAM_COLORS[4];
-    }
-    if (rawColor.includes("pink") || rawColor.includes("fuchsia")) {
-      return FALLBACK_TEAM_COLORS[5];
-    }
-    if (rawColor.includes("blue") || rawColor.includes("sky")) {
-      return FALLBACK_TEAM_COLORS[3];
-    }
-    if (rawColor.includes("green") || rawColor.includes("emerald")) {
-      return FALLBACK_TEAM_COLORS[2];
-    }
-    if (rawColor.includes("orange") || rawColor.includes("amber")) {
-      return FALLBACK_TEAM_COLORS[1];
-    }
-    if (rawColor.includes("red") || rawColor.includes("rose")) {
-      return FALLBACK_TEAM_COLORS[0];
+    for (const [name, index] of Object.entries(COLOR_NAME_MAP)) {
+      if (rawColor.includes(name)) {
+        return FALLBACK_TEAM_COLORS[index]!;
+      }
     }
   }
   return FALLBACK_TEAM_COLORS[hashValue(member.id) % FALLBACK_TEAM_COLORS.length]!;
@@ -164,6 +171,16 @@ function formatTimestamp(value: string): string {
   }).format(parsed);
 }
 
+function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 function formatRunSpan(run: AgentTeamsRun): string {
   if (!run.endedAt) {
     return `Started ${formatTimestamp(run.startedAt)}`;
@@ -172,14 +189,72 @@ function formatRunSpan(run: AgentTeamsRun): string {
 }
 
 function panelSummary(run: AgentTeamsRun): string {
+  const runningMembers = run.members.filter((member) => member.status === "running").length;
   const idleMembers = run.members.filter((member) => member.status === "idle").length;
-  const activeMembers = run.members.filter(
-    (member) =>
-      member.status === "running" ||
-      member.status === "idle" ||
-      member.status === "awaitingApproval",
-  ).length;
-  return `${run.members.length} agent${run.members.length === 1 ? "" : "s"} • ${activeMembers} active${idleMembers > 0 ? ` • ${idleMembers} idle` : ""}`;
+  const parts = [`${run.members.length} agent${run.members.length === 1 ? "" : "s"}`];
+  if (runningMembers > 0) parts.push(`${runningMembers} running`);
+  if (idleMembers > 0) parts.push(`${idleMembers} idle`);
+  return parts.join(" · ");
+}
+
+function latestToolForMember(member: AgentTeamsMember): string | undefined {
+  if (member.status !== "running") return undefined;
+  const sorted = [...member.activities].toSorted((a, b) =>
+    b.updatedAt.localeCompare(a.updatedAt),
+  );
+  return sorted[0]?.lastToolName;
+}
+
+interface UnifiedFeedEntry {
+  id: string;
+  updatedAt: string;
+  label: string;
+  detail?: string;
+  lastToolName?: string;
+  kind: "activity" | "task";
+  status?: string;
+}
+
+function buildUnifiedFeed(
+  member: AgentTeamsMember,
+  tasks: AgentTeamsTaskSnapshot[] | undefined,
+): UnifiedFeedEntry[] {
+  const entries: UnifiedFeedEntry[] = [];
+
+  for (const activity of member.activities) {
+    const entry: UnifiedFeedEntry = {
+      id: activity.id,
+      updatedAt: activity.updatedAt,
+      label: activity.label,
+      kind: "activity",
+    };
+    if (activity.detail) entry.detail = activity.detail;
+    if (activity.lastToolName) entry.lastToolName = activity.lastToolName;
+    entries.push(entry);
+  }
+
+  if (tasks) {
+    for (const task of tasks) {
+      if (
+        task.teammateName &&
+        task.teammateName.toLowerCase() !== member.label.toLowerCase() &&
+        task.teammateName.toLowerCase() !== member.teammateName?.toLowerCase() &&
+        task.teammateName.toLowerCase() !== member.agentName?.toLowerCase()
+      ) {
+        continue;
+      }
+      const taskEntry: UnifiedFeedEntry = {
+        id: `task:${task.taskId ?? task.summary ?? task.updatedAt ?? "unknown"}`,
+        updatedAt: task.updatedAt ?? member.startedAt,
+        label: task.summary ?? task.taskId ?? "Task",
+        kind: "task",
+      };
+      if (task.status) taskEntry.status = task.status;
+      entries.push(taskEntry);
+    }
+  }
+
+  return entries.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function AgentTeamsPanel({
@@ -217,6 +292,11 @@ export function AgentTeamsPanel({
     capabilityMessage;
   const selectedMemberPreset = selectedMember ? colorPresetForMember(selectedMember) : null;
 
+  const unifiedFeed = useMemo(
+    () => (selectedMember ? buildUnifiedFeed(selectedMember, subjectRun?.tasks) : []),
+    [selectedMember, subjectRun?.tasks],
+  );
+
   useEffect(() => {
     if (!subjectRun) {
       if (selectedMemberId !== null) {
@@ -242,6 +322,7 @@ export function AgentTeamsPanel({
           expanded ? "rounded-b-[20px] rounded-t-none" : "rounded-b-[18px] rounded-t-none",
         )}
       >
+        {/* Collapsed / header bar */}
         <div
           className={cn(
             "bg-card px-3 sm:px-4",
@@ -348,10 +429,10 @@ export function AgentTeamsPanel({
           </div>
 
           {expanded ? (
-            <div className="mt-3 space-y-3">
+            <div className="mt-2 space-y-2">
               <p className="text-xs text-muted-foreground">
                 {formatRunSpan(subjectRun)}
-                {subjectRun.endedAt ? " • shut down" : ""}
+                {subjectRun.endedAt ? " · shut down" : ""}
               </p>
 
               {showWarning ? (
@@ -359,246 +440,164 @@ export function AgentTeamsPanel({
                   {capabilityMessage}
                 </div>
               ) : null}
-
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                {subjectRun.members.map((member) => {
-                  const preset = colorPresetForMember(member);
-                  const isSelected = selectedMember?.id === member.id;
-                  return (
-                    <button
-                      key={member.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedMemberId(member.id);
-                        setExpanded(true);
-                      }}
-                      className={cn(
-                        "flex min-w-0 flex-col gap-2 rounded-xl border px-3 py-2 text-left transition-colors",
-                        preset.border,
-                        isSelected
-                          ? cn("bg-background", preset.surface)
-                          : "bg-background/70 hover:bg-background",
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className={cn("size-2 rounded-full", preset.dot)} />
-                            <span className={cn("truncate text-sm font-medium", preset.accent)}>
-                              {member.label}
-                            </span>
-                          </div>
-                          <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                            {member.agentType ?? member.teamName ?? "Teammate"}
-                          </p>
-                        </div>
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
-                            statusTone(member.status),
-                          )}
-                        >
-                          <StatusGlyph status={member.status} />
-                          {statusLabel(member.status)}
-                        </span>
-                      </div>
-                      <p className="line-clamp-2 text-xs text-muted-foreground">
-                        {member.detail ?? "Claude has not published a detailed update yet."}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
             </div>
           ) : null}
         </div>
 
+        {/* Expanded: master-detail layout */}
         {expanded ? (
-          <div className="bg-muted/[0.18] px-3 py-3 sm:px-4">
-            {selectedMember ? (
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-                <div className="min-w-0 rounded-xl border border-border bg-card/70 p-3">
-                  <div className="flex flex-col gap-4">
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p
-                          className={cn(
-                            "text-base font-semibold",
-                            selectedMemberPreset ? selectedMemberPreset.accent : undefined,
-                          )}
+          <div className="max-h-[500px] overflow-y-auto bg-muted/[0.18] px-3 py-3 sm:px-4">
+            <div className="grid gap-0 lg:grid-cols-[200px_minmax(0,1fr)]">
+              {/* Left: agent list */}
+              <div className="flex gap-1 overflow-x-auto border-b border-border/50 pb-2 lg:max-h-[460px] lg:flex-col lg:gap-0 lg:overflow-x-visible lg:overflow-y-auto lg:border-b-0 lg:border-r lg:pb-0 lg:pr-3">
+                {subjectRun.members.map((member) => {
+                  const preset = colorPresetForMember(member);
+                  const isSelected = selectedMember?.id === member.id;
+                  const currentTool = latestToolForMember(member);
+                  return (
+                    <button
+                      key={member.id}
+                      type="button"
+                      onClick={() => setSelectedMemberId(member.id)}
+                      className={cn(
+                        "flex shrink-0 flex-col gap-0.5 rounded-lg px-2.5 py-1.5 text-left transition-colors lg:shrink",
+                        isSelected
+                          ? cn("bg-background", preset.surface)
+                          : "hover:bg-background/60",
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("size-1.5 shrink-0 rounded-full", preset.dot)} />
+                        <span
+                          className={cn("truncate text-sm font-medium", preset.accent)}
                         >
-                          {selectedMember.label}
-                        </p>
+                          {member.label}
+                        </span>
+                        <StatusGlyph status={member.status} />
+                      </div>
+                      <div className="flex items-center gap-1.5 pl-3 text-[11px] text-muted-foreground">
+                        <span>{statusLabel(member.status)}</span>
+                        {currentTool ? (
+                          <>
+                            <span className="text-border">·</span>
+                            <span className="truncate">{currentTool}</span>
+                          </>
+                        ) : null}
+                      </div>
+                    </button>
+                  );
+                })}
+
+                {archivedRuns.length > 0 ? (
+                  <div className="mt-2 hidden space-y-1 border-t border-border/50 pt-2 lg:block">
+                    <p className="px-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Earlier runs
+                    </p>
+                    {archivedRuns.map((run) => (
+                      <div
+                        key={run.id}
+                        className="flex items-center justify-between gap-2 px-2.5 py-1"
+                      >
+                        <span className="truncate text-xs text-foreground">{run.label}</span>
                         <span
                           className={cn(
-                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
-                            statusTone(selectedMember.status),
+                            "inline-flex shrink-0 items-center gap-1 text-[11px]",
+                            statusTone(run.status),
                           )}
                         >
-                          <StatusGlyph status={selectedMember.status} />
-                          {statusLabel(selectedMember.status)}
+                          <StatusGlyph status={run.status} />
                         </span>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        {selectedMember.agentType ? `${selectedMember.agentType} • ` : ""}
-                        {selectedMember.teamName ?? subjectRun.label}
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Right: selected member detail + activity feed */}
+              <div className="min-w-0 pt-3 lg:pl-4 lg:pt-0">
+                {selectedMember && selectedMemberPreset ? (
+                  <>
+                    {/* Identity header */}
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn("text-sm font-semibold", selectedMemberPreset.accent)}
+                      >
+                        {selectedMember.label}
+                      </span>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
+                          statusTone(selectedMember.status),
+                        )}
+                      >
+                        <StatusGlyph status={selectedMember.status} />
+                        {statusLabel(selectedMember.status)}
+                      </span>
+                      <span className="ml-auto text-[11px] text-muted-foreground">
+                        {selectedMember.agentType ? `${selectedMember.agentType} · ` : ""}
+                        Started {formatRelativeTime(selectedMember.startedAt)}
+                        {" · Updated "}
+                        {formatRelativeTime(selectedMember.updatedAt)}
+                      </span>
+                    </div>
+
+                    {/* Current detail */}
+                    {selectedMember.detail ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {selectedMember.detail}
                       </p>
-                      <p className="text-sm text-foreground">
-                        {selectedMember.detail ??
-                          "Claude has not published a detailed update for this teammate yet."}
-                      </p>
-                    </div>
-
-                    <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                      <div className="rounded-lg border border-border bg-background/80 px-3 py-2">
-                        <span className="block text-[11px]">Started</span>
-                        <span className="text-foreground">
-                          {formatTimestamp(selectedMember.startedAt)}
-                        </span>
-                      </div>
-                      <div className="rounded-lg border border-border bg-background/80 px-3 py-2">
-                        <span className="block text-[11px]">Last update</span>
-                        <span className="text-foreground">
-                          {formatTimestamp(selectedMember.updatedAt)}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium text-foreground">Activity</p>
-                      <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-                        {selectedMember.activities
-                          .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-                          .map((activity) => (
-                            <div
-                              key={activity.id}
-                              className="rounded-lg border border-border bg-background/75 px-3 py-2"
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-sm text-foreground">{activity.label}</p>
-                                <span className="text-[11px] text-muted-foreground">
-                                  {formatTimestamp(activity.updatedAt)}
-                                </span>
-                              </div>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                {activity.detail ?? "No extra detail from Claude for this step."}
-                              </p>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-
-                    {subjectRun.tasks && subjectRun.tasks.length > 0 ? (
-                      <div className="space-y-2">
-                        <p className="text-sm font-medium text-foreground">Claude task history</p>
-                        <div className="space-y-2">
-                          {subjectRun.tasks.map((task) => (
-                            <div
-                              key={`${
-                                selectedMember.id
-                              }:task:${task.taskId ?? task.summary ?? task.updatedAt ?? task.teammateName ?? "task"}`}
-                              className="rounded-lg border border-border bg-background/75 px-3 py-2"
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-sm text-foreground">
-                                  {task.summary ?? task.taskId ?? "Task"}
-                                </p>
-                                {task.status ? (
-                                  <span className="text-[11px] text-muted-foreground">
-                                    {task.status}
-                                  </span>
-                                ) : null}
-                              </div>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                {[
-                                  task.teammateName,
-                                  task.updatedAt ? formatTimestamp(task.updatedAt) : null,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" • ")}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
                     ) : null}
-                  </div>
-                </div>
 
-                <aside className="space-y-2 rounded-xl border border-border bg-card/60 p-3">
-                  <p className="text-sm font-medium text-foreground">Team snapshot</p>
-                  <div className="space-y-2">
-                    {subjectRun.members.map((member) => {
-                      const preset = colorPresetForMember(member);
-                      return (
-                        <button
-                          key={member.id}
-                          type="button"
-                          onClick={() => setSelectedMemberId(member.id)}
-                          className={cn(
-                            "flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition-colors",
-                            preset.border,
-                            selectedMember.id === member.id
-                              ? cn("bg-background", preset.surface)
-                              : "bg-background/70 hover:bg-background",
-                          )}
-                        >
-                          <span className="flex min-w-0 items-center gap-2">
-                            <span className={cn("size-2 rounded-full", preset.dot)} />
-                            <span className={cn("truncate text-sm font-medium", preset.accent)}>
-                              {member.label}
+                    {/* Unified activity feed */}
+                    <div className="mt-3 max-h-[400px] overflow-y-auto">
+                      <div className="relative pl-4">
+                        <div className="absolute bottom-1 left-[5px] top-1 w-px bg-border/60" />
+                        {unifiedFeed.map((entry) => (
+                          <div key={entry.id} className="relative flex gap-2 pb-2">
+                            <span
+                              className={cn(
+                                "absolute left-[-11px] top-1.5 size-1.5 rounded-full",
+                                entry.kind === "task" ? "bg-violet-400" : "bg-border",
+                              )}
+                            />
+                            <span className="w-12 shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                              {formatRelativeTime(entry.updatedAt)}
                             </span>
-                          </span>
-                          <span
-                            className={cn(
-                              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
-                              statusTone(member.status),
-                            )}
-                          >
-                            <StatusGlyph status={member.status} />
-                            {statusLabel(member.status)}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {archivedRuns.length > 0 ? (
-                    <div className="space-y-2 border-t border-border/70 pt-3">
-                      <p className="text-sm font-medium text-foreground">Earlier runs</p>
-                      <div className="space-y-2">
-                        {archivedRuns.map((run) => (
-                          <div
-                            key={run.id}
-                            className="rounded-xl border border-border bg-background/70 px-3 py-2"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="truncate text-sm text-foreground">{run.label}</p>
-                              <span
-                                className={cn(
-                                  "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
-                                  statusTone(run.status),
-                                )}
-                              >
-                                <StatusGlyph status={run.status} />
-                                {statusLabel(run.status)}
-                              </span>
+                            <div className="min-w-0 flex-1">
+                              <span className="text-xs text-foreground">{entry.label}</span>
+                              {entry.lastToolName ? (
+                                <span className="ml-1.5 text-[11px] text-muted-foreground">
+                                  [{entry.lastToolName}]
+                                </span>
+                              ) : null}
+                              {entry.kind === "task" && entry.status ? (
+                                <span className="ml-1.5 text-[11px] text-muted-foreground">
+                                  ({entry.status})
+                                </span>
+                              ) : null}
+                              {entry.detail ? (
+                                <p className="truncate text-[11px] text-muted-foreground">
+                                  {entry.detail}
+                                </p>
+                              ) : null}
                             </div>
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              {formatRunSpan(run)}
-                            </p>
                           </div>
                         ))}
+                        {unifiedFeed.length === 0 ? (
+                          <p className="pl-2 text-xs text-muted-foreground">
+                            No activity recorded yet.
+                          </p>
+                        ) : null}
                       </div>
                     </div>
-                  ) : null}
-                </aside>
+                  </>
+                ) : (
+                  <div className="py-4 text-sm text-muted-foreground">
+                    Select a teammate to view activity.
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="rounded-lg border border-dashed border-border bg-background/70 px-3 py-4 text-sm text-muted-foreground">
-                Select a teammate to inspect their current work.
-              </div>
-            )}
+            </div>
           </div>
         ) : null}
       </div>
