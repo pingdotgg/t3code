@@ -36,3 +36,31 @@ export function readPathFromLoginShell(
   });
   return extractPathFromShellOutput(output) ?? undefined;
 }
+
+/**
+ * Well-known macOS binary directories that should always be on PATH
+ * so that tools installed via Homebrew are discoverable even when the
+ * app is launched from the Dock / Finder (which inherits a minimal PATH).
+ */
+export const COMMON_MACOS_PATHS = [
+  "/opt/homebrew/bin", // Apple Silicon Homebrew
+  "/opt/homebrew/sbin",
+  "/usr/local/bin", // Intel Homebrew / user binaries
+  "/usr/local/sbin",
+] as const;
+
+/**
+ * Append any missing well-known macOS binary directories to
+ * `process.env.PATH`.  This is a no-op on non-darwin platforms.
+ */
+export function ensureCommonMacPaths(): void {
+  if (process.platform !== "darwin") return;
+
+  const currentPath = process.env.PATH ?? "";
+  const currentDirs = new Set(currentPath.split(":").filter(Boolean));
+  const missing = COMMON_MACOS_PATHS.filter((p) => !currentDirs.has(p));
+
+  if (missing.length > 0) {
+    process.env.PATH = [currentPath, ...missing].filter(Boolean).join(":");
+  }
+}
