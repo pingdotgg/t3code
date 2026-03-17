@@ -19,6 +19,8 @@ import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type {
   DesktopConnectionMode,
+  DesktopConnectionSettings,
+  DesktopConnectionSettingsSnapshot,
   DesktopTheme,
   DesktopUpdateActionResult,
   DesktopUpdateState,
@@ -29,6 +31,19 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
+import {
+  DEFAULT_DESKTOP_CONNECTION_SETTINGS,
+  normalizeDesktopConnectionSettings,
+  readDesktopConnectionSettings,
+  resolveDesktopConnectionSettingsPath,
+  resolveDesktopConnectionSettingsSnapshot,
+  writeDesktopConnectionSettings,
+} from "./desktopConnectionSettings";
+import {
+  redactTokenInWsUrl,
+  resolveDesktopConnectionSettingsFromEnv,
+  resolveDesktopRemoteConnection,
+} from "./remoteConnection";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
@@ -44,7 +59,6 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
-import { redactTokenInWsUrl, resolveDesktopRemoteConnectionFromEnv } from "./remoteConnection";
 
 syncShellEnvironment();
 
@@ -54,12 +68,16 @@ const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
+const CONNECTION_GET_CHANNEL = "desktop:connection:get";
+const CONNECTION_SET_CHANNEL = "desktop:connection:set";
+const RELAUNCH_CHANNEL = "desktop:relaunch";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const STATE_DIR =
   process.env.T3CODE_STATE_DIR?.trim() || Path.join(OS.homedir(), ".t3", "userdata");
+const DESKTOP_CONNECTION_SETTINGS_PATH = resolveDesktopConnectionSettingsPath(STATE_DIR);
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -86,6 +104,11 @@ let backendPort = 0;
 let backendAuthToken = "";
 let backendWsUrl = "";
 let connectionMode: DesktopConnectionMode = "local";
+let desktopConnectionSettingsSnapshot: DesktopConnectionSettingsSnapshot = {
+  source: "default",
+  effective: DEFAULT_DESKTOP_CONNECTION_SETTINGS,
+  saved: DEFAULT_DESKTOP_CONNECTION_SETTINGS,
+};
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
@@ -119,6 +142,16 @@ function sanitizeLogValue(value: string): string {
 function writeDesktopLogHeader(message: string): void {
   if (!desktopLogSink) return;
   desktopLogSink.write(`[${logTimestamp()}] [${logScope("desktop")}] ${message}\n`);
+}
+
+function refreshDesktopConnectionSettingsSnapshot(): DesktopConnectionSettingsSnapshot {
+  const { exists, settings } = readDesktopConnectionSettings(DESKTOP_CONNECTION_SETTINGS_PATH);
+  desktopConnectionSettingsSnapshot = resolveDesktopConnectionSettingsSnapshot({
+    saved: settings,
+    savedExists: exists,
+    environmentOverride: resolveDesktopConnectionSettingsFromEnv(process.env),
+  });
+  return desktopConnectionSettingsSnapshot;
 }
 
 function writeBackendSessionBoundary(phase: "START" | "END", details: string): void {
@@ -812,6 +845,11 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
   }
 }
 
+function requestDesktopRelaunch(): void {
+  app.relaunch();
+  app.quit();
+}
+
 function configureAutoUpdater(): void {
   const enabled = shouldEnableAutoUpdates();
   setUpdateState({
@@ -1185,6 +1223,35 @@ function registerIpcHandlers(): void {
     }
   });
 
+  ipcMain.removeHandler(CONNECTION_GET_CHANNEL);
+  ipcMain.handle(CONNECTION_GET_CHANNEL, async () => refreshDesktopConnectionSettingsSnapshot());
+
+  ipcMain.removeHandler(CONNECTION_SET_CHANNEL);
+  ipcMain.handle(CONNECTION_SET_CHANNEL, async (_event, rawSettings: unknown) => {
+    const normalized = normalizeDesktopConnectionSettings(
+      typeof rawSettings === "object" && rawSettings !== null
+        ? (rawSettings as Partial<DesktopConnectionSettings>)
+        : undefined,
+    );
+
+    if (normalized.mode === "remote") {
+      resolveDesktopRemoteConnection(normalized);
+    }
+
+    const saved = writeDesktopConnectionSettings(DESKTOP_CONNECTION_SETTINGS_PATH, normalized);
+    desktopConnectionSettingsSnapshot = resolveDesktopConnectionSettingsSnapshot({
+      saved,
+      savedExists: true,
+      environmentOverride: resolveDesktopConnectionSettingsFromEnv(process.env),
+    });
+    return desktopConnectionSettingsSnapshot;
+  });
+
+  ipcMain.removeHandler(RELAUNCH_CHANNEL);
+  ipcMain.handle(RELAUNCH_CHANNEL, async () => {
+    requestDesktopRelaunch();
+  });
+
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);
   ipcMain.handle(UPDATE_GET_STATE_CHANNEL, async () => updateState);
 
@@ -1316,16 +1383,35 @@ configureAppIdentity();
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
-  const remoteConnection = resolveDesktopRemoteConnectionFromEnv(process.env);
-  if (remoteConnection?.disableLocalBackend) {
-    connectionMode = "remote";
-    backendWsUrl = remoteConnection.wsUrl;
-    writeDesktopLogHeader(
-      `bootstrap remote mode enabled origin=${remoteConnection.httpOrigin} websocket=${redactTokenInWsUrl(
-        backendWsUrl,
-      )}`,
-    );
-  } else {
+  refreshDesktopConnectionSettingsSnapshot();
+
+  if (desktopConnectionSettingsSnapshot.effective.mode === "remote") {
+    try {
+      const remoteConnection = resolveDesktopRemoteConnection(
+        desktopConnectionSettingsSnapshot.effective,
+      );
+      if (remoteConnection?.disableLocalBackend) {
+        connectionMode = "remote";
+        backendWsUrl = remoteConnection.wsUrl;
+        writeDesktopLogHeader(
+          `bootstrap remote mode enabled source=${desktopConnectionSettingsSnapshot.source} origin=${remoteConnection.httpOrigin} websocket=${redactTokenInWsUrl(
+            backendWsUrl,
+          )}`,
+        );
+      }
+    } catch (error) {
+      if (desktopConnectionSettingsSnapshot.source === "environment") {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      writeDesktopLogHeader(
+        `bootstrap ignored invalid saved remote settings and fell back to local mode error=${message}`,
+      );
+    }
+  }
+
+  if (connectionMode !== "remote") {
     connectionMode = "local";
     backendPort = await Effect.service(NetService).pipe(
       Effect.flatMap((net) => net.reserveLoopbackPort()),

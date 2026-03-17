@@ -66,6 +66,19 @@ export type DesktopUpdateStatus =
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
 export type DesktopConnectionMode = "local" | "remote";
+export type DesktopConnectionSettingsSource = "default" | "settings" | "environment";
+
+export interface DesktopConnectionSettings {
+  mode: DesktopConnectionMode;
+  remoteUrl: string;
+  authToken: string;
+}
+
+export interface DesktopConnectionSettingsSnapshot {
+  source: DesktopConnectionSettingsSource;
+  effective: DesktopConnectionSettings;
+  saved: DesktopConnectionSettings;
+}
 
 export interface DesktopRuntimeInfo {
   hostArch: DesktopRuntimeArch;
@@ -98,6 +111,11 @@ export interface DesktopUpdateActionResult {
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   getConnectionMode: () => DesktopConnectionMode;
+  getConnectionSettings: () => Promise<DesktopConnectionSettingsSnapshot>;
+  setConnectionSettings: (
+    settings: DesktopConnectionSettings,
+  ) => Promise<DesktopConnectionSettingsSnapshot>;
+  relaunch: () => Promise<void>;
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;

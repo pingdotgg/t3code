@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   DesktopRemoteConnectionConfigError,
   redactTokenInWsUrl,
+  resolveDesktopConnectionSettingsFromEnv,
+  resolveDesktopRemoteConnection,
   resolveDesktopRemoteConnectionFromEnv,
 } from "./remoteConnection";
 
@@ -88,5 +90,36 @@ describe("redactTokenInWsUrl", () => {
 
   it("leaves invalid URLs untouched", () => {
     expect(redactTokenInWsUrl("not-a-url")).toBe("not-a-url");
+  });
+});
+
+describe("resolveDesktopConnectionSettingsFromEnv", () => {
+  it("returns null when the remote URL is unset", () => {
+    expect(resolveDesktopConnectionSettingsFromEnv({})).toBeNull();
+  });
+
+  it("returns normalized remote settings when configured", () => {
+    expect(
+      resolveDesktopConnectionSettingsFromEnv({
+        T3CODE_DESKTOP_REMOTE_URL: " https://chat.example.com ",
+        T3CODE_DESKTOP_REMOTE_AUTH_TOKEN: " secret-token ",
+      }),
+    ).toEqual({
+      mode: "remote",
+      remoteUrl: "https://chat.example.com",
+      authToken: "secret-token",
+    });
+  });
+});
+
+describe("resolveDesktopRemoteConnection", () => {
+  it("returns null for local mode", () => {
+    expect(
+      resolveDesktopRemoteConnection({
+        mode: "local",
+        remoteUrl: "https://chat.example.com",
+        authToken: "secret-token",
+      }),
+    ).toBeNull();
   });
 });

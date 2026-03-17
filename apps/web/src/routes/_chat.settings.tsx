@@ -1,12 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
-import { type DesktopConnectionMode, type ProviderKind } from "@t3tools/contracts";
+import { useCallback, useEffect, useState } from "react";
+import type {
+  DesktopConnectionMode,
+  DesktopConnectionSettings,
+  DesktopConnectionSettingsSnapshot,
+  ProviderKind,
+} from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
-import { resolveDesktopConnectionMode, resolveRuntimeHttpOrigin } from "../connection";
+import {
+  resolveDesktopConnectionMode,
+  resolveRuntimeHttpOrigin,
+  resolveRuntimeWsUrl,
+} from "../connection";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
@@ -103,6 +112,36 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
   }
 }
 
+const EMPTY_DESKTOP_CONNECTION_SETTINGS: DesktopConnectionSettings = {
+  mode: "local",
+  remoteUrl: "",
+  authToken: "",
+};
+
+function describeConnectionSettingsSource(
+  source: DesktopConnectionSettingsSnapshot["source"] | null,
+): string | null {
+  if (source === "environment") {
+    return "Managed by environment variables";
+  }
+  if (source === "settings") {
+    return "Saved in desktop settings";
+  }
+  if (source === "default") {
+    return "Using desktop defaults";
+  }
+  return null;
+}
+
+function readRuntimeWsAuthState(): "token-present" | "token-missing" | "unknown" {
+  try {
+    const parsed = new URL(resolveRuntimeWsUrl());
+    return parsed.searchParams.get("token") ? "token-present" : "token-missing";
+  } catch {
+    return "unknown";
+  }
+}
+
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
@@ -117,6 +156,13 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const [desktopConnectionSettings, setDesktopConnectionSettings] =
+    useState<DesktopConnectionSettingsSnapshot | null>(null);
+  const [desktopConnectionDraft, setDesktopConnectionDraft] = useState<DesktopConnectionSettings>(
+    EMPTY_DESKTOP_CONNECTION_SETTINGS,
+  );
+  const [desktopConnectionError, setDesktopConnectionError] = useState<string | null>(null);
+  const [isSavingDesktopConnection, setIsSavingDesktopConnection] = useState(false);
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
@@ -124,6 +170,39 @@ function SettingsRouteView() {
   const availableEditors = serverConfigQuery.data?.availableEditors;
   const desktopConnectionMode = isElectron ? resolveDesktopConnectionMode() : null;
   const serverHttpOrigin = resolveRuntimeHttpOrigin();
+  const runtimeWsAuthState = readRuntimeWsAuthState();
+  const desktopConnectionSource = desktopConnectionSettings?.source ?? null;
+  const desktopConnectionSourceLabel = describeConnectionSettingsSource(desktopConnectionSource);
+  const desktopConnectionManagedByEnvironment = desktopConnectionSource === "environment";
+  const hasUnsavedDesktopConnectionChanges =
+    desktopConnectionDraft.mode !== (desktopConnectionSettings?.saved.mode ?? "local") ||
+    desktopConnectionDraft.remoteUrl !== (desktopConnectionSettings?.saved.remoteUrl ?? "") ||
+    desktopConnectionDraft.authToken !== (desktopConnectionSettings?.saved.authToken ?? "");
+
+  useEffect(() => {
+    if (!isElectron || !window.desktopBridge) {
+      return;
+    }
+
+    let cancelled = false;
+    void window.desktopBridge
+      .getConnectionSettings()
+      .then((snapshot) => {
+        if (cancelled) return;
+        setDesktopConnectionSettings(snapshot);
+        setDesktopConnectionDraft(snapshot.saved);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setDesktopConnectionError(
+          error instanceof Error ? error.message : "Unable to load connection settings.",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -212,6 +291,34 @@ function SettingsRouteView() {
     [settings, updateSettings],
   );
 
+  const saveDesktopConnectionSettings = useCallback(async () => {
+    if (!window.desktopBridge) return;
+
+    const confirmed = await ensureNativeApi().dialogs.confirm(
+      desktopConnectionDraft.mode === "remote"
+        ? "Save shared history settings and restart T3 Code now?"
+        : "Switch back to local desktop history and restart T3 Code now?",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDesktopConnectionError(null);
+    setIsSavingDesktopConnection(true);
+    try {
+      const snapshot = await window.desktopBridge.setConnectionSettings(desktopConnectionDraft);
+      setDesktopConnectionSettings(snapshot);
+      setDesktopConnectionDraft(snapshot.saved);
+      await window.desktopBridge.relaunch();
+    } catch (error) {
+      setDesktopConnectionError(
+        error instanceof Error ? error.message : "Unable to save connection settings.",
+      );
+    } finally {
+      setIsSavingDesktopConnection(false);
+    }
+  }, [desktopConnectionDraft]);
+
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
@@ -232,46 +339,190 @@ function SettingsRouteView() {
               </p>
             </header>
 
-            {isElectron ? (
-              <section className="rounded-2xl border border-border bg-card p-5">
-                <div className="mb-4">
-                  <h2 className="text-sm font-medium text-foreground">Connection</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Desktop can run in local mode or attach to a shared remote backend.
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Shared History</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Attach desktop to one server-backed chat history instead of running a separate
+                  local desktop history.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Current mode</p>
+                    <p className="text-xs text-muted-foreground">
+                      {desktopConnectionMode === "remote"
+                        ? "Shared history from a remote server."
+                        : isElectron
+                          ? "Desktop-local backend and history."
+                          : "Browser session connected to this server."}
+                    </p>
+                  </div>
+                  <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                    {describeConnectionMode(desktopConnectionMode)}
+                  </span>
+                </div>
+
+                <div className="rounded-lg border border-border bg-background px-3 py-2">
+                  <p className="text-xs font-medium text-foreground">Current server endpoint</p>
+                  <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                    {serverHttpOrigin}
                   </p>
                 </div>
 
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">Mode</p>
-                      <p className="text-xs text-muted-foreground">
-                        {desktopConnectionMode === "remote"
-                          ? "Shared history from your remote server."
-                          : "Desktop-local server and history."}
-                      </p>
+                {isElectron ? (
+                  <>
+                    <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">
+                          Use a shared remote backend
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Remote mode disables the persistent local desktop backend and uses one
+                          server-backed history instead.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={desktopConnectionDraft.mode === "remote"}
+                        disabled={desktopConnectionManagedByEnvironment}
+                        onCheckedChange={(checked) =>
+                          setDesktopConnectionDraft((existing) => ({
+                            ...existing,
+                            mode: checked ? "remote" : "local",
+                          }))
+                        }
+                        aria-label="Use a shared remote backend"
+                      />
                     </div>
-                    <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-                      {describeConnectionMode(desktopConnectionMode)}
-                    </span>
-                  </div>
 
-                  <div className="rounded-lg border border-border bg-background px-3 py-2">
-                    <p className="text-xs font-medium text-foreground">Server endpoint</p>
-                    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
-                      {serverHttpOrigin}
-                    </p>
-                  </div>
+                    {desktopConnectionSourceLabel ? (
+                      <p className="text-xs text-muted-foreground">
+                        {desktopConnectionSourceLabel}
+                      </p>
+                    ) : null}
 
-                  {desktopConnectionMode === "remote" ? (
+                    {desktopConnectionDraft.mode === "remote" ? (
+                      <div className="space-y-4 rounded-xl border border-border bg-background/50 p-4">
+                        <label htmlFor="desktop-remote-url" className="block space-y-1">
+                          <span className="text-xs font-medium text-foreground">
+                            Shared backend URL
+                          </span>
+                          <Input
+                            id="desktop-remote-url"
+                            value={desktopConnectionDraft.remoteUrl}
+                            disabled={desktopConnectionManagedByEnvironment}
+                            onChange={(event) =>
+                              setDesktopConnectionDraft((existing) => ({
+                                ...existing,
+                                remoteUrl: event.target.value,
+                              }))
+                            }
+                            placeholder="https://chat.example.com"
+                            spellCheck={false}
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            Use the same externally reachable URL as the web UI.
+                          </span>
+                        </label>
+
+                        <label htmlFor="desktop-remote-token" className="block space-y-1">
+                          <span className="text-xs font-medium text-foreground">Auth token</span>
+                          <Input
+                            id="desktop-remote-token"
+                            type="password"
+                            value={desktopConnectionDraft.authToken}
+                            disabled={desktopConnectionManagedByEnvironment}
+                            onChange={(event) =>
+                              setDesktopConnectionDraft((existing) => ({
+                                ...existing,
+                                authToken: event.target.value,
+                              }))
+                            }
+                            placeholder="same token used to start the shared server"
+                            spellCheck={false}
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            The token is stored on this desktop only and is not synced.
+                          </span>
+                        </label>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Local mode keeps desktop history on this device and starts the desktop
+                        backend on loopback.
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs text-muted-foreground">
+                        Saving connection changes restarts the desktop app.
+                      </p>
+                      <div className="flex gap-2">
+                        {hasUnsavedDesktopConnectionChanges ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            disabled={
+                              desktopConnectionManagedByEnvironment || isSavingDesktopConnection
+                            }
+                            onClick={() =>
+                              setDesktopConnectionDraft(
+                                desktopConnectionSettings?.saved ??
+                                  EMPTY_DESKTOP_CONNECTION_SETTINGS,
+                              )
+                            }
+                          >
+                            Reset
+                          </Button>
+                        ) : null}
+                        <Button
+                          size="xs"
+                          disabled={
+                            desktopConnectionManagedByEnvironment ||
+                            isSavingDesktopConnection ||
+                            !hasUnsavedDesktopConnectionChanges
+                          }
+                          onClick={() => void saveDesktopConnectionSettings()}
+                        >
+                          {isSavingDesktopConnection ? "Saving..." : "Save and restart"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {desktopConnectionMode === "remote" ? (
+                      <p className="text-xs text-muted-foreground">
+                        Remote mode uses server-backed history and does not merge old desktop-local
+                        chats automatically.
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <div className="rounded-xl border border-border bg-background/50 p-4 text-xs text-muted-foreground">
+                      This web UI is already using the server-backed history for this origin. Enable
+                      the same mode in T3 Code Desktop with this server URL to share chats between
+                      desktop and web cleanly.
+                    </div>
                     <p className="text-xs text-muted-foreground">
-                      Remote mode uses server-backed history and does not merge old desktop-local
-                      chats.
+                      WebSocket auth:{" "}
+                      <span className="font-medium text-foreground">
+                        {runtimeWsAuthState === "token-present"
+                          ? "authenticated URL detected"
+                          : runtimeWsAuthState === "token-missing"
+                            ? "no token detected in runtime URL"
+                            : "unknown"}
+                      </span>
                     </p>
-                  ) : null}
-                </div>
-              </section>
-            ) : null}
+                  </>
+                )}
+
+                {desktopConnectionError ? (
+                  <p className="text-xs text-destructive">{desktopConnectionError}</p>
+                ) : null}
+              </div>
+            </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">

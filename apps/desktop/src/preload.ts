@@ -7,6 +7,9 @@ const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
+const CONNECTION_GET_CHANNEL = "desktop:connection:get";
+const CONNECTION_SET_CHANNEL = "desktop:connection:set";
+const RELAUNCH_CHANNEL = "desktop:relaunch";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
@@ -17,6 +20,9 @@ const connectionMode = process.env.T3CODE_DESKTOP_CONNECTION_MODE === "remote" ?
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => wsUrl,
   getConnectionMode: () => connectionMode,
+  getConnectionSettings: () => ipcRenderer.invoke(CONNECTION_GET_CHANNEL),
+  setConnectionSettings: (settings) => ipcRenderer.invoke(CONNECTION_SET_CHANNEL, settings),
+  relaunch: () => ipcRenderer.invoke(RELAUNCH_CHANNEL),
   pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL),
   confirm: (message) => ipcRenderer.invoke(CONFIRM_CHANNEL, message),
   setTheme: (theme) => ipcRenderer.invoke(SET_THEME_CHANNEL, theme),

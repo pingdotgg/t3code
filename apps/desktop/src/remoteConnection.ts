@@ -1,3 +1,5 @@
+import type { DesktopConnectionSettings } from "@t3tools/contracts";
+
 const SUPPORTED_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
 
 const toWebSocketProtocol = (protocol: string): string => {
@@ -33,10 +35,29 @@ export interface DesktopRemoteConnectionConfig {
   readonly disableLocalBackend: true;
 }
 
-export function resolveDesktopRemoteConnectionFromEnv(
+export function resolveDesktopConnectionSettingsFromEnv(
   env: NodeJS.ProcessEnv,
+): DesktopConnectionSettings | null {
+  const remoteUrl = sanitizeEnvValue(env.T3CODE_DESKTOP_REMOTE_URL);
+  if (!remoteUrl) {
+    return null;
+  }
+
+  return {
+    mode: "remote",
+    remoteUrl,
+    authToken: sanitizeEnvValue(env.T3CODE_DESKTOP_REMOTE_AUTH_TOKEN) ?? "",
+  };
+}
+
+export function resolveDesktopRemoteConnection(
+  settings: DesktopConnectionSettings | null,
 ): DesktopRemoteConnectionConfig | null {
-  const remoteUrlValue = sanitizeEnvValue(env.T3CODE_DESKTOP_REMOTE_URL);
+  if (settings?.mode !== "remote") {
+    return null;
+  }
+
+  const remoteUrlValue = sanitizeEnvValue(settings.remoteUrl);
   if (!remoteUrlValue) {
     return null;
   }
@@ -56,7 +77,7 @@ export function resolveDesktopRemoteConnectionFromEnv(
     );
   }
 
-  const explicitToken = sanitizeEnvValue(env.T3CODE_DESKTOP_REMOTE_AUTH_TOKEN);
+  const explicitToken = sanitizeEnvValue(settings.authToken);
   const existingToken = sanitizeEnvValue(parsedRemoteUrl.searchParams.get("token") ?? undefined);
   const token = explicitToken ?? existingToken;
 
@@ -83,6 +104,12 @@ export function resolveDesktopRemoteConnectionFromEnv(
     httpOrigin: httpOriginUrl.origin,
     disableLocalBackend: true,
   };
+}
+
+export function resolveDesktopRemoteConnectionFromEnv(
+  env: NodeJS.ProcessEnv,
+): DesktopRemoteConnectionConfig | null {
+  return resolveDesktopRemoteConnection(resolveDesktopConnectionSettingsFromEnv(env));
 }
 
 export function redactTokenInWsUrl(rawUrl: string): string {

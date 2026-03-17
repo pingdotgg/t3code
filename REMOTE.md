@@ -78,6 +78,9 @@ export T3CODE_DESKTOP_REMOTE_AUTH_TOKEN="$TOKEN"
 
 Then start T3 Code Desktop normally.
 
+You can also open `Settings -> Shared History` inside the desktop app, save the same URL/token
+there, and let the app restart itself into remote mode.
+
 Behavior in remote mode:
 
 - Desktop connects directly to the configured remote WebSocket/backend.

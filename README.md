@@ -27,6 +27,7 @@ export T3CODE_DESKTOP_REMOTE_AUTH_TOKEN="your-auth-token"
 ```
 
 Desktop will attach to that server as the source of truth (no silent fallback local history backend).
+You can also configure the same remote/shared-history mode from the desktop app Settings screen.
 See [REMOTE.md](./REMOTE.md) for full LAN/Tailscale setup.
 
 ## Some notes
