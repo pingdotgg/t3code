@@ -308,11 +308,20 @@ jobs:
     needs: [preflight, release]
     runs-on: ubuntu-24.04
     steps:
+      - id: app_token
+        name: Mint release app token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
