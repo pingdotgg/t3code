@@ -47,6 +47,10 @@ import {
   replaceTextRange,
 } from "../composer-logic";
 import {
+  navigateComposerPromptHistory,
+  resolveComposerPromptHistoryEntries,
+} from "../composerPromptHistory";
+import {
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
@@ -264,6 +268,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   >({});
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
+  const composerPromptHistoryNavigationRef = useRef<{
+    draftPrompt: string;
+    historyIndex: number;
+  } | null>(null);
+  const isApplyingComposerPromptHistoryRef = useRef(false);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
@@ -320,6 +329,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
+  }, []);
+  const resetComposerPromptHistoryNavigation = useCallback(() => {
+    composerPromptHistoryNavigationRef.current = null;
+    isApplyingComposerPromptHistoryRef.current = false;
   }, []);
 
   const terminalState = useTerminalStateStore((state) =>
@@ -813,6 +826,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () =>
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
+  );
+  const composerPromptHistoryEntries = useMemo(
+    () =>
+      activeThread
+        ? resolveComposerPromptHistoryEntries({
+            currentProjectId: activeThread.projectId,
+            currentThreadMessages: timelineMessages,
+            projects,
+            threads,
+            ignoredMessageTexts: [IMAGE_ONLY_BOOTSTRAP_PROMPT],
+          })
+        : [],
+    [activeThread, projects, threads, timelineMessages],
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
@@ -1761,7 +1787,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useEffect(() => {
     promptRef.current = prompt;
     setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
-  }, [prompt]);
+    if (isApplyingComposerPromptHistoryRef.current) {
+      isApplyingComposerPromptHistoryRef.current = false;
+      return;
+    }
+    resetComposerPromptHistoryNavigation();
+  }, [prompt, resetComposerPromptHistoryNavigation]);
 
   useEffect(() => {
     setOptimisticUserMessages((existing) => {
@@ -1775,10 +1806,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    resetComposerPromptHistoryNavigation();
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
-  }, [threadId]);
+  }, [resetComposerPromptHistoryNavigation, threadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2211,6 +2243,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         planMarkdown: activeProposedPlan.planMarkdown,
       });
       promptRef.current = "";
+      resetComposerPromptHistoryNavigation();
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
@@ -2226,6 +2259,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (standaloneSlashCommand) {
       await handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
+      resetComposerPromptHistoryNavigation();
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
@@ -2293,6 +2327,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     setThreadError(threadIdForSend, null);
     promptRef.current = "";
+    resetComposerPromptHistoryNavigation();
     clearComposerDraftContent(threadIdForSend);
     setComposerHighlightedItemId(null);
     setComposerCursor(0);
@@ -2969,6 +3004,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     value: string;
     cursor: number;
     expandedCursor: number;
+    isOnFirstVisualLine: boolean;
+    isOnLastVisualLine: boolean;
   } => {
     const editorSnapshot = composerEditorRef.current?.readSnapshot();
     if (editorSnapshot) {
@@ -2978,11 +3015,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
       value: promptRef.current,
       cursor: composerCursor,
       expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
+      isOnFirstVisualLine: true,
+      isOnLastVisualLine: true,
     };
   }, [composerCursor]);
 
   const resolveActiveComposerTrigger = useCallback((): {
-    snapshot: { value: string; cursor: number; expandedCursor: number };
+    snapshot: {
+      value: string;
+      cursor: number;
+      expandedCursor: number;
+      isOnFirstVisualLine: boolean;
+      isOnLastVisualLine: boolean;
+    };
     trigger: ComposerTrigger | null;
   } => {
     const snapshot = readComposerSnapshot();
@@ -3130,7 +3175,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return true;
     }
 
-    const { trigger } = resolveActiveComposerTrigger();
+    const { snapshot, trigger } = resolveActiveComposerTrigger();
     const menuIsActive = composerMenuOpenRef.current || trigger !== null;
 
     if (menuIsActive) {
@@ -3149,6 +3194,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onSelectComposerItem(selectedItem);
           return true;
         }
+      }
+    }
+
+    if (
+      (key === "ArrowUp" || key === "ArrowDown") &&
+      !isComposerApprovalState &&
+      !activePendingProgress &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      (key === "ArrowUp" ? snapshot.isOnFirstVisualLine : snapshot.isOnLastVisualLine)
+    ) {
+      const navigation = navigateComposerPromptHistory({
+        currentPrompt: snapshot.value,
+        direction: key === "ArrowUp" ? "up" : "down",
+        entries: composerPromptHistoryEntries,
+        navigationState: composerPromptHistoryNavigationRef.current,
+      });
+      if (navigation.handled) {
+        composerPromptHistoryNavigationRef.current = navigation.nextNavigationState;
+        isApplyingComposerPromptHistoryRef.current = true;
+        promptRef.current = navigation.nextPrompt;
+        setPrompt(navigation.nextPrompt);
+        setComposerCursor(
+          collapseExpandedComposerCursor(navigation.nextPrompt, navigation.nextPrompt.length),
+        );
+        setComposerTrigger(detectComposerTrigger(navigation.nextPrompt, navigation.nextPrompt.length));
+        return true;
       }
     }
 

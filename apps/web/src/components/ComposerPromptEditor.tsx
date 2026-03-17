@@ -458,7 +458,13 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
-  readSnapshot: () => { value: string; cursor: number; expandedCursor: number };
+  readSnapshot: () => {
+    value: string;
+    cursor: number;
+    expandedCursor: number;
+    isOnFirstVisualLine: boolean;
+    isOnLastVisualLine: boolean;
+  };
 }
 
 interface ComposerPromptEditorProps {
@@ -482,6 +488,74 @@ interface ComposerPromptEditorProps {
 
 interface ComposerPromptEditorInnerProps extends ComposerPromptEditorProps {
   editorRef: Ref<ComposerPromptEditorHandle>;
+}
+
+function readComposerVisualLineState(
+  rootElement: HTMLElement | null,
+  fallback: {
+    isOnFirstVisualLine: boolean;
+    isOnLastVisualLine: boolean;
+  },
+  value: string,
+): {
+  isOnFirstVisualLine: boolean;
+  isOnLastVisualLine: boolean;
+} {
+  if (!rootElement || value.length === 0 || typeof window === "undefined") {
+    return {
+      isOnFirstVisualLine: true,
+      isOnLastVisualLine: true,
+    };
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) {
+    return fallback;
+  }
+
+  const selectionRange = selection.getRangeAt(0);
+  if (!rootElement.contains(selectionRange.startContainer)) {
+    return fallback;
+  }
+
+  const caretRange = selectionRange.cloneRange();
+  caretRange.collapse(true);
+  const caretRect = caretRange.getClientRects()[0] ?? caretRange.getBoundingClientRect();
+  if (!caretRect || (!caretRect.width && !caretRect.height && !caretRect.top && !caretRect.bottom)) {
+    return fallback;
+  }
+
+  const contentRange = document.createRange();
+  contentRange.selectNodeContents(rootElement);
+  const contentRect = contentRange.getBoundingClientRect();
+  if (
+    !contentRect ||
+    (!contentRect.width &&
+      !contentRect.height &&
+      !contentRect.top &&
+      !contentRect.bottom)
+  ) {
+    return {
+      isOnFirstVisualLine: true,
+      isOnLastVisualLine: true,
+    };
+  }
+
+  const rootRect = rootElement.getBoundingClientRect();
+  const computedLineHeight = Number.parseFloat(window.getComputedStyle(rootElement).lineHeight);
+  const tolerance = Number.isFinite(computedLineHeight)
+    ? Math.max(2, computedLineHeight / 2)
+    : 4;
+  const scrollTop = rootElement.scrollTop;
+  const maxScrollTop = Math.max(0, rootElement.scrollHeight - rootElement.clientHeight);
+  const visibleTop = Math.max(contentRect.top, rootRect.top);
+  const visibleBottom = Math.min(contentRect.bottom, rootRect.bottom);
+
+  return {
+    isOnFirstVisualLine: scrollTop <= tolerance && caretRect.top <= visibleTop + tolerance,
+    isOnLastVisualLine:
+      scrollTop >= maxScrollTop - tolerance && caretRect.bottom >= visibleBottom - tolerance,
+  };
 }
 
 function ComposerCommandKeyPlugin(props: {
@@ -713,6 +787,8 @@ function ComposerPromptEditorInner({
     value,
     cursor: initialCursor,
     expandedCursor: expandCollapsedComposerCursor(value, initialCursor),
+    isOnFirstVisualLine: true,
+    isOnLastVisualLine: true,
   });
   const isApplyingControlledUpdateRef = useRef(false);
 
@@ -735,6 +811,7 @@ function ComposerPromptEditorInner({
       value,
       cursor: normalizedCursor,
       expandedCursor: expandCollapsedComposerCursor(value, normalizedCursor),
+      ...readComposerVisualLineState(editor.getRootElement(), snapshotRef.current, value),
     };
 
     const rootElement = editor.getRootElement();
@@ -771,6 +848,11 @@ function ComposerPromptEditorInner({
         value: snapshotRef.current.value,
         cursor: boundedCursor,
         expandedCursor: expandCollapsedComposerCursor(snapshotRef.current.value, boundedCursor),
+        ...readComposerVisualLineState(
+          editor.getRootElement(),
+          snapshotRef.current,
+          snapshotRef.current.value,
+        ),
       };
       onChangeRef.current(
         snapshotRef.current.value,
@@ -786,6 +868,8 @@ function ComposerPromptEditorInner({
     value: string;
     cursor: number;
     expandedCursor: number;
+    isOnFirstVisualLine: boolean;
+    isOnLastVisualLine: boolean;
   } => {
     let snapshot = snapshotRef.current;
     editor.getEditorState().read(() => {
@@ -807,6 +891,7 @@ function ComposerPromptEditorInner({
         value: nextValue,
         cursor: nextCursor,
         expandedCursor: nextExpandedCursor,
+        ...readComposerVisualLineState(editor.getRootElement(), snapshotRef.current, nextValue),
       };
     });
     snapshotRef.current = snapshot;
@@ -864,13 +949,14 @@ function ComposerPromptEditorInner({
         value: nextValue,
         cursor: nextCursor,
         expandedCursor: nextExpandedCursor,
+        ...readComposerVisualLineState(editor.getRootElement(), snapshotRef.current, nextValue),
       };
       const cursorAdjacentToMention =
         isCollapsedCursorAdjacentToMention(nextValue, nextCursor, "left") ||
         isCollapsedCursorAdjacentToMention(nextValue, nextCursor, "right");
       onChangeRef.current(nextValue, nextCursor, nextExpandedCursor, cursorAdjacentToMention);
     });
-  }, []);
+  }, [editor]);
 
   return (
     <div className="relative">
