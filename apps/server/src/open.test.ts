@@ -321,5 +321,6 @@ it.layer(NodeServices.layer)("resolveTerminalLaunch", (it) => {
 
 it("resolveTerminalName returns platform-specific display names", () => {
   assert.equal(resolveTerminalName("win32"), "Command Prompt");
-  assert.equal(resolveTerminalName("linux"), "Terminal");
+  const linuxName = resolveTerminalName("linux");
+  assert.include(["Ghostty", "Kitty", "Terminal"], linuxName);
 });

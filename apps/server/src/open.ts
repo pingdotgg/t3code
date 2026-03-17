@@ -321,11 +321,49 @@ function resolveDarwinTerminal():
 }
 
 /**
+ * Well-known Linux binary paths for rich terminals.
+ * Used as a fallback when PATH-based lookup fails (common in packaged Electron builds
+ * where the login shell PATH may not be available).
+ */
+const LINUX_TERMINAL_PATHS: ReadonlyArray<{ bin: string; path: string }> = [
+  { bin: "ghostty", path: "/usr/bin/ghostty" },
+  { bin: "kitty", path: "/usr/bin/kitty" },
+  { bin: "ghostty", path: "/usr/local/bin/ghostty" },
+  { bin: "kitty", path: "/usr/local/bin/kitty" },
+];
+
+/**
+ * Linux terminal preference order: ghostty → kitty → x-terminal-emulator → xterm.
+ * Returns the resolved terminal and whether it's a "rich" terminal (ghostty/kitty)
+ * that supports `-e` and working-directory flags directly.
+ *
+ * First checks PATH, then falls back to well-known binary locations
+ * for packaged builds where the full user PATH may not be available.
+ */
+function resolveLinuxTerminal():
+  | { command: string; rich: true }
+  | { command: string; rich: false } {
+  if (isCommandAvailable("ghostty")) return { command: "ghostty", rich: true };
+  if (isCommandAvailable("kitty")) return { command: "kitty", rich: true };
+
+  for (const { bin: _bin, path } of LINUX_TERMINAL_PATHS) {
+    if (isExecutableFile(path, "linux", [])) {
+      return { command: path, rich: true };
+    }
+  }
+
+  if (isCommandAvailable("x-terminal-emulator")) {
+    return { command: "x-terminal-emulator", rich: false };
+  }
+  return { command: "xterm", rich: false };
+}
+
+/**
  * Resolve a user-facing terminal display name for the current platform.
  *
  * On macOS: Ghostty / Kitty / Terminal
  * On Windows: Command Prompt
- * On Linux: Terminal
+ * On Linux: Ghostty / Kitty / Terminal
  */
 export function resolveTerminalName(platform: NodeJS.Platform = process.platform): string {
   if (platform === "darwin") {
@@ -335,6 +373,9 @@ export function resolveTerminalName(platform: NodeJS.Platform = process.platform
     return "Terminal";
   }
   if (platform === "win32") return "Command Prompt";
+  const terminal = resolveLinuxTerminal();
+  if (terminal.command.endsWith("ghostty")) return "Ghostty";
+  if (terminal.command.endsWith("kitty")) return "Kitty";
   return "Terminal";
 }
 
@@ -388,13 +429,22 @@ export const resolveTerminalLaunch = Effect.fnUntraced(function* (
       };
     }
 
-    // Linux: use a shell wrapper so xdg-open or x-terminal-emulator picks the default terminal
-    const terminalEmulator = isCommandAvailable("x-terminal-emulator")
-      ? "x-terminal-emulator"
-      : terminalCommandForPlatform(platform);
-
+    // Linux: prefer rich terminals (ghostty/kitty) over generic x-terminal-emulator
+    const linuxTerminal = resolveLinuxTerminal();
+    if (linuxTerminal.rich) {
+      return {
+        command: linuxTerminal.command,
+        args: [
+          ...richTerminalCwdArgs(linuxTerminal.command, cwd),
+          "-e",
+          "sh",
+          "-lc",
+          posixTmuxBootstrapCommand,
+        ],
+      };
+    }
     return {
-      command: terminalEmulator,
+      command: linuxTerminal.command,
       args: ["-e", "sh", "-lc", posixTmuxBootstrapCommand],
     };
   }
@@ -413,10 +463,14 @@ export const resolveTerminalLaunch = Effect.fnUntraced(function* (
   if (platform === "win32") {
     return { command: "cmd", args: ["/c", "start", "cmd", "/k", `cd /d "${cwd}"`] };
   }
-  const terminalEmulator = isCommandAvailable("x-terminal-emulator")
-    ? "x-terminal-emulator"
-    : "xterm";
-  return { command: terminalEmulator, args: ["--working-directory", cwd] };
+  const linuxTerminal = resolveLinuxTerminal();
+  if (linuxTerminal.rich) {
+    return {
+      command: linuxTerminal.command,
+      args: [...richTerminalCwdArgs(linuxTerminal.command, cwd)],
+    };
+  }
+  return { command: linuxTerminal.command, args: ["--working-directory", cwd] };
 });
 
 export const resolveEditorLaunch = Effect.fnUntraced(function* (
