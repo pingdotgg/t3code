@@ -16,7 +16,7 @@ export const ProviderHealthBanner = memo(function ProviderHealthBanner({
     status.provider === "codex"
       ? "Codex"
       : status.provider === "claudeAgent"
-        ? "Claude Code"
+        ? "Claude"
         : status.provider;
   const defaultMessage =
     status.status === "error"
