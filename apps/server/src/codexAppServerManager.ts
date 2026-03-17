@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import readline from "node:readline";
 
 import {
@@ -1546,6 +1547,12 @@ function assertSupportedCodexCliVersion(input: {
       lower.includes("command not found") ||
       lower.includes("not found")
     ) {
+      // Disambiguate: is the cwd missing, or is the binary missing?
+      if (!existsSync(input.cwd)) {
+        throw new Error(
+          `Project directory does not exist: ${input.cwd}. The folder may have been moved or deleted.`,
+        );
+      }
       throw new Error(`Codex CLI (${input.binaryPath}) is not installed or not executable.`);
     }
     throw new Error(
