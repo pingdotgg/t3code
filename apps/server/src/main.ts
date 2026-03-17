@@ -20,6 +20,7 @@ import { fixPath, resolveStateDir } from "./os-jank";
 import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
+import { CodexOpenAiEnvOverridesLive } from "./provider/Services/CodexOpenAiEnvOverrides";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
 import { Server } from "./wsServer";
@@ -134,7 +135,10 @@ const ServerConfigLive = (input: CliInput) =>
       const env = yield* CliEnvConfig.asEffect().pipe(
         Effect.mapError(
           (cause) =>
-            new StartupError({ message: "Failed to read environment configuration", cause }),
+            new StartupError({
+              message: "Failed to read environment configuration",
+              cause,
+            }),
         ),
       );
 
@@ -196,6 +200,7 @@ const ServerConfigLive = (input: CliInput) =>
 const LayerLive = (input: CliInput) =>
   Layer.empty.pipe(
     Layer.provideMerge(makeServerRuntimeServicesLayer()),
+    Layer.provideMerge(CodexOpenAiEnvOverridesLive),
     Layer.provideMerge(makeServerProviderLayer()),
     Layer.provideMerge(ProviderHealthLive),
     Layer.provideMerge(SqlitePersistence.layerConfig),
@@ -220,7 +225,9 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
       projectCount: snapshot.projects.length,
     })),
     Effect.catch((cause) =>
-      Effect.logWarning("failed to gather startup snapshot for telemetry", { cause }).pipe(
+      Effect.logWarning("failed to gather startup snapshot for telemetry", {
+        cause,
+      }).pipe(
         Effect.as({
           threadCount: 0,
           projectCount: 0,

@@ -25,6 +25,7 @@ import type {
   ProjectWriteFileResult,
 } from "./project";
 import type { ServerConfig } from "./server";
+import type { CodexSetOpenAiEnvInput, CodexSetOpenAiEnvResult } from "./codex";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -159,6 +160,7 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    setCodexOpenAiEnv: (input: CodexSetOpenAiEnvInput) => Promise<CodexSetOpenAiEnvResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

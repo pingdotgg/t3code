@@ -16,6 +16,7 @@ import { Open, type OpenShape } from "./open";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { Server, type ServerShape } from "./wsServer";
+import { CodexOpenAiEnvOverridesLive } from "./provider/Services/CodexOpenAiEnvOverrides";
 
 const start = vi.fn(() => undefined);
 const stop = vi.fn(() => undefined);
@@ -52,6 +53,7 @@ const testLayer = Layer.mergeAll(
     openInEditor: () => Effect.void,
   } satisfies OpenShape),
   AnalyticsService.layerTest,
+  CodexOpenAiEnvOverridesLive,
   FetchHttpClient.layer,
   NodeServices.layer,
 );

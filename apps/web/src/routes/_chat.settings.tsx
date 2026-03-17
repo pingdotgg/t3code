@@ -98,6 +98,7 @@ function SettingsRouteView() {
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [showCodexApiKey, setShowCodexApiKey] = useState(false);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -109,6 +110,8 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const codexOpenaiBaseUrl = settings.codexOpenaiBaseUrl;
+  const codexOpenaiApiKey = settings.codexOpenaiApiKey;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
 
@@ -312,7 +315,7 @@ function SettingsRouteView() {
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Codex App Server</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  These overrides apply to new sessions and let you use a non-default Codex install.
+                  These overrides apply to new sessions and let you customize how Codex connects.
                 </p>
               </div>
 
@@ -345,6 +348,49 @@ function SettingsRouteView() {
                   </span>
                 </label>
 
+                <label htmlFor="codex-openai-base-url" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">OPENAI_BASE_URL</span>
+                  <Input
+                    id="codex-openai-base-url"
+                    value={codexOpenaiBaseUrl}
+                    onChange={(event) => updateSettings({ codexOpenaiBaseUrl: event.target.value })}
+                    placeholder="https://api.openai.com/v1"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Optional override for Codex OpenAI API base URL.
+                  </span>
+                </label>
+
+                <div className="space-y-1">
+                  <span className="text-xs font-medium text-foreground">OPENAI_API_KEY</span>
+                  <div className="flex gap-2">
+                    <Input
+                      id="codex-openai-api-key"
+                      value={codexOpenaiApiKey}
+                      type={showCodexApiKey ? "text" : "password"}
+                      onChange={(event) =>
+                        updateSettings({
+                          codexOpenaiApiKey: event.target.value,
+                        })
+                      }
+                      placeholder="sk-..."
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowCodexApiKey((value) => !value)}
+                    >
+                      {showCodexApiKey ? "Hide" : "Show"}
+                    </Button>
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    Stored on this device only. The server does not persist it to thread history.
+                  </span>
+                </div>
+
                 <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0 flex-1">
                     <p>Binary source</p>
@@ -360,6 +406,8 @@ function SettingsRouteView() {
                       updateSettings({
                         codexBinaryPath: defaults.codexBinaryPath,
                         codexHomePath: defaults.codexHomePath,
+                        codexOpenaiBaseUrl: defaults.codexOpenaiBaseUrl,
+                        codexOpenaiApiKey: defaults.codexOpenaiApiKey,
                       })
                     }
                   >
