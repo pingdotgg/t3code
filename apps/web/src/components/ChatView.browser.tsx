@@ -2,6 +2,7 @@
 import "../index.css";
 
 import {
+  EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
@@ -21,12 +22,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { usePendingUserInputDraftStore } from "../pendingUserInputDraftStore";
 import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
+const SECOND_THREAD_ID = "thread-browser-test-2" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
@@ -356,6 +359,127 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithPendingUserInputThreads(): OrchestrationReadModel {
+  const baseSnapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-pending-target" as MessageId,
+    targetText: "pending target",
+  });
+
+  return {
+    ...baseSnapshot,
+    threads: [
+      {
+        ...baseSnapshot.threads[0]!,
+        id: THREAD_ID,
+        title: "Pending input thread",
+        activities: [
+          {
+            id: EventId.makeUnsafe("user-input-open-1"),
+            turnId: null,
+            createdAt: isoAt(500),
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-user-input-1",
+              questions: [
+                {
+                  id: "sandbox_mode",
+                  header: "Sandbox",
+                  question: "Which mode should be used?",
+                  options: [
+                    {
+                      label: "workspace-write",
+                      description: "Allow workspace writes only",
+                    },
+                    {
+                      label: "danger-full-access",
+                      description: "Allow unrestricted edits",
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        ...baseSnapshot.threads[0]!,
+        id: SECOND_THREAD_ID,
+        title: "Secondary thread",
+        activities: [],
+        messages: [
+          createUserMessage({
+            id: "msg-user-second-thread" as MessageId,
+            text: "secondary thread",
+            offsetSeconds: 700,
+          }),
+        ],
+        updatedAt: isoAt(701),
+      },
+    ],
+  };
+}
+
+function createSnapshotWithMultiQuestionPendingUserInputThread(): OrchestrationReadModel {
+  const baseSnapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-multi-pending-target" as MessageId,
+    targetText: "multi pending target",
+  });
+
+  return {
+    ...baseSnapshot,
+    threads: [
+      {
+        ...baseSnapshot.threads[0]!,
+        id: THREAD_ID,
+        title: "Multi-question pending input thread",
+        activities: [
+          {
+            id: EventId.makeUnsafe("user-input-open-multi"),
+            turnId: null,
+            createdAt: isoAt(510),
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-user-input-multi",
+              questions: [
+                {
+                  id: "sandbox_mode",
+                  header: "Sandbox",
+                  question: "Which mode should be used?",
+                  options: [
+                    {
+                      label: "workspace-write",
+                      description: "Allow workspace writes only",
+                    },
+                    {
+                      label: "danger-full-access",
+                      description: "Allow unrestricted edits",
+                    },
+                  ],
+                },
+                {
+                  id: "reasoning",
+                  header: "Reasoning",
+                  question: "How should the agent reason?",
+                  options: [
+                    {
+                      label: "Keep it concise",
+                      description: "Prefer shorter responses",
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   const tag = body._tag;
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
@@ -528,6 +652,135 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
+  );
+}
+
+async function waitForComposerText(expectedText: string): Promise<void> {
+  await vi.waitFor(
+    async () => {
+      expect((await waitForComposerEditor()).textContent ?? "").toBe(expectedText);
+    },
+    {
+      timeout: 8_000,
+      interval: 16,
+    },
+  );
+}
+
+async function waitForButtonWithText(label: string): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes(label),
+      ) as HTMLButtonElement | null,
+    `Unable to find button with text "${label}".`,
+  );
+}
+
+async function waitForPendingUserInputResponse(): Promise<Record<string, string>> {
+  let answers: Record<string, string> | null = null;
+  await vi.waitFor(
+    () => {
+      const request = wsRequests.find((wsRequest) => {
+        if (wsRequest._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return false;
+        }
+        const command =
+          "command" in wsRequest && wsRequest.command && typeof wsRequest.command === "object"
+            ? (wsRequest.command as Record<string, unknown>)
+            : null;
+        return command?.type === "thread.user-input.respond";
+      });
+      expect(request, "Unable to find thread.user-input.respond request.").toBeTruthy();
+      if (
+        !request ||
+        !("command" in request) ||
+        !request.command ||
+        typeof request.command !== "object"
+      ) {
+        throw new Error("thread.user-input.respond request did not include a command payload.");
+      }
+      const command = request.command as Record<string, unknown>;
+      answers =
+        command.answers && typeof command.answers === "object"
+          ? (command.answers as Record<string, string>)
+          : null;
+      expect(answers, "Unable to read thread.user-input.respond answers.").toBeTruthy();
+    },
+    {
+      timeout: 8_000,
+      interval: 16,
+    },
+  );
+  if (!answers) {
+    throw new Error("Unable to find pending user-input response payload.");
+  }
+  return answers;
+}
+
+function setComposerSelectionOffset(root: HTMLElement, offset: number): void {
+  const selection = document.getSelection();
+  if (!selection) {
+    throw new Error("Unable to read browser selection.");
+  }
+
+  root.focus();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let remaining = offset;
+  let currentNode = walker.nextNode();
+  while (currentNode) {
+    if (currentNode instanceof Text) {
+      const textLength = currentNode.data.length;
+      if (remaining <= textLength) {
+        const range = document.createRange();
+        range.setStart(currentNode, remaining);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+        return;
+      }
+      remaining -= textLength;
+    }
+    currentNode = walker.nextNode();
+  }
+
+  const fallbackRange = document.createRange();
+  fallbackRange.selectNodeContents(root);
+  fallbackRange.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(fallbackRange);
+  document.dispatchEvent(new Event("selectionchange"));
+}
+
+function insertComposerText(text: string): void {
+  if (document.execCommand("insertText", false, text)) {
+    return;
+  }
+
+  const selection = document.getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    throw new Error("Unable to insert text without an active composer selection.");
+  }
+  const range = selection.getRangeAt(0);
+  range.deleteContents();
+  const textNode = document.createTextNode(text);
+  range.insertNode(textNode);
+  range.setStart(textNode, text.length);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  const commonAncestor =
+    range.commonAncestorContainer instanceof HTMLElement
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentElement;
+  commonAncestor?.dispatchEvent(
+    new InputEvent("input", {
+      bubbles: true,
+      cancelable: true,
+      data: text,
+      inputType: "insertText",
+    }),
   );
 }
 
@@ -720,6 +973,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
+    });
+    usePendingUserInputDraftStore.setState({
+      draftsByThreadId: {},
     });
     useStore.setState({
       projects: [],
@@ -1243,6 +1499,167 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps pending plan answer edits in place when moving the caret", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInputThreads(),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      const composerEditorLocator = page.elementLocator(composerEditor);
+      await composerEditorLocator.click();
+      await composerEditorLocator.fill("abcde");
+      await waitForComposerText("abcde");
+
+      setComposerSelectionOffset(composerEditor, 3);
+      insertComposerText("X");
+
+      await waitForComposerText("abcXde");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("preserves pending plan answer drafts across thread navigation", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInputThreads(),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      const composerEditorLocator = page.elementLocator(composerEditor);
+      await composerEditorLocator.click();
+      await composerEditorLocator.fill("Keep the current flow");
+      await waitForComposerText("Keep the current flow");
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: SECOND_THREAD_ID },
+      });
+      await waitForLayout();
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("secondary thread");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+      });
+      await waitForLayout();
+      await waitForComposerText("Keep the current flow");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("submits a custom pending answer when the user clicks Submit answers", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInputThreads(),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      const composerEditorLocator = page.elementLocator(composerEditor);
+      await composerEditorLocator.click();
+      await composerEditorLocator.fill("Keep the custom answer");
+
+      const submitButton = await waitForButtonWithText("Submit answers");
+      submitButton.click();
+
+      expect(await waitForPendingUserInputResponse()).toMatchObject({
+        sandbox_mode: "Keep the custom answer",
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("submits a preset pending answer when the user selects an option without custom text", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInputThreads(),
+    });
+
+    try {
+      const presetButton = await waitForButtonWithText("workspace-write");
+      presetButton.click();
+
+      expect(await waitForPendingUserInputResponse()).toMatchObject({
+        sandbox_mode: "workspace-write",
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("submits the selected preset instead of stale custom text", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInputThreads(),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      const composerEditorLocator = page.elementLocator(composerEditor);
+      await composerEditorLocator.click();
+      await composerEditorLocator.fill("stale custom answer");
+      await waitForComposerText("stale custom answer");
+
+      const presetButton = await waitForButtonWithText("workspace-write");
+      presetButton.click();
+
+      await waitForComposerText("");
+      await waitForLayout();
+      await waitForComposerText("");
+
+      expect(await waitForPendingUserInputResponse()).toMatchObject({
+        sandbox_mode: "workspace-write",
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps preset and custom answers separate across a multi-question prompt", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithMultiQuestionPendingUserInputThread(),
+    });
+
+    try {
+      const presetButton = await waitForButtonWithText("workspace-write");
+      presetButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("How should the agent reason?");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const composerEditor = await waitForComposerEditor();
+      const composerEditorLocator = page.elementLocator(composerEditor);
+      await composerEditorLocator.click();
+      await composerEditorLocator.fill("Use a longer custom explanation");
+
+      const submitButton = await waitForButtonWithText("Submit answers");
+      submitButton.click();
+
+      expect(await waitForPendingUserInputResponse()).toMatchObject({
+        sandbox_mode: "workspace-write",
+        reasoning: "Use a longer custom explanation",
+      });
     } finally {
       await mounted.cleanup();
     }

@@ -7,10 +7,31 @@ import {
   findFirstUnansweredPendingUserInputQuestionIndex,
   resolvePendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
+  setPendingUserInputSelectedOption,
 } from "./pendingUserInput";
 
 describe("resolvePendingUserInputAnswer", () => {
-  it("prefers a custom answer over a selected option", () => {
+  it("resolves a custom answer when the explicit source is custom", () => {
+    expect(
+      resolvePendingUserInputAnswer({
+        answerSource: "custom",
+        selectedOptionLabel: "Keep current envelope",
+        customAnswer: "Keep the existing envelope for one release",
+      }),
+    ).toBe("Keep the existing envelope for one release");
+  });
+
+  it("resolves a selected option when the explicit source is option", () => {
+    expect(
+      resolvePendingUserInputAnswer({
+        answerSource: "option",
+        selectedOptionLabel: "Scaffold only",
+        customAnswer: "Old custom answer",
+      }),
+    ).toBe("Scaffold only");
+  });
+
+  it("prefers a custom answer over a selected option for legacy drafts", () => {
     expect(
       resolvePendingUserInputAnswer({
         selectedOptionLabel: "Keep current envelope",
@@ -31,13 +52,46 @@ describe("resolvePendingUserInputAnswer", () => {
     expect(
       setPendingUserInputCustomAnswer(
         {
+          answerSource: "option",
           selectedOptionLabel: "Preserve existing tags",
         },
         "doesn't matter",
       ),
     ).toEqual({
-      selectedOptionLabel: undefined,
+      answerSource: "custom",
       customAnswer: "doesn't matter",
+    });
+  });
+
+  it("keeps the selected option active when custom text is cleared", () => {
+    expect(
+      setPendingUserInputCustomAnswer(
+        {
+          answerSource: "option",
+          selectedOptionLabel: "Preserve existing tags",
+        },
+        "",
+      ),
+    ).toEqual({
+      answerSource: "option",
+      selectedOptionLabel: "Preserve existing tags",
+      customAnswer: "",
+    });
+  });
+
+  it("sets the selected option as the explicit answer source", () => {
+    expect(
+      setPendingUserInputSelectedOption(
+        {
+          answerSource: "custom",
+          customAnswer: "Keep the old custom answer",
+        },
+        "Preserve existing tags",
+      ),
+    ).toEqual({
+      answerSource: "option",
+      selectedOptionLabel: "Preserve existing tags",
+      customAnswer: "",
     });
   });
 });
@@ -72,9 +126,11 @@ describe("buildPendingUserInputAnswers", () => {
         ],
         {
           scope: {
+            answerSource: "option",
             selectedOptionLabel: "Orchestration-first",
           },
           compat: {
+            answerSource: "custom",
             customAnswer: "Keep the current envelope for one release window",
           },
         },
@@ -137,6 +193,7 @@ describe("pending user input question progress", () => {
     expect(
       countAnsweredPendingUserInputQuestions(questions, {
         scope: {
+          answerSource: "option",
           selectedOptionLabel: "Orchestration-first",
         },
       }),
@@ -147,6 +204,7 @@ describe("pending user input question progress", () => {
     expect(
       findFirstUnansweredPendingUserInputQuestionIndex(questions, {
         scope: {
+          answerSource: "option",
           selectedOptionLabel: "Orchestration-first",
         },
       }),
@@ -157,9 +215,11 @@ describe("pending user input question progress", () => {
     expect(
       findFirstUnansweredPendingUserInputQuestionIndex(questions, {
         scope: {
+          answerSource: "option",
           selectedOptionLabel: "Orchestration-first",
         },
         compat: {
+          answerSource: "custom",
           customAnswer: "Keep it for one release window",
         },
       }),
@@ -172,6 +232,7 @@ describe("pending user input question progress", () => {
         questions,
         {
           scope: {
+            answerSource: "option",
             selectedOptionLabel: "Orchestration-first",
           },
         },
@@ -183,10 +244,32 @@ describe("pending user input question progress", () => {
       selectedOptionLabel: "Orchestration-first",
       customAnswer: "",
       resolvedAnswer: "Orchestration-first",
+      usingCustomAnswer: false,
       answeredQuestionCount: 1,
       isLastQuestion: false,
       isComplete: false,
       canAdvance: true,
+    });
+  });
+
+  it("marks preset selections as active even if a stale custom value exists", () => {
+    expect(
+      derivePendingUserInputProgress(
+        questions,
+        {
+          scope: {
+            answerSource: "option",
+            selectedOptionLabel: "Orchestration-first",
+            customAnswer: "stale custom answer",
+          },
+        },
+        0,
+      ),
+    ).toMatchObject({
+      selectedOptionLabel: "Orchestration-first",
+      customAnswer: "stale custom answer",
+      resolvedAnswer: "Orchestration-first",
+      usingCustomAnswer: false,
     });
   });
 });

@@ -1,5 +1,5 @@
 import { type ApprovalRequestId } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -13,8 +13,14 @@ interface PendingUserInputPanelProps {
   respondingRequestIds: ApprovalRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
-  onSelectOption: (questionId: string, optionLabel: string) => void;
-  onAdvance: () => void;
+  onSelectOption: (
+    questionId: string,
+    optionLabel: string,
+    options?: {
+      advanceToNextQuestion?: boolean;
+      submitIfComplete?: boolean;
+    },
+  ) => void;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -23,7 +29,6 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   answers,
   questionIndex,
   onSelectOption,
-  onAdvance,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -37,7 +42,6 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       answers={answers}
       questionIndex={questionIndex}
       onSelectOption={onSelectOption}
-      onAdvance={onAdvance}
     />
   );
 });
@@ -48,40 +52,32 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   answers,
   questionIndex,
   onSelectOption,
-  onAdvance,
 }: {
   prompt: PendingUserInput;
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
-  onSelectOption: (questionId: string, optionLabel: string) => void;
-  onAdvance: () => void;
+  onSelectOption: (
+    questionId: string,
+    optionLabel: string,
+    options?: {
+      advanceToNextQuestion?: boolean;
+      submitIfComplete?: boolean;
+    },
+  ) => void;
 }) {
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
-  const autoAdvanceTimerRef = useRef<number | null>(null);
-
-  // Clear auto-advance timer on unmount
-  useEffect(() => {
-    return () => {
-      if (autoAdvanceTimerRef.current !== null) {
-        window.clearTimeout(autoAdvanceTimerRef.current);
-      }
-    };
-  }, []);
 
   const selectOptionAndAutoAdvance = useCallback(
     (questionId: string, optionLabel: string) => {
-      onSelectOption(questionId, optionLabel);
-      if (autoAdvanceTimerRef.current !== null) {
-        window.clearTimeout(autoAdvanceTimerRef.current);
-      }
-      autoAdvanceTimerRef.current = window.setTimeout(() => {
-        autoAdvanceTimerRef.current = null;
-        onAdvance();
-      }, 200);
+      onSelectOption(
+        questionId,
+        optionLabel,
+        progress.isLastQuestion ? { submitIfComplete: true } : { advanceToNextQuestion: true },
+      );
     },
-    [onSelectOption, onAdvance],
+    [onSelectOption, progress.isLastQuestion],
   );
 
   // Keyboard shortcut: number keys 1-9 select corresponding option and auto-advance.
