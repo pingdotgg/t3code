@@ -417,6 +417,72 @@ function resolveDesktopRuntimeDependencies(
   return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");
 }
 
+const stageNativeModules = Effect.fn("stageNativeModules")(function* (
+  repoRoot: string,
+  stageAppDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const nativeSourceDir = path.join(repoRoot, "packages/native");
+  const stagePackagesDir = path.join(stageAppDir, "packages");
+  const stageNativeDir = path.join(stageAppDir, "packages/native");
+  const nativePackageJsonPath = path.join(nativeSourceDir, "package.json");
+
+  if (!(yield* fs.exists(nativePackageJsonPath))) {
+    return yield* new BuildScriptError({
+      message: `Missing native package.json at ${nativePackageJsonPath}. Run 'bun run build:desktop' first.`,
+    });
+  }
+
+  yield* fs.makeDirectory(stagePackagesDir, { recursive: true });
+  yield* fs.makeDirectory(stageNativeDir, { recursive: true });
+
+  const packResult = spawnSync("npm", ["pack", "--json", "--pack-destination", stagePackagesDir], {
+    cwd: nativeSourceDir,
+    encoding: "utf8",
+  });
+
+  if (packResult.status !== 0) {
+    return yield* new BuildScriptError({
+      message: `Failed to pack native module from ${nativeSourceDir}.`,
+      cause: packResult.stderr || packResult.stdout,
+    });
+  }
+
+  const packOutput = JSON.parse(packResult.stdout) as Array<{ filename?: unknown }>;
+  const tarballName =
+    Array.isArray(packOutput) && typeof packOutput[0]?.filename === "string"
+      ? packOutput[0].filename
+      : "";
+  const tarballPath = path.join(stagePackagesDir, tarballName);
+
+  if (!tarballName || !(yield* fs.exists(tarballPath))) {
+    return yield* new BuildScriptError({
+      message: `Packed native tarball was not found at ${tarballPath}.`,
+    });
+  }
+
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stagePackagesDir,
+      ...commandOutputOptions(false),
+      shell: process.platform === "win32",
+    })`tar -xzf ${tarballPath} -C ${stageNativeDir} --strip-components=1`,
+  );
+
+  return {
+    "@t3tools/native": "file:packages/native",
+  } satisfies Record<string, string>;
+});
+
+const unstageNativeModules = Effect.fn("unstageNativeModules")(function* (stageAppDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const stagePackagesDir = path.join(stageAppDir, "packages");
+  yield* fs.remove(stagePackagesDir, { recursive: true });
+});
+
 function resolveGitHubPublishConfig():
   | {
       readonly provider: "github";
@@ -616,6 +682,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
+  const stagedNativeModuleDependencies = yield* stageNativeModules(repoRoot, stageAppDir);
 
   const stagePackageJson: StagePackageJson = {
     name: "t3-code-desktop",
@@ -635,6 +702,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     dependencies: {
       ...resolvedServerDependencies,
       ...resolvedDesktopRuntimeDependencies,
+      ...stagedNativeModuleDependencies,
     },
     devDependencies: {
       electron: electronVersion,
@@ -653,6 +721,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       shell: process.platform === "win32",
     })`bun install --production`,
   );
+
+  yield* unstageNativeModules(stageAppDir);
 
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,

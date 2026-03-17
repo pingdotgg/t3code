@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "nodenext"
+  },
+  "include": ["./*.ts", "../types/native/*.d.ts"],
+  "exclude": ["../node_modules", "../dist", "../build"]
+}
