@@ -15,19 +15,19 @@ You can also just install the desktop app. It's cooler.
 
 Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
 
-## Shared remote history (phone + desktop)
+## Shared history (web + desktop)
 
-You can run a single self-hosted `apps/server` instance and have both mobile web and desktop share the same chat history.
+You can point T3 Code Desktop at the same server-backed history that the web UI is already using and keep one shared chat timeline between web and desktop.
 
 Set desktop remote mode before launch:
 
 ```bash
-export T3CODE_DESKTOP_REMOTE_URL="https://your-server.example.com"
-export T3CODE_DESKTOP_REMOTE_AUTH_TOKEN="your-auth-token"
+export T3CODE_DESKTOP_REMOTE_URL="<the current web UI server endpoint>"
+export T3CODE_DESKTOP_REMOTE_AUTH_TOKEN="<the auth token used by that server>"
 ```
 
 Desktop will attach to that server as the source of truth (no silent fallback local history backend).
-You can also configure the same remote/shared-history mode from the desktop app Settings screen.
+You can also configure the same shared-history mode from the desktop app Settings screen by copying the current server endpoint shown in the web UI.
 See [REMOTE.md](./REMOTE.md) for full LAN/Tailscale setup.
 
 ## Some notes

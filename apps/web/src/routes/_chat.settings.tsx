@@ -419,11 +419,11 @@ function SettingsRouteView() {
                                 remoteUrl: event.target.value,
                               }))
                             }
-                            placeholder="https://chat.example.com"
+                            placeholder={serverHttpOrigin}
                             spellCheck={false}
                           />
                           <span className="text-xs text-muted-foreground">
-                            Use the same externally reachable URL as the web UI.
+                            Use the same server endpoint shown above for the web UI.
                           </span>
                         </label>
 
@@ -501,9 +501,7 @@ function SettingsRouteView() {
                 ) : (
                   <>
                     <div className="rounded-xl border border-border bg-background/50 p-4 text-xs text-muted-foreground">
-                      This web UI is already using the server-backed history for this origin. Enable
-                      the same mode in T3 Code Desktop with this server URL to share chats between
-                      desktop and web cleanly.
+                      This web UI is already using the server-backed history for this origin. Enable the same mode in T3 Code Desktop with the server endpoint shown above to share chats between desktop and web cleanly.
                     </div>
                     <p className="text-xs text-muted-foreground">
                       WebSocket auth:{" "}
