@@ -15,7 +15,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-export type DraftThreadEnvMode = "local" | "worktree";
+export type DraftThreadEnvMode = "local" | "worktree" | "open-worktree";
 
 const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
 
@@ -294,10 +294,13 @@ function normalizeDraftThreadEnvMode(
   value: unknown,
   fallbackWorktreePath: string | null,
 ): DraftThreadEnvMode {
-  if (value === "local" || value === "worktree") {
+  if (fallbackWorktreePath) {
+    return "worktree";
+  }
+  if (value === "local" || value === "worktree" || value === "open-worktree") {
     return value;
   }
-  return fallbackWorktreePath ? "worktree" : "local";
+  return "local";
 }
 
 function normalizePersistedComposerDraftState(value: unknown): PersistedComposerDraftStoreState {
@@ -611,9 +614,10 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
                 ? (existingThread?.branch ?? null)
                 : (options.branch ?? null),
             worktreePath: nextWorktreePath,
-            envMode:
-              options?.envMode ??
-              (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
+            envMode: normalizeDraftThreadEnvMode(
+              options?.envMode ?? existingThread?.envMode,
+              nextWorktreePath,
+            ),
           };
           const hasSameProjectMapping = previousThreadIdForProject === threadId;
           const hasSameDraftThread =
@@ -682,8 +686,10 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             interactionMode: options.interactionMode ?? existing.interactionMode,
             branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
             worktreePath: nextWorktreePath,
-            envMode:
-              options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
+            envMode: normalizeDraftThreadEnvMode(
+              options.envMode ?? existing.envMode,
+              nextWorktreePath,
+            ),
           };
           const isUnchanged =
             nextDraftThread.projectId === existing.projectId &&

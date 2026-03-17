@@ -154,6 +154,9 @@ import {
   LastInvokedScriptByProjectSchema,
   PullRequestDialogState,
   readFileAsDataUrl,
+  resolveInitialWorktreeCreation,
+  resolveOpenWorktreeReuseCandidate,
+  resolvePendingWorktreeBranchForSend,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   SendPhase,
@@ -913,6 +916,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
+  const currentGitBranch =
+    branchesQuery.data?.branches.find((branch) => branch.current && !branch.isRemote)?.name ?? null;
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
@@ -2236,25 +2241,65 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
-        ? activeThread.branch
-        : null;
+    const resolvedPendingWorktreeBranch = resolvePendingWorktreeBranchForSend({
+      envMode,
+      isFirstMessage,
+      branch: activeThread.branch,
+      currentGitBranch,
+      worktreePath: activeThread.worktreePath,
+    });
+    let initialWorktreeCreation = resolveInitialWorktreeCreation({
+      envMode,
+      isFirstMessage,
+      branch: resolvedPendingWorktreeBranch,
+      worktreePath: activeThread.worktreePath,
+      buildNewBranchName: buildTemporaryWorktreeBranchName,
+    });
 
-    // In worktree mode, require an explicit base branch so we don't silently
-    // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThread.branch) {
+    // Pending worktree modes can reuse the currently checked-out branch shown in
+    // the toolbar, but still require a resolvable branch before first send.
+    const shouldSelectNewWorktreeBranch =
+      isFirstMessage &&
+      envMode === "worktree" &&
+      !activeThread.worktreePath &&
+      !resolvedPendingWorktreeBranch;
+    if (shouldSelectNewWorktreeBranch) {
       setStoreThreadError(
         threadIdForSend,
         "Select a base branch before sending in New worktree mode.",
       );
       return;
     }
+    const shouldSelectOpenWorktreeBranch =
+      isFirstMessage &&
+      envMode === "open-worktree" &&
+      !activeThread.worktreePath &&
+      !resolvedPendingWorktreeBranch;
+    if (shouldSelectOpenWorktreeBranch) {
+      setStoreThreadError(threadIdForSend, "Select a branch before sending in Open worktree mode.");
+      return;
+    }
+
+    let resolvedExistingOpenWorktreeTarget: { branch: string; worktreePath: string | null } | null =
+      null;
+    if (initialWorktreeCreation.type === "open-worktree") {
+      const branchesResult = await api.git
+        .listBranches({ cwd: activeProject.cwd })
+        .catch(() => null);
+      resolvedExistingOpenWorktreeTarget = branchesResult
+        ? resolveOpenWorktreeReuseCandidate({
+            activeProjectCwd: activeProject.cwd,
+            branches: branchesResult.branches,
+            branchName: initialWorktreeCreation.branch,
+          })
+        : null;
+      if (resolvedExistingOpenWorktreeTarget) {
+        initialWorktreeCreation = { type: "none" };
+      }
+    }
 
     sendInFlightRef.current = true;
-    beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
+    beginSendPhase(initialWorktreeCreation.type === "none" ? "sending-turn" : "preparing-worktree");
 
     const composerImagesSnapshot = [...composerImages];
     const messageIdForSend = newMessageId();
@@ -2300,31 +2345,71 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     let createdServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
-    let nextThreadBranch = activeThread.branch;
-    let nextThreadWorktreePath = activeThread.worktreePath;
+    let nextThreadBranch =
+      resolvedExistingOpenWorktreeTarget?.branch ??
+      resolvedPendingWorktreeBranch ??
+      activeThread.branch;
+    let nextThreadWorktreePath =
+      resolvedExistingOpenWorktreeTarget?.worktreePath ?? activeThread.worktreePath;
     await (async () => {
-      // On first message: lock in branch + create worktree if needed.
-      if (baseBranchForWorktree) {
-        beginSendPhase("preparing-worktree");
-        const newBranch = buildTemporaryWorktreeBranchName();
-        const result = await createWorktreeMutation.mutateAsync({
-          cwd: activeProject.cwd,
-          branch: baseBranchForWorktree,
-          newBranch,
+      if (resolvedExistingOpenWorktreeTarget && isServerThread) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          branch: nextThreadBranch,
+          worktreePath: nextThreadWorktreePath,
         });
-        nextThreadBranch = result.worktree.branch;
-        nextThreadWorktreePath = result.worktree.path;
+        setStoreThreadBranch(threadIdForSend, nextThreadBranch, nextThreadWorktreePath);
+      }
+
+      // On first message: lock in branch + create worktree if needed.
+      if (initialWorktreeCreation.type !== "none") {
+        beginSendPhase("preparing-worktree");
+        try {
+          const result = await createWorktreeMutation.mutateAsync({
+            cwd: activeProject.cwd,
+            branch: initialWorktreeCreation.branch,
+            ...(initialWorktreeCreation.type === "new-worktree"
+              ? { newBranch: initialWorktreeCreation.newBranch }
+              : {}),
+          });
+          nextThreadBranch = result.worktree.branch;
+          nextThreadWorktreePath = result.worktree.path;
+        } catch (error) {
+          if (initialWorktreeCreation.type !== "open-worktree") {
+            throw error;
+          }
+
+          const branchesResult = await api.git
+            .listBranches({ cwd: activeProject.cwd })
+            .catch(() => null);
+          const reuseCandidate = branchesResult
+            ? resolveOpenWorktreeReuseCandidate({
+                activeProjectCwd: activeProject.cwd,
+                branches: branchesResult.branches,
+                branchName: initialWorktreeCreation.branch,
+              })
+            : null;
+          if (!reuseCandidate) {
+            throw error;
+          }
+
+          nextThreadBranch = reuseCandidate.branch;
+          nextThreadWorktreePath = reuseCandidate.worktreePath;
+        }
+
         if (isServerThread) {
           await api.orchestration.dispatchCommand({
             type: "thread.meta.update",
             commandId: newCommandId(),
             threadId: threadIdForSend,
-            branch: result.worktree.branch,
-            worktreePath: result.worktree.path,
+            branch: nextThreadBranch,
+            worktreePath: nextThreadWorktreePath,
           });
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
-          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
+          setStoreThreadBranch(threadIdForSend, nextThreadBranch, nextThreadWorktreePath);
         }
       }
 
@@ -2365,7 +2450,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
 
       let setupScript: ProjectScript | null = null;
-      if (baseBranchForWorktree) {
+      if (initialWorktreeCreation.type !== "none") {
         setupScript = setupProjectScript(activeProject.scripts);
       }
       if (setupScript) {
