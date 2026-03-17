@@ -5,6 +5,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  shouldBrowseForProjectImmediately,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
 
@@ -80,6 +81,26 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("shouldBrowseForProjectImmediately", () => {
+  it("uses the folder picker in local Electron mode", () => {
+    expect(
+      shouldBrowseForProjectImmediately({
+        isElectron: true,
+        connectionMode: "local",
+      }),
+    ).toBe(true);
+  });
+
+  it("falls back to manual path entry in remote Electron mode", () => {
+    expect(
+      shouldBrowseForProjectImmediately({
+        isElectron: true,
+        connectionMode: "remote",
+      }),
+    ).toBe(false);
   });
 });
 

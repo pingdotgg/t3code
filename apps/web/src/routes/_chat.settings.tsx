@@ -1,13 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
-import { type ProviderKind } from "@t3tools/contracts";
+import { useCallback, useEffect, useState } from "react";
+import { type DesktopConnectionSettings, type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import {
+  buildDesktopConnectionUrlValue,
+  resolveDesktopConnectionSettingsFromUrl,
+} from "../lib/desktop-connection-url";
 import { ensureNativeApi } from "../nativeApi";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -98,6 +102,12 @@ function SettingsRouteView() {
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [connectionSettings, setConnectionSettings] = useState<DesktopConnectionSettings | null>(
+    null,
+  );
+  const [connectionUrlInput, setConnectionUrlInput] = useState("");
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [isSavingConnection, setIsSavingConnection] = useState(false);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -111,6 +121,33 @@ function SettingsRouteView() {
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
+
+  useEffect(() => {
+    if (!isElectron || !window.desktopBridge?.getConnectionSettings) {
+      return;
+    }
+
+    let cancelled = false;
+    void window.desktopBridge
+      .getConnectionSettings()
+      .then((nextSettings) => {
+        if (!cancelled) {
+          setConnectionSettings(nextSettings);
+          setConnectionUrlInput(buildDesktopConnectionUrlValue(nextSettings));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setConnectionError(
+            error instanceof Error ? error.message : "Unable to load desktop connection settings.",
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -134,6 +171,38 @@ function SettingsRouteView() {
         setIsOpeningKeybindings(false);
       });
   }, [availableEditors, keybindingsConfigPath]);
+
+  const saveConnectionSettings = useCallback(() => {
+    if (!window.desktopBridge?.saveConnectionSettings || !window.desktopBridge.restartApp) {
+      return;
+    }
+    if (!connectionSettings) {
+      setConnectionError("Desktop connection settings are still loading.");
+      return;
+    }
+
+    setConnectionError(null);
+    setIsSavingConnection(true);
+    let nextSettings: DesktopConnectionSettings;
+    try {
+      nextSettings = resolveDesktopConnectionSettingsFromUrl(connectionSettings, connectionUrlInput);
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error ? error.message : "Unable to parse the connection URL.",
+      );
+      setIsSavingConnection(false);
+      return;
+    }
+    void window.desktopBridge
+      .saveConnectionSettings(nextSettings)
+      .then(() => window.desktopBridge?.restartApp?.())
+      .catch((error) => {
+        setConnectionError(
+          error instanceof Error ? error.message : "Unable to save desktop connection settings.",
+        );
+        setIsSavingConnection(false);
+      });
+  }, [connectionSettings, connectionUrlInput]);
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -198,6 +267,61 @@ function SettingsRouteView() {
     },
     [settings, updateSettings],
   );
+
+  const connectionSection = isElectron ? (
+    <section className="rounded-2xl border border-border bg-card p-5">
+      <div className="mb-4">
+        <h2 className="text-sm font-medium text-foreground">Connection</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Paste a remote T3 connection URL to use a VPS or Tailnet host. Leave the field blank to
+          keep using the bundled local server. The saved connection is remembered on this device
+          until you change it.
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-foreground" htmlFor="desktop-remote-url">
+            Connection URL
+          </label>
+          <Input
+            id="desktop-remote-url"
+            placeholder="http://100.x.y.z:3773/?token=..."
+            value={connectionUrlInput}
+            onChange={(event) => setConnectionUrlInput(event.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Paste the remote T3 URL. If the server uses auth, include the <code>token</code> query
+            parameter. Clear the field and save to switch back to the local bundled server.
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+          Current mode:{" "}
+          <span className="font-medium text-foreground">
+            {connectionSettings?.mode === "remote" ? "Remote" : "Local"}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
+          <p className="text-xs text-muted-foreground">
+            Save changes, then restart the desktop app to reconnect. Your connection details stay
+            saved on this machine.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!connectionSettings || isSavingConnection}
+            onClick={saveConnectionSettings}
+          >
+            {isSavingConnection ? "Restarting..." : "Save and restart"}
+          </Button>
+        </div>
+
+        {connectionError ? <p className="text-xs text-destructive">{connectionError}</p> : null}
+      </div>
+    </section>
+  ) : null;
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
@@ -501,6 +625,8 @@ function SettingsRouteView() {
                 })}
               </div>
             </section>
+
+            {connectionSection}
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">

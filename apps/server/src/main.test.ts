@@ -297,4 +297,27 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(stop.mock.calls.length, 0);
     }),
   );
+
+  it.effect("uses remote-friendly defaults for --remote", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--remote"]);
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.mode, "web");
+      assert.equal(resolvedConfig?.host, "0.0.0.0");
+      assert.equal(resolvedConfig?.port, 3773);
+      assert.equal(resolvedConfig?.noBrowser, true);
+      assert.equal(findAvailablePort.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("lets --remote override the default port", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--remote", "--port", "4010"]);
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.port, 4010);
+      assert.equal(resolvedConfig?.host, "0.0.0.0");
+    }),
+  );
 });

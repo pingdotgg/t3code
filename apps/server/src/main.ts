@@ -6,8 +6,19 @@
  *
  * @module CliConfig
  */
-import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import {
+  Config,
+  Data,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  References,
+  Schema,
+  ServiceMap,
+} from "effect";
+import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import { NetService } from "@t3tools/shared/Net";
 import {
   DEFAULT_PORT,
@@ -26,6 +37,12 @@ import { Server } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import {
+  buildRemoteConnectUrl,
+  formatHostForUrl,
+  formatRemoteStartupMessage,
+  isWildcardHost,
+} from "./remote-access";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -33,6 +50,7 @@ export class StartupError extends Data.TaggedError("StartupError")<{
 }> {}
 
 interface CliInput {
+  readonly remote: Option.Option<boolean>;
   readonly mode: Option.Option<RuntimeMode>;
   readonly port: Option.Option<number>;
   readonly host: Option.Option<string>;
@@ -125,6 +143,8 @@ const CliEnvConfig = Config.all({
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
   Option.getOrElse(Option.filter(flag, Boolean), () => envValue);
 
+const resolveRemoteFlag = (input: CliInput): boolean => resolveBooleanFlag(input.remote, false);
+
 const ServerConfigLive = (input: CliInput) =>
   Layer.effect(
     ServerConfig,
@@ -138,7 +158,8 @@ const ServerConfigLive = (input: CliInput) =>
         ),
       );
 
-      const mode = Option.getOrElse(input.mode, () => env.mode);
+      const remote = resolveRemoteFlag(input);
+      const mode = remote ? "web" : Option.getOrElse(input.mode, () => env.mode);
 
       const port = yield* Option.match(input.port, {
         onSome: (value) => Effect.succeed(value),
@@ -146,7 +167,7 @@ const ServerConfigLive = (input: CliInput) =>
           if (env.port) {
             return Effect.succeed(env.port);
           }
-          if (mode === "desktop") {
+          if (mode === "desktop" || remote) {
             return Effect.succeed(DEFAULT_PORT);
           }
           return findAvailablePort(DEFAULT_PORT);
@@ -156,7 +177,9 @@ const ServerConfigLive = (input: CliInput) =>
         Option.getOrUndefined(input.stateDir) ?? env.stateDir,
       );
       const devUrl = Option.getOrElse(input.devUrl, () => env.devUrl);
-      const noBrowser = resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
+      const noBrowser = remote
+        ? true
+        : resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
       const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
         input.autoBootstrapProjectFromCwd,
@@ -172,7 +195,7 @@ const ServerConfigLive = (input: CliInput) =>
       const host =
         Option.getOrUndefined(input.host) ??
         env.host ??
-        (mode === "desktop" ? "127.0.0.1" : undefined);
+        (remote ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined);
 
       const config: ServerConfigShape = {
         mode,
@@ -204,12 +227,6 @@ const LayerLive = (input: CliInput) =>
     Layer.provideMerge(ServerConfigLive(input)),
   );
 
-const isWildcardHost = (host: string | undefined): boolean =>
-  host === "0.0.0.0" || host === "::" || host === "[::]";
-
-const formatHostForUrl = (host: string): string =>
-  host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-
 export const recordStartupHeartbeat = Effect.gen(function* () {
   const analytics = yield* AnalyticsService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -235,7 +252,7 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
 });
 
-const makeServerProgram = (input: CliInput) =>
+const makeServerProgramBody = (input: CliInput) =>
   Effect.gen(function* () {
     const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
@@ -262,11 +279,27 @@ const makeServerProgram = (input: CliInput) =>
         ? `http://${formatHostForUrl(config.host)}:${config.port}`
         : localUrl;
     const { authToken, devUrl, ...safeConfig } = config;
+    const remoteConnectUrl = buildRemoteConnectUrl({
+      host: config.host,
+      port: config.port,
+      authToken,
+    });
     yield* Effect.logInfo("T3 Code running", {
       ...safeConfig,
       devUrl: devUrl?.toString(),
       authEnabled: Boolean(authToken),
     });
+
+    if (resolveRemoteFlag(input)) {
+      yield* Effect.sync(() => {
+        console.log(
+          formatRemoteStartupMessage({
+            connectUrl: remoteConnectUrl,
+            port: config.port,
+          }),
+        );
+      });
+    }
 
     if (!config.noBrowser) {
       const target = config.devUrl?.toString() ?? bindUrl;
@@ -282,10 +315,28 @@ const makeServerProgram = (input: CliInput) =>
     return yield* stopSignal;
   }).pipe(Effect.provide(LayerLive(input)));
 
+const makeServerProgram = (input: CliInput) =>
+  Effect.gen(function* () {
+    const configuredLogLevel = yield* GlobalFlag.LogLevel;
+    const program = makeServerProgramBody(input);
+
+    if (resolveRemoteFlag(input) && Option.isNone(configuredLogLevel)) {
+      return yield* program.pipe(Effect.provideService(References.MinimumLogLevel, "Warn"));
+    }
+
+    return yield* program;
+  });
+
 /**
  * These flags mirrors the environment variables and the config shape.
  */
 
+const remoteFlag = Flag.boolean("remote").pipe(
+  Flag.withDescription(
+    "Run in remote-friendly mode: web server, no browser, host 0.0.0.0, default port 3773, and print a desktop connection URL.",
+  ),
+  Flag.optional,
+);
 const modeFlag = Flag.choice("mode", ["web", "desktop"]).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
   Flag.optional,
@@ -332,6 +383,7 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
 );
 
 export const t3Cli = Command.make("t3", {
+  remote: remoteFlag,
   mode: modeFlag,
   port: portFlag,
   host: hostFlag,
