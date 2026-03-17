@@ -7,7 +7,7 @@ import {
   getModelOptions,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
-import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
+import { getAppModelOptions, MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
@@ -115,6 +115,16 @@ function SettingsRouteView() {
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
+  const selectedGitTextGenerationModel =
+    settings.gitTextGenerationModel || DEFAULT_GIT_TEXT_GENERATION_MODEL;
+  const gitTextGenerationModelOptions = getAppModelOptions(
+    "codex",
+    settings.customCodexModels,
+    selectedGitTextGenerationModel,
+  );
+  const selectedGitTextGenerationModelLabel =
+    gitTextGenerationModelOptions.find((option) => option.slug === selectedGitTextGenerationModel)
+      ?.name ?? selectedGitTextGenerationModel;
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -515,16 +525,15 @@ function SettingsRouteView() {
                 </p>
               </div>
 
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
+              <div className="flex flex-col gap-4 rounded-lg border border-border bg-background px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-foreground">Text generation model</p>
                   <p className="text-xs text-muted-foreground">
-                    Model used for auto-generated git content. Faster models are recommended.
-                    Default: <code>{DEFAULT_GIT_TEXT_GENERATION_MODEL}</code>
+                    Model used for auto-generated git content.
                   </p>
                 </div>
                 <Select
-                  value={settings.gitTextGenerationModel || DEFAULT_GIT_TEXT_GENERATION_MODEL}
+                  value={selectedGitTextGenerationModel}
                   onValueChange={(value) => {
                     updateSettings({
                       gitTextGenerationModel:
@@ -532,20 +541,16 @@ function SettingsRouteView() {
                     });
                   }}
                 >
-                  <SelectTrigger className="w-48" aria-label="Git text generation model">
-                    <SelectValue>
-                      {settings.gitTextGenerationModel || DEFAULT_GIT_TEXT_GENERATION_MODEL}
-                    </SelectValue>
+                  <SelectTrigger
+                    className="w-full shrink-0 sm:w-48"
+                    aria-label="Git text generation model"
+                  >
+                    <SelectValue>{selectedGitTextGenerationModelLabel}</SelectValue>
                   </SelectTrigger>
                   <SelectPopup align="end">
-                    {getModelOptions("codex").map((option) => (
+                    {gitTextGenerationModelOptions.map((option) => (
                       <SelectItem key={option.slug} value={option.slug}>
                         {option.name}
-                      </SelectItem>
-                    ))}
-                    {settings.customCodexModels.map((slug) => (
-                      <SelectItem key={slug} value={slug}>
-                        {slug}
                       </SelectItem>
                     ))}
                   </SelectPopup>
