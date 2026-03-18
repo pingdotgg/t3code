@@ -55,6 +55,7 @@ import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnap
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
+import { CodexOpenAiEnvOverrides } from "./provider/Services/CodexOpenAiEnvOverrides";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
@@ -208,7 +209,8 @@ export type ServerCoreRuntimeServices =
   | CheckpointDiffQuery
   | OrchestrationReactor
   | ProviderService
-  | ProviderHealth;
+  | ProviderHealth
+  | CodexOpenAiEnvOverrides;
 
 export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
@@ -254,6 +256,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
+  const codexOpenAiEnvOverrides = yield* CodexOpenAiEnvOverrides;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -291,7 +294,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* readiness.markPushBusReady;
   yield* keybindingsManager.start.pipe(
     Effect.mapError(
-      (cause) => new ServerLifecycleError({ operation: "keybindingsRuntimeStart", cause }),
+      (cause) =>
+        new ServerLifecycleError({
+          operation: "keybindingsRuntimeStart",
+          cause,
+        }),
     ),
   );
   yield* readiness.markKeybindingsReady;
@@ -582,7 +589,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       if (error && !isServerNotRunningError(error)) {
         resume(
           Effect.fail(
-            new ServerLifecycleError({ operation: "closeWebSocketServer", cause: error }),
+            new ServerLifecycleError({
+              operation: "closeWebSocketServer",
+              cause: error,
+            }),
           ),
         );
       } else {
@@ -679,7 +689,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }
     }).pipe(
       Effect.mapError(
-        (cause) => new ServerLifecycleError({ operation: "autoBootstrapProject", cause }),
+        (cause) =>
+          new ServerLifecycleError({
+            operation: "autoBootstrapProject",
+            cause,
+          }),
       ),
     );
   }
@@ -883,6 +897,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return { keybindings: keybindingsConfig, issues: [] };
       }
 
+      case WS_METHODS.codexSetOpenAiEnv: {
+        const body = stripRequestTag(request.body);
+        return yield* codexOpenAiEnvOverrides.set(body);
+      }
+
       default: {
         const _exhaustiveCheck: never = request.body;
         return yield* new RouteRequestError({
@@ -911,7 +930,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (Result.isFailure(request)) {
       return yield* sendWsResponse({
         id: "unknown",
-        error: { message: `Invalid request format: ${formatSchemaError(request.failure)}` },
+        error: {
+          message: `Invalid request format: ${formatSchemaError(request.failure)}`,
+        },
       });
     }
 

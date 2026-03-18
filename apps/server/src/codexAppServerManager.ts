@@ -131,6 +131,8 @@ export interface CodexAppServerStartSessionInput {
   readonly serviceTier?: string;
   readonly resumeCursor?: unknown;
   readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
+  readonly openaiApiKey?: string;
+  readonly openaiBaseUrl?: string;
   readonly runtimeMode: RuntimeMode;
 }
 
@@ -376,7 +378,9 @@ export function resolveCodexModelForAccount(
 function killChildTree(child: ChildProcessWithoutNullStreams): void {
   if (process.platform === "win32" && child.pid !== undefined) {
     try {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+      });
       return;
     } catch {
       // fallback to direct kill
@@ -541,6 +545,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       };
 
       const codexOptions = readCodexProviderOptions(input);
+      const openAiOverrides = readCodexOpenAiEnvOverrides(input);
       const codexBinaryPath = codexOptions.binaryPath ?? "codex";
       const codexHomePath = codexOptions.homePath;
       this.assertSupportedCodexCliVersion({
@@ -553,6 +558,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         env: {
           ...process.env,
           ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+          ...(openAiOverrides.openaiApiKey ? { OPENAI_API_KEY: openAiOverrides.openaiApiKey } : {}),
+          ...(openAiOverrides.openaiBaseUrl
+            ? { OPENAI_BASE_URL: openAiOverrides.openaiBaseUrl }
+            : {}),
         },
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
@@ -1145,7 +1154,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         this.readString(this.readObject(notification.params)?.thread, "id"),
       );
       if (providerThreadId) {
-        this.updateSession(context, { resumeCursor: { threadId: providerThreadId } });
+        this.updateSession(context, {
+          resumeCursor: { threadId: providerThreadId },
+        });
       }
       return;
     }
@@ -1518,6 +1529,18 @@ function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   return {
     ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
     ...(options.homePath ? { homePath: options.homePath } : {}),
+  };
+}
+
+function readCodexOpenAiEnvOverrides(input: CodexAppServerStartSessionInput): {
+  readonly openaiApiKey?: string;
+  readonly openaiBaseUrl?: string;
+} {
+  const openaiApiKey = input.openaiApiKey?.trim();
+  const openaiBaseUrl = input.openaiBaseUrl?.trim();
+  return {
+    ...(openaiApiKey ? { openaiApiKey } : {}),
+    ...(openaiBaseUrl ? { openaiBaseUrl } : {}),
   };
 }
 

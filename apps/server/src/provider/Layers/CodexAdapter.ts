@@ -37,6 +37,7 @@ import {
 } from "../../codexAppServerManager.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { CodexOpenAiEnvOverrides } from "../Services/CodexOpenAiEnvOverrides.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "codex" as const;
@@ -1261,6 +1262,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const serverConfig = yield* Effect.service(ServerConfig);
+    const codexOpenAiEnvOverrides = yield* CodexOpenAiEnvOverrides;
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -1287,39 +1289,45 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         }),
     );
 
-    const startSession: CodexAdapterShape["startSession"] = (input) => {
-      if (input.provider !== undefined && input.provider !== PROVIDER) {
-        return Effect.fail(
-          new ProviderAdapterValidationError({
+    const startSession: CodexAdapterShape["startSession"] = (input) =>
+      Effect.gen(function* () {
+        if (input.provider !== undefined && input.provider !== PROVIDER) {
+          return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
             operation: "startSession",
             issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
-          }),
-        );
-      }
+          });
+        }
 
-      const managerInput: CodexAppServerStartSessionInput = {
-        threadId: input.threadId,
-        provider: "codex",
-        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
-        ...(input.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
-        ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
-        runtimeMode: input.runtimeMode,
-        ...(input.model !== undefined ? { model: input.model } : {}),
-        ...(input.modelOptions?.codex?.fastMode ? { serviceTier: "fast" } : {}),
-      };
+        const openAiOverrides = yield* codexOpenAiEnvOverrides.get;
+        const managerInput: CodexAppServerStartSessionInput = {
+          threadId: input.threadId,
+          provider: "codex",
+          ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+          ...(input.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+          ...(input.providerOptions !== undefined
+            ? { providerOptions: input.providerOptions }
+            : {}),
+          ...(openAiOverrides.openaiApiKey ? { openaiApiKey: openAiOverrides.openaiApiKey } : {}),
+          ...(openAiOverrides.openaiBaseUrl
+            ? { openaiBaseUrl: openAiOverrides.openaiBaseUrl }
+            : {}),
+          runtimeMode: input.runtimeMode,
+          ...(input.model !== undefined ? { model: input.model } : {}),
+          ...(input.modelOptions?.codex?.fastMode ? { serviceTier: "fast" } : {}),
+        };
 
-      return Effect.tryPromise({
-        try: () => manager.startSession(managerInput),
-        catch: (cause) =>
-          new ProviderAdapterProcessError({
-            provider: PROVIDER,
-            threadId: input.threadId,
-            detail: toMessage(cause, "Failed to start Codex adapter session."),
-            cause,
-          }),
-      }).pipe(Effect.map((session) => session));
-    };
+        return yield* Effect.tryPromise({
+          try: () => manager.startSession(managerInput),
+          catch: (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: toMessage(cause, "Failed to start Codex adapter session."),
+              cause,
+            }),
+        }).pipe(Effect.map((session) => session));
+      });
 
     const sendTurn: CodexAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {

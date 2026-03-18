@@ -160,16 +160,21 @@ export function createWsNativeApi(): NativeApi {
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
+      setCodexOpenAiEnv: (input) => transport.request(WS_METHODS.codexSetOpenAiEnv, input),
     },
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
       dispatchCommand: (command) =>
-        transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, { command }),
+        transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, {
+          command,
+        }),
       getTurnDiff: (input) => transport.request(ORCHESTRATION_WS_METHODS.getTurnDiff, input),
       getFullThreadDiff: (input) =>
         transport.request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, input),
       replayEvents: (fromSequenceExclusive) =>
-        transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
+        transport.request(ORCHESTRATION_WS_METHODS.replayEvents, {
+          fromSequenceExclusive,
+        }),
       onDomainEvent: (callback) =>
         transport.subscribe(ORCHESTRATION_WS_CHANNELS.domainEvent, (message) =>
           callback(message.data),

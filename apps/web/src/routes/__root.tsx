@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
-import { Throttler } from "@tanstack/react-pacer";
+import { Throttler, useDebouncedValue } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { Button } from "../components/ui/button";
@@ -24,6 +24,7 @@ import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { useAppSettings } from "../appSettings";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -52,11 +53,43 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <EventRouter />
+        <CodexOpenAiEnvSync />
         <DesktopProjectBootstrap />
         <Outlet />
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function CodexOpenAiEnvSync() {
+  const { settings } = useAppSettings();
+  const api = readNativeApi();
+  const [debouncedApiKey] = useDebouncedValue(settings.codexOpenaiApiKey, {
+    wait: 300,
+  });
+  const [debouncedBaseUrl] = useDebouncedValue(settings.codexOpenaiBaseUrl, {
+    wait: 300,
+  });
+  const lastSignatureRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!api) return;
+    const openaiApiKey = debouncedApiKey.trim();
+    const openaiBaseUrl = debouncedBaseUrl.trim();
+    const signature = `${openaiBaseUrl}::${openaiApiKey}`;
+    if (signature === lastSignatureRef.current) {
+      return;
+    }
+    lastSignatureRef.current = signature;
+    void api.server
+      .setCodexOpenAiEnv({
+        openaiApiKey: openaiApiKey.length > 0 ? openaiApiKey : null,
+        openaiBaseUrl: openaiBaseUrl.length > 0 ? openaiBaseUrl : null,
+      })
+      .catch(() => undefined);
+  }, [api, debouncedApiKey, debouncedBaseUrl]);
+
+  return null;
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
@@ -138,7 +171,9 @@ function EventRouter() {
   );
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
   const pathnameRef = useRef(pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
 
@@ -192,10 +227,14 @@ function EventRouter() {
       () => {
         if (needsProviderInvalidation) {
           needsProviderInvalidation = false;
-          void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
+          void queryClient.invalidateQueries({
+            queryKey: providerQueryKeys.all,
+          });
           // Invalidate workspace entry queries so the @-mention file picker
           // reflects files created, deleted, or restored during this turn.
-          void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+          void queryClient.invalidateQueries({
+            queryKey: projectQueryKeys.all,
+          });
         }
         void syncSnapshot();
       },
@@ -260,7 +299,9 @@ function EventRouter() {
     // don't produce duplicate toasts.
     let subscribed = false;
     const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
-      void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
+      void queryClient.invalidateQueries({
+        queryKey: serverQueryKeys.config(),
+      });
       if (!subscribed) return;
       const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
       if (!issue) {

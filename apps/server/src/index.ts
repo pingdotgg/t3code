@@ -10,12 +10,14 @@ import { version } from "../package.json" with { type: "json" };
 import { ServerLive } from "./wsServer";
 import { NetService } from "@t3tools/shared/Net";
 import { FetchHttpClient } from "effect/unstable/http";
+import { CodexOpenAiEnvOverridesLive } from "./provider/Services/CodexOpenAiEnvOverrides";
 
 const RuntimeLayer = Layer.empty.pipe(
   Layer.provideMerge(CliConfig.layer),
   Layer.provideMerge(ServerLive),
   Layer.provideMerge(OpenLive),
   Layer.provideMerge(NetService.layer),
+  Layer.provideMerge(CodexOpenAiEnvOverridesLive),
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(FetchHttpClient.layer),
 );

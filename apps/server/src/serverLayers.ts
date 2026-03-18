@@ -25,6 +25,7 @@ import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
+import { CodexOpenAiEnvOverrides } from "./provider/Services/CodexOpenAiEnvOverrides";
 
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
 import { KeybindingsLive } from "./keybindings";
@@ -40,7 +41,11 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
   ProviderUnsupportedError,
-  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService
+  | SqlClient.SqlClient
+  | ServerConfig
+  | FileSystem.FileSystem
+  | AnalyticsService
+  | CodexOpenAiEnvOverrides
 > {
   return Effect.gen(function* () {
     const { stateDir } = yield* ServerConfig;
