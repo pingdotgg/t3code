@@ -838,6 +838,13 @@ function configureAutoUpdater(): void {
     }
   }
 
+  if (process.env.T3CODE_DESKTOP_MOCK_UPDATES) {
+    autoUpdater.setFeedURL({
+      provider: "generic",
+      url: `http://localhost:${process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
+    });
+  }
+
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   // Keep alpha branding, but force all installs onto the stable update track.

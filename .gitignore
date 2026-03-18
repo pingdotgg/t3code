@@ -12,6 +12,7 @@ packages/*/dist
 build/
 .logs/
 release/
+release-mock/
 .t3
 .idea/
 apps/web/.playwright
