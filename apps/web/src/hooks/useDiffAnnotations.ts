@@ -49,12 +49,15 @@ export function useDiffAnnotations(
     async (comment: ReviewComment) => {
       if (!threadId || !publishContext) return;
       const api = ensureNativeApi();
-      await api.reviewComment.publish({
+      const result = await api.reviewComment.publish({
         threadId,
         cwd: publishContext.cwd,
         prUrl: publishContext.prUrl,
         commentId: comment.id,
       });
+      if (!result.published || result.published === 0) {
+        throw new Error(result.error ?? "GitHub rejected the comment — check your permissions and PR access.");
+      }
       await invalidateReviewCommentQueries(queryClient, threadId);
     },
     [threadId, publishContext, queryClient],

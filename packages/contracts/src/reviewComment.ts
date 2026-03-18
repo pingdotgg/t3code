@@ -74,5 +74,7 @@ export const ReviewCommentPublishResult = Schema.Struct({
   published: Schema.Number,
   failed: Schema.optional(Schema.Number),
   url: Schema.optional(Schema.String),
+  /** Human-readable error when publishing fails (e.g. gh api error output). */
+  error: Schema.optional(Schema.String),
 });
 export type ReviewCommentPublishResult = typeof ReviewCommentPublishResult.Type;

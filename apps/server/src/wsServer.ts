@@ -1226,7 +1226,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
                 return { ok: true as const, url: prUrl };
               }
             }),
-            Effect.catch(() => Effect.succeed({ ok: false as const, url: prUrl })),
+            Effect.catch((err) =>
+              Effect.succeed({
+                ok: false as const,
+                url: prUrl,
+                error: err instanceof Error ? err.message : "GitHub API request failed",
+              }),
+            ),
           );
 
         if (batchResult.ok) {
@@ -1287,6 +1293,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return {
           published,
           failed: comments.length - published,
+          ...(published === 0 ? { error: batchResult.error ?? "All publish attempts failed" } : {}),
           url: prUrl,
         };
       }
