@@ -127,6 +127,7 @@ const makeReviewRequestRepository = Effect.gen(function* () {
           pr_title = ${row.prTitle},
           author_login = ${row.authorLogin},
           is_bot = ${row.isBot},
+          status = CASE WHEN review_requests.status = 'dismissed' THEN 'pending' ELSE review_requests.status END,
           pr_body = ${row.prBody},
           pr_labels = ${row.prLabels},
           updated_at = ${row.updatedAt}
