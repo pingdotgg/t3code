@@ -28,12 +28,7 @@ export const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
     high: "High",
     xhigh: "Extra High",
   };
-  const triggerLabel = [
-    reasoningLabelByOption[props.effort],
-    ...(props.fastModeEnabled ? ["Fast"] : []),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const effortLabel = reasoningLabelByOption[props.effort];
 
   return (
     <Menu
@@ -47,12 +42,24 @@ export const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
           <Button
             size="sm"
             variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+            className="min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:max-w-48 sm:px-3 [&_svg]:mx-0"
           />
         }
       >
-        <span>{triggerLabel}</span>
-        <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+        <span className="flex min-w-0 w-full items-center gap-2 overflow-hidden">
+          {props.fastModeEnabled ? (
+            <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+              <span className="min-w-0 flex-1 truncate">{effortLabel}</span>
+              <span className="shrink-0 text-muted-foreground/60" aria-hidden="true">
+                ·
+              </span>
+              <span className="shrink-0">Fast</span>
+            </span>
+          ) : (
+            <span className="min-w-0 flex-1 truncate">{effortLabel}</span>
+          )}
+          <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
+        </span>
       </MenuTrigger>
       <MenuPopup align="start">
         <MenuGroup>

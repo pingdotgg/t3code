@@ -4,6 +4,11 @@ import { randomUUID } from "~/lib/utils";
 import { getAppModelOptions } from "../appSettings";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
+import {
+  filterTerminalContextsWithText,
+  stripInlineTerminalContextPlaceholders,
+  type TerminalContextDraft,
+} from "../lib/terminalContext";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const WORKTREE_BRANCH_PREFIX = "t3code";
@@ -121,5 +126,46 @@ export function getCustomModelOptionsByProvider(settings: {
 }): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
   return {
     codex: getAppModelOptions("codex", settings.customCodexModels),
+  };
+}
+
+export function deriveComposerSendState(options: {
+  prompt: string;
+  imageCount: number;
+  terminalContexts: ReadonlyArray<TerminalContextDraft>;
+}): {
+  trimmedPrompt: string;
+  sendableTerminalContexts: TerminalContextDraft[];
+  expiredTerminalContextCount: number;
+  hasSendableContent: boolean;
+} {
+  const trimmedPrompt = stripInlineTerminalContextPlaceholders(options.prompt).trim();
+  const sendableTerminalContexts = filterTerminalContextsWithText(options.terminalContexts);
+  const expiredTerminalContextCount =
+    options.terminalContexts.length - sendableTerminalContexts.length;
+  return {
+    trimmedPrompt,
+    sendableTerminalContexts,
+    expiredTerminalContextCount,
+    hasSendableContent:
+      trimmedPrompt.length > 0 || options.imageCount > 0 || sendableTerminalContexts.length > 0,
+  };
+}
+
+export function buildExpiredTerminalContextToastCopy(
+  expiredTerminalContextCount: number,
+  variant: "omitted" | "empty",
+): { title: string; description: string } {
+  const count = Math.max(1, Math.floor(expiredTerminalContextCount));
+  const noun = count === 1 ? "Expired terminal context" : "Expired terminal contexts";
+  if (variant === "empty") {
+    return {
+      title: `${noun} won't be sent`,
+      description: "Remove it or re-add it to include terminal output.",
+    };
+  }
+  return {
+    title: `${noun} omitted from message`,
+    description: "Re-add it if you want that terminal output included.",
   };
 }

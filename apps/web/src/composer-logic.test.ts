@@ -5,10 +5,11 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
-  isCollapsedCursorAdjacentToMention,
+  isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
+import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 describe("detectComposerTrigger", () => {
   it("detects @path trigger at cursor", () => {
@@ -192,16 +193,16 @@ describe("replaceTextRange trailing space consumption", () => {
   });
 });
 
-describe("isCollapsedCursorAdjacentToMention", () => {
+describe("isCollapsedCursorAdjacentToInlineToken", () => {
   it("returns false when no mention exists", () => {
-    expect(isCollapsedCursorAdjacentToMention("plain text", 6, "left")).toBe(false);
-    expect(isCollapsedCursorAdjacentToMention("plain text", 6, "right")).toBe(false);
+    expect(isCollapsedCursorAdjacentToInlineToken("plain text", 6, "left")).toBe(false);
+    expect(isCollapsedCursorAdjacentToInlineToken("plain text", 6, "right")).toBe(false);
   });
 
   it("keeps @query typing non-adjacent while no mention pill exists", () => {
     const text = "hello @pac";
-    expect(isCollapsedCursorAdjacentToMention(text, text.length, "left")).toBe(false);
-    expect(isCollapsedCursorAdjacentToMention(text, text.length, "right")).toBe(false);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, text.length, "left")).toBe(false);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, text.length, "right")).toBe(false);
   });
 
   it("detects left adjacency only when cursor is directly after a mention", () => {
@@ -209,9 +210,9 @@ describe("isCollapsedCursorAdjacentToMention", () => {
     const mentionStart = "open ".length;
     const mentionEnd = mentionStart + 1;
 
-    expect(isCollapsedCursorAdjacentToMention(text, mentionEnd, "left")).toBe(true);
-    expect(isCollapsedCursorAdjacentToMention(text, mentionStart, "left")).toBe(false);
-    expect(isCollapsedCursorAdjacentToMention(text, mentionEnd + 1, "left")).toBe(false);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionEnd, "left")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionStart, "left")).toBe(false);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionEnd + 1, "left")).toBe(false);
   });
 
   it("detects right adjacency only when cursor is directly before a mention", () => {
@@ -219,9 +220,18 @@ describe("isCollapsedCursorAdjacentToMention", () => {
     const mentionStart = "open ".length;
     const mentionEnd = mentionStart + 1;
 
-    expect(isCollapsedCursorAdjacentToMention(text, mentionStart, "right")).toBe(true);
-    expect(isCollapsedCursorAdjacentToMention(text, mentionEnd, "right")).toBe(false);
-    expect(isCollapsedCursorAdjacentToMention(text, mentionStart - 1, "right")).toBe(false);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionStart, "right")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionEnd, "right")).toBe(false);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, mentionStart - 1, "right")).toBe(false);
+  });
+
+  it("treats terminal pills as inline tokens for adjacency checks", () => {
+    const text = `open ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} next`;
+    const tokenStart = "open ".length;
+    const tokenEnd = tokenStart + 1;
+
+    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
   });
 });
 

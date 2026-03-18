@@ -6,6 +6,11 @@ import {
   createDebouncedStorage,
   useComposerDraftStore,
 } from "./composerDraftStore";
+import {
+  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+  insertInlineTerminalContextPlaceholder,
+  type TerminalContextDraft,
+} from "./lib/terminalContext";
 
 function makeImage(input: {
   id: string;
@@ -31,6 +36,26 @@ function makeImage(input: {
     sizeBytes: file.size,
     previewUrl: input.previewUrl,
     file,
+  };
+}
+
+function makeTerminalContext(input: {
+  id: string;
+  text?: string;
+  terminalId?: string;
+  terminalLabel?: string;
+  lineStart?: number;
+  lineEnd?: number;
+}): TerminalContextDraft {
+  return {
+    id: input.id,
+    threadId: ThreadId.makeUnsafe("thread-dedupe"),
+    terminalId: input.terminalId ?? "default",
+    terminalLabel: input.terminalLabel ?? "Terminal 1",
+    lineStart: input.lineStart ?? 4,
+    lineEnd: input.lineEnd ?? 5,
+    text: input.text ?? "git status\nOn branch main",
+    createdAt: "2026-03-13T12:00:00.000Z",
   };
 }
 
@@ -155,6 +180,148 @@ describe("composerDraftStore clearComposerContent", () => {
     const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
     expect(draft).toBeUndefined();
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:optimistic");
+  });
+});
+
+describe("composerDraftStore terminal contexts", () => {
+  const threadId = ThreadId.makeUnsafe("thread-dedupe");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("deduplicates identical terminal contexts by selection signature", () => {
+    const first = makeTerminalContext({ id: "ctx-1" });
+    const duplicate = makeTerminalContext({ id: "ctx-2" });
+
+    useComposerDraftStore.getState().addTerminalContexts(threadId, [first, duplicate]);
+
+    const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
+    expect(draft?.terminalContexts.map((context) => context.id)).toEqual(["ctx-1"]);
+  });
+
+  it("clears terminal contexts when clearing composer content", () => {
+    useComposerDraftStore
+      .getState()
+      .addTerminalContext(threadId, makeTerminalContext({ id: "ctx-1" }));
+
+    useComposerDraftStore.getState().clearComposerContent(threadId);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+
+  it("inserts terminal contexts at the requested inline prompt position", () => {
+    const firstInsertion = insertInlineTerminalContextPlaceholder("alpha beta", 6);
+    const secondInsertion = insertInlineTerminalContextPlaceholder(firstInsertion.prompt, 0);
+
+    expect(
+      useComposerDraftStore
+        .getState()
+        .insertTerminalContext(
+          threadId,
+          firstInsertion.prompt,
+          makeTerminalContext({ id: "ctx-1" }),
+          firstInsertion.contextIndex,
+        ),
+    ).toBe(true);
+    expect(
+      useComposerDraftStore.getState().insertTerminalContext(
+        threadId,
+        secondInsertion.prompt,
+        makeTerminalContext({
+          id: "ctx-2",
+          terminalLabel: "Terminal 2",
+          lineStart: 9,
+          lineEnd: 10,
+        }),
+        secondInsertion.contextIndex,
+      ),
+    ).toBe(true);
+
+    const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
+    expect(draft?.prompt).toBe(
+      `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} alpha ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} beta`,
+    );
+    expect(draft?.terminalContexts.map((context) => context.id)).toEqual(["ctx-2", "ctx-1"]);
+  });
+
+  it("omits terminal context text from persisted drafts", () => {
+    useComposerDraftStore
+      .getState()
+      .addTerminalContext(threadId, makeTerminalContext({ id: "ctx-persist" }));
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+      };
+    };
+    const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadId?: Record<string, { terminalContexts?: Array<Record<string, unknown>> }>;
+    };
+
+    expect(
+      persistedState.draftsByThreadId?.[threadId]?.terminalContexts?.[0],
+      "Expected terminal context metadata to be persisted.",
+    ).toMatchObject({
+      id: "ctx-persist",
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 4,
+      lineEnd: 5,
+    });
+    expect(
+      persistedState.draftsByThreadId?.[threadId]?.terminalContexts?.[0]?.text,
+    ).toBeUndefined();
+  });
+
+  it("hydrates persisted terminal contexts without in-memory snapshot text", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+            attachments: [],
+            terminalContexts: [
+              {
+                id: "ctx-rehydrated",
+                threadId,
+                createdAt: "2026-03-13T12:00:00.000Z",
+                terminalId: "default",
+                terminalLabel: "Terminal 1",
+                lineStart: 4,
+                lineEnd: 5,
+              },
+            ],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectId: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.draftsByThreadId[threadId]?.terminalContexts).toMatchObject([
+      {
+        id: "ctx-rehydrated",
+        terminalId: "default",
+        terminalLabel: "Terminal 1",
+        lineStart: 4,
+        lineEnd: 5,
+        text: "",
+      },
+    ]);
   });
 });
 
