@@ -25,5 +25,13 @@ export function computeMessageDurationStart(
 }
 
 export function normalizeCompactToolLabel(value: string): string {
-  return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+  let label = value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+
+  // Humanize MCP tool names: "Mcp__server-name__tool_name" → "Tool name"
+  const mcpMatch = label.match(/^Mcp__[^_]+__(.+)$/i);
+  if (mcpMatch) {
+    label = mcpMatch[1]!.replace(/_/g, " ");
+  }
+
+  return label;
 }
