@@ -1,3 +1,5 @@
+import type { GitWorktreeBranchNaming } from "@t3tools/contracts";
+
 /**
  * Sanitize an arbitrary string into a valid, lowercase git branch fragment.
  * Strips quotes, collapses separators, limits to 64 chars.
@@ -33,6 +35,73 @@ export function sanitizeFeatureBranchName(raw: string): string {
 }
 
 const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
+export const DEFAULT_WORKTREE_BRANCH_PREFIX = "t3code";
+const TEMP_WORKTREE_BRANCH_TOKEN_PATTERN = /^[0-9a-f]{8}$/;
+
+function resolveWorktreeBranchPrefix(naming?: GitWorktreeBranchNaming): string {
+  if (naming?.mode === "prefix") {
+    return sanitizeBranchFragment(naming.prefix);
+  }
+  return DEFAULT_WORKTREE_BRANCH_PREFIX;
+}
+
+function stripKnownWorktreePrefix(raw: string, configuredPrefix: string): string {
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^refs\/heads\//, "")
+    .replace(/['"`]/g, "");
+  const candidatePrefixes = new Set([configuredPrefix, DEFAULT_WORKTREE_BRANCH_PREFIX]);
+  for (const prefix of candidatePrefixes) {
+    const prefixWithSeparator = `${prefix}/`;
+    if (normalized.startsWith(prefixWithSeparator)) {
+      return normalized.slice(prefixWithSeparator.length);
+    }
+  }
+  return normalized;
+}
+
+export function buildInitialWorktreeBranchName(
+  naming?: GitWorktreeBranchNaming,
+  token = crypto.randomUUID().slice(0, 8).toLowerCase(),
+): string {
+  if (naming?.mode === "full") {
+    return naming.branchName.trim();
+  }
+  return `${resolveWorktreeBranchPrefix(naming)}/${token}`;
+}
+
+export function buildFinalWorktreeBranchName(
+  rawGeneratedBranch: string,
+  naming?: GitWorktreeBranchNaming,
+): string {
+  if (naming?.mode === "full") {
+    return naming.branchName.trim();
+  }
+
+  const prefix = resolveWorktreeBranchPrefix(naming);
+  const branchFragment = sanitizeBranchFragment(
+    stripKnownWorktreePrefix(rawGeneratedBranch, prefix),
+  );
+  return `${prefix}/${branchFragment}`;
+}
+
+export function isTemporaryWorktreeBranchName(
+  branch: string,
+  naming?: GitWorktreeBranchNaming,
+): boolean {
+  if (naming?.mode === "full") {
+    return false;
+  }
+
+  const normalized = branch.trim().toLowerCase();
+  const prefix = resolveWorktreeBranchPrefix(naming);
+  if (!normalized.startsWith(`${prefix}/`)) {
+    return false;
+  }
+  const token = normalized.slice(prefix.length + 1);
+  return TEMP_WORKTREE_BRANCH_TOKEN_PATTERN.test(token);
+}
 
 /**
  * Resolve a unique `feature/…` branch name that doesn't collide with

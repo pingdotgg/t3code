@@ -7,16 +7,27 @@ import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
 import {
+  DEFAULT_DRAFT_WORKTREE_BRANCH_NAMING_STATE,
+  updateDraftWorktreeBranchNamingMode,
+  type DraftWorktreeBranchNamingMode,
+} from "../worktreeBranchNaming";
+import {
   EnvMode,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
 } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
+import { Input } from "./ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 
 const envModeItems = [
   { value: "local", label: "Local" },
   { value: "worktree", label: "New worktree" },
+] as const;
+const worktreeBranchNamingModeItems = [
+  { value: "auto", label: "Auto Branch Name" },
+  { value: "prefix", label: "Prefix" },
+  { value: "full", label: "Custom Branch Name" },
 ] as const;
 
 interface BranchToolbarProps {
@@ -53,6 +64,10 @@ export default function BranchToolbar({
     hasServerThread,
     draftThreadEnvMode: draftThread?.envMode,
   });
+  const worktreeBranchNaming =
+    draftThread?.worktreeBranchNaming ?? DEFAULT_DRAFT_WORKTREE_BRANCH_NAMING_STATE;
+  const shouldShowWorktreeBranchNaming =
+    !envLocked && !hasServerThread && effectiveEnvMode === "worktree" && !activeWorktreePath;
 
   const setThreadBranch = useCallback(
     (branch: string | null, worktreePath: string | null) => {
@@ -106,54 +121,119 @@ export default function BranchToolbar({
     ],
   );
 
+  const updateWorktreeBranchNaming = useCallback(
+    (nextValue: typeof worktreeBranchNaming) => {
+      setDraftThreadContext(threadId, {
+        worktreeBranchNaming: nextValue,
+      });
+    },
+    [setDraftThreadContext, threadId],
+  );
+
   if (!activeThreadId || !activeProject) return null;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-5 pb-3 pt-1">
-      {envLocked || activeWorktreePath ? (
-        <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
-          {activeWorktreePath ? (
-            <>
-              <GitForkIcon className="size-3" />
-              Worktree
-            </>
-          ) : (
-            <>
-              <FolderIcon className="size-3" />
-              Local
-            </>
-          )}
-        </span>
-      ) : (
-        <Select
-          value={effectiveEnvMode}
-          onValueChange={(value) => onEnvModeChange(value as EnvMode)}
-          items={envModeItems}
-        >
-          <SelectTrigger variant="ghost" size="xs" className="font-medium">
-            {effectiveEnvMode === "worktree" ? (
-              <GitForkIcon className="size-3" />
+    <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-2 px-5 pb-3 pt-1">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {envLocked || activeWorktreePath ? (
+          <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
+            {activeWorktreePath ? (
+              <>
+                <GitForkIcon className="size-3" />
+                Worktree
+              </>
             ) : (
-              <FolderIcon className="size-3" />
-            )}
-            <SelectValue />
-          </SelectTrigger>
-          <SelectPopup>
-            <SelectItem value="local">
-              <span className="inline-flex items-center gap-1.5">
+              <>
                 <FolderIcon className="size-3" />
                 Local
-              </span>
-            </SelectItem>
-            <SelectItem value="worktree">
-              <span className="inline-flex items-center gap-1.5">
+              </>
+            )}
+          </span>
+        ) : (
+          <Select
+            value={effectiveEnvMode}
+            onValueChange={(value) => onEnvModeChange(value as EnvMode)}
+            items={envModeItems}
+          >
+            <SelectTrigger variant="ghost" size="xs" className="font-medium">
+              {effectiveEnvMode === "worktree" ? (
                 <GitForkIcon className="size-3" />
-                New worktree
-              </span>
-            </SelectItem>
-          </SelectPopup>
-        </Select>
-      )}
+              ) : (
+                <FolderIcon className="size-3" />
+              )}
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup>
+              <SelectItem value="local">
+                <span className="inline-flex items-center gap-1.5">
+                  <FolderIcon className="size-3" />
+                  Local
+                </span>
+              </SelectItem>
+              <SelectItem value="worktree">
+                <span className="inline-flex items-center gap-1.5">
+                  <GitForkIcon className="size-3" />
+                  New worktree
+                </span>
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        )}
+
+        {shouldShowWorktreeBranchNaming ? (
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Select
+              value={worktreeBranchNaming.mode}
+              onValueChange={(value) =>
+                updateWorktreeBranchNaming(
+                  updateDraftWorktreeBranchNamingMode(
+                    worktreeBranchNaming,
+                    value as DraftWorktreeBranchNamingMode,
+                  ),
+                )
+              }
+              items={worktreeBranchNamingModeItems}
+            >
+              <SelectTrigger size="xs" variant="ghost" className="font-medium">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="auto">Auto Branch Name</SelectItem>
+                <SelectItem value="prefix">Prefix</SelectItem>
+                <SelectItem value="full">Custom Branch Name</SelectItem>
+              </SelectPopup>
+            </Select>
+
+            {worktreeBranchNaming.mode !== "auto" ? (
+              <Input
+                size="sm"
+                className="w-44 sm:w-48"
+                value={
+                  worktreeBranchNaming.mode === "prefix"
+                    ? worktreeBranchNaming.prefix
+                    : worktreeBranchNaming.branchName
+                }
+                placeholder={
+                  worktreeBranchNaming.mode === "prefix" ? "Prefix" : "feature/my-branch"
+                }
+                aria-label={
+                  worktreeBranchNaming.mode === "prefix"
+                    ? "Worktree branch prefix"
+                    : "Full worktree branch name"
+                }
+                onChange={(event) =>
+                  updateWorktreeBranchNaming({
+                    ...worktreeBranchNaming,
+                    ...(worktreeBranchNaming.mode === "prefix"
+                      ? { prefix: event.target.value }
+                      : { branchName: event.target.value }),
+                  })
+                }
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
       <BranchToolbarBranchSelector
         activeProjectCwd={activeProject.cwd}

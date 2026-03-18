@@ -12,6 +12,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
+  type GitWorktreeBranchNaming,
 } from "@t3tools/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -83,7 +84,14 @@ describe("ProviderCommandReactor", () => {
     createdStateDirs.clear();
   });
 
-  async function createHarness(input?: { readonly stateDir?: string }) {
+  async function createHarness(input?: {
+    readonly stateDir?: string;
+    readonly threadCreate?: {
+      readonly branch?: string | null;
+      readonly worktreePath?: string | null;
+      readonly worktreeBranchNaming?: GitWorktreeBranchNaming;
+    };
+  }) {
     const now = new Date().toISOString();
     const stateDir = input?.stateDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
     createdStateDirs.add(stateDir);
@@ -171,7 +179,7 @@ describe("ProviderCommandReactor", () => {
             : "renamed-branch",
       }),
     );
-    const generateBranchName = vi.fn(() =>
+    const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>(() =>
       Effect.fail(
         new TextGenerationError({
           operation: "generateBranchName",
@@ -242,8 +250,11 @@ describe("ProviderCommandReactor", () => {
         model: "gpt-5-codex",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
+        branch: input?.threadCreate?.branch ?? null,
+        worktreePath: input?.threadCreate?.worktreePath ?? null,
+        ...(input?.threadCreate?.worktreeBranchNaming
+          ? { worktreeBranchNaming: input.threadCreate.worktreeBranchNaming }
+          : {}),
         createdAt: now,
       }),
     );
@@ -387,6 +398,92 @@ describe("ProviderCommandReactor", () => {
       threadId: ThreadId.makeUnsafe("thread-1"),
       interactionMode: "plan",
     });
+  });
+
+  it("renames temporary worktree branches using a custom prefix", async () => {
+    const harness = await createHarness({
+      threadCreate: {
+        branch: "team-branches/deadbeef",
+        worktreePath: "/tmp/provider-project/.t3/worktrees/team-branches",
+        worktreeBranchNaming: {
+          mode: "prefix",
+          prefix: "Team Branches",
+        },
+      },
+    });
+    const now = new Date().toISOString();
+
+    harness.generateBranchName.mockImplementation(
+      () =>
+        Effect.succeed({
+          branch: "feat/session",
+        }) as ReturnType<TextGenerationShape["generateBranchName"]>,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-custom-prefix"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-custom-prefix"),
+          role: "user",
+          text: "rename this worktree branch",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
+    expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
+      oldBranch: "team-branches/deadbeef",
+      newBranch: "team-branches/feat/session",
+    });
+  });
+
+  it("skips worktree branch rename when the full branch name is explicit", async () => {
+    const harness = await createHarness({
+      threadCreate: {
+        branch: "feature/my-custom-branch",
+        worktreePath: "/tmp/provider-project/.t3/worktrees/full-branch",
+        worktreeBranchNaming: {
+          mode: "full",
+          branchName: "feature/my-custom-branch",
+        },
+      },
+    });
+    const now = new Date().toISOString();
+
+    harness.generateBranchName.mockImplementation(
+      () =>
+        Effect.succeed({
+          branch: "ignored",
+        }) as ReturnType<TextGenerationShape["generateBranchName"]>,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-full-name"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-full-name"),
+          role: "user",
+          text: "use the explicit branch name",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.generateBranchName).not.toHaveBeenCalled();
+    expect(harness.renameBranch).not.toHaveBeenCalled();
   });
 
   it("reuses the same provider session when runtime mode is unchanged", async () => {
