@@ -1735,6 +1735,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
     yield* Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore;
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const sql = yield* SqlClient.SqlClient;
 
       yield* eventStore.append({
         type: "thread.turn-start-requested",
@@ -1755,6 +1756,26 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
       });
 
       yield* projectionPipeline.bootstrap;
+
+      const sessionRows = yield* sql<{
+        readonly status: string;
+        readonly runtimeMode: string;
+        readonly providerName: string | null;
+      }>`
+        SELECT
+          status,
+          runtime_mode AS "runtimeMode",
+          provider_name AS "providerName"
+        FROM projection_thread_sessions
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(sessionRows, [
+        {
+          status: "starting",
+          runtimeMode: "approval-required",
+          providerName: null,
+        },
+      ]);
     }).pipe(Effect.provide(firstProjectionLayer));
 
     const turnRows = yield* Effect.gen(function* () {

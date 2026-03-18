@@ -10,6 +10,7 @@ import {
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
+  hasLatestTurnObservationSince,
   hasToolActivityForTurn,
   isLatestTurnSettled,
 } from "./session-logic";
@@ -579,6 +580,7 @@ describe("hasToolActivityForTurn", () => {
 describe("isLatestTurnSettled", () => {
   const latestTurn = {
     turnId: TurnId.makeUnsafe("turn-1"),
+    requestedAt: "2026-02-27T21:10:00.000Z",
     startedAt: "2026-02-27T21:10:00.000Z",
     completedAt: "2026-02-27T21:10:06.000Z",
   } as const;
@@ -615,6 +617,7 @@ describe("isLatestTurnSettled", () => {
       isLatestTurnSettled(
         {
           turnId: TurnId.makeUnsafe("turn-1"),
+          requestedAt: "2026-02-27T21:10:00.000Z",
           startedAt: null,
           completedAt: "2026-02-27T21:10:06.000Z",
         },
@@ -627,6 +630,7 @@ describe("isLatestTurnSettled", () => {
 describe("deriveActiveWorkStartedAt", () => {
   const latestTurn = {
     turnId: TurnId.makeUnsafe("turn-1"),
+    requestedAt: "2026-02-27T21:10:00.000Z",
     startedAt: "2026-02-27T21:10:00.000Z",
     completedAt: "2026-02-27T21:10:06.000Z",
   } as const;
@@ -662,6 +666,7 @@ describe("deriveActiveWorkStartedAt", () => {
       deriveActiveWorkStartedAt(
         {
           turnId: TurnId.makeUnsafe("turn-1"),
+          requestedAt: "2026-02-27T21:10:00.000Z",
           startedAt: "2026-02-27T21:10:00.000Z",
           completedAt: "2026-02-27T21:10:06.000Z",
         },
@@ -669,6 +674,36 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+describe("hasLatestTurnObservationSince", () => {
+  it("returns true when a completed turn was observed after send started", () => {
+    expect(
+      hasLatestTurnObservationSince(
+        {
+          turnId: TurnId.makeUnsafe("turn-2"),
+          requestedAt: "2026-02-27T21:11:00.000Z",
+          startedAt: "2026-02-27T21:11:01.000Z",
+          completedAt: "2026-02-27T21:11:03.000Z",
+        },
+        "2026-02-27T21:10:59.000Z",
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false for an older completed turn from before the current send", () => {
+    expect(
+      hasLatestTurnObservationSince(
+        {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          requestedAt: "2026-02-27T21:10:00.000Z",
+          startedAt: "2026-02-27T21:10:00.000Z",
+          completedAt: "2026-02-27T21:10:06.000Z",
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe(false);
   });
 });
 

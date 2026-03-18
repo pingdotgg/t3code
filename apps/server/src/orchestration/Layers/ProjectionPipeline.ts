@@ -751,18 +751,40 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
     _attachmentSideEffects,
   ) =>
     Effect.gen(function* () {
-      if (event.type !== "thread.session-set") {
-        return;
+      switch (event.type) {
+        case "thread.turn-start-requested": {
+          const existingRow = yield* projectionThreadSessionRepository.getByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* projectionThreadSessionRepository.upsert({
+            threadId: event.payload.threadId,
+            status: "starting",
+            providerName:
+              event.payload.provider ??
+              (Option.isSome(existingRow) ? existingRow.value.providerName : null),
+            runtimeMode: event.payload.runtimeMode,
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: event.payload.createdAt,
+          });
+          return;
+        }
+
+        case "thread.session-set":
+          yield* projectionThreadSessionRepository.upsert({
+            threadId: event.payload.threadId,
+            status: event.payload.session.status,
+            providerName: event.payload.session.providerName,
+            runtimeMode: event.payload.session.runtimeMode,
+            activeTurnId: event.payload.session.activeTurnId,
+            lastError: event.payload.session.lastError,
+            updatedAt: event.payload.session.updatedAt,
+          });
+          return;
+
+        default:
+          return;
       }
-      yield* projectionThreadSessionRepository.upsert({
-        threadId: event.payload.threadId,
-        status: event.payload.session.status,
-        providerName: event.payload.session.providerName,
-        runtimeMode: event.payload.session.runtimeMode,
-        activeTurnId: event.payload.session.activeTurnId,
-        lastError: event.payload.session.lastError,
-        updatedAt: event.payload.session.updatedAt,
-      });
     });
 
   const applyThreadTurnsProjection: ProjectorDefinition["apply"] = (

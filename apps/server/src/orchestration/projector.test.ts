@@ -214,6 +214,72 @@ describe("orchestration projector", () => {
     expect(thread?.session?.status).toBe("running");
   });
 
+  it("marks a thread session as starting when a turn is requested", async () => {
+    const createdAt = "2026-02-23T08:00:00.000Z";
+    const requestedAt = "2026-02-23T08:00:02.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterTurnRequested = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.turn-start-requested",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: requestedAt,
+          commandId: "cmd-turn-requested",
+          payload: {
+            threadId: "thread-1",
+            messageId: "message-1",
+            provider: "codex",
+            runtimeMode: "approval-required",
+            interactionMode: "plan",
+            assistantDeliveryMode: "streaming",
+            createdAt: requestedAt,
+          },
+        }),
+      ),
+    );
+
+    const thread = afterTurnRequested.threads[0];
+    expect(thread?.session).toEqual({
+      threadId: "thread-1",
+      status: "starting",
+      providerName: "codex",
+      runtimeMode: "approval-required",
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: requestedAt,
+    });
+    expect(thread?.latestTurn).toBeNull();
+  });
+
   it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {
     const createdAt = "2026-02-23T08:00:00.000Z";
     const updatedAt = "2026-02-23T08:00:05.000Z";

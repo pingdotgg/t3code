@@ -116,7 +116,10 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
   return formatDuration(endedAt - startedAt);
 }
 
-type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
+type LatestTurnTiming = Pick<
+  OrchestrationLatestTurn,
+  "turnId" | "requestedAt" | "startedAt" | "completedAt"
+>;
 type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
 
 export function isLatestTurnSettled(
@@ -139,6 +142,30 @@ export function deriveActiveWorkStartedAt(
     return latestTurn?.startedAt ?? sendStartedAt;
   }
   return sendStartedAt;
+}
+
+export function hasLatestTurnObservationSince(
+  latestTurn: LatestTurnTiming | null,
+  sendStartedAt: string | null,
+): boolean {
+  if (!latestTurn || !sendStartedAt) {
+    return false;
+  }
+
+  const sendStartedAtMs = Date.parse(sendStartedAt);
+  if (Number.isNaN(sendStartedAtMs)) {
+    return false;
+  }
+
+  return [latestTurn.requestedAt, latestTurn.startedAt, latestTurn.completedAt].some(
+    (timestamp) => {
+      if (!timestamp) {
+        return false;
+      }
+      const timestampMs = Date.parse(timestamp);
+      return !Number.isNaN(timestampMs) && timestampMs >= sendStartedAtMs;
+    },
+  );
 }
 
 function requestKindFromRequestType(requestType: unknown): PendingApproval["requestKind"] | null {

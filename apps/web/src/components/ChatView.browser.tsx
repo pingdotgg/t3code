@@ -313,6 +313,20 @@ function addThreadToSnapshot(
   };
 }
 
+function mapThreadInSnapshot(
+  snapshot: OrchestrationReadModel,
+  threadId: ThreadId,
+  mapper: (
+    thread: OrchestrationReadModel["threads"][number],
+  ) => OrchestrationReadModel["threads"][number],
+): OrchestrationReadModel {
+  return {
+    ...snapshot,
+    snapshotSequence: snapshot.snapshotSequence + 1,
+    threads: snapshot.threads.map((thread) => (thread.id === threadId ? mapper(thread) : thread)),
+  };
+}
+
 function createDraftOnlySnapshot(): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-draft-target" as MessageId,
@@ -1193,6 +1207,69 @@ describe("ChatView timeline estimator parity (full app)", () => {
           );
           expect(document.body.textContent).not.toContain(expiredLabel);
           expect(document.body.textContent).toContain("yoowaddup");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("re-enables sending after a turn completes without an observed running phase", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "first prompt");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-fast-complete" as MessageId,
+        targetText: "fast complete target",
+      }),
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      const completedSnapshot = mapThreadInSnapshot(fixture.snapshot, THREAD_ID, (thread) => ({
+        ...thread,
+        latestTurn: {
+          turnId: "turn-fast-complete" as never,
+          state: "completed",
+          requestedAt: isoAt(2_000),
+          startedAt: isoAt(2_001),
+          completedAt: isoAt(2_003),
+          assistantMessageId: null,
+        },
+        session: {
+          ...(thread.session ?? {
+            threadId: THREAD_ID,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: NOW_ISO,
+          }),
+          status: "ready",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: isoAt(2_003),
+        },
+        updatedAt: isoAt(2_003),
+      }));
+      fixture.snapshot = completedSnapshot;
+      useStore.getState().syncServerReadModel(completedSnapshot);
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "second prompt");
+
+      await vi.waitFor(
+        () => {
+          const nextSendButton = document.querySelector<HTMLButtonElement>(
+            'button[aria-label="Send message"]',
+          );
+          expect(nextSendButton).toBeTruthy();
+          expect(nextSendButton?.disabled).toBe(false);
         },
         { timeout: 8_000, interval: 16 },
       );

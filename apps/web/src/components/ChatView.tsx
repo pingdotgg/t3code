@@ -55,6 +55,7 @@ import {
   deriveActivePlanState,
   findLatestProposedPlan,
   deriveWorkLogEntries,
+  hasLatestTurnObservationSince,
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
@@ -2051,6 +2052,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     if (
       phase === "running" ||
+      hasLatestTurnObservationSince(activeLatestTurn, sendStartedAt) ||
       activePendingApproval !== null ||
       activePendingUserInput !== null ||
       activeThread?.error
@@ -2060,9 +2062,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activePendingApproval,
     activePendingUserInput,
+    activeLatestTurn,
     activeThread?.error,
     phase,
     resetSendPhase,
+    sendStartedAt,
     sendPhase,
   ]);
 
