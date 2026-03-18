@@ -91,6 +91,7 @@ import type {
   ReviewRequestListResult,
   ReviewRequestDismissInput,
   ReviewRequestLinkThreadInput,
+  ReviewRequestSubmitInput,
 } from "./reviewRequest";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -233,6 +234,7 @@ export interface NativeApi {
     list: (input: ReviewRequestListInput) => Promise<ReviewRequestListResult>;
     dismiss: (input: ReviewRequestDismissInput) => Promise<void>;
     linkThread: (input: ReviewRequestLinkThreadInput) => Promise<void>;
+    submit: (input: ReviewRequestSubmitInput) => Promise<void>;
   };
   contextMenu: {
     show: <T extends string>(

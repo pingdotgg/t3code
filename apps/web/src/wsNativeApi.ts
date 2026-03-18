@@ -178,6 +178,7 @@ export function createWsNativeApi(): NativeApi {
       list: (input) => transport.request(WS_METHODS.reviewRequestList, input),
       dismiss: (input) => transport.request(WS_METHODS.reviewRequestDismiss, input),
       linkThread: (input) => transport.request(WS_METHODS.reviewRequestLinkThread, input),
+      submit: (input) => transport.request(WS_METHODS.reviewRequestSubmit, input),
     },
     contextMenu: {
       show: async <T extends string>(

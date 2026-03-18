@@ -2,10 +2,10 @@ import type { GitStackedAction } from "@t3tools/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 
-const GIT_STATUS_STALE_TIME_MS = 5_000;
-const GIT_STATUS_REFETCH_INTERVAL_MS = 15_000;
-const GIT_BRANCHES_STALE_TIME_MS = 15_000;
-const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
+const GIT_STATUS_STALE_TIME_MS = 15_000;
+const GIT_STATUS_REFETCH_INTERVAL_MS = 30_000;
+const GIT_BRANCHES_STALE_TIME_MS = 30_000;
+const GIT_BRANCHES_REFETCH_INTERVAL_MS = 120_000;
 
 export const gitQueryKeys = {
   all: ["git"] as const,
@@ -42,6 +42,7 @@ export function gitStatusQueryOptions(cwd: string | null) {
     refetchOnWindowFocus: "always",
     refetchOnReconnect: "always",
     refetchInterval: GIT_STATUS_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -58,6 +59,7 @@ export function gitBranchesQueryOptions(cwd: string | null) {
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -109,8 +111,10 @@ export function reviewRequestListQueryOptions(refetchInterval?: number) {
       const api = ensureNativeApi();
       return api.reviewRequest.list({});
     },
-    staleTime: 30_000,
-    refetchInterval: refetchInterval ?? 60_000,
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+    refetchInterval: refetchInterval ?? 120_000,
+    refetchIntervalInBackground: false,
   });
 }
 

@@ -82,6 +82,22 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { createTtlCache } from "@t3tools/shared/cache";
+
+// Cache PR head SHA for 2 minutes — avoids re-fetching on each comment publish.
+const prHeadShaCache = createTtlCache<string>(120_000);
+
+// Cache review request GitHub results for 60s — collapses duplicate polls from multiple tabs.
+interface CachedReviewRequestPr {
+  url: string;
+  number: number;
+  title: string;
+  body: string;
+  repository: { nameWithOwner: string };
+  author: { login: string };
+  labels: readonly { name: string }[];
+}
+const reviewRequestGhCache = createTtlCache<readonly CachedReviewRequestPr[]>(60_000);
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -1152,23 +1168,81 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         }
         const [, owner, repo, prNumber] = prUrlMatch;
 
-        // Get the PR head SHA from GitHub API instead of the local worktree
-        // (worktree git link may be broken if the clone was removed).
-        const headSha = yield* gitHubCli
+        // Get the PR head SHA (cached for 2 minutes to avoid repeated API calls
+        // when publishing multiple comments in the same review session).
+        const prKey = `${owner}/${repo}#${prNumber}`;
+        const cachedSha = prHeadShaCache.get(prKey);
+        const headSha = cachedSha
+          ? cachedSha
+          : yield* gitHubCli
+              .execute({
+                cwd: body.cwd,
+                args: ["api", `repos/${owner}/${repo}/pulls/${prNumber}`, "--jq", ".head.sha"],
+                timeoutMs: 15_000,
+              })
+              .pipe(
+                Effect.map((r) => r.stdout.trim()),
+                Effect.tap((sha) => Effect.sync(() => prHeadShaCache.set(prKey, sha))),
+                Effect.catch(() =>
+                  // Fallback: try local git rev-parse
+                  git.resolveRef(body.cwd, "HEAD").pipe(Effect.catch(() => Effect.succeed("HEAD"))),
+                ),
+              );
+
+        // Batch-submit all comments as a single pending review (1 API call
+        // instead of N individual comment calls).
+        const reviewPayload = JSON.stringify({
+          commit_id: headSha,
+          event: "COMMENT",
+          comments: comments.map((c) => ({
+            path: c.file,
+            line: c.startLine,
+            body: c.body,
+          })),
+        });
+        const prUrl = `https://github.com/${owner}/${repo}/pull/${prNumber}`;
+
+        const batchResult = yield* gitHubCli
           .execute({
             cwd: body.cwd,
-            args: ["api", `repos/${owner}/${repo}/pulls/${prNumber}`, "--jq", ".head.sha"],
-            timeoutMs: 15_000,
+            args: [
+              "api",
+              `repos/${owner}/${repo}/pulls/${prNumber}/reviews`,
+              "-X",
+              "POST",
+              "--input",
+              "-",
+              // gh reads JSON from stdin when --input is "-"
+            ],
+            timeoutMs: 30_000,
+            stdin: reviewPayload,
           })
           .pipe(
-            Effect.map((r) => r.stdout.trim()),
-            Effect.catch(() =>
-              // Fallback: try local git rev-parse
-              git.resolveRef(body.cwd, "HEAD").pipe(Effect.catch(() => Effect.succeed("HEAD"))),
-            ),
+            Effect.map((r) => {
+              try {
+                const json = JSON.parse(r.stdout) as { html_url?: string };
+                return { ok: true as const, url: json.html_url ?? prUrl };
+              } catch {
+                return { ok: true as const, url: prUrl };
+              }
+            }),
+            Effect.catch(() => Effect.succeed({ ok: false as const, url: prUrl })),
           );
 
-        // Create individual PR review comments, marking each as published on success.
+        if (batchResult.ok) {
+          const now = new Date().toISOString();
+          for (const comment of comments) {
+            yield* reviewCommentRepo
+              .update({ id: comment.id, publishedAt: now, publishedUrl: batchResult.url })
+              .pipe(Effect.ignore);
+          }
+          return {
+            published: comments.length,
+            url: prUrl,
+          };
+        }
+
+        // Fallback: publish comments individually if batch fails.
         let published = 0;
         const now = new Date().toISOString();
         for (const comment of comments) {
@@ -1203,7 +1277,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               Effect.catch(() => Effect.succeed(null as string | null)),
             );
           if (ghUrl !== null) {
-            // Mark comment as published with the GitHub URL
             yield* reviewCommentRepo
               .update({ id: comment.id, publishedAt: now, publishedUrl: ghUrl })
               .pipe(Effect.ignore);
@@ -1214,15 +1287,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return {
           published,
           failed: comments.length - published,
-          url: `https://github.com/${owner}/${repo}/pull/${prNumber}`,
+          url: prUrl,
         };
       }
 
       case WS_METHODS.reviewRequestList: {
-        // Fetch current review requests from GitHub and sync to DB
-        const ghResults = yield* gitHubCli
-          .listReviewRequests({ limit: 30 })
-          .pipe(Effect.catch(() => Effect.succeed([] as const)));
+        // Fetch current review requests from GitHub, using a 60s server-side
+        // cache to collapse duplicate polls from multiple browser tabs.
+        const cachedGhResults = reviewRequestGhCache.get("review-requests");
+        const ghResults = cachedGhResults
+          ? cachedGhResults
+          : yield* gitHubCli.listReviewRequests({ limit: 30 }).pipe(
+              Effect.tap((results) =>
+                Effect.sync(() => reviewRequestGhCache.set("review-requests", results)),
+              ),
+              Effect.catch(() => Effect.succeed([] as const)),
+            );
 
         // Upsert each GitHub result into the DB
         for (const pr of ghResults) {
@@ -1273,6 +1353,39 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           status: "in_review",
           threadId: body.threadId,
         });
+        return {};
+      }
+
+      case WS_METHODS.reviewRequestSubmit: {
+        const body = stripRequestTag(request.body);
+
+        // Parse owner/repo/number from PR URL
+        const prUrlMatch = body.prUrl.match(/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/);
+        if (!prUrlMatch) {
+          return yield* new RouteRequestError({
+            message: "Invalid PR URL format. Expected: https://github.com/owner/repo/pull/123",
+          });
+        }
+        const [, owner, repo, prNumber] = prUrlMatch;
+
+        // Submit the review via GitHub API
+        yield* gitHubCli.execute({
+          cwd: process.cwd(),
+          args: [
+            "api",
+            `repos/${owner}/${repo}/pulls/${prNumber}/reviews`,
+            "-X",
+            "POST",
+            "-f",
+            `event=${body.event}`,
+            "-f",
+            `body=${body.body ?? ""}`,
+          ],
+          timeoutMs: 15_000,
+        });
+
+        // Dismiss the review request after successful submission
+        yield* reviewRequestRepo.updateStatus({ id: body.id, status: "dismissed" });
         return {};
       }
 

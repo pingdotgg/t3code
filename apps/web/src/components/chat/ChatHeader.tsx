@@ -8,6 +8,7 @@ import {
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { JiraActionsControl } from "../JiraActionsControl";
+import { ReviewActionsControl } from "./ReviewActionsControl";
 import { DiffIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -107,6 +108,7 @@ export const ChatHeader = memo(function ChatHeader({
           />
         )}
         {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        <ReviewActionsControl threadId={activeThreadId} />
         <JiraActionsControl
           threadId={activeThreadId}
           linkedJiraTicket={linkedJiraTicket}

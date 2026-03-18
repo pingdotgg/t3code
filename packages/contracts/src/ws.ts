@@ -64,6 +64,7 @@ import {
   ReviewRequestListInput,
   ReviewRequestDismissInput,
   ReviewRequestLinkThreadInput,
+  ReviewRequestSubmitInput,
 } from "./reviewRequest";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
@@ -130,6 +131,7 @@ export const WS_METHODS = {
   reviewRequestList: "reviewRequest.list",
   reviewRequestDismiss: "reviewRequest.dismiss",
   reviewRequestLinkThread: "reviewRequest.linkThread",
+  reviewRequestSubmit: "reviewRequest.submit",
 
   // Server meta
   serverGetConfig: "server.getConfig",
@@ -225,6 +227,7 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.reviewRequestList, ReviewRequestListInput),
   tagRequestBody(WS_METHODS.reviewRequestDismiss, ReviewRequestDismissInput),
   tagRequestBody(WS_METHODS.reviewRequestLinkThread, ReviewRequestLinkThreadInput),
+  tagRequestBody(WS_METHODS.reviewRequestSubmit, ReviewRequestSubmitInput),
 
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),

@@ -41,3 +41,14 @@ export const ReviewRequestLinkThreadInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type ReviewRequestLinkThreadInput = typeof ReviewRequestLinkThreadInput.Type;
+
+export const ReviewRequestSubmitEvent = Schema.Literals(["APPROVE", "REQUEST_CHANGES"]);
+export type ReviewRequestSubmitEvent = typeof ReviewRequestSubmitEvent.Type;
+
+export const ReviewRequestSubmitInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  prUrl: Schema.String,
+  event: ReviewRequestSubmitEvent,
+  body: Schema.optional(Schema.String),
+});
+export type ReviewRequestSubmitInput = typeof ReviewRequestSubmitInput.Type;

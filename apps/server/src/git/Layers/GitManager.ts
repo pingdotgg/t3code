@@ -7,6 +7,7 @@ import {
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
+import { createTtlCache } from "@t3tools/shared/cache";
 
 import { GitCommandError, GitManagerError } from "../Errors.ts";
 import { GitManager, type GitManagerShape } from "../Services/GitManager.ts";
@@ -361,6 +362,13 @@ function toPullRequestHeadRemoteInfo(pr: {
   };
 }
 
+// Cache PR lookups for 60s — the PR state for a branch rarely changes between polls.
+const latestPrCache = createTtlCache<PullRequestInfo | null>(60_000);
+// Cache repository clone URLs for 5 minutes — repo clone URLs are essentially static.
+const repoCloneUrlCache = createTtlCache<{ sshUrl: string; url: string }>(300_000);
+// Cache default branch for 15 minutes — essentially never changes for a given repo.
+const defaultBranchCache = createTtlCache<string | null>(900_000);
+
 export const makeGitManager = Effect.gen(function* () {
   const gitCore = yield* GitCore;
   const gitHubCli = yield* GitHubCli;
@@ -377,10 +385,16 @@ export const makeGitManager = Effect.gen(function* () {
         return;
       }
 
-      const cloneUrls = yield* gitHubCli.getRepositoryCloneUrls({
-        cwd,
-        repository: repositoryNameWithOwner,
-      });
+      const cachedCloneUrls = repoCloneUrlCache.get(repositoryNameWithOwner);
+      const cloneUrls = cachedCloneUrls
+        ? cachedCloneUrls
+        : yield* gitHubCli
+            .getRepositoryCloneUrls({ cwd, repository: repositoryNameWithOwner })
+            .pipe(
+              Effect.tap((urls) =>
+                Effect.sync(() => repoCloneUrlCache.set(repositoryNameWithOwner, urls)),
+              ),
+            );
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
       const preferredRemoteName =
@@ -424,10 +438,16 @@ export const makeGitManager = Effect.gen(function* () {
         return;
       }
 
-      const cloneUrls = yield* gitHubCli.getRepositoryCloneUrls({
-        cwd,
-        repository: repositoryNameWithOwner,
-      });
+      const cachedCloneUrls = repoCloneUrlCache.get(repositoryNameWithOwner);
+      const cloneUrls = cachedCloneUrls
+        ? cachedCloneUrls
+        : yield* gitHubCli
+            .getRepositoryCloneUrls({ cwd, repository: repositoryNameWithOwner })
+            .pipe(
+              Effect.tap((urls) =>
+                Effect.sync(() => repoCloneUrlCache.set(repositoryNameWithOwner, urls)),
+              ),
+            );
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
       const preferredRemoteName =
@@ -587,7 +607,10 @@ export const makeGitManager = Effect.gen(function* () {
       return null;
     });
 
-  const findLatestPr = (cwd: string, details: { branch: string; upstreamRef: string | null }) =>
+  const findLatestPrUncached = (
+    cwd: string,
+    details: { branch: string; upstreamRef: string | null },
+  ) =>
     Effect.gen(function* () {
       const headContext = yield* resolveBranchHeadContext(cwd, details);
       const parsedByNumber = new Map<number, PullRequestInfo>();
@@ -640,6 +663,17 @@ export const makeGitManager = Effect.gen(function* () {
       return parsed[0] ?? null;
     });
 
+  const findLatestPr = (cwd: string, details: { branch: string; upstreamRef: string | null }) =>
+    Effect.gen(function* () {
+      const cacheKey = `${cwd}::${details.branch}`;
+      const cached = latestPrCache.get(cacheKey);
+      if (cached !== undefined) return cached;
+
+      const result = yield* findLatestPrUncached(cwd, details);
+      latestPrCache.set(cacheKey, result);
+      return result;
+    });
+
   const resolveBaseBranch = (
     cwd: string,
     branch: string,
@@ -657,9 +691,14 @@ export const makeGitManager = Effect.gen(function* () {
         }
       }
 
-      const defaultFromGh = yield* gitHubCli
-        .getDefaultBranch({ cwd })
-        .pipe(Effect.catch(() => Effect.succeed(null)));
+      const cachedDefault = defaultBranchCache.get(cwd);
+      if (cachedDefault !== undefined) {
+        return cachedDefault ?? "main";
+      }
+      const defaultFromGh = yield* gitHubCli.getDefaultBranch({ cwd }).pipe(
+        Effect.tap((result) => Effect.sync(() => defaultBranchCache.set(cwd, result))),
+        Effect.catch(() => Effect.succeed(null)),
+      );
       if (defaultFromGh) {
         return defaultFromGh;
       }
@@ -760,6 +799,9 @@ export const makeGitManager = Effect.gen(function* () {
         branch,
         upstreamRef: details.upstreamRef,
       });
+
+      // Invalidate the PR cache since we're about to look up / create a PR
+      latestPrCache.invalidate(`${cwd}::${branch}`);
 
       const existing = yield* findOpenPr(cwd, headContext.headSelectors);
       if (existing) {

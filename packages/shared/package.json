@@ -35,6 +35,10 @@
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"
+    },
+    "./cache": {
+      "types": "./src/cache.ts",
+      "import": "./src/cache.ts"
     }
   },
   "scripts": {
