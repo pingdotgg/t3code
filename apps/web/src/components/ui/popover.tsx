@@ -42,7 +42,10 @@ function PopoverPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        className={cn("z-50 h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none", positionerClassName)}
+        className={cn(
+          "z-50 h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none",
+          positionerClassName,
+        )}
         data-slot="popover-positioner"
         side={side}
         sideOffset={sideOffset}

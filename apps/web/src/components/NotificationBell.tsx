@@ -106,7 +106,13 @@ export default function NotificationBell({
         <TooltipPopup side="bottom">Review requests</TooltipPopup>
       </Tooltip>
 
-      <PopoverPopup side="bottom" align="end" sideOffset={8} positionerClassName="max-sm:z-[52]" className="max-sm:w-[calc(100vw-1rem)] sm:w-96">
+      <PopoverPopup
+        side="bottom"
+        align="end"
+        sideOffset={8}
+        positionerClassName="max-sm:z-[52]"
+        className="max-sm:w-[calc(100vw-1rem)] sm:w-96"
+      >
         <div className="-my-4 -mx-4">
           <div className="border-b border-border/50 px-3 py-2">
             <div className="flex items-center gap-1">
