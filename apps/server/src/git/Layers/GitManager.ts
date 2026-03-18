@@ -639,6 +639,7 @@ export const makeGitManager = Effect.gen(function* () {
     /** When true, also produce a semantic feature branch name. */
     includeBranch?: boolean;
     filePaths?: readonly string[];
+    model?: string;
   }) =>
     Effect.gen(function* () {
       const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths);
@@ -665,6 +666,7 @@ export const makeGitManager = Effect.gen(function* () {
           stagedSummary: limitContext(context.stagedSummary, 8_000),
           stagedPatch: limitContext(context.stagedPatch, 50_000),
           ...(input.includeBranch ? { includeBranch: true } : {}),
+          ...(input.model ? { model: input.model } : {}),
         })
         .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
 
@@ -682,6 +684,7 @@ export const makeGitManager = Effect.gen(function* () {
     commitMessage?: string,
     preResolvedSuggestion?: CommitAndBranchSuggestion,
     filePaths?: readonly string[],
+    model?: string,
   ) =>
     Effect.gen(function* () {
       const suggestion =
@@ -691,6 +694,7 @@ export const makeGitManager = Effect.gen(function* () {
           branch,
           ...(commitMessage ? { commitMessage } : {}),
           ...(filePaths ? { filePaths } : {}),
+          ...(model ? { model } : {}),
         }));
       if (!suggestion) {
         return { status: "skipped_no_changes" as const };
@@ -704,7 +708,7 @@ export const makeGitManager = Effect.gen(function* () {
       };
     });
 
-  const runPrStep = (cwd: string, fallbackBranch: string | null) =>
+  const runPrStep = (cwd: string, fallbackBranch: string | null, model?: string) =>
     Effect.gen(function* () {
       const details = yield* gitCore.statusDetails(cwd);
       const branch = details.branch ?? fallbackBranch;
@@ -748,6 +752,7 @@ export const makeGitManager = Effect.gen(function* () {
         commitSummary: limitContext(rangeContext.commitSummary, 20_000),
         diffSummary: limitContext(rangeContext.diffSummary, 20_000),
         diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+        ...(model ? { model } : {}),
       });
 
       const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
@@ -972,6 +977,7 @@ export const makeGitManager = Effect.gen(function* () {
     branch: string | null,
     commitMessage?: string,
     filePaths?: readonly string[],
+    model?: string,
   ) =>
     Effect.gen(function* () {
       const suggestion = yield* resolveCommitAndBranchSuggestion({
@@ -980,6 +986,7 @@ export const makeGitManager = Effect.gen(function* () {
         ...(commitMessage ? { commitMessage } : {}),
         ...(filePaths ? { filePaths } : {}),
         includeBranch: true,
+        ...(model ? { model } : {}),
       });
       if (!suggestion) {
         return yield* gitManagerError(
@@ -1028,6 +1035,7 @@ export const makeGitManager = Effect.gen(function* () {
           initialStatus.branch,
           input.commitMessage,
           input.filePaths,
+          input.textGenerationModel,
         );
         branchStep = result.branchStep;
         commitMessageForStep = result.resolvedCommitMessage;
@@ -1044,6 +1052,7 @@ export const makeGitManager = Effect.gen(function* () {
         commitMessageForStep,
         preResolvedCommitSuggestion,
         input.filePaths,
+        input.textGenerationModel,
       );
 
       const push = wantsPush
@@ -1051,7 +1060,7 @@ export const makeGitManager = Effect.gen(function* () {
         : { status: "skipped_not_requested" as const };
 
       const pr = wantsPr
-        ? yield* runPrStep(input.cwd, currentBranch)
+        ? yield* runPrStep(input.cwd, currentBranch, input.textGenerationModel)
         : { status: "skipped_not_requested" as const };
 
       return {
