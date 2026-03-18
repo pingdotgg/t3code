@@ -3,41 +3,43 @@ import { Option, Schema } from "effect";
 import { TrimmedNonEmptyString, type ProviderKind } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { useLocalStorage } from "./hooks/useLocalStorage";
+import { EnvMode } from "./components/BranchToolbar.logic";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
-export const TIMESTAMP_FORMAT_OPTIONS = ["locale", "12-hour", "24-hour"] as const;
-export type TimestampFormat = (typeof TIMESTAMP_FORMAT_OPTIONS)[number];
+
+export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
+export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
+
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
   claudeAgent: new Set(getModelOptions("claudeAgent").map((option) => option.slug)),
 };
 
-const AppSettingsSchema = Schema.Struct({
-  codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
-    Schema.withConstructorDefault(() => Option.some("")),
-  ),
-  codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
-    Schema.withConstructorDefault(() => Option.some("")),
-  ),
-  defaultThreadEnvMode: Schema.Literals(["local", "worktree"]).pipe(
-    Schema.withConstructorDefault(() => Option.some("local")),
-  ),
-  confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
-  enableAssistantStreaming: Schema.Boolean.pipe(
-    Schema.withConstructorDefault(() => Option.some(false)),
-  ),
-  timestampFormat: Schema.Literals(["locale", "12-hour", "24-hour"]).pipe(
-    Schema.withConstructorDefault(() => Option.some(DEFAULT_TIMESTAMP_FORMAT)),
-  ),
-  customCodexModels: Schema.Array(Schema.String).pipe(
-    Schema.withConstructorDefault(() => Option.some([])),
-  ),
-  customClaudeModels: Schema.Array(Schema.String).pipe(
-    Schema.withConstructorDefault(() => Option.some([])),
-  ),
+const withDefaults =
+  <
+    S extends Schema.Top & Schema.WithoutConstructorDefault,
+    D extends S["~type.make.in"] & S["Encoded"],
+  >(
+    fallback: () => D,
+  ) =>
+  (schema: S) =>
+    schema.pipe(
+      Schema.withConstructorDefault(() => Option.some(fallback())),
+      Schema.withDecodingDefault(() => fallback()),
+    );
+
+export const AppSettingsSchema = Schema.Struct({
+  codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
+  codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
+  defaultThreadEnvMode: EnvMode.pipe(withDefaults(() => "local" as const satisfies EnvMode)),
+  confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
+  enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => false)),
+  timestampFormat: TimestampFormat.pipe(withDefaults(() => DEFAULT_TIMESTAMP_FORMAT)),
+  customCodexModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
+  customClaudeModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
   textGenerationModel: Schema.optional(TrimmedNonEmptyString),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;

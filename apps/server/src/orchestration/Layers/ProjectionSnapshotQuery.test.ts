@@ -1,4 +1,12 @@
-import { CheckpointRef, EventId, MessageId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EventId,
+  MessageId,
+  ProjectId,
+  ThreadId,
+  TurnId,
+  WorkUnitId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -13,6 +21,7 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.makeUnsafe(value);
+const asWorkUnitId = (value: string): WorkUnitId => WorkUnitId.makeUnsafe(value);
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
@@ -130,6 +139,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           activity_id,
           thread_id,
           turn_id,
+          work_unit_id,
           tone,
           kind,
           summary,
@@ -140,11 +150,45 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'activity-1',
           'thread-1',
           'turn-1',
+          'wu:thread-1:turn:turn-1:root',
           'info',
           'runtime.note',
           'provider started',
           '{"stage":"start"}',
           '2026-02-24T00:00:06.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_work_units (
+          work_unit_id,
+          thread_id,
+          turn_id,
+          parent_work_unit_id,
+          kind,
+          state,
+          title,
+          detail,
+          spawned_by_activity_id,
+          provider_refs_json,
+          started_at,
+          updated_at,
+          completed_at
+        )
+        VALUES (
+          'wu:thread-1:turn:turn-1:root',
+          'thread-1',
+          'turn-1',
+          NULL,
+          'primary_agent',
+          'completed',
+          'Primary agent',
+          NULL,
+          NULL,
+          '{"providerTurnId":"provider-turn-1"}',
+          '2026-02-24T00:00:08.000Z',
+          '2026-02-24T00:00:08.000Z',
+          '2026-02-24T00:00:08.000Z'
         )
       `;
 
@@ -304,7 +348,26 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               summary: "provider started",
               payload: { stage: "start" },
               turnId: asTurnId("turn-1"),
+              workUnitId: asWorkUnitId("wu:thread-1:turn:turn-1:root"),
               createdAt: "2026-02-24T00:00:06.000Z",
+            },
+          ],
+          workUnits: [
+            {
+              id: asWorkUnitId("wu:thread-1:turn:turn-1:root"),
+              turnId: asTurnId("turn-1"),
+              parentWorkUnitId: null,
+              kind: "primary_agent",
+              state: "completed",
+              title: "Primary agent",
+              detail: null,
+              spawnedByActivityId: null,
+              providerRefs: {
+                providerTurnId: "provider-turn-1",
+              },
+              startedAt: "2026-02-24T00:00:08.000Z",
+              updatedAt: "2026-02-24T00:00:08.000Z",
+              completedAt: "2026-02-24T00:00:08.000Z",
             },
           ],
           checkpoints: [

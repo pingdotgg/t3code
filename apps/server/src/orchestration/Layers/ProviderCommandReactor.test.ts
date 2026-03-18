@@ -1097,6 +1097,7 @@ describe("ProviderCommandReactor", () => {
             requestKind: "command",
           },
           turnId: null,
+          workUnitId: null,
           createdAt: now,
         },
         createdAt: now,

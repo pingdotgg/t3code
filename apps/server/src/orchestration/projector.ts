@@ -23,6 +23,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadWorkUnitUpsertedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -133,6 +134,17 @@ function retainThreadProposedPlansAfterRevert(
 ): ReadonlyArray<OrchestrationThread["proposedPlans"][number]> {
   return proposedPlans.filter(
     (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
+  );
+}
+
+function retainThreadWorkUnitsAfterRevert(
+  workUnits: ReadonlyArray<OrchestrationThread["workUnits"][number]>,
+  retainedTurnIds: ReadonlySet<string>,
+): ReadonlyArray<OrchestrationThread["workUnits"][number]> {
+  const retained = workUnits.filter((workUnit) => retainedTurnIds.has(workUnit.turnId));
+  const retainedIds = new Set(retained.map((workUnit) => workUnit.id));
+  return retained.filter(
+    (workUnit) => workUnit.parentWorkUnitId === null || retainedIds.has(workUnit.parentWorkUnitId),
   );
 }
 
@@ -262,7 +274,9 @@ export function projectEvent(
             updatedAt: payload.updatedAt,
             deletedAt: null,
             messages: [],
+            proposedPlans: [],
             activities: [],
+            workUnits: [],
             checkpoints: [],
             session: null,
           },
@@ -563,6 +577,7 @@ export function projectEvent(
             retainedTurnIds,
           ).slice(-200);
           const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
+          const workUnits = retainThreadWorkUnitsAfterRevert(thread.workUnits, retainedTurnIds);
 
           const latestCheckpoint = checkpoints.at(-1) ?? null;
           const latestTurn =
@@ -584,6 +599,7 @@ export function projectEvent(
               messages,
               proposedPlans,
               activities,
+              workUnits,
               latestTurn,
               updatedAt: event.occurredAt,
             }),
@@ -615,6 +631,37 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.work-unit-upserted":
+      return decodeForEvent(
+        ThreadWorkUnitUpsertedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+
+          const workUnits = [
+            ...thread.workUnits.filter((entry) => entry.id !== payload.workUnit.id),
+            payload.workUnit,
+          ].toSorted(
+            (left, right) =>
+              left.startedAt.localeCompare(right.startedAt) || left.id.localeCompare(right.id),
+          );
+
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              workUnits,
               updatedAt: event.occurredAt,
             }),
           };

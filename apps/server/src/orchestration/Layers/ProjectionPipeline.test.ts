@@ -7,6 +7,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
+  WorkUnitId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -172,6 +173,138 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
       for (const row of stateRows) {
         assert.equal(row.lastAppliedSequence, 3);
       }
+    }),
+  );
+
+  it.effect("projects work units and activity work-unit links", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.makeUnsafe("evt-work-unit-thread"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-work-unit"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-work-unit-thread"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-work-unit-thread"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-work-unit"),
+          projectId: ProjectId.makeUnsafe("project-1"),
+          title: "Thread work unit",
+          model: "gpt-5-codex",
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.work-unit-upserted",
+        eventId: EventId.makeUnsafe("evt-work-unit-upsert"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-work-unit"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-work-unit-upsert"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-work-unit-upsert"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-work-unit"),
+          workUnit: {
+            id: WorkUnitId.makeUnsafe("wu:thread-work-unit:turn:turn-1:root"),
+            turnId: TurnId.makeUnsafe("turn-1"),
+            parentWorkUnitId: null,
+            kind: "primary_agent",
+            state: "running",
+            title: "Primary agent",
+            detail: null,
+            spawnedByActivityId: null,
+            providerRefs: {
+              providerTurnId: "provider-turn-1",
+            },
+            startedAt: now,
+            updatedAt: now,
+            completedAt: null,
+          },
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.activity-appended",
+        eventId: EventId.makeUnsafe("evt-work-unit-activity"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-work-unit"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-work-unit-activity"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-work-unit-activity"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-work-unit"),
+          activity: {
+            id: EventId.makeUnsafe("activity-work-unit"),
+            tone: "info",
+            kind: "task.progress",
+            summary: "Reasoning update",
+            payload: {
+              detail: "Looking around",
+            },
+            turnId: TurnId.makeUnsafe("turn-1"),
+            workUnitId: WorkUnitId.makeUnsafe("wu:thread-work-unit:turn:turn-1:root"),
+            createdAt: now,
+          },
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const workUnitRows = yield* sql<{
+        readonly workUnitId: string;
+        readonly turnId: string;
+        readonly state: string;
+        readonly providerRefsJson: string | null;
+      }>`
+        SELECT
+          work_unit_id AS "workUnitId",
+          turn_id AS "turnId",
+          state,
+          provider_refs_json AS "providerRefsJson"
+        FROM projection_thread_work_units
+        WHERE thread_id = 'thread-work-unit'
+      `;
+      assert.deepEqual(workUnitRows, [
+        {
+          workUnitId: "wu:thread-work-unit:turn:turn-1:root",
+          turnId: "turn-1",
+          state: "running",
+          providerRefsJson: '{"providerTurnId":"provider-turn-1"}',
+        },
+      ]);
+
+      const activityRows = yield* sql<{
+        readonly activityId: string;
+        readonly workUnitId: string | null;
+      }>`
+        SELECT
+          activity_id AS "activityId",
+          work_unit_id AS "workUnitId"
+        FROM projection_thread_activities
+        WHERE thread_id = 'thread-work-unit'
+      `;
+      assert.deepEqual(activityRows, [
+        {
+          activityId: "activity-work-unit",
+          workUnitId: "wu:thread-work-unit:turn:turn-1:root",
+        },
+      ]);
     }),
   );
 

@@ -244,6 +244,7 @@ function createSnapshotForTargetUser(options: {
         messages,
         activities: [],
         proposedPlans: [],
+        workUnits: [],
         checkpoints: [],
         session: {
           threadId: THREAD_ID,
@@ -298,6 +299,7 @@ function addThreadToSnapshot(
         messages: [],
         activities: [],
         proposedPlans: [],
+        workUnits: [],
         checkpoints: [],
         session: {
           threadId,

@@ -9,6 +9,8 @@ import {
   OrchestrationLatestTurn,
   OrchestrationProposedPlan,
   OrchestrationSession,
+  OrchestrationThread,
+  OrchestrationThreadActivity,
   ProjectCreateCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
@@ -26,6 +28,8 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
+const decodeOrchestrationThreadActivity = Schema.decodeUnknownEffect(OrchestrationThreadActivity);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
@@ -313,5 +317,45 @@ it.effect("preserves proposed plan implementation metadata when present", () =>
     });
     assert.strictEqual(parsed.implementedAt, "2026-01-02T00:00:00.000Z");
     assert.strictEqual(parsed.implementationThreadId, "thread-2");
+  }),
+);
+
+it.effect("defaults activity work unit ids for historical rows", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThreadActivity({
+      id: "activity-1",
+      tone: "info",
+      kind: "runtime.note",
+      summary: "Runtime note",
+      payload: {},
+      turnId: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.workUnitId, null);
+  }),
+);
+
+it.effect("defaults thread work units for historical rows", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThread({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      model: "gpt-5-codex",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    });
+    assert.deepStrictEqual(parsed.workUnits, []);
   }),
 );

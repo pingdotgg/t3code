@@ -890,6 +890,65 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("treats user-aborted Claude results as interrupted without a runtime error", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: false,
+        errors: ["Error: Request was aborted."],
+        stop_reason: "tool_use",
+        session_id: "sdk-session-abort",
+        uuid: "result-abort",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "turn.started",
+          "thread.started",
+          "turn.completed",
+        ],
+      );
+
+      const turnCompleted = runtimeEvents[runtimeEvents.length - 1];
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(String(turnCompleted.turnId), String(turn.turnId));
+        assert.equal(turnCompleted.payload.state, "interrupted");
+        assert.equal(turnCompleted.payload.errorMessage, "Error: Request was aborted.");
+        assert.equal(turnCompleted.payload.stopReason, "tool_use");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("forwards Claude task progress summaries for subagent updates", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -930,6 +989,84 @@ describe("ClaudeAdapterLive", () => {
           "Code reviewer checked the migration edge cases.",
         );
         assert.equal(progressEvent.payload.description, "Running background teammate");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("attaches Claude subagent task progress to the collab tool item", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "delegate this",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-task-item-link",
+        uuid: "stream-task-item-link",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "tool-task-link-1",
+            name: "Task",
+            input: {
+              description: "Review the database layer",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "tool_progress",
+        session_id: "sdk-session-task-item-link",
+        uuid: "tool-progress-task-link",
+        parent_tool_use_id: null,
+        tool_use_id: "tool-task-link-1",
+        tool_name: "Task",
+        task_id: "task-subagent-link-1",
+        elapsed_time_seconds: 1,
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-subagent-link-1",
+        description: "Running background teammate",
+        summary: "Code reviewer checked the migration edge cases.",
+        session_id: "sdk-session-task-item-link",
+        uuid: "task-progress-task-link",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const progressEvent = runtimeEvents.find(
+        (event) =>
+          event.type === "task.progress" && event.payload.taskId === "task-subagent-link-1",
+      );
+      assert.equal(progressEvent?.type, "task.progress");
+      if (progressEvent?.type === "task.progress") {
+        assert.equal(progressEvent.itemId, "tool-task-link-1");
+        assert.equal(progressEvent.providerRefs?.providerItemId, "tool-task-link-1");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -1835,6 +1972,143 @@ describe("ClaudeAdapterLive", () => {
       });
 
       assert.deepEqual(harness.query.setPermissionModeCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("captures ExitPlanMode as a proposed plan and denies auto-exit", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "plan this",
+        interactionMode: "plan",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const permissionPromise = canUseTool(
+        "ExitPlanMode",
+        {
+          plan: "# Ship it\n\n- one\n- two",
+          allowedPrompts: [{ tool: "Bash", prompt: "run tests" }],
+        },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "tool-exit-1",
+        },
+      );
+
+      const proposedEvent = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(proposedEvent._tag, "Some");
+      if (proposedEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(proposedEvent.value.type, "turn.proposed.completed");
+      if (proposedEvent.value.type !== "turn.proposed.completed") {
+        return;
+      }
+      assert.equal(proposedEvent.value.payload.planMarkdown, "# Ship it\n\n- one\n- two");
+      assert.deepEqual(proposedEvent.value.providerRefs, {
+        providerItemId: ProviderItemId.makeUnsafe("tool-exit-1"),
+      });
+
+      const permissionResult = yield* Effect.promise(() => permissionPromise);
+      assert.equal((permissionResult as PermissionResult).behavior, "deny");
+      const deniedResult = permissionResult as PermissionResult & {
+        message?: string;
+      };
+      assert.equal(deniedResult.message?.includes("captured your proposed plan"), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("extracts proposed plans from assistant ExitPlanMode snapshots", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "plan this",
+        interactionMode: "plan",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const proposedEventFiber = yield* Stream.filter(
+        adapter.streamEvents,
+        (event) => event.type === "turn.proposed.completed",
+      ).pipe(Stream.runHead, Effect.forkChild);
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-exit-plan",
+        uuid: "assistant-exit-plan",
+        parent_tool_use_id: null,
+        message: {
+          model: "claude-opus-4-6",
+          id: "msg-exit-plan",
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "tool-exit-2",
+              name: "ExitPlanMode",
+              input: {
+                plan: "# Final plan\n\n- capture it",
+              },
+            },
+          ],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {},
+        },
+      } as unknown as SDKMessage);
+
+      const proposedEvent = yield* Fiber.join(proposedEventFiber);
+      assert.equal(proposedEvent._tag, "Some");
+      if (proposedEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(proposedEvent.value.type, "turn.proposed.completed");
+      if (proposedEvent.value.type !== "turn.proposed.completed") {
+        return;
+      }
+      assert.equal(proposedEvent.value.payload.planMarkdown, "# Final plan\n\n- capture it");
+      assert.deepEqual(proposedEvent.value.providerRefs, {
+        providerItemId: ProviderItemId.makeUnsafe("tool-exit-2"),
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

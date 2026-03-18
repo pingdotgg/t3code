@@ -88,6 +88,8 @@ interface ClaudeTurnState {
   readonly items: Array<unknown>;
   readonly assistantTextBlocks: Map<number, AssistantTextBlockState>;
   readonly assistantTextBlockOrder: Array<number>;
+  readonly capturedProposedPlanKeys: Set<string>;
+  readonly taskItemIds: Map<string, string>;
   nextSyntheticAssistantBlockIndex: number;
 }
 
@@ -172,6 +174,27 @@ function toMessage(cause: unknown, fallback: string): string {
     return cause.message;
   }
   return fallback;
+}
+
+function resultErrorsText(result: SDKResultMessage): string {
+  return "errors" in result && Array.isArray(result.errors)
+    ? result.errors.join(" ").toLowerCase()
+    : "";
+}
+
+function isInterruptedResult(result: SDKResultMessage): boolean {
+  const errors = resultErrorsText(result);
+  if (errors.includes("interrupt")) {
+    return true;
+  }
+
+  return (
+    result.subtype === "error_during_execution" &&
+    result.is_error === false &&
+    (errors.includes("request was aborted") ||
+      errors.includes("interrupted by user") ||
+      errors.includes("aborted"))
+  );
 }
 
 function asRuntimeItemId(value: string): RuntimeItemId {
@@ -384,8 +407,8 @@ function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStat
     return "completed";
   }
 
-  const errors = result.errors.join(" ").toLowerCase();
-  if (errors.includes("interrupt")) {
+  const errors = resultErrorsText(result);
+  if (isInterruptedResult(result)) {
     return "interrupted";
   }
   if (errors.includes("cancel")) {
@@ -410,6 +433,20 @@ function nativeProviderRefs(
     };
   }
   return {};
+}
+
+function taskEventParentItemFields(
+  context: ClaudeSessionContext,
+  taskId: string,
+): Pick<ProviderRuntimeEvent, "itemId" | "providerRefs"> | undefined {
+  const providerItemId = context.turnState?.taskItemIds.get(taskId);
+  if (!providerItemId) {
+    return undefined;
+  }
+  return {
+    itemId: asRuntimeItemId(providerItemId),
+    providerRefs: nativeProviderRefs(context, { providerItemId }),
+  };
 }
 
 function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
@@ -472,6 +509,28 @@ function extractTextContent(value: unknown): string {
   }
 
   return extractTextContent(record.content);
+}
+
+function extractExitPlanModePlan(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as {
+    plan?: unknown;
+  };
+  return typeof record.plan === "string" && record.plan.trim().length > 0
+    ? record.plan.trim()
+    : undefined;
+}
+
+function exitPlanCaptureKey(input: {
+  readonly toolUseId?: string | undefined;
+  readonly planMarkdown: string;
+}): string {
+  return input.toolUseId && input.toolUseId.length > 0
+    ? `tool:${input.toolUseId}`
+    : `plan:${input.planMarkdown}`;
 }
 
 function tryParseJsonRecord(value: string): Record<string, unknown> | undefined {
@@ -1053,6 +1112,54 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         });
       });
 
+    const emitProposedPlanCompleted = (
+      context: ClaudeSessionContext,
+      input: {
+        readonly planMarkdown: string;
+        readonly toolUseId?: string | undefined;
+        readonly rawSource: "claude.sdk.message" | "claude.sdk.permission";
+        readonly rawMethod: string;
+        readonly rawPayload: unknown;
+      },
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const turnState = context.turnState;
+        const planMarkdown = input.planMarkdown.trim();
+        if (!turnState || planMarkdown.length === 0) {
+          return;
+        }
+
+        const captureKey = exitPlanCaptureKey({
+          toolUseId: input.toolUseId,
+          planMarkdown,
+        });
+        if (turnState.capturedProposedPlanKeys.has(captureKey)) {
+          return;
+        }
+        turnState.capturedProposedPlanKeys.add(captureKey);
+
+        const stamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "turn.proposed.completed",
+          eventId: stamp.eventId,
+          provider: PROVIDER,
+          createdAt: stamp.createdAt,
+          threadId: context.session.threadId,
+          turnId: turnState.turnId,
+          payload: {
+            planMarkdown,
+          },
+          providerRefs: nativeProviderRefs(context, {
+            providerItemId: input.toolUseId,
+          }),
+          raw: {
+            source: input.rawSource,
+            method: input.rawMethod,
+            payload: input.rawPayload,
+          },
+        });
+      });
+
     const completeTurn = (
       context: ClaudeSessionContext,
       status: ProviderRuntimeTurnStatus,
@@ -1506,6 +1613,8 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             items: [],
             assistantTextBlocks: new Map(),
             assistantTextBlockOrder: [],
+            capturedProposedPlanKeys: new Set(),
+            taskItemIds: new Map(),
             nextSyntheticAssistantBlockIndex: -1,
           };
           context.session = {
@@ -1533,6 +1642,35 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               payload: {},
             },
           });
+        }
+
+        const content = message.message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (!block || typeof block !== "object") {
+              continue;
+            }
+            const toolUse = block as {
+              type?: unknown;
+              id?: unknown;
+              name?: unknown;
+              input?: unknown;
+            };
+            if (toolUse.type !== "tool_use" || toolUse.name !== "ExitPlanMode") {
+              continue;
+            }
+            const planMarkdown = extractExitPlanModePlan(toolUse.input);
+            if (!planMarkdown) {
+              continue;
+            }
+            yield* emitProposedPlanCompleted(context, {
+              planMarkdown,
+              toolUseId: typeof toolUse.id === "string" ? toolUse.id : undefined,
+              rawSource: "claude.sdk.message",
+              rawMethod: "claude/assistant",
+              rawPayload: message,
+            });
+          }
         }
 
         if (context.turnState) {
@@ -1659,6 +1797,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           case "task_started":
             yield* offerRuntimeEvent({
               ...base,
+              ...taskEventParentItemFields(context, message.task_id),
               type: "task.started",
               payload: {
                 taskId: RuntimeTaskId.makeUnsafe(message.task_id),
@@ -1670,6 +1809,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           case "task_progress":
             yield* offerRuntimeEvent({
               ...base,
+              ...taskEventParentItemFields(context, message.task_id),
               type: "task.progress",
               payload: {
                 taskId: RuntimeTaskId.makeUnsafe(message.task_id),
@@ -1683,6 +1823,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           case "task_notification":
             yield* offerRuntimeEvent({
               ...base,
+              ...taskEventParentItemFields(context, message.task_id),
               type: "task.completed",
               payload: {
                 taskId: RuntimeTaskId.makeUnsafe(message.task_id),
@@ -1746,8 +1887,13 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         };
 
         if (message.type === "tool_progress") {
+          if (message.task_id && context.turnState) {
+            context.turnState.taskItemIds.set(message.task_id, message.tool_use_id);
+          }
           yield* offerRuntimeEvent({
             ...base,
+            itemId: asRuntimeItemId(message.tool_use_id),
+            providerRefs: nativeProviderRefs(context, { providerItemId: message.tool_use_id }),
             type: "tool.progress",
             payload: {
               toolUseId: message.tool_use_id,
@@ -2090,6 +2236,28 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                 return yield* handleAskUserQuestion(context, toolInput, callbackOptions);
               }
 
+              if (toolName === "ExitPlanMode") {
+                const planMarkdown = extractExitPlanModePlan(toolInput);
+                if (planMarkdown) {
+                  yield* emitProposedPlanCompleted(context, {
+                    planMarkdown,
+                    toolUseId: callbackOptions.toolUseID,
+                    rawSource: "claude.sdk.permission",
+                    rawMethod: "canUseTool/ExitPlanMode",
+                    rawPayload: {
+                      toolName,
+                      input: toolInput,
+                    },
+                  });
+                }
+
+                return {
+                  behavior: "deny",
+                  message:
+                    "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+                } satisfies PermissionResult;
+              }
+
               const runtimeMode = input.runtimeMode ?? "full-access";
               if (runtimeMode === "full-access") {
                 return {
@@ -2405,6 +2573,8 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           items: [],
           assistantTextBlocks: new Map(),
           assistantTextBlockOrder: [],
+          capturedProposedPlanKeys: new Set(),
+          taskItemIds: new Map(),
           nextSyntheticAssistantBlockIndex: -1,
         };
 

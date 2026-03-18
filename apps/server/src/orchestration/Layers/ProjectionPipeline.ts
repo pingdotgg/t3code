@@ -22,6 +22,10 @@ import {
   type ProjectionThreadProposedPlan,
   ProjectionThreadProposedPlanRepository,
 } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
+import {
+  type ProjectionThreadWorkUnit,
+  ProjectionThreadWorkUnitRepository,
+} from "../../persistence/Services/ProjectionThreadWorkUnits.ts";
 import { ProjectionThreadSessionRepository } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import {
   type ProjectionTurn,
@@ -34,6 +38,7 @@ import { ProjectionStateRepositoryLive } from "../../persistence/Layers/Projecti
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
+import { ProjectionThreadWorkUnitRepositoryLive } from "../../persistence/Layers/ProjectionThreadWorkUnits.ts";
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
@@ -55,6 +60,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadMessages: "projection.thread-messages",
   threadProposedPlans: "projection.thread-proposed-plans",
   threadActivities: "projection.thread-activities",
+  threadWorkUnits: "projection.thread-work-units",
   threadSessions: "projection.thread-sessions",
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
@@ -214,6 +220,28 @@ function retainProjectionProposedPlansAfterRevert(
   );
 }
 
+function retainProjectionWorkUnitsAfterRevert(
+  workUnits: ReadonlyArray<ProjectionThreadWorkUnit>,
+  turns: ReadonlyArray<ProjectionTurn>,
+  turnCount: number,
+): ReadonlyArray<ProjectionThreadWorkUnit> {
+  const retainedTurnIds = new Set<string>(
+    turns
+      .filter(
+        (turn) =>
+          turn.turnId !== null &&
+          turn.checkpointTurnCount !== null &&
+          turn.checkpointTurnCount <= turnCount,
+      )
+      .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
+  );
+  const retained = workUnits.filter((workUnit) => retainedTurnIds.has(workUnit.turnId));
+  const retainedIds = new Set(retained.map((workUnit) => workUnit.workUnitId));
+  return retained.filter(
+    (workUnit) => workUnit.parentWorkUnitId === null || retainedIds.has(workUnit.parentWorkUnitId),
+  );
+}
+
 function collectThreadAttachmentRelativePaths(
   threadId: string,
   messages: ReadonlyArray<ProjectionThreadMessage>,
@@ -346,6 +374,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
   const projectionThreadProposedPlanRepository = yield* ProjectionThreadProposedPlanRepository;
   const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
+  const projectionThreadWorkUnitRepository = yield* ProjectionThreadWorkUnitRepository;
   const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
@@ -705,6 +734,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             activityId: event.payload.activity.id,
             threadId: event.payload.threadId,
             turnId: event.payload.activity.turnId,
+            workUnitId: event.payload.activity.workUnitId,
             tone: event.payload.activity.tone,
             kind: event.payload.activity.kind,
             summary: event.payload.activity.summary,
@@ -738,6 +768,64 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             threadId: event.payload.threadId,
           });
           yield* Effect.forEach(keptRows, projectionThreadActivityRepository.upsert, {
+            concurrency: 1,
+          }).pipe(Effect.asVoid);
+          return;
+        }
+
+        default:
+          return;
+      }
+    });
+
+  const applyThreadWorkUnitsProjection: ProjectorDefinition["apply"] = (
+    event,
+    _attachmentSideEffects,
+  ) =>
+    Effect.gen(function* () {
+      switch (event.type) {
+        case "thread.work-unit-upserted":
+          yield* projectionThreadWorkUnitRepository.upsert({
+            workUnitId: event.payload.workUnit.id,
+            threadId: event.payload.threadId,
+            turnId: event.payload.workUnit.turnId,
+            parentWorkUnitId: event.payload.workUnit.parentWorkUnitId,
+            kind: event.payload.workUnit.kind,
+            state: event.payload.workUnit.state,
+            title: event.payload.workUnit.title,
+            detail: event.payload.workUnit.detail,
+            spawnedByActivityId: event.payload.workUnit.spawnedByActivityId,
+            ...(event.payload.workUnit.providerRefs !== undefined
+              ? { providerRefs: event.payload.workUnit.providerRefs }
+              : {}),
+            startedAt: event.payload.workUnit.startedAt,
+            updatedAt: event.payload.workUnit.updatedAt,
+            completedAt: event.payload.workUnit.completedAt,
+          });
+          return;
+
+        case "thread.reverted": {
+          const existingRows = yield* projectionThreadWorkUnitRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          if (existingRows.length === 0) {
+            return;
+          }
+          const existingTurns = yield* projectionTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const keptRows = retainProjectionWorkUnitsAfterRevert(
+            existingRows,
+            existingTurns,
+            event.payload.turnCount,
+          );
+          if (keptRows.length === existingRows.length) {
+            return;
+          }
+          yield* projectionThreadWorkUnitRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(keptRows, projectionThreadWorkUnitRepository.upsert, {
             concurrency: 1,
           }).pipe(Effect.asVoid);
           return;
@@ -1135,6 +1223,10 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
       apply: applyThreadActivitiesProjection,
     },
     {
+      name: ORCHESTRATION_PROJECTOR_NAMES.threadWorkUnits,
+      apply: applyThreadWorkUnitsProjection,
+    },
+    {
       name: ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
       apply: applyThreadSessionsProjection,
     },
@@ -1251,6 +1343,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),
   Layer.provideMerge(ProjectionThreadActivityRepositoryLive),
+  Layer.provideMerge(ProjectionThreadWorkUnitRepositoryLive),
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),

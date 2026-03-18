@@ -173,6 +173,7 @@ const make = Effect.gen(function* () {
           ...(input.requestId ? { requestId: input.requestId } : {}),
         },
         turnId: input.turnId,
+        workUnitId: null,
         createdAt: input.createdAt,
       },
       createdAt: input.createdAt,

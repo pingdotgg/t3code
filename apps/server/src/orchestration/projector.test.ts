@@ -85,6 +85,7 @@ describe("orchestration projector", () => {
         messages: [],
         proposedPlans: [],
         activities: [],
+        workUnits: [],
         checkpoints: [],
         session: null,
       },
@@ -120,6 +121,88 @@ describe("orchestration projector", () => {
         ),
       ),
     ).rejects.toBeDefined();
+  });
+
+  it("applies thread.work-unit-upserted events", async () => {
+    const now = new Date().toISOString();
+    const model = createEmptyReadModel(now);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-thread-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    const next = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.work-unit-upserted",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-work-unit-upsert",
+          payload: {
+            threadId: "thread-1",
+            workUnit: {
+              id: "wu:thread-1:turn:turn-1:root",
+              turnId: "turn-1",
+              parentWorkUnitId: null,
+              kind: "primary_agent",
+              state: "running",
+              title: "Primary agent",
+              detail: null,
+              spawnedByActivityId: null,
+              providerRefs: {
+                providerTurnId: "provider-turn-1",
+              },
+              startedAt: now,
+              updatedAt: now,
+              completedAt: null,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(next.threads[0]?.workUnits).toEqual([
+      {
+        id: "wu:thread-1:turn:turn-1:root",
+        turnId: "turn-1",
+        parentWorkUnitId: null,
+        kind: "primary_agent",
+        state: "running",
+        title: "Primary agent",
+        detail: null,
+        spawnedByActivityId: null,
+        providerRefs: {
+          providerTurnId: "provider-turn-1",
+        },
+        startedAt: now,
+        updatedAt: now,
+        completedAt: null,
+      },
+    ]);
   });
 
   it("keeps projector forward-compatible for unhandled event types", async () => {
@@ -453,6 +536,7 @@ describe("orchestration projector", () => {
             summary: "Edit file started",
             payload: { toolKind: "command" },
             turnId: "turn-1",
+            workUnitId: null,
             createdAt: "2026-02-23T10:00:02.750Z",
           },
         },
@@ -527,6 +611,7 @@ describe("orchestration projector", () => {
             summary: "Edit file complete",
             payload: { toolKind: "command" },
             turnId: "turn-2",
+            workUnitId: null,
             createdAt: "2026-02-23T10:00:04.750Z",
           },
         },

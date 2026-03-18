@@ -41,6 +41,7 @@ function makeActivity(overrides: {
     tone: overrides.tone ?? "tool",
     payload,
     turnId: overrides.turnId ? TurnId.makeUnsafe(overrides.turnId) : null,
+    workUnitId: null,
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }

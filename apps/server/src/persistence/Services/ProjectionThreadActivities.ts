@@ -13,6 +13,7 @@ import {
   OrchestrationThreadActivityTone,
   ThreadId,
   TurnId,
+  WorkUnitId,
 } from "@t3tools/contracts";
 import { Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
@@ -23,6 +24,7 @@ export const ProjectionThreadActivity = Schema.Struct({
   activityId: EventId,
   threadId: ThreadId,
   turnId: Schema.NullOr(TurnId),
+  workUnitId: Schema.NullOr(WorkUnitId),
   tone: OrchestrationThreadActivityTone,
   kind: Schema.String,
   summary: Schema.String,

@@ -7,8 +7,11 @@ import {
   type OrchestrationProposedPlanId,
   CheckpointRef,
   isToolLifecycleItemType,
+  RuntimeTaskId,
   ThreadId,
   TurnId,
+  WorkUnitId,
+  type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
@@ -29,6 +32,10 @@ import {
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
   CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
+const rootWorkUnitIdForTurn = (threadId: ThreadId, turnId: TurnId): WorkUnitId =>
+  WorkUnitId.makeUnsafe(`wu:${threadId}:turn:${turnId}:root`);
+const taskWorkUnitIdForTurn = (threadId: ThreadId, turnId: TurnId, taskId: string): WorkUnitId =>
+  WorkUnitId.makeUnsafe(`wu:${threadId}:turn:${turnId}:task:${taskId}`);
 
 const DEFAULT_ASSISTANT_DELIVERY_MODE: AssistantDeliveryMode = "buffered";
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
@@ -177,6 +184,57 @@ function requestKindFromCanonicalRequestType(
   }
 }
 
+function workUnitIdForRuntimeEvent(event: ProviderRuntimeEvent): WorkUnitId | null {
+  const turnId = toTurnId(event.turnId);
+  if (!turnId) {
+    return null;
+  }
+  if (
+    event.type === "task.started" ||
+    event.type === "task.progress" ||
+    event.type === "task.completed"
+  ) {
+    return taskWorkUnitIdForTurn(event.threadId, turnId, String(event.payload.taskId));
+  }
+  return rootWorkUnitIdForTurn(event.threadId, turnId);
+}
+
+function runtimeTurnStateToWorkUnitState(
+  state: "completed" | "failed" | "interrupted" | "cancelled",
+): "completed" | "failed" | "stopped" | "cancelled" {
+  switch (state) {
+    case "failed":
+      return "failed";
+    case "interrupted":
+      return "stopped";
+    case "cancelled":
+      return "cancelled";
+    case "completed":
+      return "completed";
+  }
+}
+
+function runtimeTaskStateToWorkUnitState(
+  state: "completed" | "failed" | "stopped",
+): "completed" | "failed" | "stopped" {
+  switch (state) {
+    case "failed":
+      return "failed";
+    case "stopped":
+      return "stopped";
+    case "completed":
+      return "completed";
+  }
+}
+
+function providerTurnWorkUnitRefs(
+  event: ProviderRuntimeEvent,
+): NonNullable<OrchestrationThread["workUnits"][number]["providerRefs"]> | undefined {
+  return event.providerRefs?.providerTurnId !== undefined
+    ? { providerTurnId: event.providerRefs.providerTurnId }
+    : undefined;
+}
+
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
 ): ReadonlyArray<OrchestrationThreadActivity> {
@@ -186,6 +244,7 @@ function runtimeEventToActivities(
       ? { sequence: eventWithSequence.sessionSequence }
       : {};
   })();
+  const maybeWorkUnit = { workUnitId: workUnitIdForRuntimeEvent(event) };
   switch (event.type) {
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
@@ -213,6 +272,7 @@ function runtimeEventToActivities(
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -237,6 +297,7 @@ function runtimeEventToActivities(
             ...(event.payload.decision ? { decision: event.payload.decision } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -258,6 +319,7 @@ function runtimeEventToActivities(
             message: truncateDetail(message),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -276,6 +338,7 @@ function runtimeEventToActivities(
             ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -296,6 +359,7 @@ function runtimeEventToActivities(
               : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -314,6 +378,7 @@ function runtimeEventToActivities(
             questions: event.payload.questions,
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -332,6 +397,7 @@ function runtimeEventToActivities(
             answers: event.payload.answers,
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -358,6 +424,7 @@ function runtimeEventToActivities(
               : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -379,6 +446,7 @@ function runtimeEventToActivities(
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -404,6 +472,7 @@ function runtimeEventToActivities(
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -427,6 +496,7 @@ function runtimeEventToActivities(
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -448,6 +518,7 @@ function runtimeEventToActivities(
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -469,6 +540,7 @@ function runtimeEventToActivities(
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeWorkUnit,
           ...maybeSequence,
         },
       ];
@@ -856,6 +928,74 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const upsertWorkUnit = Effect.fnUntraced(function* (input: {
+    thread: OrchestrationThread;
+    event: ProviderRuntimeEvent;
+    workUnitId: WorkUnitId;
+    turnId: TurnId;
+    kind: "primary_agent" | "delegated_agent";
+    state: "queued" | "running" | "completed" | "failed" | "stopped" | "cancelled";
+    title: string;
+    updatedAt: string;
+    parentWorkUnitId?: WorkUnitId | null;
+    detail?: string | null;
+    startedAt?: string;
+    completedAt?: string | null;
+    providerRefs?: NonNullable<OrchestrationThread["workUnits"][number]["providerRefs"]>;
+  }) {
+    const existing = input.thread.workUnits.find((entry) => sameId(entry.id, input.workUnitId));
+    const providerRefs =
+      input.providerRefs !== undefined || existing?.providerRefs !== undefined
+        ? {
+            ...existing?.providerRefs,
+            ...input.providerRefs,
+          }
+        : undefined;
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.work-unit.upsert",
+      commandId: providerCommandId(input.event, "thread-work-unit-upsert"),
+      threadId: input.thread.id,
+      workUnit: {
+        id: input.workUnitId,
+        turnId: input.turnId,
+        parentWorkUnitId: input.parentWorkUnitId ?? existing?.parentWorkUnitId ?? null,
+        kind: input.kind,
+        state: input.state,
+        title: input.title.trim().length > 0 ? input.title : (existing?.title ?? "Work unit"),
+        detail: input.detail !== undefined ? input.detail : (existing?.detail ?? null),
+        spawnedByActivityId: existing?.spawnedByActivityId ?? null,
+        ...(providerRefs !== undefined ? { providerRefs } : {}),
+        startedAt: existing?.startedAt ?? input.startedAt ?? input.updatedAt,
+        updatedAt: input.updatedAt,
+        completedAt:
+          input.completedAt !== undefined ? input.completedAt : (existing?.completedAt ?? null),
+      },
+      createdAt: input.updatedAt,
+    });
+  });
+
+  const ensureRootWorkUnit = Effect.fnUntraced(function* (
+    thread: OrchestrationThread,
+    event: ProviderRuntimeEvent,
+    turnId: TurnId,
+    updatedAt: string,
+  ) {
+    const providerRefs = providerTurnWorkUnitRefs(event);
+    yield* upsertWorkUnit({
+      thread,
+      event,
+      workUnitId: rootWorkUnitIdForTurn(thread.id, turnId),
+      turnId,
+      kind: "primary_agent",
+      state: "running",
+      title: "Primary agent",
+      updatedAt,
+      startedAt: updatedAt,
+      ...(providerRefs ? { providerRefs } : {}),
+    });
+  });
+
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
       const readModel = yield* orchestrationEngine.getReadModel();
@@ -978,6 +1118,89 @@ const make = Effect.gen(function* () {
             createdAt: now,
           });
         }
+      }
+
+      if (eventTurnId !== undefined) {
+        yield* ensureRootWorkUnit(thread, event, eventTurnId, now);
+      }
+
+      if (event.type === "turn.started" && eventTurnId !== undefined) {
+        const providerRefs = providerTurnWorkUnitRefs(event);
+        yield* upsertWorkUnit({
+          thread,
+          event,
+          workUnitId: rootWorkUnitIdForTurn(thread.id, eventTurnId),
+          turnId: eventTurnId,
+          kind: "primary_agent",
+          state: "running",
+          title: "Primary agent",
+          updatedAt: now,
+          startedAt: now,
+          ...(providerRefs ? { providerRefs } : {}),
+        });
+      }
+
+      if (event.type === "turn.completed" && eventTurnId !== undefined) {
+        const providerRefs = providerTurnWorkUnitRefs(event);
+        yield* upsertWorkUnit({
+          thread,
+          event,
+          workUnitId: rootWorkUnitIdForTurn(thread.id, eventTurnId),
+          turnId: eventTurnId,
+          kind: "primary_agent",
+          state: runtimeTurnStateToWorkUnitState(runtimeTurnState(event)),
+          title: "Primary agent",
+          updatedAt: now,
+          completedAt: now,
+          ...(providerRefs ? { providerRefs } : {}),
+        });
+      }
+
+      if (
+        (event.type === "task.started" ||
+          event.type === "task.progress" ||
+          event.type === "task.completed") &&
+        eventTurnId !== undefined
+      ) {
+        const taskId = String(event.payload.taskId);
+        const workUnitId = taskWorkUnitIdForTurn(thread.id, eventTurnId, taskId);
+        const taskState =
+          event.type === "task.completed"
+            ? runtimeTaskStateToWorkUnitState(event.payload.status)
+            : "running";
+        const taskTitle =
+          event.type === "task.started"
+            ? (event.payload.description ?? event.payload.taskType ?? "Delegated task")
+            : event.type === "task.completed"
+              ? (event.payload.summary ?? "Delegated task")
+              : (event.payload.summary ?? event.payload.description);
+        const taskDetail =
+          event.type === "task.started"
+            ? (event.payload.description ?? null)
+            : event.type === "task.completed"
+              ? (event.payload.summary ?? null)
+              : (event.payload.summary ?? event.payload.description);
+        yield* upsertWorkUnit({
+          thread,
+          event,
+          workUnitId,
+          turnId: eventTurnId,
+          parentWorkUnitId: rootWorkUnitIdForTurn(thread.id, eventTurnId),
+          kind: "delegated_agent",
+          state: taskState,
+          title: taskTitle,
+          detail: taskDetail,
+          updatedAt: now,
+          ...(event.type === "task.started" ? { startedAt: now } : {}),
+          ...(event.type === "task.completed" ? { completedAt: now } : {}),
+          providerRefs: {
+            runtimeTaskId: RuntimeTaskId.makeUnsafe(taskId),
+            ...(event.itemId ? { runtimeItemId: event.itemId } : {}),
+            ...(event.providerRefs?.providerTurnId !== undefined
+              ? { providerTurnId: event.providerRefs.providerTurnId }
+              : {}),
+          },
+        });
       }
 
       const assistantDelta =

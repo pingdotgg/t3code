@@ -13,6 +13,9 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
+  RuntimeItemId,
+  RuntimeTaskId,
+  WorkUnitId,
 } from "./baseSchemas";
 
 export const ORCHESTRATION_WS_METHODS = {
@@ -245,10 +248,48 @@ export const OrchestrationThreadActivity = Schema.Struct({
   summary: TrimmedNonEmptyString,
   payload: Schema.Unknown,
   turnId: Schema.NullOr(TurnId),
+  workUnitId: Schema.NullOr(WorkUnitId).pipe(Schema.withDecodingDefault(() => null)),
   sequence: Schema.optional(NonNegativeInt),
   createdAt: IsoDateTime,
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
+
+export const OrchestrationWorkUnitKind = Schema.Literals(["primary_agent", "delegated_agent"]);
+export type OrchestrationWorkUnitKind = typeof OrchestrationWorkUnitKind.Type;
+
+export const OrchestrationWorkUnitState = Schema.Literals([
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "stopped",
+  "cancelled",
+]);
+export type OrchestrationWorkUnitState = typeof OrchestrationWorkUnitState.Type;
+
+export const OrchestrationWorkUnitProviderRefs = Schema.Struct({
+  runtimeTaskId: Schema.optional(RuntimeTaskId),
+  runtimeItemId: Schema.optional(RuntimeItemId),
+  providerThreadId: Schema.optional(TrimmedNonEmptyString),
+  providerTurnId: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationWorkUnitProviderRefs = typeof OrchestrationWorkUnitProviderRefs.Type;
+
+export const OrchestrationWorkUnit = Schema.Struct({
+  id: WorkUnitId,
+  turnId: TurnId,
+  parentWorkUnitId: Schema.NullOr(WorkUnitId),
+  kind: OrchestrationWorkUnitKind,
+  state: OrchestrationWorkUnitState,
+  title: TrimmedNonEmptyString,
+  detail: Schema.NullOr(TrimmedNonEmptyString),
+  spawnedByActivityId: Schema.NullOr(EventId),
+  providerRefs: Schema.optional(OrchestrationWorkUnitProviderRefs),
+  startedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestrationWorkUnit = typeof OrchestrationWorkUnit.Type;
 
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
@@ -287,6 +328,7 @@ export const OrchestrationThread = Schema.Struct({
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(Schema.withDecodingDefault(() => [])),
   activities: Schema.Array(OrchestrationThreadActivity),
+  workUnits: Schema.Array(OrchestrationWorkUnit).pipe(Schema.withDecodingDefault(() => [])),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
 });
@@ -553,6 +595,14 @@ const ThreadActivityAppendCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadWorkUnitUpsertCommand = Schema.Struct({
+  type: Schema.Literal("thread.work-unit.upsert"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  workUnit: OrchestrationWorkUnit,
+  createdAt: IsoDateTime,
+});
+
 const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
@@ -568,6 +618,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
+  ThreadWorkUnitUpsertCommand,
   ThreadRevertCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
@@ -599,6 +650,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.work-unit-upserted",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -763,6 +815,11 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+export const ThreadWorkUnitUpsertedPayload = Schema.Struct({
+  threadId: ThreadId,
+  workUnit: OrchestrationWorkUnit,
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -884,6 +941,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.work-unit-upserted"),
+    payload: ThreadWorkUnitUpsertedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

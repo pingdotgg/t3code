@@ -67,6 +67,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     messages: [],
     activities: [],
     proposedPlans: [],
+    workUnits: [],
     checkpoints: [],
     session: null,
     ...overrides,

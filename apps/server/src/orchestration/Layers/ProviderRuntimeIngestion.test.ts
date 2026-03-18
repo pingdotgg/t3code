@@ -125,6 +125,7 @@ type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number]
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
 type ProviderRuntimeTestProposedPlan = ProviderRuntimeTestThread["proposedPlans"][number];
 type ProviderRuntimeTestActivity = ProviderRuntimeTestThread["activities"][number];
+type ProviderRuntimeTestWorkUnit = ProviderRuntimeTestThread["workUnits"][number];
 type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][number];
 
 describe("ProviderRuntimeIngestion", () => {
@@ -1909,6 +1910,7 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-1"),
+      itemId: "call-collab-1",
       payload: {
         taskId: "turn-task-1",
         taskType: "plan",
@@ -1922,6 +1924,7 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-1"),
+      itemId: "call-collab-1",
       payload: {
         taskId: "turn-task-1",
         description: "Comparing the desktop rollout chunks to the app-server stream.",
@@ -1936,6 +1939,7 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-1"),
+      itemId: "call-collab-1",
       payload: {
         taskId: "turn-task-1",
         status: "completed",
@@ -1994,6 +1998,38 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(completed?.kind).toBe("task.completed");
     expect(completedPayload?.detail).toBe("<proposed_plan>\n# Plan title\n</proposed_plan>");
+    expect(started?.workUnitId).toBe("wu:thread-1:turn:turn-task-1:task:turn-task-1");
+    expect(progress?.workUnitId).toBe("wu:thread-1:turn:turn-task-1:task:turn-task-1");
+    expect(completed?.workUnitId).toBe("wu:thread-1:turn:turn-task-1:task:turn-task-1");
+    expect(
+      thread.workUnits.find(
+        (entry: ProviderRuntimeTestWorkUnit) => entry.id === "wu:thread-1:turn:turn-task-1:root",
+      ),
+    ).toMatchObject({
+      id: "wu:thread-1:turn:turn-task-1:root",
+      turnId: "turn-task-1",
+      parentWorkUnitId: null,
+      kind: "primary_agent",
+      state: "running",
+      title: "Primary agent",
+    });
+    expect(
+      thread.workUnits.find(
+        (entry: ProviderRuntimeTestWorkUnit) =>
+          entry.id === "wu:thread-1:turn:turn-task-1:task:turn-task-1",
+      ),
+    ).toMatchObject({
+      id: "wu:thread-1:turn:turn-task-1:task:turn-task-1",
+      turnId: "turn-task-1",
+      parentWorkUnitId: "wu:thread-1:turn:turn-task-1:root",
+      kind: "delegated_agent",
+      state: "completed",
+      title: "<proposed_plan>\n# Plan title\n</proposed_plan>",
+      providerRefs: {
+        runtimeTaskId: "turn-task-1",
+        runtimeItemId: "call-collab-1",
+      },
+    });
     expect(
       thread.proposedPlans.find(
         (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-task-1",
