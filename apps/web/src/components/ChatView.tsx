@@ -1802,8 +1802,16 @@ function ChatViewContent(props: ChatViewProps) {
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   useEffect(() => {
+    if (!activeThread) {
+      return;
+    }
     clearInactivePendingUserInputDraftRequests(threadId, activePendingUserInputRequestIds);
-  }, [activePendingUserInputRequestIds, clearInactivePendingUserInputDraftRequests, threadId]);
+  }, [
+    activePendingUserInputRequestIds,
+    activeThread,
+    clearInactivePendingUserInputDraftRequests,
+    threadId,
+  ]);
   const lastSyncedPendingInputRef = useRef<{
     requestId: string | null;
     questionId: string | null;
@@ -5026,7 +5034,6 @@ function ChatViewContent(props: ChatViewProps) {
                     onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
                     onPreviousActivePendingUserInputQuestion={
                       onPreviousActivePendingUserInputQuestion
-                    }
                     }
                     onChangeActivePendingUserInputCustomAnswer={
                       onChangeActivePendingUserInputCustomAnswer
