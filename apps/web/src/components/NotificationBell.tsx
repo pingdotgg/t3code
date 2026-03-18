@@ -3,7 +3,14 @@ import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import type { ReviewRequest } from "@t3tools/contracts";
-import { BellIcon, BotIcon, ExternalLinkIcon, GitPullRequestIcon, XIcon } from "lucide-react";
+import {
+  BellIcon,
+  BotIcon,
+  ExternalLinkIcon,
+  GitPullRequestIcon,
+  RotateCcwIcon,
+  XIcon,
+} from "lucide-react";
 
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
@@ -294,13 +301,28 @@ export default function NotificationBell({
                                 {request.threadId ? "Go to Review" : "Start Review"}
                               </button>
                               {request.status === "in_review" && (
-                                <button
-                                  type="button"
-                                  className="rounded-md border border-border/50 px-2 py-1 text-[10px] font-medium text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
-                                  onClick={(event) => void handleDismiss(event, request.id)}
-                                >
-                                  Done
-                                </button>
+                                <>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center gap-1 rounded-md border border-border/50 px-2 py-1 text-[10px] font-medium text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setOpen(false);
+                                      setOpenMobile(false);
+                                      onStartReview(request.prUrl, request.id);
+                                    }}
+                                  >
+                                    <RotateCcwIcon className="size-2.5" />
+                                    Restart
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded-md border border-border/50 px-2 py-1 text-[10px] font-medium text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+                                    onClick={(event) => void handleDismiss(event, request.id)}
+                                  >
+                                    Done
+                                  </button>
+                                </>
                               )}
                             </div>
                           </div>

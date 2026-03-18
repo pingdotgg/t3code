@@ -39,6 +39,10 @@
     "./cache": {
       "types": "./src/cache.ts",
       "import": "./src/cache.ts"
+    },
+    "./prReview": {
+      "types": "./src/prReview.ts",
+      "import": "./src/prReview.ts"
     }
   },
   "scripts": {
