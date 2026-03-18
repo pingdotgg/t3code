@@ -1,18 +1,60 @@
 import { EDITORS, EditorId, NativeApi } from "@t3tools/contracts";
-import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
-import { useMemo } from "react";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+  useLocalStorage,
+} from "./hooks/useLocalStorage";
+import { useCallback, useMemo } from "react";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
+const LAST_OPEN_TARGET_KEY = "t3code:last-open-target";
+
+function resolveDefaultOpenTarget(availableEditors: ReadonlyArray<EditorId>): EditorId | null {
+  if (availableEditors.includes("file-manager")) {
+    return "file-manager";
+  }
+
+  return EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null;
+}
+
+function resolveDefaultPreferredEditor(availableEditors: ReadonlyArray<EditorId>): EditorId | null {
+  return (
+    EDITORS.find((editor) => editor.id !== "file-manager" && availableEditors.includes(editor.id))
+      ?.id ?? (availableEditors.includes("file-manager") ? "file-manager" : null)
+  );
+}
 
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
-  const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
+  const [lastOpenTarget, setLastOpenTarget] = useLocalStorage(
+    LAST_OPEN_TARGET_KEY,
+    getLocalStorageItem(LAST_EDITOR_KEY, EditorId),
+    EditorId,
+  );
 
   const effectiveEditor = useMemo(() => {
-    if (lastEditor && availableEditors.includes(lastEditor)) return lastEditor;
-    return EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null;
-  }, [lastEditor, availableEditors]);
+    if (lastOpenTarget && availableEditors.includes(lastOpenTarget)) return lastOpenTarget;
+    return resolveDefaultOpenTarget(availableEditors);
+  }, [lastOpenTarget, availableEditors]);
 
-  return [effectiveEditor, setLastEditor] as const;
+  const setPreferredEditor = useCallback(
+    (value: EditorId | null | ((val: EditorId | null) => EditorId | null)) => {
+      setLastOpenTarget((prev) => {
+        const next = typeof value === "function" ? value(prev) : value;
+        if (next === null) {
+          removeLocalStorageItem(LAST_EDITOR_KEY);
+          return next;
+        }
+        if (next !== "file-manager") {
+          setLocalStorageItem(LAST_EDITOR_KEY, next, EditorId);
+        }
+        return next;
+      });
+    },
+    [setLastOpenTarget],
+  );
+
+  return [effectiveEditor, setPreferredEditor] as const;
 }
 
 export function resolveAndPersistPreferredEditor(
@@ -21,7 +63,7 @@ export function resolveAndPersistPreferredEditor(
   const availableEditorIds = new Set(availableEditors);
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   if (stored && availableEditorIds.has(stored)) return stored;
-  const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
+  const editor = resolveDefaultPreferredEditor(availableEditors);
   if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
   return editor ?? null;
 }
