@@ -1194,7 +1194,7 @@ export default function Sidebar() {
                 }
               >
                 <SearchIcon className="size-3.5" />
-                <span className="flex-1 truncate text-left text-xs">Search commands</span>
+                <span className="flex-1 truncate text-left text-xs">Search</span>
                 {commandPaletteShortcutLabel ? (
                   <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
                     {commandPaletteShortcutLabel}

@@ -1,13 +1,11 @@
 "use client";
 
-import { type KeybindingCommand } from "@t3tools/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
-  ChevronRightIcon,
   CornerLeftUpIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -15,7 +13,15 @@ import {
   SettingsIcon,
   SquarePenIcon,
 } from "lucide-react";
-import { useCallback, useDeferredValue, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { useAppSettings } from "../appSettings";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -31,89 +37,40 @@ import {
 import { addProjectFromPath } from "../lib/projectAdd";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { cn } from "../lib/utils";
-import { shortcutLabelForCommand } from "../keybindings";
 import { readNativeApi } from "../nativeApi";
-import { formatRelativeTime } from "../relativeTime";
 import { useStore } from "../store";
-import { Kbd, KbdGroup } from "./ui/kbd";
+import {
+  ADDON_ICON_CLASS,
+  buildBrowseGroups,
+  buildProjectActionItems,
+  buildThreadActionItems,
+  type CommandPaletteActionItem,
+  type CommandPaletteGroup,
+  type CommandPaletteSubmenuItem,
+  type CommandPaletteView,
+  filterCommandPaletteGroups,
+  getCommandPaletteInputPlaceholder,
+  getCommandPaletteInputStartAddon,
+  getCommandPaletteMode,
+  ITEM_ICON_CLASS,
+  RECENT_THREAD_LIMIT,
+} from "./CommandPalette.logic";
+import { CommandPaletteResults } from "./CommandPaletteResults";
+import { Button } from "./ui/button";
 import {
   Command,
-  CommandCollection,
   CommandDialog,
   CommandDialogPopup,
   CommandFooter,
-  CommandGroup,
-  CommandGroupLabel,
   CommandInput,
-  CommandItem,
-  CommandList,
   CommandPanel,
-  CommandShortcut,
 } from "./ui/command";
-import { Button } from "./ui/button";
+import { Kbd, KbdGroup } from "./ui/kbd";
 import { toastManager } from "./ui/toast";
 
-const RECENT_THREAD_LIMIT = 12;
-
-interface CommandPaletteItem {
-  readonly kind: "action" | "submenu";
-  readonly value: string;
-  readonly label: string;
-  readonly title: ReactNode;
-  readonly description?: string;
-  readonly searchText?: string;
-  readonly timestamp?: string;
-  readonly icon: ReactNode;
-  readonly shortcutCommand?: KeybindingCommand;
-}
-
-interface CommandPaletteActionItem extends CommandPaletteItem {
-  readonly kind: "action";
-  readonly keepOpen?: boolean;
-  readonly run: () => Promise<void>;
-}
-
-interface CommandPaletteSubmenuItem extends CommandPaletteItem {
-  readonly kind: "submenu";
-  readonly addonIcon: ReactNode;
-  readonly groups: ReadonlyArray<CommandPaletteGroup>;
-  readonly initialQuery?: string;
-}
-
-interface CommandPaletteGroup {
-  readonly value: string;
-  readonly label: string;
-  readonly items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
-}
-
-interface CommandPaletteView {
-  readonly addonIcon: ReactNode;
-  readonly title: ReactNode;
-  readonly groups: ReadonlyArray<CommandPaletteGroup>;
-  readonly initialQuery?: string;
-}
-
-const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
-const ADDON_ICON_CLASS = "size-4";
-
-function compareThreadsByCreatedAtDesc(
-  left: { id: string; createdAt: string },
-  right: { id: string; createdAt: string },
-): number {
-  const byTimestamp = Date.parse(right.createdAt) - Date.parse(left.createdAt);
-  if (!Number.isNaN(byTimestamp) && byTimestamp !== 0) {
-    return byTimestamp;
-  }
-  return right.id.localeCompare(left.id);
-}
-
-function normalizeSearchText(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 export function CommandPalette({ children }: { children: ReactNode }) {
-  const open = useCommandPaletteStore((s) => s.open);
-  const setOpen = useCommandPaletteStore((s) => s.setOpen);
+  const open = useCommandPaletteStore((store) => store.open);
+  const setOpen = useCommandPaletteStore((store) => store.setOpen);
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
@@ -124,7 +81,15 @@ export function CommandPalette({ children }: { children: ReactNode }) {
 }
 
 function CommandPaletteDialog() {
-  const open = useCommandPaletteStore((s) => s.open);
+  const open = useCommandPaletteStore((store) => store.open);
+  const setOpen = useCommandPaletteStore((store) => store.setOpen);
+
+  useEffect(() => {
+    return () => {
+      setOpen(false);
+    };
+  }, [setOpen]);
+
   if (!open) {
     return null;
   }
@@ -134,12 +99,13 @@ function CommandPaletteDialog() {
 
 function OpenCommandPaletteDialog() {
   const navigate = useNavigate();
-  const setOpen = useCommandPaletteStore((s) => s.setOpen);
+  const setOpen = useCommandPaletteStore((store) => store.setOpen);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = query.startsWith(">");
   const isBrowsing = isFilesystemBrowseQuery(query);
   const [debouncedBrowsePath] = useDebouncedValue(query, { wait: 200 });
+  const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const { settings } = useAppSettings();
   const { activeDraftThread, activeThread, handleNewThread, projects } = useHandleNewThread();
   const threads = useStore((store) => store.threads);
@@ -147,20 +113,29 @@ function OpenCommandPaletteDialog() {
   const keybindings = serverConfigQuery.data?.keybindings ?? [];
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
+  const paletteMode = getCommandPaletteMode({ currentView, isBrowsing });
   const [browseGeneration, setBrowseGeneration] = useState(0);
+
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
   );
+  const projectTitleById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.name] as const)),
+    [projects],
+  );
+
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const currentProjectCwd = currentProjectId
     ? (projectCwdById.get(currentProjectId) ?? null)
     : null;
+
   const { data: browseEntries = [] } = useQuery({
     queryKey: ["filesystemBrowse", debouncedBrowsePath, currentProjectCwd],
     queryFn: async () => {
       const api = readNativeApi();
       if (!api) return [];
+
       const result = await api.filesystem.browse({
         partialPath: debouncedBrowsePath,
         ...(currentProjectCwd ? { cwd: currentProjectCwd } : {}),
@@ -173,71 +148,81 @@ function OpenCommandPaletteDialog() {
       (!debouncedBrowsePath.startsWith(".") || currentProjectCwd !== null),
   });
 
-  const projectTitleById = useMemo(
-    () => new Map(projects.map((project) => [project.id, project.name] as const)),
-    [projects],
-  );
-
-  const projectThreadItems = useMemo<CommandPaletteActionItem[]>(
+  const projectThreadItems = useMemo(
     () =>
-      projects.map((project) => ({
-        kind: "action",
-        value: `new-thread-in:${project.id}`,
-        label: `${project.name} ${project.cwd}`.trim(),
-        title: project.name,
-        description: project.cwd,
+      buildProjectActionItems({
+        projects,
+        valuePrefix: "new-thread-in",
         icon: <FolderIcon className={ITEM_ICON_CLASS} />,
-        run: async () => {
-          await handleNewThread(project.id, {
+        runProject: async (projectId) => {
+          await handleNewThread(projectId, {
             envMode: settings.defaultThreadEnvMode,
           });
         },
-      })),
+      }),
     [handleNewThread, projects, settings.defaultThreadEnvMode],
   );
 
-  const projectLocalThreadItems = useMemo<CommandPaletteActionItem[]>(
+  const projectLocalThreadItems = useMemo(
     () =>
-      projects.map((project) => ({
-        kind: "action",
-        value: `new-local-thread-in:${project.id}`,
-        label: `${project.name} ${project.cwd}`.trim(),
-        title: project.name,
-        description: project.cwd,
+      buildProjectActionItems({
+        projects,
+        valuePrefix: "new-local-thread-in",
         icon: <FolderIcon className={ITEM_ICON_CLASS} />,
-        run: async () => {
-          await handleNewThread(project.id, {
+        runProject: async (projectId) => {
+          await handleNewThread(projectId, {
             envMode: "local",
           });
         },
-      })),
+      }),
     [handleNewThread, projects],
   );
 
+  const allThreadItems = useMemo(
+    () =>
+      buildThreadActionItems({
+        threads,
+        ...(activeThread?.id ? { activeThreadId: activeThread.id } : {}),
+        projectTitleById,
+        icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+        runThread: async (threadId) => {
+          await navigate({
+            to: "/$threadId",
+            params: { threadId },
+          });
+        },
+      }),
+    [activeThread?.id, navigate, projectTitleById, threads],
+  );
+
+  const recentThreadItems = useMemo(
+    () => allThreadItems.slice(0, RECENT_THREAD_LIMIT),
+    [allThreadItems],
+  );
+
   const pushView = useCallback((item: CommandPaletteSubmenuItem) => {
-    setViewStack((prev) => [
-      ...prev,
+    setViewStack((previousViews) => [
+      ...previousViews,
       {
         addonIcon: item.addonIcon,
-        title: item.title,
         groups: item.groups,
         ...(item.initialQuery ? { initialQuery: item.initialQuery } : {}),
       },
     ]);
+    setHighlightedItemValue(null);
     setQuery(item.initialQuery ?? "");
   }, []);
 
   const popView = useCallback(() => {
-    setViewStack((prev) => prev.slice(0, -1));
+    setViewStack((previousViews) => previousViews.slice(0, -1));
+    setHighlightedItemValue(null);
     setQuery("");
   }, []);
 
   const handleQueryChange = useCallback(
     (nextQuery: string) => {
+      setHighlightedItemValue(null);
       setQuery(nextQuery);
-      // Auto-exit views that were entered with an initial query (e.g. browse mode)
-      // when the input is fully cleared. This unifies the exit behavior for
-      // typing ~/... at root and entering via the "Add project" submenu.
       if (nextQuery === "" && currentView?.initialQuery) {
         popView();
       }
@@ -253,7 +238,6 @@ function OpenCommandPaletteDialog() {
         ? (projectTitleById.get(currentProjectId) ?? null)
         : null;
 
-      // Quick actions: only show when there's an active thread/draft to derive the project from
       if (activeProjectTitle) {
         actionItems.push({
           kind: "action",
@@ -347,154 +331,49 @@ function OpenCommandPaletteDialog() {
       },
     });
 
-    const recentThreadItems = threads
-      .toSorted(compareThreadsByCreatedAtDesc)
-      .slice(0, RECENT_THREAD_LIMIT)
-      .map<CommandPaletteActionItem>((thread) => {
-        const projectTitle = projectTitleById.get(thread.projectId);
-        const descriptionParts = [
-          projectTitle,
-          thread.branch ? `#${thread.branch}` : null,
-          thread.id === activeThread?.id ? "Current thread" : null,
-        ].filter(Boolean);
-
-        return {
-          kind: "action",
-          value: `thread:${thread.id}`,
-          label: `${thread.title} ${projectTitle ?? ""} ${thread.branch ?? ""}`.trim(),
-          title: thread.title,
-          description: descriptionParts.join(" · "),
-          timestamp: formatRelativeTime(thread.createdAt),
-          icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-          run: async () => {
-            await navigate({
-              to: "/$threadId",
-              params: { threadId: thread.id },
-            });
-          },
-        };
-      });
-
-    const nextGroups: CommandPaletteGroup[] = [];
+    const groups: CommandPaletteGroup[] = [];
     if (actionItems.length > 0) {
-      nextGroups.push({
+      groups.push({
         value: "actions",
         label: "Actions",
         items: actionItems,
       });
     }
     if (recentThreadItems.length > 0) {
-      nextGroups.push({
+      groups.push({
         value: "recent-threads",
         label: "Recent Threads",
         items: recentThreadItems,
       });
     }
-    return nextGroups;
+    return groups;
   }, [
     activeDraftThread,
     activeThread,
     currentProjectId,
     handleNewThread,
     navigate,
-    projectTitleById,
-    projects,
     projectLocalThreadItems,
     projectThreadItems,
+    projectTitleById,
+    projects,
+    recentThreadItems,
     settings.defaultThreadEnvMode,
-    threads,
   ]);
 
   const activeGroups = currentView ? currentView.groups : rootGroups;
 
-  // All threads as searchable items (used when there's a query to search beyond the 12 recent)
-  const allThreadItems = useMemo<CommandPaletteActionItem[]>(
+  const filteredGroups = useMemo(
     () =>
-      threads.toSorted(compareThreadsByCreatedAtDesc).map((thread) => {
-        const projectTitle = projectTitleById.get(thread.projectId);
-        const descriptionParts = [
-          projectTitle,
-          thread.branch ? `#${thread.branch}` : null,
-          thread.id === activeThread?.id ? "Current thread" : null,
-        ].filter(Boolean);
-
-        return {
-          kind: "action",
-          value: `thread:${thread.id}`,
-          label: `${thread.title} ${projectTitle ?? ""} ${thread.branch ?? ""}`.trim(),
-          title: thread.title,
-          description: descriptionParts.join(" · "),
-          timestamp: formatRelativeTime(thread.createdAt),
-          icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-          run: async () => {
-            await navigate({
-              to: "/$threadId",
-              params: { threadId: thread.id },
-            });
-          },
-        };
+      filterCommandPaletteGroups({
+        activeGroups,
+        query: deferredQuery,
+        isInSubmenu: currentView !== null,
+        projectSearchItems: projectThreadItems,
+        threadSearchItems: allThreadItems,
       }),
-    [activeThread, navigate, projectTitleById, threads],
+    [activeGroups, allThreadItems, currentView, deferredQuery, projectThreadItems],
   );
-
-  const filteredGroups = useMemo(() => {
-    const isActionsFilter = deferredQuery.startsWith(">");
-    const searchQuery = isActionsFilter ? deferredQuery.slice(1) : deferredQuery;
-    const normalizedQuery = normalizeSearchText(searchQuery);
-
-    if (normalizedQuery.length === 0) {
-      if (isActionsFilter) {
-        return activeGroups.filter((group) => group.value === "actions");
-      }
-      return activeGroups;
-    }
-
-    // When searching at root level, replace the recent-threads group with all threads
-    // and add all projects so the full dataset is searchable
-    let baseGroups = activeGroups;
-    if (isActionsFilter) {
-      baseGroups = activeGroups.filter((group) => group.value === "actions");
-    } else if (currentView === null) {
-      baseGroups = activeGroups.filter((group) => group.value !== "recent-threads");
-    }
-
-    const extraGroups: CommandPaletteGroup[] = [];
-    if (currentView === null && !isActionsFilter) {
-      if (projectThreadItems.length > 0) {
-        extraGroups.push({
-          value: "projects-search",
-          label: "Projects",
-          items: projectThreadItems,
-        });
-      }
-      if (allThreadItems.length > 0) {
-        extraGroups.push({
-          value: "threads-search",
-          label: "Threads",
-          items: allThreadItems,
-        });
-      }
-    }
-
-    const searchableGroups = [...baseGroups, ...extraGroups];
-
-    return searchableGroups.flatMap((group) => {
-      const items = group.items.filter((item) => {
-        const haystack = normalizeSearchText(
-          [item.searchText ?? item.label, item.searchText ? "" : (item.description ?? "")].join(
-            " ",
-          ),
-        );
-        return haystack.includes(normalizedQuery);
-      });
-
-      if (items.length === 0) {
-        return [];
-      }
-
-      return [{ value: group.value, label: group.label, items }];
-    });
-  }, [activeGroups, allThreadItems, currentView, deferredQuery, projectThreadItems]);
 
   const handleAddProject = useCallback(
     async (rawCwd: string) => {
@@ -539,84 +418,63 @@ function OpenCommandPaletteDialog() {
     ],
   );
 
-  // Navigate into a subdirectory in browse mode
   const browseTo = useCallback(
     (name: string) => {
+      setHighlightedItemValue(null);
       setQuery(appendBrowsePathSegment(query, name));
-      setBrowseGeneration((g) => g + 1);
+      setBrowseGeneration((generation) => generation + 1);
     },
     [query],
   );
 
-  // Navigate up one directory level in browse mode
   const browseUp = useCallback(() => {
     const parentPath = getBrowseParentPath(query);
-    if (parentPath !== null) {
-      setQuery(parentPath);
-      setBrowseGeneration((g) => g + 1);
+    if (parentPath === null) {
+      return;
     }
+
+    setHighlightedItemValue(null);
+    setQuery(parentPath);
+    setBrowseGeneration((generation) => generation + 1);
   }, [query]);
 
   const canBrowseUp = isBrowsing && getBrowseParentPath(query) !== null;
 
-  // Browse mode items rendered through the autocomplete primitive
-  const browseGroups = useMemo<CommandPaletteGroup[]>(() => {
-    const items: CommandPaletteActionItem[] = [];
-
-    // ".." to go up
-    if (canBrowseUp) {
-      items.push({
-        kind: "action",
-        value: "browse:up",
-        label: "..",
-        title: "..",
-        icon: <CornerLeftUpIcon className={ITEM_ICON_CLASS} />,
-        keepOpen: true,
-        run: async () => {
-          browseUp();
-        },
-      });
-    }
-
-    // Directory entries
-    for (const entry of browseEntries) {
-      items.push({
-        kind: "action",
-        value: `browse:${entry.fullPath}`,
-        label: entry.name,
-        title: entry.name,
-        icon: <FolderIcon className={ITEM_ICON_CLASS} />,
-        keepOpen: true,
-        run: async () => {
-          browseTo(entry.name);
-        },
-      });
-    }
-
-    return [{ value: "directories", label: "Directories", items }];
-  }, [canBrowseUp, browseEntries, browseUp, browseTo]);
+  const browseGroups = useMemo(
+    () =>
+      buildBrowseGroups({
+        browseEntries,
+        canBrowseUp,
+        upIcon: <CornerLeftUpIcon className={ITEM_ICON_CLASS} />,
+        directoryIcon: <FolderIcon className={ITEM_ICON_CLASS} />,
+        browseUp,
+        browseTo,
+      }),
+    [browseEntries, browseTo, browseUp, canBrowseUp],
+  );
 
   const displayedGroups = isBrowsing ? browseGroups : filteredGroups;
+  const inputPlaceholder = getCommandPaletteInputPlaceholder(paletteMode);
+  const inputStartAddon = getCommandPaletteInputStartAddon({
+    mode: paletteMode,
+    currentViewAddonIcon: currentView?.addonIcon ?? null,
+    browseIcon: <FolderPlusIcon />,
+  });
+  const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
 
   const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLInputElement>) => {
-      // In browse mode, Enter with nothing highlighted submits the typed path
-      if (isBrowsing && event.key === "Enter") {
-        const hasHighlight = document.querySelector(
-          "[data-testid='command-palette'] [data-highlighted]",
-        );
-        if (!hasHighlight) {
-          event.preventDefault();
-          void handleAddProject(query.trim());
-        }
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (isBrowsing && event.key === "Enter" && highlightedItemValue === null) {
+        event.preventDefault();
+        void handleAddProject(query.trim());
       }
 
-      if (event.key === "Backspace" && query === "" && viewStack.length > 0) {
+      if (event.key === "Backspace" && query === "" && isSubmenu) {
         event.preventDefault();
         popView();
       }
     },
-    [isBrowsing, query, handleAddProject, viewStack, popView],
+    [handleAddProject, highlightedItemValue, isBrowsing, isSubmenu, popView, query],
   );
 
   const executeItem = useCallback(
@@ -625,9 +483,11 @@ function OpenCommandPaletteDialog() {
         pushView(item);
         return;
       }
+
       if (!item.keepOpen) {
         setOpen(false);
       }
+
       void item.run().catch((error: unknown) => {
         toastManager.add({
           type: "error",
@@ -638,24 +498,6 @@ function OpenCommandPaletteDialog() {
     },
     [pushView, setOpen],
   );
-
-  let inputPlaceholder = "Search commands, projects, and threads...";
-  if (currentView !== null) {
-    inputPlaceholder = "Search...";
-  }
-  if (isBrowsing) {
-    inputPlaceholder = "Enter project path (e.g. ~/projects/my-app)";
-    if (currentView !== null) {
-      inputPlaceholder = "Enter path (e.g. ~/projects/my-app)";
-    }
-  }
-
-  let inputStartAddon: ReactNode = undefined;
-  if (currentView !== null) {
-    inputStartAddon = currentView.addonIcon;
-  } else if (isBrowsing) {
-    inputStartAddon = <FolderPlusIcon />;
-  }
 
   return (
     <CommandDialogPopup
@@ -668,6 +510,9 @@ function OpenCommandPaletteDialog() {
         aria-label="Command palette"
         autoHighlight={isBrowsing ? false : "always"}
         mode="none"
+        onItemHighlighted={(value) => {
+          setHighlightedItemValue(typeof value === "string" ? value : null);
+        }}
         onValueChange={handleQueryChange}
         value={query}
       >
@@ -695,65 +540,12 @@ function OpenCommandPaletteDialog() {
           ) : null}
         </div>
         <CommandPanel className="max-h-[min(28rem,70vh)]">
-          {displayedGroups.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">
-              {isActionsOnly
-                ? "No matching actions."
-                : "No matching commands, projects, or threads."}
-            </div>
-          ) : (
-            <CommandList>
-              {displayedGroups.map((group) => (
-                <CommandGroup items={group.items} key={group.value}>
-                  <CommandGroupLabel>{group.label}</CommandGroupLabel>
-                  <CommandCollection>
-                    {(item) => {
-                      const shortcutLabel = item.shortcutCommand
-                        ? shortcutLabelForCommand(keybindings, item.shortcutCommand)
-                        : null;
-                      return (
-                        <CommandItem
-                          value={item.value}
-                          className="cursor-pointer gap-2"
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                          }}
-                          onClick={() => {
-                            executeItem(item);
-                          }}
-                        >
-                          {item.icon}
-                          {item.description ? (
-                            <span className="flex min-w-0 flex-1 flex-col">
-                              <span className="truncate text-sm text-foreground">{item.title}</span>
-                              <span className="truncate text-muted-foreground/70 text-xs">
-                                {item.description}
-                              </span>
-                            </span>
-                          ) : (
-                            <span className="flex min-w-0 items-center gap-1.5 truncate text-sm text-foreground">
-                              <span className="truncate">{item.title}</span>
-                            </span>
-                          )}
-                          {item.timestamp ? (
-                            <span className="min-w-12 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground/70">
-                              {item.timestamp}
-                            </span>
-                          ) : null}
-                          {shortcutLabel ? (
-                            <CommandShortcut>{shortcutLabel}</CommandShortcut>
-                          ) : null}
-                          {item.kind === "submenu" ? (
-                            <ChevronRightIcon className="ml-auto size-4 shrink-0 text-muted-foreground/50" />
-                          ) : null}
-                        </CommandItem>
-                      );
-                    }}
-                  </CommandCollection>
-                </CommandGroup>
-              ))}
-            </CommandList>
-          )}
+          <CommandPaletteResults
+            groups={displayedGroups}
+            isActionsOnly={isActionsOnly}
+            keybindings={keybindings}
+            onExecuteItem={executeItem}
+          />
         </CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
           <div className="flex items-center gap-3">
@@ -770,7 +562,7 @@ function OpenCommandPaletteDialog() {
               <Kbd>Enter</Kbd>
               <span className={cn("text-muted-foreground/80")}>Select</span>
             </KbdGroup>
-            {currentView !== null ? (
+            {isSubmenu ? (
               <KbdGroup className="items-center gap-1.5">
                 <Kbd>Backspace</Kbd>
                 <span className={cn("text-muted-foreground/80")}>Back</span>

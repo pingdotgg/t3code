@@ -1391,6 +1391,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const useMetaForMod = isMacPlatform(navigator.platform);
+      const palette = page.getByTestId("command-palette");
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "k",
@@ -1401,9 +1402,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
         }),
       );
 
-      await expect.element(page.getByTestId("command-palette")).toBeInTheDocument();
-      await expect.element(page.getByText("New thread")).toBeInTheDocument();
-      await page.getByText("New thread").click();
+      await expect.element(palette).toBeInTheDocument();
+      await expect
+        .element(palette.getByText("New thread in Project", { exact: true }))
+        .toBeInTheDocument();
+      await palette.getByText("New thread in Project", { exact: true }).click();
 
       await waitForURL(
         mounted.router,
@@ -1448,6 +1451,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const useMetaForMod = isMacPlatform(navigator.platform);
+      const palette = page.getByTestId("command-palette");
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "k",
@@ -1458,10 +1462,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
         }),
       );
 
-      await expect.element(page.getByTestId("command-palette")).toBeInTheDocument();
+      await expect.element(palette).toBeInTheDocument();
       await page.getByPlaceholder("Search commands, projects, and threads...").fill("settings");
-      await expect.element(page.getByText("Open settings")).toBeInTheDocument();
-      await expect.element(page.getByText("New thread")).not.toBeInTheDocument();
+      await expect.element(palette.getByText("Open settings", { exact: true })).toBeInTheDocument();
+      await expect
+        .element(palette.getByText("New thread in Project", { exact: true }))
+        .not.toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }
@@ -1500,6 +1506,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const useMetaForMod = isMacPlatform(navigator.platform);
+      const palette = page.getByTestId("command-palette");
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "k",
@@ -1510,10 +1517,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
         }),
       );
 
-      await expect.element(page.getByTestId("command-palette")).toBeInTheDocument();
+      await expect.element(palette).toBeInTheDocument();
       await page.getByPlaceholder("Search commands, projects, and threads...").fill("project");
-      await expect.element(page.getByText("Project")).toBeInTheDocument();
-      await expect.element(page.getByText("New thread")).not.toBeInTheDocument();
+      await expect.element(palette.getByText("Project", { exact: true })).toBeInTheDocument();
+      await expect
+        .element(palette.getByText("New thread in Project", { exact: true }))
+        .not.toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }
@@ -1522,7 +1531,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("searches projects by path and opens a new thread using the default env mode", async () => {
     localStorage.setItem(
       "t3code:app-settings:v1",
-      JSON.stringify({ defaultThreadEnvMode: "worktree" }),
+      JSON.stringify({
+        codexBinaryPath: "",
+        codexHomePath: "",
+        defaultThreadEnvMode: "worktree",
+        confirmThreadDelete: true,
+        enableAssistantStreaming: false,
+        timestampFormat: "locale",
+        customCodexModels: [],
+      }),
     );
 
     const mounted = await mountChatView({
@@ -1554,6 +1571,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const useMetaForMod = isMacPlatform(navigator.platform);
+      const palette = page.getByTestId("command-palette");
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "k",
@@ -1564,11 +1582,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         }),
       );
 
-      await expect.element(page.getByTestId("command-palette")).toBeInTheDocument();
+      await expect.element(palette).toBeInTheDocument();
       await page.getByPlaceholder("Search commands, projects, and threads...").fill("clients/docs");
-      await expect.element(page.getByText("Docs Portal")).toBeInTheDocument();
-      await expect.element(page.getByText("/repo/clients/docs-portal")).toBeInTheDocument();
-      await page.getByText("Docs Portal").click();
+      await expect.element(palette.getByText("Docs Portal", { exact: true })).toBeInTheDocument();
+      await expect
+        .element(palette.getByText("/repo/clients/docs-portal", { exact: true }))
+        .toBeInTheDocument();
+      await palette.getByText("Docs Portal", { exact: true }).click();
 
       const nextPath = await waitForURL(
         mounted.router,
