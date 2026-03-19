@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import {
+  computeMessageDurationStart,
+  normalizeCompactToolLabel,
+  resolveAssistantMessageCopyState,
+} from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -141,5 +145,59 @@ describe("normalizeCompactToolLabel", () => {
 
   it("removes trailing completion wording from other labels", () => {
     expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
+  });
+});
+
+describe("resolveAssistantMessageCopyState", () => {
+  it("returns enabled copy state for completed assistant messages", () => {
+    expect(
+      resolveAssistantMessageCopyState({
+        text: "Ship it",
+        streaming: false,
+      }),
+    ).toEqual({
+      disabled: false,
+      text: "Ship it",
+      visible: true,
+    });
+  });
+
+  it("keeps copy visible but disabled for streaming assistant messages", () => {
+    expect(
+      resolveAssistantMessageCopyState({
+        text: "Still streaming",
+        streaming: true,
+      }),
+    ).toEqual({
+      disabled: true,
+      text: "Still streaming",
+      visible: true,
+    });
+  });
+
+  it("hides copy for empty completed assistant messages", () => {
+    expect(
+      resolveAssistantMessageCopyState({
+        text: "   ",
+        streaming: false,
+      }),
+    ).toEqual({
+      disabled: false,
+      text: null,
+      visible: false,
+    });
+  });
+
+  it("keeps copy visible while an empty assistant message is streaming", () => {
+    expect(
+      resolveAssistantMessageCopyState({
+        text: null,
+        streaming: true,
+      }),
+    ).toEqual({
+      disabled: true,
+      text: null,
+      visible: true,
+    });
   });
 });

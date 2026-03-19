@@ -55,6 +55,7 @@ import {
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
+import { toastManager } from "../ui/toast";
 import {
   buildInlineTerminalContextText,
   formatInlineTerminalContextLabel,
@@ -438,6 +439,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "assistant" &&
         (() => {
           const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+          const assistantCopyState = resolveAssistantMessageCopyState({
+            text: row.message.text ?? null,
+            streaming: row.message.streaming,
+          });
           return (
             <>
               {row.showCompletionDivider && (
@@ -512,15 +517,43 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     </div>
                   );
                 })()}
-                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
-                  {formatMessageMeta(
-                    row.message.createdAt,
-                    row.message.streaming
-                      ? formatElapsed(row.durationStart, nowIso)
-                      : formatElapsed(row.durationStart, row.message.completedAt),
-                    timestampFormat,
-                  )}
-                </p>
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    {assistantCopyState.visible ? (
+                      <MessageCopyButton
+                        text={assistantCopyState.text ?? ""}
+                        title="Copy assistant response"
+                        disabled={assistantCopyState.disabled}
+                        disabledTitle="Copy available when response completes"
+                        size="icon-xs"
+                        variant="outline"
+                        className="border-border/50 bg-background/35 text-muted-foreground/45 shadow-none hover:border-border/70 hover:bg-background/55 hover:text-muted-foreground/70"
+                        onCopy={() => {
+                          toastManager.add({
+                            type: "success",
+                            title: "Assistant response copied",
+                          });
+                        }}
+                        onError={(error) => {
+                          toastManager.add({
+                            type: "error",
+                            title: "Failed to copy assistant response",
+                            description: error.message,
+                          });
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground/30">
+                    {formatMessageMeta(
+                      row.message.createdAt,
+                      row.message.streaming
+                        ? formatElapsed(row.durationStart, nowIso)
+                        : formatElapsed(row.durationStart, row.message.completedAt),
+                      timestampFormat,
+                    )}
+                  </p>
+                </div>
               </div>
             </>
           );
