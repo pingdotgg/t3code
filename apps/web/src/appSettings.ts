@@ -14,30 +14,33 @@ const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
 };
 
+const withDefaults =
+  <
+    S extends Schema.Top & Schema.WithoutConstructorDefault,
+    D extends S["~type.make.in"] & S["Encoded"],
+  >(
+    fallback: () => D,
+  ) =>
+  (schema: S) =>
+    schema.pipe(
+      Schema.withConstructorDefault(() => Option.some(fallback())),
+      Schema.withDecodingDefault(() => fallback()),
+    );
+
 const AppSettingsSchema = Schema.Struct({
-  codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
-    Schema.withConstructorDefault(() => Option.some("")),
-  ),
-  codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
-    Schema.withConstructorDefault(() => Option.some("")),
-  ),
-  gitCommitFlags: Schema.String.check(Schema.isMaxLength(4096)).pipe(
-    Schema.withConstructorDefault(() => Option.some("")),
-  ),
+  codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
+  codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
+  gitCommitFlags: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   defaultThreadEnvMode: Schema.Literals(["local", "worktree"]).pipe(
-    Schema.withConstructorDefault(() => Option.some("local")),
+    withDefaults(() => "local" as const),
   ),
-  confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
-  enableAssistantStreaming: Schema.Boolean.pipe(
-    Schema.withConstructorDefault(() => Option.some(false)),
-  ),
+  confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
+  enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => false)),
   timestampFormat: Schema.Literals(["locale", "12-hour", "24-hour"]).pipe(
-    Schema.withConstructorDefault(() => Option.some(DEFAULT_TIMESTAMP_FORMAT)),
-  ),
-  customCodexModels: Schema.Array(Schema.String).pipe(
-    Schema.withConstructorDefault(() => Option.some([])),
+    withDefaults(() => DEFAULT_TIMESTAMP_FORMAT),
   ),
   textGenerationModel: Schema.optional(TrimmedNonEmptyString),
+  customCodexModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {
