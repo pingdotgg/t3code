@@ -539,9 +539,7 @@ function SettingsRouteView() {
 
               <div className="space-y-4">
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">
-                    Text generation model
-                  </span>
+                  <span className="text-xs font-medium text-foreground">Text generation model</span>
                   <Select
                     value={settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL}
                     onValueChange={(value) => {
@@ -552,10 +550,7 @@ function SettingsRouteView() {
                       }
                     }}
                   >
-                    <SelectTrigger
-                      className="w-full"
-                      aria-label="Git text generation model"
-                    >
+                    <SelectTrigger className="w-full" aria-label="Git text generation model">
                       <SelectValue>{selectedGitTextGenerationModelLabel}</SelectValue>
                     </SelectTrigger>
                     <SelectPopup align="end">
@@ -589,14 +584,13 @@ function SettingsRouteView() {
                     </span>
                   ) : (
                     <span className="text-xs text-muted-foreground">
-                      Applied to app-run git commit commands only. Example:{" "}
-                      <code>--no-gpg-sign</code>. Supports quoted values.
+                      Applied to app-run git commit commands only.
                     </span>
                   )}
                 </label>
 
-                {(settings.textGenerationModel !== defaults.textGenerationModel ||
-                  settings.gitCommitFlags !== defaults.gitCommitFlags) ? (
+                {settings.textGenerationModel !== defaults.textGenerationModel ||
+                settings.gitCommitFlags !== defaults.gitCommitFlags ? (
                   <div className="flex justify-end">
                     <Button
                       size="xs"
