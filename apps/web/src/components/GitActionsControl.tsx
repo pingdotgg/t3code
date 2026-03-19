@@ -33,7 +33,6 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
-import { useAppSettings } from "~/appSettings";
 import { openInPreferredEditor } from "~/editorPreferences";
 import {
   gitBranchesQueryOptions,
@@ -161,7 +160,6 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
   );
-  const { settings } = useAppSettings();
   const queryClient = useQueryClient();
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
