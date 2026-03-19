@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type DesktopTrayMessage } from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -6,10 +6,11 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
+import { useAppSettings } from "../appSettings";
 import { APP_DISPLAY_NAME } from "../branding";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
@@ -24,6 +25,10 @@ import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { isElectron } from "../env";
+import { useThreadSelectionStore } from "~/threadSelectionStore";
+import { useTrayState } from "~/hooks/useTrayState";
+import { useHandleNewThread } from "~/hooks/useHandleNewThread";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -53,6 +58,7 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <EventRouter />
         <DesktopProjectBootstrap />
+        <DesktopTrayBootstrap />
         <Outlet />
       </AnchoredToastProvider>
     </ToastProvider>
@@ -323,5 +329,105 @@ function EventRouter() {
 
 function DesktopProjectBootstrap() {
   // Desktop hydration runs through EventRouter project + orchestration sync.
+  return null;
+}
+
+function DesktopTrayBootstrap() {
+  const { settings } = useAppSettings();
+
+  const navigate = useNavigate();
+  const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
+
+  const { handleNewThread } = useHandleNewThread();
+
+  const onTrayMessage = useCallback(
+    (message: DesktopTrayMessage) => {
+      switch (message.type) {
+        case "thread-click":
+          setSelectionAnchor(message.threadId);
+          void navigate({
+            to: "/$threadId",
+            params: { threadId: message.threadId },
+          });
+          break;
+        case "new-thread-in-project-click":
+          void handleNewThread(message.projectId);
+          break;
+      }
+    },
+    [navigate, setSelectionAnchor, handleNewThread],
+  );
+
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+    if (!settings.showTrayIcon) return;
+    const unsubscribe = bridge.onTrayMessage(onTrayMessage);
+    return () => {
+      unsubscribe();
+    };
+  }, [onTrayMessage, settings.showTrayIcon]);
+
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+    void bridge.setTrayEnabled(settings.showTrayIcon).catch(() => {
+      // Keep the persisted setting as the source of truth and retry on the next change.
+    });
+  }, [settings.showTrayIcon]);
+
+  const threads = useStore((store) => store.threads);
+
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+    if (threads.length === 0) return;
+    void bridge.setReadyToHandleTrayMessages(true).catch(() => {
+      // Do nothing
+    });
+    return () => {
+      void bridge.setReadyToHandleTrayMessages(false).catch(() => {
+        // Do nothing
+      });
+    };
+  }, [threads]);
+
+  const [, setTrayState] = useTrayState();
+
+  useEffect(() => {
+    if (!settings.showTrayIcon) return;
+    setTrayState((previous) => ({
+      ...previous,
+      threads: threads.map((thread) => {
+        const lastVisitedAt = thread.lastVisitedAt ? Date.parse(thread.lastVisitedAt) : NaN;
+        const latestTurnCompletedAt = thread.latestTurn?.completedAt
+          ? Date.parse(thread.latestTurn.completedAt)
+          : NaN;
+        return {
+          id: thread.id,
+          name: thread.title,
+          lastUpdated: latestTurnCompletedAt,
+          needsAttention: latestTurnCompletedAt > lastVisitedAt,
+        };
+      }),
+    }));
+  }, [threads, settings.showTrayIcon, setTrayState]);
+
+  const projects = useStore((store) => store.projects);
+
+  useEffect(() => {
+    if (!settings.showTrayIcon) return;
+    setTrayState((previous) => ({
+      ...previous,
+      projects: projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+      })),
+    }));
+  }, [projects, settings.showTrayIcon, setTrayState]);
+
   return null;
 }

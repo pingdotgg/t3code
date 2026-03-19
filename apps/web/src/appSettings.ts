@@ -24,6 +24,7 @@ const AppSettingsSchema = Schema.Struct({
   defaultThreadEnvMode: Schema.Literals(["local", "worktree"]).pipe(
     Schema.withConstructorDefault(() => Option.some("local")),
   ),
+  showTrayIcon: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),

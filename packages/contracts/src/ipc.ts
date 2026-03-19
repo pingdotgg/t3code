@@ -46,6 +46,32 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
+import { ProjectId, ThreadId } from "./baseSchemas";
+
+export interface DesktopTrayState {
+  threads: {
+    id: string;
+    name: string;
+    lastUpdated: number;
+    needsAttention: boolean;
+  }[];
+  projects: {
+    id: string;
+    name: string;
+  }[];
+}
+
+interface DesktopTrayThreadMessage {
+  type: "thread-click";
+  threadId: ThreadId;
+}
+
+interface DesktopTrayProjectMessage {
+  type: "new-thread-in-project-click";
+  projectId: ProjectId;
+}
+
+export type DesktopTrayMessage = DesktopTrayThreadMessage | DesktopTrayProjectMessage;
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -109,6 +135,11 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  setTrayEnabled: (enabled: boolean) => Promise<void>;
+  getTrayState: () => Promise<DesktopTrayState>;
+  setTrayState: (state: DesktopTrayState) => Promise<void>;
+  setReadyToHandleTrayMessages: (ready: boolean) => Promise<void>;
+  onTrayMessage: (listener: (message: DesktopTrayMessage) => void) => () => void;
 }
 
 export interface NativeApi {
