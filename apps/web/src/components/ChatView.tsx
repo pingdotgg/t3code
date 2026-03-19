@@ -55,6 +55,7 @@ import {
   deriveActivePlanState,
   findLatestProposedPlan,
   deriveWorkLogEntries,
+  hasActionableProposedPlan,
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
@@ -721,7 +722,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
     latestTurnSettled &&
-    activeProposedPlan !== null;
+    hasActionableProposedPlan(activeProposedPlan);
   const activePendingApproval = pendingApprovals[0] ?? null;
   const isComposerApprovalState = activePendingApproval !== null;
   const hasComposerHeader =
@@ -2878,6 +2879,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: nextInteractionMode,
+          ...(nextInteractionMode === "default" && activeProposedPlan
+            ? {
+                sourceProposedPlan: {
+                  threadId: activeThread.id,
+                  planId: activeProposedPlan.id,
+                },
+              }
+            : {}),
           createdAt: messageCreatedAt,
         });
         // Optimistically open the plan sidebar when implementing (not refining).
@@ -2902,6 +2911,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [
       activeThread,
+      activeProposedPlan,
       beginSendPhase,
       forceStickToBottom,
       isConnecting,
@@ -3695,7 +3705,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         "flex min-w-0 flex-1 items-center",
                         isComposerFooterCompact
                           ? "gap-1 overflow-hidden"
-                          : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible",
+                          : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
                       )}
                     >
                       {/* Provider/model picker */}

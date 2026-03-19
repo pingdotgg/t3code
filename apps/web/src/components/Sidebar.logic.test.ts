@@ -141,6 +141,8 @@ describe("resolveThreadStatusPill", () => {
               createdAt: "2026-03-09T10:00:00.000Z",
               updatedAt: "2026-03-09T10:05:00.000Z",
               planMarkdown: "# Plan",
+              implementedAt: null,
+              implementationThreadId: null,
             },
           ],
           session: {
@@ -153,6 +155,35 @@ describe("resolveThreadStatusPill", () => {
         hasPendingUserInput: false,
       }),
     ).toMatchObject({ label: "Plan Ready", pulse: false });
+  });
+
+  it("does not show plan ready after the proposed plan was implemented elsewhere", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: makeLatestTurn(),
+          proposedPlans: [
+            {
+              id: "plan-1" as never,
+              turnId: "turn-1" as never,
+              createdAt: "2026-03-09T10:00:00.000Z",
+              updatedAt: "2026-03-09T10:05:00.000Z",
+              planMarkdown: "# Plan",
+              implementedAt: "2026-03-09T10:06:00.000Z",
+              implementationThreadId: "thread-implement" as never,
+            },
+          ],
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
+    ).toMatchObject({ label: "Completed", pulse: false });
   });
 
   it("shows completed when there is an unseen completion and no active blocker", () => {
