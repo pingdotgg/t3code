@@ -13,6 +13,8 @@ build/
 .logs/
 release/
 .t3
+.idea/
 apps/web/.playwright
 apps/web/playwright-report
 apps/web/src/components/__screenshots__
+.vitest-*

@@ -22,7 +22,9 @@ import {
   Array,
   Cache,
   Cause,
+  Deferred,
   Effect,
+  Exit,
   FileSystem,
   Path,
   Layer,
@@ -33,7 +35,9 @@ import {
   SchemaGetter,
   SchemaIssue,
   SchemaTransformation,
+  Ref,
   ServiceMap,
+  Scope,
   Stream,
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
@@ -422,6 +426,7 @@ export interface KeybindingsConfigState {
 }
 
 export interface KeybindingsChangeEvent {
+  readonly keybindings: ResolvedKeybindingsConfig;
   readonly issues: readonly ServerConfigIssue[];
 }
 
@@ -469,6 +474,22 @@ function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): Resolve
  */
 export interface KeybindingsShape {
   /**
+   * Start the keybindings runtime and attach file watching.
+   *
+   * Safe to call multiple times. The first successful call establishes the
+   * runtime; later calls await the same startup.
+   */
+  readonly start: Effect.Effect<void, KeybindingsConfigError>;
+
+  /**
+   * Await keybindings runtime readiness.
+   *
+   * Readiness means the config directory exists, the watcher is attached, the
+   * startup sync has completed, and the current snapshot has been loaded.
+   */
+  readonly ready: Effect.Effect<void, KeybindingsConfigError>;
+
+  /**
    * Ensure the on-disk keybindings file exists and includes all default
    * commands so newly-added defaults are backfilled on startup.
    */
@@ -480,9 +501,14 @@ export interface KeybindingsShape {
   readonly loadConfigState: Effect.Effect<KeybindingsConfigState, KeybindingsConfigError>;
 
   /**
-   * Stream keybindings config change events.
+   * Read the latest keybindings snapshot from cache/disk.
    */
-  readonly changes: Stream.Stream<KeybindingsChangeEvent>;
+  readonly getSnapshot: Effect.Effect<KeybindingsConfigState, KeybindingsConfigError>;
+
+  /**
+   * Stream of keybindings config change events.
+   */
+  readonly streamChanges: Stream.Stream<KeybindingsChangeEvent>;
 
   /**
    * Upsert a keybinding rule and persist the resulting configuration.
@@ -509,9 +535,12 @@ const makeKeybindings = Effect.gen(function* () {
   const upsertSemaphore = yield* Semaphore.make(1);
   const resolvedConfigCacheKey = "resolved" as const;
   const changesPubSub = yield* PubSub.unbounded<KeybindingsChangeEvent>();
-
-  const emitChange = (issues: readonly ServerConfigIssue[]) =>
-    PubSub.publish(changesPubSub, { issues }).pipe(Effect.asVoid);
+  const startedRef = yield* Ref.make(false);
+  const startedDeferred = yield* Deferred.make<void, KeybindingsConfigError>();
+  const watcherScope = yield* Scope.make("sequential");
+  yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
+  const emitChange = (configState: KeybindingsConfigState) =>
+    PubSub.publish(changesPubSub, configState).pipe(Effect.asVoid);
 
   const readConfigExists = fs.exists(keybindingsConfigPath).pipe(
     Effect.mapError(
@@ -676,41 +705,8 @@ const makeKeybindings = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
       const configState = yield* loadConfigStateFromCacheOrDisk;
-      yield* emitChange(configState.issues);
+      yield* emitChange(configState);
     }),
-  );
-
-  const keybindingsConfigDir = path.dirname(keybindingsConfigPath);
-  const keybindingsConfigFile = path.basename(keybindingsConfigPath);
-  const keybindingsConfigPathResolved = path.resolve(keybindingsConfigPath);
-  yield* fs
-    .makeDirectory(keybindingsConfigDir, { recursive: true })
-    .pipe(Effect.orElseSucceed(() => undefined));
-  yield* Stream.runForEach(fs.watch(keybindingsConfigDir), (event) => {
-    const isTargetConfigEvent =
-      event.path === keybindingsConfigFile ||
-      event.path === keybindingsConfigPath ||
-      path.resolve(keybindingsConfigDir, event.path) === keybindingsConfigPathResolved;
-    if (!isTargetConfigEvent) {
-      return Effect.void;
-    }
-    return revalidateAndEmit.pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("failed to revalidate keybindings config after file update", {
-          path: keybindingsConfigPath,
-          detail: error.detail,
-          cause: error.cause,
-        }),
-      ),
-    );
-  }).pipe(
-    Effect.catch((cause) =>
-      Effect.logWarning("keybindings config watcher stopped unexpectedly", {
-        path: keybindingsConfigPath,
-        cause,
-      }),
-    ),
-    Effect.forkScoped,
   );
 
   const syncDefaultKeybindingsOnStartup = upsertSemaphore.withPermits(1)(
@@ -803,10 +799,68 @@ const makeKeybindings = Effect.gen(function* () {
     }),
   );
 
+  const startWatcher = Effect.gen(function* () {
+    const keybindingsConfigDir = path.dirname(keybindingsConfigPath);
+    const keybindingsConfigFile = path.basename(keybindingsConfigPath);
+    const keybindingsConfigPathResolved = path.resolve(keybindingsConfigPath);
+
+    yield* fs.makeDirectory(keybindingsConfigDir, { recursive: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new KeybindingsConfigError({
+            configPath: keybindingsConfigPath,
+            detail: "failed to prepare keybindings config directory",
+            cause,
+          }),
+      ),
+    );
+
+    const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
+
+    yield* Stream.runForEach(fs.watch(keybindingsConfigDir), (event) => {
+      const isTargetConfigEvent =
+        event.path === keybindingsConfigFile ||
+        event.path === keybindingsConfigPath ||
+        path.resolve(keybindingsConfigDir, event.path) === keybindingsConfigPathResolved;
+      if (!isTargetConfigEvent) {
+        return Effect.void;
+      }
+      return revalidateAndEmitSafely;
+    }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope), Effect.asVoid);
+  });
+
+  const start = Effect.gen(function* () {
+    const alreadyStarted = yield* Ref.get(startedRef);
+    if (alreadyStarted) {
+      return yield* Deferred.await(startedDeferred);
+    }
+
+    yield* Ref.set(startedRef, true);
+    const startup = Effect.gen(function* () {
+      yield* startWatcher;
+      yield* syncDefaultKeybindingsOnStartup;
+      yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
+      yield* loadConfigStateFromCacheOrDisk;
+    });
+
+    const startupExit = yield* Effect.exit(startup);
+    if (startupExit._tag === "Failure") {
+      yield* Deferred.failCause(startedDeferred, startupExit.cause).pipe(Effect.orDie);
+      return yield* Effect.failCause(startupExit.cause);
+    }
+
+    yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
+  });
+
   return {
+    start,
+    ready: Deferred.await(startedDeferred),
     syncDefaultKeybindingsOnStartup,
     loadConfigState: loadConfigStateFromCacheOrDisk,
-    changes: Stream.fromPubSub(changesPubSub),
+    getSnapshot: loadConfigStateFromCacheOrDisk,
+    get streamChanges() {
+      return Stream.fromPubSub(changesPubSub);
+    },
     upsertKeybindingRule: (rule) =>
       upsertSemaphore.withPermits(1)(
         Effect.gen(function* () {
@@ -833,7 +887,10 @@ const makeKeybindings = Effect.gen(function* () {
             keybindings: nextResolved,
             issues: [],
           });
-          yield* emitChange([]);
+          yield* emitChange({
+            keybindings: nextResolved,
+            issues: [],
+          });
           return nextResolved;
         }),
       ),

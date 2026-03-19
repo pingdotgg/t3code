@@ -13,15 +13,16 @@ import { Throttler } from "@tanstack/react-pacer";
 import { APP_DISPLAY_NAME } from "../branding";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
+import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { useComposerDraftStore } from "../composerDraftStore";
+import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
-import { preferredTerminalEditor } from "../terminal-links";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
+import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 
 export const Route = createRootRouteWithContext<{
@@ -139,7 +140,6 @@ function EventRouter() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const pathnameRef = useRef(pathname);
-  const lastConfigIssuesSignatureRef = useRef<string | null>(null);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
 
   pathnameRef.current = pathname;
@@ -158,6 +158,7 @@ function EventRouter() {
       if (disposed) return;
       latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
       syncServerReadModel(snapshot);
+      clearPromotedDraftThreads(new Set(snapshot.threads.map((t) => t.id)));
       const draftThreadIds = Object.keys(
         useComposerDraftStore.getState().draftThreadsByThreadId,
       ) as ThreadId[];
@@ -192,6 +193,9 @@ function EventRouter() {
         if (needsProviderInvalidation) {
           needsProviderInvalidation = false;
           void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
+          // Invalidate workspace entry queries so the @-mention file picker
+          // reflects files created, deleted, or restored during this turn.
+          void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
         }
         void syncSnapshot();
       },
@@ -251,14 +255,13 @@ function EventRouter() {
         handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
       })().catch(() => undefined);
     });
+    // onServerConfigUpdated replays the latest cached value synchronously
+    // during subscribe. Skip the toast for that replay so effect re-runs
+    // don't produce duplicate toasts.
+    let subscribed = false;
     const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
-      const signature = JSON.stringify(payload.issues);
-      if (lastConfigIssuesSignatureRef.current === signature) {
-        return;
-      }
-      lastConfigIssuesSignatureRef.current = signature;
-
       void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
+      if (!subscribed) return;
       const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
       if (!issue) {
         toastManager.add({
@@ -278,9 +281,13 @@ function EventRouter() {
           onClick: () => {
             void queryClient
               .ensureQueryData(serverConfigQueryOptions())
-              .then((config) =>
-                api.shell.openInEditor(config.keybindingsConfigPath, preferredTerminalEditor()),
-              )
+              .then((config) => {
+                const editor = resolveAndPersistPreferredEditor(config.availableEditors);
+                if (!editor) {
+                  throw new Error("No available editors found.");
+                }
+                return api.shell.openInEditor(config.keybindingsConfigPath, editor);
+              })
               .catch((error) => {
                 toastManager.add({
                   type: "error",
@@ -293,6 +300,7 @@ function EventRouter() {
         },
       });
     });
+    subscribed = true;
     return () => {
       disposed = true;
       needsProviderInvalidation = false;

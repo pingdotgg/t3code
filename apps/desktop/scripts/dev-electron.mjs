@@ -80,12 +80,13 @@ function startApp() {
     }
   });
 
-  app.once("exit", () => {
+  app.once("exit", (code, signal) => {
     if (currentApp === app) {
       currentApp = null;
     }
 
-    if (!shuttingDown && !expectedExits.has(app)) {
+    const exitedAbnormally = signal !== null || code !== 0;
+    if (!shuttingDown && !expectedExits.has(app) && exitedAbnormally) {
       scheduleRestart();
     }
   });

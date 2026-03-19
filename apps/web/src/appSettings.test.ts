@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_TIMESTAMP_FORMAT,
   getAppModelOptions,
-  getSlashModelOptions,
   normalizeCustomModelSlugs,
   resolveAppModelSelection,
 } from "./appSettings";
@@ -28,6 +28,7 @@ describe("getAppModelOptions", () => {
 
     expect(options.map((option) => option.slug)).toEqual([
       "gpt-5.4",
+      "gpt-5.4-mini",
       "gpt-5.3-codex",
       "gpt-5.3-codex-spark",
       "gpt-5.2-codex",
@@ -59,16 +60,8 @@ describe("resolveAppModelSelection", () => {
   });
 });
 
-describe("getSlashModelOptions", () => {
-  it("includes saved custom model slugs for /model command suggestions", () => {
-    const options = getSlashModelOptions("codex", ["custom/internal-model"], "", "gpt-5.3-codex");
-
-    expect(options.some((option) => option.slug === "custom/internal-model")).toBe(true);
-  });
-
-  it("filters slash-model suggestions across built-in and custom model names", () => {
-    const options = getSlashModelOptions("codex", ["openai/gpt-oss-120b"], "oss", "gpt-5.3-codex");
-
-    expect(options.map((option) => option.slug)).toEqual(["openai/gpt-oss-120b"]);
+describe("timestamp format defaults", () => {
+  it("defaults timestamp format to locale", () => {
+    expect(DEFAULT_TIMESTAMP_FORMAT).toBe("locale");
   });
 });

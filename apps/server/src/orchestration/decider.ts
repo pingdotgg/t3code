@@ -262,11 +262,35 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
-      yield* requireThread({
+      const targetThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const sourceProposedPlan = command.sourceProposedPlan;
+      const sourceThread = sourceProposedPlan
+        ? yield* requireThread({
+            readModel,
+            command,
+            threadId: sourceProposedPlan.threadId,
+          })
+        : null;
+      const sourcePlan =
+        sourceProposedPlan && sourceThread
+          ? sourceThread.proposedPlans.find((entry) => entry.id === sourceProposedPlan.planId)
+          : null;
+      if (sourceProposedPlan && !sourcePlan) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Proposed plan '${sourceProposedPlan.planId}' does not exist on thread '${sourceProposedPlan.threadId}'.`,
+        });
+      }
+      if (sourceThread && sourceThread.projectId !== targetThread.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Proposed plan '${sourceProposedPlan?.planId}' belongs to thread '${sourceThread.id}' in a different project.`,
+        });
+      }
       const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -306,12 +330,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { providerOptions: command.providerOptions }
             : {}),
           assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
-          runtimeMode:
-            readModel.threads.find((entry) => entry.id === command.threadId)?.runtimeMode ??
-            command.runtimeMode,
-          interactionMode:
-            readModel.threads.find((entry) => entry.id === command.threadId)?.interactionMode ??
-            command.interactionMode,
+          runtimeMode: targetThread.runtimeMode,
+          interactionMode: targetThread.interactionMode,
+          ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
           createdAt: command.createdAt,
         },
       };

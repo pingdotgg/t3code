@@ -25,6 +25,8 @@ import Migration0010 from "./Migrations/010_ProjectionThreadsRuntimeMode.ts";
 import Migration0011 from "./Migrations/011_OrchestrationThreadCreatedRuntimeMode.ts";
 import Migration0012 from "./Migrations/012_ProjectionThreadsInteractionMode.ts";
 import Migration0013 from "./Migrations/013_ProjectionThreadProposedPlans.ts";
+import Migration0014 from "./Migrations/014_ProjectionThreadProposedPlanImplementation.ts";
+import Migration0015 from "./Migrations/015_ProjectionTurnsSourceProposedPlan.ts";
 import { Effect } from "effect";
 
 /**
@@ -51,6 +53,8 @@ const loader = Migrator.fromRecord({
   "11_OrchestrationThreadCreatedRuntimeMode": Migration0011,
   "12_ProjectionThreadsInteractionMode": Migration0012,
   "13_ProjectionThreadProposedPlans": Migration0013,
+  "14_ProjectionThreadProposedPlanImplementation": Migration0014,
+  "15_ProjectionTurnsSourceProposedPlan": Migration0015,
 });
 
 /**

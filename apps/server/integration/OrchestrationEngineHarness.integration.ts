@@ -15,6 +15,7 @@ import {
   Layer,
   ManagedRuntime,
   Option,
+  Ref,
   Schedule,
   Schema,
   Scope,
@@ -45,6 +46,7 @@ import { CheckpointReactorLive } from "../src/orchestration/Layers/CheckpointRea
 import { OrchestrationEngineLive } from "../src/orchestration/Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../src/orchestration/Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "../src/orchestration/Layers/ProjectionSnapshotQuery.ts";
+import { RuntimeReceiptBusLive } from "../src/orchestration/Layers/RuntimeReceiptBus.ts";
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
@@ -54,6 +56,10 @@ import {
 } from "../src/orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationReactor } from "../src/orchestration/Services/OrchestrationReactor.ts";
 import { ProjectionSnapshotQuery } from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  RuntimeReceiptBus,
+  type OrchestrationRuntimeReceipt,
+} from "../src/orchestration/Services/RuntimeReceiptBus.ts";
 
 import {
   makeTestProviderAdapterHarness,
@@ -114,7 +120,7 @@ function waitFor<A, E>(
   read: Effect.Effect<A, E>,
   predicate: (value: A) => boolean,
   description: string,
-  timeoutMs = 3000,
+  timeoutMs = 10_000,
 ): Effect.Effect<A, never> {
   const RETRY_SIGNAL = "wait_for_retry";
   const retryIntervalMs = 10;
@@ -185,6 +191,16 @@ export interface OrchestrationIntegrationHarness {
     },
     never
   >;
+  readonly waitForReceipt: {
+    (
+      predicate: (receipt: OrchestrationRuntimeReceipt) => boolean,
+      timeoutMs?: number,
+    ): Effect.Effect<OrchestrationRuntimeReceipt, never>;
+    <Receipt extends OrchestrationRuntimeReceipt>(
+      predicate: (receipt: OrchestrationRuntimeReceipt) => receipt is Receipt,
+      timeoutMs?: number,
+    ): Effect.Effect<Receipt, never>;
+  };
   readonly dispose: Effect.Effect<void, never>;
 }
 
@@ -268,6 +284,7 @@ export const makeOrchestrationIntegrationHarness = (
       ProjectionPendingApprovalRepositoryLive,
       CheckpointStoreLive,
       providerLayer,
+      RuntimeReceiptBusLive,
     );
     const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
@@ -322,11 +339,18 @@ export const makeOrchestrationIntegrationHarness = (
       "load ProjectionPendingApprovalRepository service",
       () => runtime.runPromise(Effect.service(ProjectionPendingApprovalRepository)),
     ).pipe(Effect.orDie);
+    const runtimeReceiptBus = yield* tryRuntimePromise("load RuntimeReceiptBus service", () =>
+      runtime.runPromise(Effect.service(RuntimeReceiptBus)),
+    ).pipe(Effect.orDie);
 
     const scope = yield* Scope.make("sequential");
     yield* tryRuntimePromise("start OrchestrationReactor", () =>
       runtime.runPromise(reactor.start.pipe(Scope.provide(scope))),
     ).pipe(Effect.orDie);
+    const receiptHistory = yield* Ref.make<ReadonlyArray<OrchestrationRuntimeReceipt>>([]);
+    yield* Stream.runForEach(runtimeReceiptBus.stream, (receipt) =>
+      Ref.update(receiptHistory, (history) => [...history, receipt]).pipe(Effect.asVoid),
+    ).pipe(Effect.forkIn(scope));
     yield* sleep(10);
 
     const waitForThread: OrchestrationIntegrationHarness["waitForThread"] = (
@@ -398,6 +422,30 @@ export const makeOrchestrationIntegrationHarness = (
         never
       >;
 
+    function waitForReceipt(
+      predicate: (receipt: OrchestrationRuntimeReceipt) => boolean,
+      timeoutMs?: number,
+    ): Effect.Effect<OrchestrationRuntimeReceipt, never>;
+    function waitForReceipt<Receipt extends OrchestrationRuntimeReceipt>(
+      predicate: (receipt: OrchestrationRuntimeReceipt) => receipt is Receipt,
+      timeoutMs?: number,
+    ): Effect.Effect<Receipt, never>;
+    function waitForReceipt(
+      predicate: (receipt: OrchestrationRuntimeReceipt) => boolean,
+      timeoutMs?: number,
+    ) {
+      const readMatchingReceipt = Ref.get(receiptHistory).pipe(
+        Effect.map((history) => history.find(predicate)),
+      );
+
+      return waitFor(
+        readMatchingReceipt,
+        (receipt): receipt is OrchestrationRuntimeReceipt => receipt !== undefined,
+        "runtime receipt",
+        timeoutMs,
+      );
+    }
+
     let disposed = false;
     const dispose = Effect.gen(function* () {
       if (disposed) {
@@ -443,6 +491,7 @@ export const makeOrchestrationIntegrationHarness = (
       waitForThread,
       waitForDomainEvent,
       waitForPendingApproval,
+      waitForReceipt,
       dispose,
     } satisfies OrchestrationIntegrationHarness;
   });

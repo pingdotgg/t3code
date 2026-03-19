@@ -75,6 +75,17 @@ export function basenameOfPath(pathValue: string): string {
   return pathValue.slice(slashIndex + 1);
 }
 
+export function inferEntryKindFromPath(pathValue: string): "file" | "directory" {
+  const base = basenameOfPath(pathValue);
+  if (base.startsWith(".") && !base.slice(1).includes(".")) {
+    return "directory";
+  }
+  if (base.includes(".")) {
+    return "file";
+  }
+  return "directory";
+}
+
 function extensionCandidates(fileName: string): string[] {
   const candidates = new Set<string>();
   if (fileName.includes(".")) {

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasUnseenCompletion,
+  resolveSidebarNewThreadEnvMode,
+  resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
@@ -59,6 +61,25 @@ describe("shouldClearThreadSelectionOnMouseDown", () => {
     } as unknown as HTMLElement;
 
     expect(shouldClearThreadSelectionOnMouseDown(unrelated)).toBe(true);
+  });
+});
+
+describe("resolveSidebarNewThreadEnvMode", () => {
+  it("uses the app default when the caller does not request a specific mode", () => {
+    expect(
+      resolveSidebarNewThreadEnvMode({
+        defaultEnvMode: "worktree",
+      }),
+    ).toBe("worktree");
+  });
+
+  it("preserves an explicit requested mode over the app default", () => {
+    expect(
+      resolveSidebarNewThreadEnvMode({
+        requestedEnvMode: "local",
+        defaultEnvMode: "worktree",
+      }),
+    ).toBe("local");
   });
 });
 
@@ -120,6 +141,8 @@ describe("resolveThreadStatusPill", () => {
               createdAt: "2026-03-09T10:00:00.000Z",
               updatedAt: "2026-03-09T10:05:00.000Z",
               planMarkdown: "# Plan",
+              implementedAt: null,
+              implementationThreadId: null,
             },
           ],
           session: {
@@ -132,6 +155,35 @@ describe("resolveThreadStatusPill", () => {
         hasPendingUserInput: false,
       }),
     ).toMatchObject({ label: "Plan Ready", pulse: false });
+  });
+
+  it("does not show plan ready after the proposed plan was implemented elsewhere", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: makeLatestTurn(),
+          proposedPlans: [
+            {
+              id: "plan-1" as never,
+              turnId: "turn-1" as never,
+              createdAt: "2026-03-09T10:00:00.000Z",
+              updatedAt: "2026-03-09T10:05:00.000Z",
+              planMarkdown: "# Plan",
+              implementedAt: "2026-03-09T10:06:00.000Z",
+              implementationThreadId: "thread-implement" as never,
+            },
+          ],
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
+    ).toMatchObject({ label: "Completed", pulse: false });
   });
 
   it("shows completed when there is an unseen completion and no active blocker", () => {
@@ -152,5 +204,29 @@ describe("resolveThreadStatusPill", () => {
         hasPendingUserInput: false,
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
+  });
+});
+
+describe("resolveThreadRowClassName", () => {
+  it("uses the darker selected palette when a thread is both selected and active", () => {
+    const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
+    expect(className).toContain("bg-primary/22");
+    expect(className).toContain("hover:bg-primary/26");
+    expect(className).toContain("dark:bg-primary/30");
+    expect(className).not.toContain("bg-accent/85");
+  });
+
+  it("uses selected hover colors for selected threads", () => {
+    const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
+    expect(className).toContain("bg-primary/15");
+    expect(className).toContain("hover:bg-primary/19");
+    expect(className).toContain("dark:bg-primary/22");
+    expect(className).not.toContain("hover:bg-accent");
+  });
+
+  it("keeps the accent palette for active-only threads", () => {
+    const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
+    expect(className).toContain("bg-accent/85");
+    expect(className).toContain("hover:bg-accent");
   });
 });

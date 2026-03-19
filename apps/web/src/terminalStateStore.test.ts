@@ -46,6 +46,28 @@ describe("terminalStateStore actions", () => {
     ]);
   });
 
+  it("caps splits at four terminals per group", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.splitTerminal(THREAD_ID, "terminal-3");
+    store.splitTerminal(THREAD_ID, "terminal-4");
+    store.splitTerminal(THREAD_ID, "terminal-5");
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalIds).toEqual([
+      "default",
+      "terminal-2",
+      "terminal-3",
+      "terminal-4",
+    ]);
+    expect(terminalState.terminalGroups).toEqual([
+      { id: "group-default", terminalIds: ["default", "terminal-2", "terminal-3", "terminal-4"] },
+    ]);
+  });
+
   it("creates new terminals in a separate group", () => {
     useTerminalStateStore.getState().newTerminal(THREAD_ID, "terminal-2");
 
@@ -59,6 +81,33 @@ describe("terminalStateStore actions", () => {
     expect(terminalState.terminalGroups).toEqual([
       { id: "group-default", terminalIds: ["default"] },
       { id: "group-terminal-2", terminalIds: ["terminal-2"] },
+    ]);
+  });
+
+  it("allows unlimited groups while keeping each group capped at four terminals", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.splitTerminal(THREAD_ID, "terminal-3");
+    store.splitTerminal(THREAD_ID, "terminal-4");
+    store.newTerminal(THREAD_ID, "terminal-5");
+    store.newTerminal(THREAD_ID, "terminal-6");
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalIds).toEqual([
+      "default",
+      "terminal-2",
+      "terminal-3",
+      "terminal-4",
+      "terminal-5",
+      "terminal-6",
+    ]);
+    expect(terminalState.terminalGroups).toEqual([
+      { id: "group-default", terminalIds: ["default", "terminal-2", "terminal-3", "terminal-4"] },
+      { id: "group-terminal-5", terminalIds: ["terminal-5"] },
+      { id: "group-terminal-6", terminalIds: ["terminal-6"] },
     ]);
   });
 

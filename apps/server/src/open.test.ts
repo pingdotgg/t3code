@@ -1,8 +1,7 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
+import { assertSuccess } from "@effect/vitest/utils";
+import { FileSystem, Path, Effect } from "effect";
 
 import {
   isCommandAvailable,
@@ -10,12 +9,19 @@ import {
   resolveAvailableEditors,
   resolveEditorLaunch,
 } from "./open";
-import { Effect } from "effect";
-import { assertSuccess } from "@effect/vitest/utils";
 
-describe("resolveEditorLaunch", () => {
+it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
   it.effect("returns commands for command-based editors", () =>
     Effect.gen(function* () {
+      const antigravityLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "antigravity" },
+        "darwin",
+      );
+      assert.deepEqual(antigravityLaunch, {
+        command: "agy",
+        args: ["/tmp/workspace"],
+      });
+
       const cursorLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "cursor" },
         "darwin",
@@ -117,7 +123,7 @@ describe("resolveEditorLaunch", () => {
   );
 });
 
-describe("launchDetached", () => {
+it.layer(NodeServices.layer)("launchDetached", (it) => {
   it.effect("resolves when command can be spawned", () =>
     Effect.gen(function* () {
       const result = yield* launchDetached({
@@ -139,26 +145,20 @@ describe("launchDetached", () => {
   );
 });
 
-describe("isCommandAvailable", () => {
-  function withTempDir(run: (dir: string) => void): void {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-open-"));
-    try {
-      run(dir);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  }
-
-  it("resolves win32 commands with PATHEXT", () => {
-    withTempDir((dir) => {
-      fs.writeFileSync(path.join(dir, "code.CMD"), "@echo off\r\n", "utf8");
+it.layer(NodeServices.layer)("isCommandAvailable", (it) => {
+  it.effect("resolves win32 commands with PATHEXT", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      yield* fs.writeFileString(path.join(dir, "code.CMD"), "@echo off\r\n");
       const env = {
         PATH: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       } satisfies NodeJS.ProcessEnv;
       assert.equal(isCommandAvailable("code", { platform: "win32", env }), true);
-    });
-  });
+    }),
+  );
 
   it("returns false when a command is not on PATH", () => {
     const env = {
@@ -168,55 +168,65 @@ describe("isCommandAvailable", () => {
     assert.equal(isCommandAvailable("definitely-not-installed", { platform: "win32", env }), false);
   });
 
-  it("does not treat bare files without executable extension as available on win32", () => {
-    withTempDir((dir) => {
-      fs.writeFileSync(path.join(dir, "npm"), "echo nope\r\n", "utf8");
+  it.effect("does not treat bare files without executable extension as available on win32", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      yield* fs.writeFileString(path.join(dir, "npm"), "echo nope\r\n");
       const env = {
         PATH: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       } satisfies NodeJS.ProcessEnv;
       assert.equal(isCommandAvailable("npm", { platform: "win32", env }), false);
-    });
-  });
+    }),
+  );
 
-  it("appends PATHEXT for commands with non-executable extensions on win32", () => {
-    withTempDir((dir) => {
-      fs.writeFileSync(path.join(dir, "my.tool.CMD"), "@echo off\r\n", "utf8");
+  it.effect("appends PATHEXT for commands with non-executable extensions on win32", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      yield* fs.writeFileString(path.join(dir, "my.tool.CMD"), "@echo off\r\n");
       const env = {
         PATH: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       } satisfies NodeJS.ProcessEnv;
       assert.equal(isCommandAvailable("my.tool", { platform: "win32", env }), true);
-    });
-  });
+    }),
+  );
 
-  it("uses platform-specific PATH delimiter for platform overrides", () => {
-    withTempDir((firstDir) => {
-      withTempDir((secondDir) => {
-        fs.writeFileSync(path.join(secondDir, "code.CMD"), "@echo off\r\n", "utf8");
-        const env = {
-          PATH: `${firstDir};${secondDir}`,
-          PATHEXT: ".COM;.EXE;.BAT;.CMD",
-        } satisfies NodeJS.ProcessEnv;
-        assert.equal(isCommandAvailable("code", { platform: "win32", env }), true);
-      });
-    });
-  });
+  it.effect("uses platform-specific PATH delimiter for platform overrides", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const firstDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      const secondDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      yield* fs.writeFileString(path.join(firstDir, "code.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(secondDir, "code.CMD"), "MZ");
+      const env = {
+        PATH: `${firstDir};${secondDir}`,
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      } satisfies NodeJS.ProcessEnv;
+      assert.equal(isCommandAvailable("code", { platform: "win32", env }), true);
+    }),
+  );
 });
 
-describe("resolveAvailableEditors", () => {
-  it("returns only editors whose launch commands are available", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-editors-"));
-    try {
-      fs.writeFileSync(path.join(dir, "cursor.CMD"), "@echo off\r\n", "utf8");
-      fs.writeFileSync(path.join(dir, "explorer.EXE"), "MZ", "utf8");
+it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
+  it.effect("returns installed editors for command launches", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+
+      yield* fs.writeFileString(path.join(dir, "cursor.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "explorer.CMD"), "MZ");
       const editors = resolveAvailableEditors("win32", {
         PATH: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
       assert.deepEqual(editors, ["cursor", "file-manager"]);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
+    }),
+  );
 });
