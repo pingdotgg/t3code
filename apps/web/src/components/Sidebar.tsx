@@ -386,8 +386,9 @@ export default function Sidebar() {
       const latestThread = threads
         .filter((thread) => thread.projectId === projectId)
         .toSorted((a, b) => {
-          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-          if (byDate !== 0) return byDate;
+          const aTime = a.messages.at(-1)?.createdAt ?? a.createdAt;
+          const bTime = b.messages.at(-1)?.createdAt ?? b.createdAt;
+          if (aTime !== bTime) return bTime.localeCompare(aTime);
           return b.id.localeCompare(a.id);
         })[0];
       if (!latestThread) return;
@@ -1296,9 +1297,9 @@ export default function Sidebar() {
                   const projectThreads = threads
                     .filter((thread) => thread.projectId === project.id)
                     .toSorted((a, b) => {
-                      const byDate =
-                        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-                      if (byDate !== 0) return byDate;
+                      const aTime = a.messages.at(-1)?.createdAt ?? a.createdAt;
+                      const bTime = b.messages.at(-1)?.createdAt ?? b.createdAt;
+                      if (aTime !== bTime) return bTime.localeCompare(aTime);
                       return b.id.localeCompare(a.id);
                     });
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
