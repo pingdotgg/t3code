@@ -182,6 +182,7 @@ export function filterCommandPaletteGroups(input: {
 
 export function buildBrowseGroups(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
+  browseQuery: string;
   canBrowseUp: boolean;
   upIcon: ReactNode;
   directoryIcon: ReactNode;
@@ -194,7 +195,8 @@ export function buildBrowseGroups(input: {
     items.push({
       kind: "action",
       value: "browse:up",
-      label: "..",
+      label: `${input.browseQuery} ..`,
+      searchText: `${input.browseQuery} ..`,
       title: "..",
       icon: input.upIcon,
       keepOpen: true,
@@ -208,7 +210,8 @@ export function buildBrowseGroups(input: {
     items.push({
       kind: "action",
       value: `browse:${entry.fullPath}`,
-      label: entry.name,
+      label: `${input.browseQuery} ${entry.fullPath} ${entry.name}`,
+      searchText: `${input.browseQuery} ${entry.fullPath} ${entry.name}`,
       title: entry.name,
       icon: input.directoryIcon,
       keepOpen: true,

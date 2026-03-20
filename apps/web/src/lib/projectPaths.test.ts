@@ -5,9 +5,11 @@ import {
   findProjectByPath,
   getBrowseParentPath,
   inferProjectTitleFromPath,
+  isExplicitRelativeProjectPath,
   isFilesystemBrowseQuery,
   normalizeProjectPathForComparison,
   normalizeProjectPathForDispatch,
+  isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "./projectPaths";
 
@@ -41,9 +43,21 @@ describe("projectPaths", () => {
 
   it("detects browse queries across supported path styles", () => {
     expect(isFilesystemBrowseQuery("~/projects")).toBe(true);
-    expect(isFilesystemBrowseQuery("C:\\Work\\Repo\\")).toBe(true);
     expect(isFilesystemBrowseQuery("..\\docs")).toBe(true);
     expect(isFilesystemBrowseQuery("notes")).toBe(false);
+  });
+
+  it("only treats windows-style paths as browse queries on windows", () => {
+    expect(isFilesystemBrowseQuery("C:\\Work\\Repo\\", "MacIntel")).toBe(false);
+    expect(isFilesystemBrowseQuery("C:\\Work\\Repo\\", "Win32")).toBe(true);
+    expect(isUnsupportedWindowsProjectPath("C:\\Work\\Repo\\", "MacIntel")).toBe(true);
+    expect(isUnsupportedWindowsProjectPath("C:\\Work\\Repo\\", "Win32")).toBe(false);
+  });
+
+  it("detects explicit relative project paths", () => {
+    expect(isExplicitRelativeProjectPath("./docs")).toBe(true);
+    expect(isExplicitRelativeProjectPath("..\\docs")).toBe(true);
+    expect(isExplicitRelativeProjectPath("/repo/docs")).toBe(false);
   });
 
   it("resolves explicit relative paths against the current project", () => {

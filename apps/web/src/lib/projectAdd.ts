@@ -9,6 +9,8 @@ import { newCommandId, newProjectId } from "./utils";
 import {
   findProjectByPath,
   inferProjectTitleFromPath,
+  isExplicitRelativeProjectPath,
+  isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "./projectPaths";
 
@@ -32,6 +34,7 @@ interface AddProjectFromPathContext {
     options?: { envMode?: DraftThreadEnvMode },
   ) => Promise<void>;
   readonly navigateToThread: (threadId: ThreadId) => Promise<void>;
+  readonly platform: string;
   readonly projects: ReadonlyArray<ProjectLike>;
   readonly threads: ReadonlyArray<ThreadLike>;
 }
@@ -49,21 +52,15 @@ function compareThreadsByCreatedAtDesc(
   return right.id.localeCompare(left.id);
 }
 
-function hasExplicitRelativePrefix(value: string): boolean {
-  const trimmedValue = value.trim();
-  return (
-    trimmedValue.startsWith("./") ||
-    trimmedValue.startsWith("../") ||
-    trimmedValue.startsWith(".\\") ||
-    trimmedValue.startsWith("..\\")
-  );
-}
-
 export async function addProjectFromPath(
   context: AddProjectFromPathContext,
   rawCwd: string,
 ): Promise<AddProjectFromPathResult> {
-  if (hasExplicitRelativePrefix(rawCwd) && !context.currentProjectCwd) {
+  if (isUnsupportedWindowsProjectPath(rawCwd.trim(), context.platform)) {
+    throw new Error("Windows-style paths are only supported on Windows.");
+  }
+
+  if (isExplicitRelativeProjectPath(rawCwd.trim()) && !context.currentProjectCwd) {
     throw new Error("Relative paths require an active project.");
   }
 

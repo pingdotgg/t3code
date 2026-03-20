@@ -1,3 +1,5 @@
+import { isWindowsPlatform } from "./utils";
+
 function isWindowsDrivePath(value: string): boolean {
   return /^[a-zA-Z]:([/\\]|$)/.test(value);
 }
@@ -27,7 +29,7 @@ function isUncPath(value: string): boolean {
   return value.startsWith("\\\\");
 }
 
-function isExplicitRelativePath(value: string): boolean {
+export function isExplicitRelativeProjectPath(value: string): boolean {
   return (
     value.startsWith("./") ||
     value.startsWith("../") ||
@@ -75,7 +77,11 @@ function splitAbsolutePath(value: string): {
   return null;
 }
 
-export function isFilesystemBrowseQuery(value: string): boolean {
+export function isFilesystemBrowseQuery(
+  value: string,
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): boolean {
+  const allowWindowsPaths = isWindowsPlatform(platform);
   return (
     value.startsWith("/") ||
     value.startsWith("~/") ||
@@ -83,9 +89,12 @@ export function isFilesystemBrowseQuery(value: string): boolean {
     value.startsWith("../") ||
     value.startsWith(".\\") ||
     value.startsWith("..\\") ||
-    value.startsWith("\\\\") ||
-    isWindowsDrivePath(value)
+    (allowWindowsPaths && (value.startsWith("\\\\") || isWindowsDrivePath(value)))
   );
+}
+
+export function isUnsupportedWindowsProjectPath(value: string, platform: string): boolean {
+  return (isWindowsDrivePath(value) || isUncPath(value)) && !isWindowsPlatform(platform);
 }
 
 export function normalizeProjectPathForDispatch(value: string): string {
@@ -94,7 +103,7 @@ export function normalizeProjectPathForDispatch(value: string): string {
 
 export function resolveProjectPathForDispatch(value: string, cwd?: string | null): string {
   const trimmedValue = value.trim();
-  if (!isExplicitRelativePath(trimmedValue) || !cwd) {
+  if (!isExplicitRelativeProjectPath(trimmedValue) || !cwd) {
     return normalizeProjectPathForDispatch(trimmedValue);
   }
 

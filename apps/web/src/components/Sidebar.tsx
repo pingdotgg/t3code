@@ -405,6 +405,7 @@ export default function Sidebar() {
                 params: { threadId },
               });
             },
+            platform: navigator.platform,
             projects,
             threads,
           },

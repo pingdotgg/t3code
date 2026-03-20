@@ -110,6 +110,14 @@ const isServerNotRunningError = (error: Error): boolean => {
   );
 };
 
+function isWindowsDrivePath(value: string): boolean {
+  return /^[a-zA-Z]:([/\\]|$)/.test(value);
+}
+
+function isWindowsAbsolutePath(value: string): boolean {
+  return value.startsWith("\\\\") || isWindowsDrivePath(value);
+}
+
 function isExplicitRelativePath(value: string): boolean {
   return (
     value.startsWith("./") ||
@@ -894,6 +902,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.filesystemBrowse: {
         const body = stripRequestTag(request.body);
+        if (process.platform !== "win32" && isWindowsAbsolutePath(body.partialPath)) {
+          return yield* new RouteRequestError({
+            message: "Windows-style paths are only supported on Windows.",
+          });
+        }
         const resolvedInputPath = yield* resolveFilesystemBrowseInputPath({
           cwd: body.cwd,
           path,
@@ -931,13 +944,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const entries = yield* Effect.forEach(
           filtered,
           (name) =>
-            fileSystem
-              .stat(path.join(parentDir, name))
-              .pipe(
-                Effect.map((s) =>
+            fileSystem.stat(path.join(parentDir, name)).pipe(
+              Effect.match({
+                onFailure: () => null,
+                onSuccess: (s) =>
                   s.type === "Directory" ? { name, fullPath: path.join(parentDir, name) } : null,
-                ),
-              ),
+              }),
+            ),
           { concurrency: 16 },
         );
 

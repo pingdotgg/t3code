@@ -1606,6 +1606,38 @@ describe("WebSocket Server", () => {
     });
   });
 
+  it("skips unreadable or broken browse entries instead of failing the request", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const workspace = makeTempDir("t3code-ws-filesystem-browse-broken-entry-");
+    fs.mkdirSync(path.join(workspace, "docs"), { recursive: true });
+    fs.symlinkSync(path.join(workspace, "missing-target"), path.join(workspace, "broken-link"));
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.filesystemBrowse, {
+      partialPath: `${workspace}/`,
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      parentPath: workspace,
+      entries: [
+        {
+          name: "docs",
+          fullPath: path.join(workspace, "docs"),
+        },
+      ],
+    });
+  });
+
   it("resolves relative filesystem.browse paths against the provided cwd", async () => {
     const workspace = makeTempDir("t3code-ws-filesystem-browse-relative-");
     fs.mkdirSync(path.join(workspace, "apps"), { recursive: true });
@@ -1651,6 +1683,26 @@ describe("WebSocket Server", () => {
     expect(response.error?.message).toContain(
       "Relative filesystem browse paths require a current project.",
     );
+  });
+
+  it("rejects windows-style filesystem.browse paths on non-windows hosts", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.filesystemBrowse, {
+      partialPath: "C:\\Work\\Repo",
+    });
+
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("Windows-style paths are only supported on Windows.");
   });
 
   it("supports projects.writeFile within the workspace root", async () => {

@@ -32,6 +32,7 @@ import {
 import {
   appendBrowsePathSegment,
   getBrowseParentPath,
+  isExplicitRelativeProjectPath,
   isFilesystemBrowseQuery,
 } from "../lib/projectPaths";
 import { addProjectFromPath } from "../lib/projectAdd";
@@ -129,6 +130,10 @@ function OpenCommandPaletteDialog() {
   const currentProjectCwd = currentProjectId
     ? (projectCwdById.get(currentProjectId) ?? null)
     : null;
+  const relativePathNeedsActiveProject =
+    isExplicitRelativeProjectPath(query.trim()) && currentProjectCwd === null;
+  const debouncedRelativePathNeedsActiveProject =
+    isExplicitRelativeProjectPath(debouncedBrowsePath.trim()) && currentProjectCwd === null;
 
   const { data: browseEntries = [] } = useQuery({
     queryKey: ["filesystemBrowse", debouncedBrowsePath, currentProjectCwd],
@@ -143,9 +148,7 @@ function OpenCommandPaletteDialog() {
       return result.entries;
     },
     enabled:
-      isBrowsing &&
-      debouncedBrowsePath.length > 0 &&
-      (!debouncedBrowsePath.startsWith(".") || currentProjectCwd !== null),
+      isBrowsing && debouncedBrowsePath.length > 0 && !debouncedRelativePathNeedsActiveProject,
   });
 
   const projectThreadItems = useMemo(
@@ -393,6 +396,7 @@ function OpenCommandPaletteDialog() {
                 params: { threadId },
               });
             },
+            platform: navigator.platform,
             projects,
             threads,
           },
@@ -438,22 +442,32 @@ function OpenCommandPaletteDialog() {
     setBrowseGeneration((generation) => generation + 1);
   }, [query]);
 
-  const canBrowseUp = isBrowsing && getBrowseParentPath(query) !== null;
+  const canBrowseUp =
+    isBrowsing && !relativePathNeedsActiveProject && getBrowseParentPath(query) !== null;
 
   const browseGroups = useMemo(
     () =>
       buildBrowseGroups({
         browseEntries,
+        browseQuery: query,
         canBrowseUp,
         upIcon: <CornerLeftUpIcon className={ITEM_ICON_CLASS} />,
         directoryIcon: <FolderIcon className={ITEM_ICON_CLASS} />,
         browseUp,
         browseTo,
       }),
-    [browseEntries, browseTo, browseUp, canBrowseUp],
+    [browseEntries, browseTo, browseUp, canBrowseUp, query],
   );
 
-  const displayedGroups = isBrowsing ? browseGroups : filteredGroups;
+  const displayedGroups = useMemo(
+    () =>
+      isBrowsing && relativePathNeedsActiveProject
+        ? []
+        : isBrowsing
+          ? browseGroups
+          : filteredGroups,
+    [browseGroups, filteredGroups, isBrowsing, relativePathNeedsActiveProject],
+  );
   const inputPlaceholder = getCommandPaletteInputPlaceholder(paletteMode);
   const inputStartAddon = getCommandPaletteInputStartAddon({
     mode: paletteMode,
@@ -464,7 +478,12 @@ function OpenCommandPaletteDialog() {
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
-      if (isBrowsing && event.key === "Enter" && highlightedItemValue === null) {
+      if (
+        isBrowsing &&
+        event.key === "Enter" &&
+        highlightedItemValue === null &&
+        !relativePathNeedsActiveProject
+      ) {
         event.preventDefault();
         void handleAddProject(query.trim());
       }
@@ -474,7 +493,15 @@ function OpenCommandPaletteDialog() {
         popView();
       }
     },
-    [handleAddProject, highlightedItemValue, isBrowsing, isSubmenu, popView, query],
+    [
+      handleAddProject,
+      highlightedItemValue,
+      isBrowsing,
+      isSubmenu,
+      popView,
+      query,
+      relativePathNeedsActiveProject,
+    ],
   );
 
   const executeItem = useCallback(
@@ -527,11 +554,16 @@ function OpenCommandPaletteDialog() {
             <Button
               variant="outline"
               size="xs"
+              tabIndex={-1}
               className="absolute end-2.5 top-1/2 -translate-y-1/2"
+              disabled={relativePathNeedsActiveProject}
               onMouseDown={(event) => {
                 event.preventDefault();
               }}
               onClick={() => {
+                if (relativePathNeedsActiveProject) {
+                  return;
+                }
                 void handleAddProject(query.trim());
               }}
             >
@@ -545,6 +577,9 @@ function OpenCommandPaletteDialog() {
             isActionsOnly={isActionsOnly}
             keybindings={keybindings}
             onExecuteItem={executeItem}
+            {...(relativePathNeedsActiveProject
+              ? { emptyStateMessage: "Relative paths require an active project." }
+              : {})}
           />
         </CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">

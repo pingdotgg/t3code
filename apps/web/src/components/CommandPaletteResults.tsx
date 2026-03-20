@@ -16,6 +16,7 @@ import {
 } from "./ui/command";
 
 interface CommandPaletteResultsProps {
+  emptyStateMessage?: string;
   groups: ReadonlyArray<CommandPaletteGroup>;
   isActionsOnly: boolean;
   keybindings: ResolvedKeybindingsConfig;
@@ -26,9 +27,10 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
   if (props.groups.length === 0) {
     return (
       <div className="py-10 text-center text-sm text-muted-foreground">
-        {props.isActionsOnly
-          ? "No matching actions."
-          : "No matching commands, projects, or threads."}
+        {props.emptyStateMessage ??
+          (props.isActionsOnly
+            ? "No matching actions."
+            : "No matching commands, projects, or threads.")}
       </div>
     );
   }
@@ -74,6 +76,7 @@ function CommandPaletteResultRow(props: {
         props.onExecuteItem(props.item);
       }}
     >
+      {props.item.searchText ? <span className="sr-only">{props.item.searchText}</span> : null}
       {props.item.icon}
       {props.item.description ? (
         <span className="flex min-w-0 flex-1 flex-col">
