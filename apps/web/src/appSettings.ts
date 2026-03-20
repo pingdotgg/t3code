@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { Option, Schema } from "effect";
+import { DEFAULT_WORKTREE_BRANCH_PREFIX, normalizeWorktreeBranchPrefix } from "@t3tools/shared/git";
 import { TrimmedNonEmptyString, type ProviderKind } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { useLocalStorage } from "./hooks/useLocalStorage";
@@ -41,6 +42,9 @@ export const AppSettingsSchema = Schema.Struct({
   customCodexModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
   customClaudeModels: Schema.Array(Schema.String).pipe(withDefaults(() => [])),
   textGenerationModel: Schema.optional(TrimmedNonEmptyString),
+  worktreeBranchPrefix: Schema.String.check(Schema.isMaxLength(256)).pipe(
+    withDefaults(() => DEFAULT_WORKTREE_BRANCH_PREFIX),
+  ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {
@@ -85,6 +89,7 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
     customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeAgent"),
+    worktreeBranchPrefix: normalizeWorktreeBranchPrefix(settings.worktreeBranchPrefix),
   };
 }
 export function getAppModelOptions(

@@ -1,3 +1,5 @@
+export const DEFAULT_WORKTREE_BRANCH_PREFIX = "t3code";
+
 /**
  * Sanitize an arbitrary string into a valid, lowercase git branch fragment.
  * Strips quotes, collapses separators, limits to 64 chars.
@@ -18,6 +20,80 @@ export function sanitizeBranchFragment(raw: string): string {
     .replace(/[./_-]+$/g, "");
 
   return branchFragment.length > 0 ? branchFragment : "update";
+}
+
+/**
+ * Sanitize a worktree branch namespace/prefix while preserving slash-separated scopes.
+ * Falls back to the default prefix when the input is empty after normalization.
+ */
+export function normalizeWorktreeBranchPrefix(raw: string | null | undefined): string {
+  const normalized = raw
+    ? raw
+        .trim()
+        .toLowerCase()
+        .replace(/^refs\/heads\//, "")
+        .replace(/['"`]/g, "")
+    : "";
+
+  const prefix = normalized
+    .replace(/[^a-z0-9/_-]+/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/-+/g, "-")
+    .replace(/^[./_-]+|[./_-]+$/g, "")
+    .slice(0, 64)
+    .replace(/[./_-]+$/g, "");
+
+  return prefix && prefix.length > 0 ? prefix : DEFAULT_WORKTREE_BRANCH_PREFIX;
+}
+
+export function extractTemporaryWorktreeBranchPrefix(branch: string): string | null {
+  const normalized = branch
+    .trim()
+    .toLowerCase()
+    .replace(/^refs\/heads\//, "");
+  const match = /^(?<prefix>.+)\/(?<token>[0-9a-f]{8})$/u.exec(normalized);
+  const prefix = match?.groups?.prefix?.trim();
+  if (!prefix) {
+    return null;
+  }
+  return normalizeWorktreeBranchPrefix(prefix);
+}
+
+export function isTemporaryWorktreeBranch(branch: string): boolean {
+  return extractTemporaryWorktreeBranchPrefix(branch) !== null;
+}
+
+export function buildGeneratedWorktreeBranchName(
+  raw: string,
+  prefix: string | null | undefined,
+): string {
+  const normalizedPrefix = normalizeWorktreeBranchPrefix(prefix);
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^refs\/heads\//, "")
+    .replace(/['"`]/g, "");
+
+  const withoutPrefix = normalized.startsWith(`${normalizedPrefix}/`)
+    ? normalized.slice(`${normalizedPrefix}/`.length)
+    : normalized;
+
+  return `${normalizedPrefix}/${sanitizeBranchFragment(withoutPrefix)}`;
+}
+
+export function resolvePullRequestWorktreeLocalBranchName(input: {
+  number: number;
+  headBranch: string;
+  isCrossRepository?: boolean;
+  branchPrefix?: string | null | undefined;
+}): string {
+  if (!input.isCrossRepository) {
+    return input.headBranch;
+  }
+
+  const prefix = normalizeWorktreeBranchPrefix(input.branchPrefix);
+  const suffix = sanitizeBranchFragment(input.headBranch).trim();
+  return `${prefix}/pr-${input.number}/${suffix.length > 0 ? suffix : "head"}`;
 }
 
 /**
