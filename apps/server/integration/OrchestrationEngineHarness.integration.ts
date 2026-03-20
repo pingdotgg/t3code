@@ -233,9 +233,6 @@ export const makeOrchestrationIntegrationHarness = (
       : null;
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-orchestration-integration-"));
     const workspaceDir = path.join(rootDir, "workspace");
-    const serverConfigLayer = ServerConfig.layerTest(workspaceDir, rootDir).pipe(
-      Layer.provide(NodeServices.layer),
-    );
     const { stateDir, dbPath } = yield* deriveServerPaths(rootDir, undefined);
     fs.mkdirSync(workspaceDir, { recursive: true });
     fs.mkdirSync(stateDir, { recursive: true });
@@ -264,7 +261,7 @@ export const makeOrchestrationIntegrationHarness = (
       }),
     ).pipe(
       Layer.provide(makeCodexAdapterLive()),
-      Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
@@ -314,7 +311,7 @@ export const makeOrchestrationIntegrationHarness = (
     );
     const layer = orchestrationReactorLayer.pipe(
       Layer.provide(persistenceLayer),
-      Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
       Layer.provideMerge(NodeServices.layer),
     );
 
