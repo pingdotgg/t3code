@@ -3,7 +3,13 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@t3tools/contracts";
-import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  Columns2Icon,
+  Rows3Icon,
+  WrapTextIcon,
+} from "lucide-react";
 import {
   type WheelEvent as ReactWheelEvent,
   useCallback,
@@ -30,6 +36,7 @@ import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./Dif
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
+type DiffOverflowMode = "scroll" | "wrap";
 type DiffThemeType = "light" | "dark";
 
 const DIFF_PANEL_UNSAFE_CSS = `
@@ -162,6 +169,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const { settings } = useAppSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
+  const [diffOverflowMode, setDiffOverflowMode] = useState<DiffOverflowMode>("scroll");
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
@@ -509,6 +517,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           <Columns2Icon className="size-3" />
         </Toggle>
       </ToggleGroup>
+      <ToggleGroup
+        className="shrink-0 [-webkit-app-region:no-drag]"
+        variant="outline"
+        size="xs"
+        value={[diffOverflowMode]}
+        onValueChange={(value) => {
+          const next = value[0];
+          if (next === "wrap") {
+            setDiffOverflowMode("wrap");
+          } else {
+            setDiffOverflowMode("scroll");
+          }
+        }}
+      >
+        <Toggle aria-label="Toggle line wrapping" value="wrap">
+          <WrapTextIcon className="size-3" />
+        </Toggle>
+      </ToggleGroup>
     </>
   );
 
@@ -584,6 +610,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           lineDiffType: "none",
                           theme: resolveDiffThemeName(resolvedTheme),
                           themeType: resolvedTheme as DiffThemeType,
+                          overflow: diffOverflowMode === "wrap" ? "wrap" : "scroll",
                           unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                         }}
                       />
