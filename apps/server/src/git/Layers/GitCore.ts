@@ -994,6 +994,21 @@ const makeGitCore = Effect.gen(function* () {
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
+  const getRecentCommitMessages: GitCoreShape["getRecentCommitMessages"] = (cwd, count = 5) =>
+    runGitStdout("GitCore.getRecentCommitMessages", cwd, [
+      "log",
+      `-${count}`,
+      "--pretty=%B%x00",
+      "--no-merges",
+    ]).pipe(
+      Effect.map((stdout) => {
+        return stdout
+          .split("\x00")
+          .map((commit) => commit.trim())
+          .filter((commit) => commit.length > 0);
+      }),
+    );
+
   const listBranches: GitCoreShape["listBranches"] = (input) =>
     Effect.gen(function* () {
       const branchRecencyPromise = readBranchRecency(input.cwd).pipe(
@@ -1410,6 +1425,7 @@ const makeGitCore = Effect.gen(function* () {
     pullCurrentBranch,
     readRangeContext,
     readConfigValue,
+    getRecentCommitMessages,
     listBranches,
     createWorktree,
     fetchPullRequestBranch,

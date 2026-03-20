@@ -138,6 +138,14 @@ export interface GitCoreShape {
   ) => Effect.Effect<string | null, GitCommandError>;
 
   /**
+   * Get recent commit messages from the repository.
+   */
+  readonly getRecentCommitMessages: (
+    cwd: string,
+    count?: number,
+  ) => Effect.Effect<readonly string[], GitCommandError>;
+
+  /**
    * List local + remote branches and branch metadata.
    */
   readonly listBranches: (

@@ -8,7 +8,9 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { analyzeCommitPatterns as analyzeCommitPatternsUtil } from "../analyzeCommitPatterns.ts";
 import { TextGenerationError } from "../Errors.ts";
+import { GitCore } from "../Services/GitCore.ts";
 import {
   type BranchNameGenerationInput,
   type BranchNameGenerationResult,
@@ -100,6 +102,11 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* Effect.service(ServerConfig);
+  const gitCore = yield* GitCore;
+
+  const analyzeCommitPatterns = analyzeCommitPatternsUtil({
+    getRecentCommitMessages: (cwd, count) => gitCore.getRecentCommitMessages(cwd, count),
+  });
 
   type MaterializedImageAttachments = {
     readonly imagePaths: ReadonlyArray<string>;
@@ -284,7 +291,10 @@ const makeCodexTextGeneration = Effect.gen(function* () {
             Option.match({
               onNone: () =>
                 Effect.fail(
-                  new TextGenerationError({ operation, detail: "Codex CLI request timed out." }),
+                  new TextGenerationError({
+                    operation,
+                    detail: "Codex CLI request timed out.",
+                  }),
                 ),
               onSome: () => Effect.void,
             }),
@@ -315,59 +325,105 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     });
 
   const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = (input) => {
-    const wantsBranch = input.includeBranch === true;
+    return Effect.gen(function* () {
+      const wantsBranch = input.includeBranch === true;
+      const mode = input.commitMessageMode ?? "standard";
+      const promptSections = [
+        "You write concise git commit messages.",
+        wantsBranch
+          ? "Return a JSON object with keys: subject, body, branch."
+          : "Return a JSON object with keys: subject, body.",
+        "Rules:",
+        "- subject must be imperative, <= 72 chars, and no trailing period",
+        "- body can be empty string or short bullet points",
+        ...(wantsBranch
+          ? ["- branch must be a short semantic git branch fragment for this change"]
+          : []),
+        "- capture the primary user-visible or developer-visible change",
+      ];
 
-    const prompt = [
-      "You write concise git commit messages.",
-      wantsBranch
-        ? "Return a JSON object with keys: subject, body, branch."
-        : "Return a JSON object with keys: subject, body.",
-      "Rules:",
-      "- subject must be imperative, <= 72 chars, and no trailing period",
-      "- body can be empty string or short bullet points",
-      ...(wantsBranch
-        ? ["- branch must be a short semantic git branch fragment for this change"]
-        : []),
-      "- capture the primary user-visible or developer-visible change",
-      "",
-      `Branch: ${input.branch ?? "(detached)"}`,
-      "",
-      "Staged files:",
-      limitSection(input.stagedSummary, 6_000),
-      "",
-      "Staged patch:",
-      limitSection(input.stagedPatch, 40_000),
-    ].join("\n");
+      switch (mode) {
+        case "auto": {
+          const patterns = yield* analyzeCommitPatterns(input.cwd);
+          const bestExample = patterns.examples[0]?.trim();
+          promptSections.push(
+            "",
+            "Repository analysis:",
+            patterns.analysis.trim(),
+            ...(bestExample
+              ? ["", "Best recent commit example from this repository:", bestExample]
+              : []),
+            "",
+            "- Follow the repository style shown in the analysis and example above.",
+          );
+          break;
+        }
+        case "gitmoji":
+          promptSections.push("- Use an appropriate gitmoji in the commit message.");
+          break;
+        case "custom":
+          if (input.message?.trim()) {
+            promptSections.push(
+              input.message.trim(),
+              "",
+              "- Generate a commit message strictly following the provided template.",
+              "- Do not change the template structure or format under any condition.",
+              "- Replace all placeholders (<type>, <scope>, <subject>, <body>, <#ref>) with meaningful values based on the staged changes.",
+              "- Ensure the commit message is clear, descriptive, and complete.",
+              "- If the user includes any GitHub or Jira reference (e.g., #123, PROJ-123, or a URL), extract it and include it in the appropriate section of the template.",
+              "- Do not leave any placeholder unresolved.",
+              "- Follow the template exactly — no extra text, no missing sections."
+            );
+          }
+          break;
+        case "standard":
+        default:
+          break;
+      }
 
-    const outputSchemaJson = wantsBranch
-      ? Schema.Struct({
-          subject: Schema.String,
-          body: Schema.String,
-          branch: Schema.String,
-        })
-      : Schema.Struct({
-          subject: Schema.String,
-          body: Schema.String,
-        });
+      promptSections.push(
+        "",
+        `Branch: ${input.branch ?? "(detached)"}`,
+        "",
+        "Staged files:",
+        limitSection(input.stagedSummary, 6_000),
+        "",
+        "Staged patch:",
+        limitSection(input.stagedPatch, 40_000),
+      );
 
-    return runCodexJson({
-      operation: "generateCommitMessage",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson,
-      ...(input.model ? { model: input.model } : {}),
-    }).pipe(
-      Effect.map(
-        (generated) =>
-          ({
-            subject: sanitizeCommitSubject(generated.subject),
-            body: generated.body.trim(),
-            ...("branch" in generated && typeof generated.branch === "string"
-              ? { branch: sanitizeFeatureBranchName(generated.branch) }
-              : {}),
-          }) satisfies CommitMessageGenerationResult,
-      ),
-    );
+      const prompt = promptSections.join("\n");
+
+      const outputSchemaJson = wantsBranch
+        ? Schema.Struct({
+            subject: Schema.String,
+            body: Schema.String,
+            branch: Schema.String,
+          })
+        : Schema.Struct({
+            subject: Schema.String,
+            body: Schema.String,
+          });
+
+      return yield* runCodexJson({
+        operation: "generateCommitMessage",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson,
+        ...(input.model ? { model: input.model } : {}),
+      }).pipe(
+        Effect.map(
+          (generated) =>
+            ({
+              subject: sanitizeCommitSubject(generated.subject),
+              body: generated.body.trim(),
+              ...("branch" in generated && typeof generated.branch === "string"
+                ? { branch: sanitizeFeatureBranchName(generated.branch) }
+                : {}),
+            }) satisfies CommitMessageGenerationResult,
+        ),
+      );
+    });
   };
 
   const generatePrContent: TextGenerationShape["generatePrContent"] = (input) => {

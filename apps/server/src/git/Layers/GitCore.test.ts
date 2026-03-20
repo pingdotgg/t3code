@@ -103,6 +103,7 @@ const makeIsolatedGitCore = (gitService: GitServiceShape) =>
       pullCurrentBranch: (cwd) => core.pullCurrentBranch(cwd),
       readRangeContext: (cwd, baseBranch) => core.readRangeContext(cwd, baseBranch),
       readConfigValue: (cwd, key) => core.readConfigValue(cwd, key),
+      getRecentCommitMessages: (cwd, count?) => core.getRecentCommitMessages(cwd, count),
       listBranches: (input) => core.listBranches(input),
       createWorktree: (input) => core.createWorktree(input),
       fetchPullRequestBranch: (input) => core.fetchPullRequestBranch(input),

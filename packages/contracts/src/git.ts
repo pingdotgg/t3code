@@ -8,6 +8,8 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
 export const GitStackedAction = Schema.Literals(["commit", "commit_push", "commit_push_pr"]);
 export type GitStackedAction = typeof GitStackedAction.Type;
+export const GitCommitMessageMode = Schema.Literals(["auto", "gitmoji", "standard", "custom"]);
+export type GitCommitMessageMode = typeof GitCommitMessageMode.Type;
 const GitCommitStepStatus = Schema.Literals(["created", "skipped_no_changes"]);
 const GitPushStepStatus = Schema.Literals([
   "pushed",
@@ -61,6 +63,9 @@ export const GitRunStackedActionInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
+  commitMessageMode: Schema.optional(GitCommitMessageMode).pipe(
+    Schema.withConstructorDefault(() => Option.some("standard" as const)),
+  ),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(
     Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
