@@ -517,24 +517,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           <Columns2Icon className="size-3" />
         </Toggle>
       </ToggleGroup>
-      <ToggleGroup
+      <Toggle
         className="shrink-0 [-webkit-app-region:no-drag]"
         variant="outline"
         size="xs"
-        value={[diffOverflowMode]}
-        onValueChange={(value) => {
-          const next = value[0];
-          if (next === "wrap") {
-            setDiffOverflowMode("wrap");
-          } else {
-            setDiffOverflowMode("scroll");
-          }
+        aria-label="Toggle line wrapping"
+        pressed={diffOverflowMode === "wrap"}
+        onPressedChange={(pressed) => {
+          setDiffOverflowMode(pressed ? "wrap" : "scroll");
         }}
       >
-        <Toggle aria-label="Toggle line wrapping" value="wrap">
-          <WrapTextIcon className="size-3" />
-        </Toggle>
-      </ToggleGroup>
+        <WrapTextIcon className="size-3" />
+      </Toggle>
     </>
   );
 
