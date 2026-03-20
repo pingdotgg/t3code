@@ -134,6 +134,7 @@ function makeHarness(config?: {
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
   readonly cwd?: string;
   readonly stateDir?: string;
+  readonly baseDir?: string;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -166,6 +167,7 @@ function makeHarness(config?: {
         ServerConfig.layerTest(
           config?.cwd ?? "/tmp/claude-adapter-test",
           config?.stateDir ?? "/tmp",
+          config?.baseDir ?? "/tmp",
         ),
       ),
       Layer.provideMerge(NodeServices.layer),
