@@ -4,6 +4,7 @@
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
+  --animate-project-title-shimmer: project-title-shimmer 2.6s ease-in-out infinite;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
@@ -39,6 +40,15 @@
   @keyframes skeleton {
     to {
       background-position: -200% 0;
+    }
+  }
+
+  @keyframes project-title-shimmer {
+    0% {
+      background-position: 200% 50%;
+    }
+    100% {
+      background-position: -20% 50%;
     }
   }
 }
@@ -210,6 +220,43 @@ input {
 
 .turn-chip-strip::-webkit-scrollbar {
   display: none;
+}
+
+.project-title-shimmer {
+  animation: var(--animate-project-title-shimmer);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-title-shimmer {
+    animation: none;
+  }
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .project-title-shimmer {
+    background-image: linear-gradient(
+      112deg,
+      var(--foreground) 0%,
+      var(--foreground) 43%,
+      var(--color-sky-300) 48%,
+      var(--color-sky-500) 50%,
+      var(--color-sky-300) 52%,
+      var(--foreground) 57%,
+      var(--foreground) 100%
+    );
+    background-size: 220% 100%;
+    background-position: 200% 50%;
+    color: transparent;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .project-title-shimmer {
+      background-position: 50% 50%;
+    }
+  }
 }
 
 /* Terminal drawer scrollbar parity with chat */

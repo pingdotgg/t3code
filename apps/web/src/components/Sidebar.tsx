@@ -84,6 +84,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  getProjectIdsWithRunningThreads,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -308,6 +309,24 @@ export default function Sidebar() {
   const isLinuxDesktop = isElectron && isLinuxPlatform(navigator.platform);
   const shouldBrowseForProjectImmediately = isElectron && !isLinuxDesktop;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
+  const pendingApprovalByThreadId = useMemo(() => {
+    const map = new Map<ThreadId, boolean>();
+    for (const thread of threads) {
+      map.set(thread.id, derivePendingApprovals(thread.activities).length > 0);
+    }
+    return map;
+  }, [threads]);
+  const pendingUserInputByThreadId = useMemo(() => {
+    const map = new Map<ThreadId, boolean>();
+    for (const thread of threads) {
+      map.set(thread.id, derivePendingUserInputs(thread.activities).length > 0);
+    }
+    return map;
+  }, [threads]);
+  const projectIdsWithRunningThreads = useMemo(
+    () => getProjectIdsWithRunningThreads(threads),
+    [threads],
+  );
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
@@ -1332,6 +1351,7 @@ export default function Sidebar() {
                 strategy={verticalListSortingStrategy}
               >
                 {projects.map((project) => {
+                  const projectHasActiveRun = projectIdsWithRunningThreads.has(project.id);
                   const projectThreads = threads
                     .filter((thread) => thread.projectId === project.id)
                     .toSorted((a, b) => {
@@ -1375,7 +1395,13 @@ export default function Sidebar() {
                                 }`}
                               />
                               <ProjectFavicon cwd={project.cwd} />
-                              <span className="flex-1 truncate text-xs font-medium text-foreground/90">
+                              <span
+                                className={`flex-1 truncate text-xs font-medium ${
+                                  projectHasActiveRun
+                                    ? "project-title-shimmer text-foreground"
+                                    : "text-foreground/90"
+                                }`}
+                              >
                                 {project.name}
                               </span>
                             </SidebarMenuButton>
@@ -1423,9 +1449,9 @@ export default function Sidebar() {
                                 const threadStatus = resolveThreadStatusPill({
                                   thread,
                                   hasPendingApprovals:
-                                    derivePendingApprovals(thread.activities).length > 0,
+                                    pendingApprovalByThreadId.get(thread.id) ?? false,
                                   hasPendingUserInput:
-                                    derivePendingUserInputs(thread.activities).length > 0,
+                                    pendingUserInputByThreadId.get(thread.id) ?? false,
                                 });
                                 const prStatus = prStatusIndicator(
                                   prByThreadId.get(thread.id) ?? null,
