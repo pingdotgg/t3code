@@ -16,7 +16,7 @@ import {
   type RuntimeMode,
   type ServerConfigShape,
 } from "./config";
-import { fixPath, resolveStateDir } from "./os-jank";
+import { fixPath, resolveStateDir, resolveThemesConfigPath } from "./os-jank";
 import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
@@ -169,6 +169,7 @@ const ServerConfigLive = (input: CliInput) =>
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const { join } = yield* Path.Path;
       const keybindingsConfigPath = join(stateDir, "keybindings.json");
+      const themesConfigPath = yield* resolveThemesConfigPath(stateDir);
       const host =
         Option.getOrUndefined(input.host) ??
         env.host ??
@@ -179,6 +180,7 @@ const ServerConfigLive = (input: CliInput) =>
         port,
         cwd: cliConfig.cwd,
         keybindingsConfigPath,
+        themesConfigPath,
         host,
         stateDir,
         staticDir,

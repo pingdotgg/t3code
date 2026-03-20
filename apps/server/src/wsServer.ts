@@ -49,6 +49,7 @@ import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
+import { Themes } from "./themes";
 import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
@@ -216,6 +217,7 @@ export type ServerRuntimeServices =
   | GitCore
   | TerminalManager
   | Keybindings
+  | Themes
   | Open
   | AnalyticsService;
 
@@ -241,6 +243,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     port,
     cwd,
     keybindingsConfigPath,
+    themesConfigPath,
     staticDir,
     devUrl,
     authToken,
@@ -253,6 +256,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
+  const themesManager = yield* Themes;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -261,6 +265,15 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
     Effect.catch((error) =>
       Effect.logWarning("failed to sync keybindings defaults on startup", {
+        path: error.configPath,
+        detail: error.detail,
+        cause: error.cause,
+      }),
+    ),
+  );
+  yield* themesManager.syncDefaultThemesOnStartup.pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("failed to sync themes defaults on startup", {
         path: error.configPath,
         detail: error.detail,
         cause: error.cause,
@@ -292,6 +305,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* keybindingsManager.start.pipe(
     Effect.mapError(
       (cause) => new ServerLifecycleError({ operation: "keybindingsRuntimeStart", cause }),
+    ),
+  );
+  yield* themesManager.start.pipe(
+    Effect.mapError(
+      (cause) => new ServerLifecycleError({ operation: "themesRuntimeStart", cause }),
     ),
   );
   yield* readiness.markKeybindingsReady;
@@ -615,6 +633,15 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
       issues: event.issues,
       providers: providerStatuses,
+      updated: ["keybindings"],
+    }),
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
+  yield* Stream.runForEach(themesManager.streamChanges, (event) =>
+    pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+      issues: event.issues,
+      providers: providerStatuses,
+      updated: ["themes"],
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
@@ -868,11 +895,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        const themesConfig = yield* themesManager.loadConfigState;
         return {
           cwd,
           keybindingsConfigPath,
+          themesConfigPath,
           keybindings: keybindingsConfig.keybindings,
-          issues: keybindingsConfig.issues,
+          customThemes: themesConfig.themes,
+          issues: [...keybindingsConfig.issues, ...themesConfig.issues],
           providers: providerStatuses,
           availableEditors,
         };

@@ -41,7 +41,9 @@ function createBaseServerConfig(): ServerConfig {
   return {
     cwd: "/repo/project",
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
+    themesConfigPath: "/repo/project/.t3/themes.json",
     keybindings: [],
+    customThemes: [],
     issues: [],
     providers: [
       {
@@ -203,6 +205,7 @@ function sendServerConfigUpdatedPush(issues: Array<{ kind: string; message: stri
       data: {
         issues,
         providers: fixture.serverConfig.providers,
+        updated: ["keybindings"],
       },
     }),
   );

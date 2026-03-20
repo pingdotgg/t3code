@@ -103,7 +103,9 @@ function createBaseServerConfig(): ServerConfig {
   return {
     cwd: "/repo/project",
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
+    themesConfigPath: "/repo/project/.t3/themes.json",
     keybindings: [],
+    customThemes: [],
     issues: [],
     providers: [
       {

@@ -198,6 +198,7 @@ describe("wsNativeApi", () => {
         },
       ],
       providers: defaultProviders,
+      updated: ["keybindings"],
     } as const;
     emitPush(WS_CHANNELS.serverConfigUpdated, payload);
 
@@ -220,16 +221,19 @@ describe("wsNativeApi", () => {
     emitPush(WS_CHANNELS.serverConfigUpdated, {
       issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
       providers: defaultProviders,
+      updated: ["keybindings"],
     });
     emitPush(WS_CHANNELS.serverConfigUpdated, {
       issues: [],
       providers: defaultProviders,
+      updated: ["themes"],
     });
 
     expect(listener).toHaveBeenCalledTimes(2);
     expect(listener).toHaveBeenLastCalledWith({
       issues: [],
       providers: defaultProviders,
+      updated: ["themes"],
     });
   });
 

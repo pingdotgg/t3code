@@ -7,6 +7,11 @@ import { getAppModelOptions, MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
+import {
+  CUSTOM_THEME_FILE_EXAMPLE,
+  type ResolvedThemeMode,
+  type ThemePalette,
+} from "../lib/themePalettes";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { Button } from "../components/ui/button";
@@ -105,12 +110,74 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
   }
 }
 
+function ThemePaletteCard(props: {
+  palette: ThemePalette;
+  resolvedTheme: ResolvedThemeMode;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const tokens = props.resolvedTheme === "dark" ? props.palette.dark : props.palette.light;
+
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={props.selected}
+      className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+        props.selected
+          ? "border-primary/60 bg-primary/8"
+          : "border-border bg-background hover:bg-accent"
+      }`}
+      onClick={props.onSelect}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-foreground">{props.palette.label}</p>
+            <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+              {props.palette.source}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">{props.palette.description}</p>
+        </div>
+        {props.selected ? (
+          <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+            Selected
+          </span>
+        ) : null}
+      </div>
+
+      <div className="mt-4 flex items-center gap-2">
+        <ThemeSwatch color={tokens.background} outline />
+        <ThemeSwatch color={tokens.card} outline />
+        <ThemeSwatch color={tokens.primary} />
+        <ThemeSwatch color={tokens.accent} />
+        <ThemeSwatch color={tokens.success} />
+      </div>
+    </button>
+  );
+}
+
+function ThemeSwatch(props: { color: string; outline?: boolean }) {
+  return (
+    <span
+      className={`inline-flex h-6 w-6 rounded-full border ${
+        props.outline ? "border-border" : "border-transparent"
+      }`}
+      style={{ backgroundColor: props.color }}
+      aria-hidden="true"
+    />
+  );
+}
+
 function SettingsRouteView() {
-  const { theme, setTheme, resolvedTheme } = useTheme();
+  const { theme, setTheme, resolvedTheme, palette, paletteId, palettes, setPaletteId } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [isOpeningThemes, setIsOpeningThemes] = useState(false);
+  const [openThemesError, setOpenThemesError] = useState<string | null>(null);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -124,7 +191,10 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const themesConfigPath = serverConfigQuery.data?.themesConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
+  const themeIssues =
+    serverConfigQuery.data?.issues.filter((issue) => issue.kind.startsWith("themes.")) ?? [];
 
   const gitTextGenerationModelOptions = getAppModelOptions(
     "codex",
@@ -159,6 +229,27 @@ function SettingsRouteView() {
         setIsOpeningKeybindings(false);
       });
   }, [availableEditors, keybindingsConfigPath]);
+
+  const openThemesFile = useCallback(() => {
+    if (!themesConfigPath) return;
+    setOpenThemesError(null);
+    setIsOpeningThemes(true);
+    const api = ensureNativeApi();
+    const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
+    if (!editor) {
+      setOpenThemesError("No available editors found.");
+      setIsOpeningThemes(false);
+      return;
+    }
+    void api.shell
+      .openInEditor(themesConfigPath, editor)
+      .catch((error) => {
+        setOpenThemesError(error instanceof Error ? error.message : "Unable to open themes file.");
+      })
+      .finally(() => {
+        setIsOpeningThemes(false);
+      });
+  }, [availableEditors, themesConfigPath]);
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -283,9 +374,96 @@ function SettingsRouteView() {
                   })}
                 </div>
 
-                <p className="text-xs text-muted-foreground">
-                  Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
-                </p>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Color palette</p>
+                      <p className="text-xs text-muted-foreground">
+                        Built-in palettes apply instantly, and custom palettes load from{" "}
+                        <code>themes.json</code>.
+                      </p>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {palettes.filter((candidate) => candidate.source === "custom").length} custom
+                    </span>
+                  </div>
+
+                  <div
+                    className="grid gap-3 sm:grid-cols-2"
+                    role="radiogroup"
+                    aria-label="Color palette"
+                  >
+                    {palettes.map((candidate) => (
+                      <ThemePaletteCard
+                        key={candidate.id}
+                        palette={candidate}
+                        resolvedTheme={resolvedTheme}
+                        selected={paletteId === candidate.id}
+                        onSelect={() => setPaletteId(candidate.id)}
+                      />
+                    ))}
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    Active appearance:{" "}
+                    <span className="font-medium text-foreground">
+                      {resolvedTheme} / {palette.label}
+                    </span>
+                  </p>
+                </div>
+
+                <div className="space-y-3 rounded-xl border border-border bg-background/60 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground">Custom theme file</p>
+                      <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                        {themesConfigPath ?? "Resolving themes path..."}
+                      </p>
+                    </div>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={!themesConfigPath || isOpeningThemes}
+                      onClick={openThemesFile}
+                    >
+                      {isOpeningThemes ? "Opening..." : "Open themes.json"}
+                    </Button>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    Custom themes hot-reload when you save this file. Omitted tokens inherit the
+                    default palette for that mode.
+                  </p>
+
+                  <pre className="overflow-x-auto rounded-lg border border-border bg-background px-3 py-3 text-[11px] text-muted-foreground">
+                    {CUSTOM_THEME_FILE_EXAMPLE}
+                  </pre>
+
+                  {openThemesError ? (
+                    <p className="text-xs text-destructive">{openThemesError}</p>
+                  ) : null}
+                  {themeIssues.length > 0 ? (
+                    <div className="space-y-1 rounded-lg border border-destructive/30 bg-destructive/8 px-3 py-2">
+                      <p className="text-xs font-medium text-destructive">
+                        Invalid custom theme entries
+                      </p>
+                      {themeIssues.map((issue) => (
+                        <p
+                          key={
+                            issue.kind === "themes.invalid-entry"
+                              ? `${issue.kind}:${issue.index}`
+                              : `${issue.kind}:${issue.message}`
+                          }
+                          className="text-xs text-destructive"
+                        >
+                          {issue.kind === "themes.invalid-entry"
+                            ? `Entry ${issue.index + 1}: ${issue.message}`
+                            : issue.message}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
 
                 <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
                   <div>

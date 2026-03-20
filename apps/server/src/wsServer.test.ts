@@ -503,6 +503,7 @@ describe("WebSocket Server", () => {
       host: undefined,
       cwd: options.cwd ?? "/test/project",
       keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
+      themesConfigPath: path.join(stateDir, "themes.json"),
       stateDir,
       staticDir: options.staticDir,
       devUrl: options.devUrl ? new URL(options.devUrl) : undefined,
@@ -827,7 +828,9 @@ describe("WebSocket Server", () => {
     expect(response.result).toEqual({
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
+      themesConfigPath: path.join(stateDir, "themes.json"),
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+      customThemes: [],
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
@@ -852,7 +855,9 @@ describe("WebSocket Server", () => {
     expect(response.result).toEqual({
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
+      themesConfigPath: path.join(stateDir, "themes.json"),
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+      customThemes: [],
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
@@ -882,7 +887,9 @@ describe("WebSocket Server", () => {
     expect(response.result).toEqual({
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
+      themesConfigPath: path.join(stateDir, "themes.json"),
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+      customThemes: [],
       issues: [
         {
           kind: "keybindings.malformed-config",
@@ -921,13 +928,17 @@ describe("WebSocket Server", () => {
     const result = response.result as {
       cwd: string;
       keybindingsConfigPath: string;
+      themesConfigPath: string;
       keybindings: ResolvedKeybindingsConfig;
+      customThemes: Array<{ id: string }>;
       issues: Array<{ kind: string; index?: number; message: string }>;
       providers: ReadonlyArray<ServerProviderStatus>;
       availableEditors: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
     expect(result.keybindingsConfigPath).toBe(keybindingsPath);
+    expect(result.themesConfigPath).toBe(path.join(stateDir, "themes.json"));
+    expect(result.customThemes).toEqual([]);
     expect(result.issues).toEqual([
       {
         kind: "keybindings.invalid-entry",
@@ -971,6 +982,7 @@ describe("WebSocket Server", () => {
     expect(malformedPush.data).toEqual({
       issues: [{ kind: "keybindings.malformed-config", message: expect.any(String) }],
       providers: defaultProviderStatuses,
+      updated: ["keybindings"],
     });
 
     const successPush = await rewriteKeybindingsAndWaitForPush(
@@ -979,7 +991,11 @@ describe("WebSocket Server", () => {
       "[]",
       (push) => Array.isArray(push.data.issues) && push.data.issues.length === 0,
     );
-    expect(successPush.data).toEqual({ issues: [], providers: defaultProviderStatuses });
+    expect(successPush.data).toEqual({
+      issues: [],
+      providers: defaultProviderStatuses,
+      updated: ["keybindings"],
+    });
   });
 
   it("routes shell.openInEditor through the injected open service", async () => {
@@ -1034,7 +1050,9 @@ describe("WebSocket Server", () => {
     expect(response.result).toEqual({
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
+      themesConfigPath: path.join(stateDir, "themes.json"),
       keybindings: compileKeybindings(persistedConfig),
+      customThemes: [],
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
@@ -1081,7 +1099,9 @@ describe("WebSocket Server", () => {
     expect(configResponse.result).toEqual({
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
+      themesConfigPath: path.join(stateDir, "themes.json"),
       keybindings: compileKeybindings(persistedConfig),
+      customThemes: [],
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),

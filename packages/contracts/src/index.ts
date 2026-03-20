@@ -6,6 +6,7 @@ export * from "./providerRuntime";
 export * from "./model";
 export * from "./ws";
 export * from "./keybindings";
+export * from "./theme";
 export * from "./server";
 export * from "./git";
 export * from "./orchestration";

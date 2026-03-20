@@ -34,3 +34,12 @@ export const resolveStateDir = Effect.fn(function* (raw: string | undefined) {
   }
   return resolve(yield* expandHomePath(raw.trim()));
 });
+
+export const resolveThemesConfigPath = Effect.fn(function* (stateDir: string) {
+  const path = yield* Path.Path;
+  const normalizedStateDir = path.resolve(stateDir);
+  if (path.basename(normalizedStateDir) === "userdata") {
+    return path.join(path.dirname(normalizedStateDir), "themes.json");
+  }
+  return path.join(normalizedStateDir, "themes.json");
+});

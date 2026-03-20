@@ -20,6 +20,7 @@ import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDra
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
+import { setCustomThemes } from "../hooks/useTheme";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
@@ -153,6 +154,19 @@ function EventRouter() {
     let pending = false;
     let needsProviderInvalidation = false;
 
+    const syncThemeConfig = async () => {
+      try {
+        const config = await queryClient.fetchQuery(serverConfigQueryOptions());
+        if (disposed) {
+          return null;
+        }
+        setCustomThemes(config.customThemes);
+        return config;
+      } catch {
+        return null;
+      }
+    };
+
     const flushSnapshotSync = async (): Promise<void> => {
       const snapshot = await api.orchestration.getSnapshot();
       if (disposed) return;
@@ -229,9 +243,11 @@ function EventRouter() {
           hasRunningSubprocess,
         );
     });
+    void syncThemeConfig();
     const unsubWelcome = onServerWelcome((payload) => {
       void (async () => {
         await syncSnapshot();
+        await syncThemeConfig();
         if (disposed) {
           return;
         }
@@ -261,34 +277,79 @@ function EventRouter() {
     let subscribed = false;
     const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
       void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
-      if (!subscribed) return;
-      const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
-      if (!issue) {
-        toastManager.add({
-          type: "success",
-          title: "Keybindings updated",
-          description: "Keybindings configuration reloaded successfully.",
-        });
-        return;
-      }
+      const themeIssue = payload.issues.find((entry) => entry.kind.startsWith("themes."));
+      const keybindingIssue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
+      const themeUpdated = payload.updated.includes("themes");
+      const keybindingsUpdated = payload.updated.includes("keybindings");
 
-      toastManager.add({
-        type: "warning",
-        title: "Invalid keybindings configuration",
-        description: issue.message,
-        actionProps: {
-          children: "Open keybindings.json",
-          onClick: () => {
-            void queryClient
-              .ensureQueryData(serverConfigQueryOptions())
-              .then((config) => {
-                const editor = resolveAndPersistPreferredEditor(config.availableEditors);
-                if (!editor) {
-                  throw new Error("No available editors found.");
-                }
-                return api.shell.openInEditor(config.keybindingsConfigPath, editor);
-              })
-              .catch((error) => {
+      void syncThemeConfig().then((config) => {
+        if (!subscribed || !config) {
+          return;
+        }
+
+        if (themeUpdated) {
+          if (themeIssue) {
+            toastManager.add({
+              type: "warning",
+              title: "Invalid themes configuration",
+              description: themeIssue.message,
+              actionProps: {
+                children: "Open themes.json",
+                onClick: () => {
+                  const editor = resolveAndPersistPreferredEditor(config.availableEditors);
+                  if (!editor) {
+                    toastManager.add({
+                      type: "error",
+                      title: "Unable to open themes file",
+                      description: "No available editors found.",
+                    });
+                    return;
+                  }
+                  void api.shell.openInEditor(config.themesConfigPath, editor).catch((error) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Unable to open themes file",
+                      description:
+                        error instanceof Error ? error.message : "Unknown error opening file.",
+                    });
+                  });
+                },
+              },
+            });
+          }
+          return;
+        }
+
+        if (!keybindingsUpdated) {
+          return;
+        }
+
+        if (!keybindingIssue) {
+          toastManager.add({
+            type: "success",
+            title: "Keybindings updated",
+            description: "Keybindings configuration reloaded successfully.",
+          });
+          return;
+        }
+
+        toastManager.add({
+          type: "warning",
+          title: "Invalid keybindings configuration",
+          description: keybindingIssue.message,
+          actionProps: {
+            children: "Open keybindings.json",
+            onClick: () => {
+              const editor = resolveAndPersistPreferredEditor(config.availableEditors);
+              if (!editor) {
+                toastManager.add({
+                  type: "error",
+                  title: "Unable to open keybindings file",
+                  description: "No available editors found.",
+                });
+                return;
+              }
+              void api.shell.openInEditor(config.keybindingsConfigPath, editor).catch((error) => {
                 toastManager.add({
                   type: "error",
                   title: "Unable to open keybindings file",
@@ -296,8 +357,9 @@ function EventRouter() {
                     error instanceof Error ? error.message : "Unknown error opening file.",
                 });
               });
+            },
           },
-        },
+        });
       });
     });
     subscribed = true;

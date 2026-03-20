@@ -3,6 +3,7 @@ import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
 import { ProviderKind } from "./orchestration";
+import { ThemePaletteDefinition } from "./theme";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -15,9 +16,22 @@ const KeybindingsInvalidEntryIssue = Schema.Struct({
   index: Schema.Number,
 });
 
+const ThemesMalformedConfigIssue = Schema.Struct({
+  kind: Schema.Literal("themes.malformed-config"),
+  message: TrimmedNonEmptyString,
+});
+
+const ThemesInvalidEntryIssue = Schema.Struct({
+  kind: Schema.Literal("themes.invalid-entry"),
+  message: TrimmedNonEmptyString,
+  index: Schema.Number,
+});
+
 export const ServerConfigIssue = Schema.Union([
   KeybindingsMalformedConfigIssue,
   KeybindingsInvalidEntryIssue,
+  ThemesMalformedConfigIssue,
+  ThemesInvalidEntryIssue,
 ]);
 export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 
@@ -48,7 +62,9 @@ const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   keybindingsConfigPath: TrimmedNonEmptyString,
+  themesConfigPath: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,
+  customThemes: Schema.Array(ThemePaletteDefinition),
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
   availableEditors: Schema.Array(EditorId),
@@ -67,5 +83,9 @@ export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.T
 export const ServerConfigUpdatedPayload = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
+  updated: Schema.Array(Schema.Literals(["keybindings", "themes", "providers"])).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(3),
+  ),
 });
 export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
