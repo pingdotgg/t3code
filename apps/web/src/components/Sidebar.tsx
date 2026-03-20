@@ -45,9 +45,9 @@ import { shortcutLabelForCommand } from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { openOrReuseProjectDraftThread } from "../lib/projectDraftThreads";
 import { readNativeApi } from "../nativeApi";
-import { useComposerDraftStore } from "../composerDraftStore";
-import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
@@ -262,6 +262,9 @@ export default function Sidebar() {
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
+  const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const clearProjectDraftThreadId = useComposerDraftStore(
@@ -273,7 +276,6 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const isOnSettings = useLocation({ select: (loc) => loc.pathname === "/settings" });
   const { settings: appSettings } = useAppSettings();
-  const { handleNewThread } = useHandleNewThread();
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
@@ -383,6 +385,51 @@ export default function Sidebar() {
     });
   }, []);
 
+  const handleNewThread = useCallback(
+    (
+      projectId: ProjectId,
+      options?: {
+        branch?: string | null;
+        worktreePath?: string | null;
+        envMode?: DraftThreadEnvMode;
+      },
+    ): Promise<void> => {
+      return openOrReuseProjectDraftThread({
+        projectId,
+        currentThreadId: routeThreadId ?? null,
+        ...(options
+          ? {
+              options: {
+                ...(options.branch !== undefined ? { branch: options.branch } : {}),
+                ...(options.worktreePath !== undefined
+                  ? { worktreePath: options.worktreePath }
+                  : {}),
+                ...(options.envMode !== undefined ? { envMode: options.envMode } : {}),
+              },
+            }
+          : {}),
+        getDraftThreadByProjectId,
+        getDraftThread,
+        setDraftThreadContext,
+        setProjectDraftThreadId,
+        clearProjectDraftThreadId,
+        navigateToThread: (threadId) =>
+          navigate({
+            to: "/$threadId",
+            params: { threadId },
+          }),
+      }).then(() => undefined);
+    },
+    [
+      clearProjectDraftThreadId,
+      getDraftThreadByProjectId,
+      navigate,
+      getDraftThread,
+      routeThreadId,
+      setDraftThreadContext,
+      setProjectDraftThreadId,
+    ],
+  );
   const focusMostRecentThreadForProject = useCallback(
     (projectId: ProjectId) => {
       const latestThread = threads
