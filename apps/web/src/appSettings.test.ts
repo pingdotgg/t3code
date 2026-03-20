@@ -1,6 +1,8 @@
+import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
+  AppSettingsSchema,
   DEFAULT_TIMESTAMP_FORMAT,
   getAppModelOptions,
   normalizeCustomModelSlugs,
@@ -19,6 +21,13 @@ describe("normalizeCustomModelSlugs", () => {
         null,
       ]),
     ).toEqual(["custom/internal-model"]);
+  });
+
+  it("normalizes provider-specific aliases for claude", () => {
+    expect(normalizeCustomModelSlugs(["sonnet"], "claudeAgent")).toEqual([]);
+    expect(normalizeCustomModelSlugs(["claude/custom-sonnet"], "claudeAgent")).toEqual([
+      "claude/custom-sonnet",
+    ]);
   });
 });
 
@@ -46,6 +55,13 @@ describe("getAppModelOptions", () => {
       isCustom: true,
     });
   });
+  it("keeps a saved custom provider model available as an exact slug option", () => {
+    const options = getAppModelOptions("claudeAgent", ["claude/custom-opus"], "claude/custom-opus");
+
+    expect(options.some((option) => option.slug === "claude/custom-opus" && option.isCustom)).toBe(
+      true,
+    );
+  });
 });
 
 describe("resolveAppModelSelection", () => {
@@ -63,5 +79,37 @@ describe("resolveAppModelSelection", () => {
 describe("timestamp format defaults", () => {
   it("defaults timestamp format to locale", () => {
     expect(DEFAULT_TIMESTAMP_FORMAT).toBe("locale");
+  });
+});
+
+describe("provider-specific custom models", () => {
+  it("includes provider-specific custom slugs in non-codex model lists", () => {
+    const claudeOptions = getAppModelOptions("claudeAgent", ["claude/custom-opus"]);
+
+    expect(claudeOptions.some((option) => option.slug === "claude/custom-opus")).toBe(true);
+  });
+});
+
+describe("AppSettingsSchema", () => {
+  it("fills decoding defaults for persisted settings that predate newer keys", () => {
+    const decode = Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema));
+
+    expect(
+      decode(
+        JSON.stringify({
+          codexBinaryPath: "/usr/local/bin/codex",
+          confirmThreadDelete: false,
+        }),
+      ),
+    ).toMatchObject({
+      codexBinaryPath: "/usr/local/bin/codex",
+      codexHomePath: "",
+      defaultThreadEnvMode: "local",
+      confirmThreadDelete: false,
+      enableAssistantStreaming: false,
+      timestampFormat: DEFAULT_TIMESTAMP_FORMAT,
+      customCodexModels: [],
+      customClaudeModels: [],
+    });
   });
 });

@@ -4,10 +4,13 @@
   "type": "module",
   "scripts": {
     "prepare": "effect-language-service patch",
+    "claude-fast-mode-probe": "bun run claude-fast-mode-probe.ts",
+    "claude-haiku-thinking-probe": "bun run claude-haiku-thinking-probe.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.77",
     "@effect/platform-node": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",

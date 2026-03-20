@@ -6,6 +6,8 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   OrchestrationGetTurnDiffInput,
+  OrchestrationLatestTurn,
+  OrchestrationProposedPlan,
   OrchestrationSession,
   ProjectCreateCommand,
   ThreadTurnStartCommand,
@@ -21,6 +23,8 @@ const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartC
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
+const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
+const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 
@@ -186,6 +190,31 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   }),
 );
 
+it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-source-plan",
+      threadId: "thread-2",
+      message: {
+        messageId: "msg-source-plan",
+        role: "user",
+        text: "implement this",
+        attachments: [],
+      },
+      sourceProposedPlan: {
+        threadId: "thread-1",
+        planId: "plan-1",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-1",
+      planId: "plan-1",
+    });
+  }),
+);
+
 it.effect(
   "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
   () =>
@@ -198,7 +227,47 @@ it.effect(
       assert.strictEqual(parsed.provider, undefined);
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+      assert.strictEqual(parsed.sourceProposedPlan, undefined);
     }),
+);
+
+it.effect("decodes thread.turn-start-requested source proposed plan metadata when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-2",
+      messageId: "msg-2",
+      sourceProposedPlan: {
+        threadId: "thread-1",
+        planId: "plan-1",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-1",
+      planId: "plan-1",
+    });
+  }),
+);
+
+it.effect("decodes latest turn source proposed plan metadata when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationLatestTurn({
+      turnId: "turn-2",
+      state: "running",
+      requestedAt: "2026-01-01T00:00:00.000Z",
+      startedAt: "2026-01-01T00:00:01.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+      sourceProposedPlan: {
+        threadId: "thread-1",
+        planId: "plan-1",
+      },
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-1",
+      planId: "plan-1",
+    });
+  }),
 );
 
 it.effect("decodes orchestration session runtime mode defaults", () =>
@@ -214,5 +283,35 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+  }),
+);
+
+it.effect("defaults proposed plan implementation metadata for historical rows", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationProposedPlan({
+      id: "plan-1",
+      turnId: "turn-1",
+      planMarkdown: "# Plan",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.implementedAt, null);
+    assert.strictEqual(parsed.implementationThreadId, null);
+  }),
+);
+
+it.effect("preserves proposed plan implementation metadata when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationProposedPlan({
+      id: "plan-2",
+      turnId: "turn-2",
+      planMarkdown: "# Plan",
+      implementedAt: "2026-01-02T00:00:00.000Z",
+      implementationThreadId: "thread-2",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.implementedAt, "2026-01-02T00:00:00.000Z");
+    assert.strictEqual(parsed.implementationThreadId, "thread-2");
   }),
 );

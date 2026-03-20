@@ -312,7 +312,7 @@ jobs:
         name: Mint release app token
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ vars.RELEASE_APP_ID }}
+          app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 

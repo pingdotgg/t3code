@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ApprovalRequestId,
+  ProviderKind,
   type OrchestrationEvent,
   type OrchestrationThread,
 } from "@t3tools/contracts";
@@ -205,7 +206,7 @@ export interface OrchestrationIntegrationHarness {
 }
 
 interface MakeOrchestrationIntegrationHarnessOptions {
-  readonly provider?: "codex";
+  readonly provider?: ProviderKind;
   readonly realCodex?: boolean;
 }
 

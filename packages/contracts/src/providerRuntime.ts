@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Option, Schema } from "effect";
 import {
   EventId,
   IsoDateTime,
@@ -19,6 +19,8 @@ const RuntimeEventRawSource = Schema.Literals([
   "codex.app-server.notification",
   "codex.app-server.request",
   "codex.eventmsg",
+  "claude.sdk.message",
+  "claude.sdk.permission",
   "codex.sdk.thread-event",
 ]);
 export type RuntimeEventRawSource = typeof RuntimeEventRawSource.Type;
@@ -411,6 +413,9 @@ export const UserInputQuestion = Schema.Struct({
   header: TrimmedNonEmptyStringSchema,
   question: TrimmedNonEmptyStringSchema,
   options: Schema.Array(UserInputQuestionOption),
+  multiSelect: Schema.optional(Schema.Boolean).pipe(
+    Schema.withConstructorDefault(() => Option.some(false)),
+  ),
 });
 export type UserInputQuestion = typeof UserInputQuestion.Type;
 
@@ -434,6 +439,7 @@ export type TaskStartedPayload = typeof TaskStartedPayload.Type;
 const TaskProgressPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   description: TrimmedNonEmptyStringSchema,
+  summary: Schema.optional(TrimmedNonEmptyStringSchema),
   usage: Schema.optional(Schema.Unknown),
   lastToolName: Schema.optional(TrimmedNonEmptyStringSchema),
 });
