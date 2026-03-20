@@ -15,7 +15,7 @@ export default mergeConfig(
       },
     },
     test: {
-      include: ["src/components/**/*.browser.tsx"],
+      include: ["**/*.browser.tsx"],
       browser: {
         enabled: true,
         provider: playwright(),
