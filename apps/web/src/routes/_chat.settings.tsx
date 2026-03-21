@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 import { type ProviderKind, DEFAULT_GIT_TEXT_GENERATION_MODEL } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import {
-  getAppModelOptions,
+  getGitTextGenerationModelOptions,
   getCustomModelsForProvider,
   getDefaultCustomModelsForProvider,
   MAX_CUSTOM_MODEL_LENGTH,
@@ -75,11 +75,11 @@ function SettingsRouteView() {
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
 
-  const gitTextGenerationModelOptions = getAppModelOptions(
-    "codex",
-    settings.customCodexModels,
-    settings.textGenerationModel,
-  );
+  const gitTextGenerationModelOptions = getGitTextGenerationModelOptions({
+    customCodexModels: settings.customCodexModels,
+    customClaudeModels: settings.customClaudeModels,
+    selectedModel: settings.textGenerationModel ?? null,
+  });
   const selectedGitTextGenerationModelLabel =
     gitTextGenerationModelOptions.find(
       (option) =>

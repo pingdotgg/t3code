@@ -9,6 +9,7 @@ import {
   getCustomModelsByProvider,
   getCustomModelsForProvider,
   getDefaultCustomModelsForProvider,
+  getGitTextGenerationModelOptions,
   MODEL_PROVIDER_SETTINGS,
   normalizeCustomModelSlugs,
   patchCustomModels,
@@ -67,6 +68,29 @@ describe("getAppModelOptions", () => {
     expect(options.some((option) => option.slug === "claude/custom-opus" && option.isCustom)).toBe(
       true,
     );
+  });
+});
+
+describe("getGitTextGenerationModelOptions", () => {
+  it("does not duplicate built-in Claude options when the selected model is Claude", () => {
+    const options = getGitTextGenerationModelOptions({
+      customCodexModels: [],
+      customClaudeModels: [],
+      selectedModel: "claude-sonnet-4-6",
+    });
+
+    expect(options.filter((option) => option.slug === "claude-sonnet-4-6")).toHaveLength(1);
+    expect(options.filter((option) => option.slug === "claude-haiku-4-5")).toHaveLength(1);
+  });
+
+  it("keeps an unsaved Claude custom selection available once", () => {
+    const options = getGitTextGenerationModelOptions({
+      customCodexModels: [],
+      customClaudeModels: [],
+      selectedModel: "claude/custom-opus",
+    });
+
+    expect(options.filter((option) => option.slug === "claude/custom-opus")).toHaveLength(1);
   });
 });
 

@@ -112,7 +112,7 @@ export function gitCheckoutMutationOptions(input: {
 export function gitRunStackedActionMutationOptions(input: {
   cwd: string | null;
   queryClient: QueryClient;
-  model?: string | null;
+  textGenerationModel?: string | null;
 }) {
   return mutationOptions({
     mutationKey: gitMutationKeys.runStackedAction(input.cwd),
@@ -135,7 +135,7 @@ export function gitRunStackedActionMutationOptions(input: {
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
-        ...(input.model ? { model: input.model } : {}),
+        ...(input.textGenerationModel ? { textGenerationModel: input.textGenerationModel } : {}),
       });
     },
     onSettled: async () => {

@@ -4,6 +4,7 @@ import { TrimmedNonEmptyString, type ProviderKind } from "@t3tools/contracts";
 import {
   getDefaultModel,
   getModelOptions,
+  inferProviderForModel,
   normalizeModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
@@ -199,6 +200,38 @@ export function getAppModelOptions(
   }
 
   return options;
+}
+
+export function getGitTextGenerationModelOptions(input: {
+  customCodexModels: readonly string[];
+  customClaudeModels: readonly string[];
+  selectedModel?: string | null;
+}): AppModelOption[] {
+  const selectedProvider = inferProviderForModel(input.selectedModel, "codex");
+  const options = [
+    ...getAppModelOptions(
+      "codex",
+      input.customCodexModels,
+      selectedProvider === "codex" ? input.selectedModel : null,
+    ),
+    ...getAppModelOptions(
+      "claudeAgent",
+      input.customClaudeModels,
+      selectedProvider === "claudeAgent" ? input.selectedModel : null,
+    ),
+  ];
+
+  const deduped: AppModelOption[] = [];
+  const seen = new Set<string>();
+  for (const option of options) {
+    if (seen.has(option.slug)) {
+      continue;
+    }
+    seen.add(option.slug);
+    deduped.push(option);
+  }
+
+  return deduped;
 }
 
 export function resolveAppModelSelection(

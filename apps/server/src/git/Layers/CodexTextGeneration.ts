@@ -9,6 +9,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "../Errors.ts";
+import { CodexTextGenerationBackend } from "../Services/TextGenerationBackends.ts";
 import {
   type BranchNameGenerationInput,
   type BranchNameGenerationResult,
@@ -17,20 +18,10 @@ import {
   type TextGenerationShape,
   TextGeneration,
 } from "../Services/TextGeneration.ts";
+import { toTextGenerationOutputJsonSchema } from "./TextGenerationJsonSchema.ts";
 
 const CODEX_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
-
-function toCodexOutputJsonSchema(schema: Schema.Top): unknown {
-  const document = Schema.toJsonSchemaDocument(schema);
-  if (document.definitions && Object.keys(document.definitions).length > 0) {
-    return {
-      ...document.schema,
-      $defs: document.definitions,
-    };
-  }
-  return document.schema;
-}
 
 function normalizeCodexError(
   operation: string,
@@ -201,7 +192,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       const schemaPath = yield* writeTempFile(
         operation,
         "codex-schema",
-        JSON.stringify(toCodexOutputJsonSchema(outputSchemaJson)),
+        JSON.stringify(toTextGenerationOutputJsonSchema(outputSchemaJson)),
       );
       const outputPath = yield* writeTempFile(operation, "codex-output", "");
 
@@ -470,3 +461,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 });
 
 export const CodexTextGenerationLive = Layer.effect(TextGeneration, makeCodexTextGeneration);
+export const CodexTextGenerationBackendLive = Layer.effect(
+  CodexTextGenerationBackend,
+  makeCodexTextGeneration,
+);
