@@ -94,6 +94,8 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export type DesktopMenuAction = "open-settings" | "toggle-notes";
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
@@ -104,7 +106,7 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
-  onMenuAction: (listener: (action: string) => void) => () => void;
+  onMenuAction: (listener: (action: DesktopMenuAction) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;

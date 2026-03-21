@@ -2,6 +2,9 @@
 import "../index.css";
 
 import {
+  type DesktopBridge,
+  type DesktopMenuAction,
+  type DesktopUpdateState,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
@@ -270,6 +273,69 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
       bootstrapProjectId: PROJECT_ID,
       bootstrapThreadId: THREAD_ID,
     },
+  };
+}
+
+interface DesktopBridgeHarness {
+  bridge: DesktopBridge;
+  emitMenuAction: (action: DesktopMenuAction) => void;
+  getMenuListenerCount: () => number;
+}
+
+function buildDesktopUpdateState(): DesktopUpdateState {
+  return {
+    enabled: false,
+    status: "disabled",
+    currentVersion: "1.0.0",
+    hostArch: "arm64",
+    appArch: "arm64",
+    runningUnderArm64Translation: false,
+    availableVersion: null,
+    downloadedVersion: null,
+    downloadPercent: null,
+    checkedAt: null,
+    message: null,
+    errorContext: null,
+    canRetry: false,
+  };
+}
+
+function createDesktopBridgeHarness(): DesktopBridgeHarness {
+  const menuListeners = new Set<(action: DesktopMenuAction) => void>();
+
+  return {
+    bridge: {
+      getWsUrl: () => null,
+      pickFolder: async () => null,
+      confirm: async () => true,
+      setTheme: async () => {},
+      showContextMenu: async () => null,
+      openExternal: async () => true,
+      onMenuAction: (listener) => {
+        menuListeners.add(listener);
+        return () => {
+          menuListeners.delete(listener);
+        };
+      },
+      getUpdateState: async () => buildDesktopUpdateState(),
+      downloadUpdate: async () => ({
+        accepted: false,
+        completed: false,
+        state: buildDesktopUpdateState(),
+      }),
+      installUpdate: async () => ({
+        accepted: false,
+        completed: false,
+        state: buildDesktopUpdateState(),
+      }),
+      onUpdateState: () => () => {},
+    },
+    emitMenuAction: (action) => {
+      for (const listener of menuListeners) {
+        listener(action);
+      }
+    },
+    getMenuListenerCount: () => menuListeners.size,
   };
 }
 
@@ -764,6 +830,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   afterEach(() => {
     document.body.innerHTML = "";
+    Reflect.deleteProperty(window, "desktopBridge");
   });
 
   it.each(TEXT_VIEWPORT_MATRIX)(
@@ -1522,6 +1589,51 @@ describe("ChatView timeline estimator parity (full app)", () => {
         (path) => UUID_ROUTE_RE.test(path),
         "Route should have changed to a new draft thread UUID from the shortcut.",
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("toggles the notes sidebar from a desktop menu action", async () => {
+    const desktopBridge = createDesktopBridgeHarness();
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      writable: true,
+      value: desktopBridge.bridge,
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-desktop-notes-toggle-test" as MessageId,
+        targetText: "desktop notes toggle test",
+      }),
+    });
+
+    const notesSelector =
+      'textarea[placeholder="Jot down ideas, todos, or notes for this project..."]';
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await vi.waitFor(() => {
+        expect(desktopBridge.getMenuListenerCount()).toBeGreaterThan(0);
+      });
+
+      expect(document.querySelector(notesSelector)).toBeNull();
+
+      desktopBridge.emitMenuAction("toggle-notes");
+
+      await waitForElement(
+        () => document.querySelector<HTMLTextAreaElement>(notesSelector),
+        "Unable to find project notes sidebar after desktop menu action.",
+      );
+
+      desktopBridge.emitMenuAction("toggle-notes");
+
+      await vi.waitFor(() => {
+        expect(document.querySelector(notesSelector)).toBeNull();
+      });
     } finally {
       await mounted.cleanup();
     }

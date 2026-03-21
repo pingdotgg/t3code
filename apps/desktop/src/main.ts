@@ -18,6 +18,7 @@ import {
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type {
+  DesktopMenuAction,
   DesktopTheme,
   DesktopUpdateActionResult,
   DesktopUpdateState,
@@ -487,7 +488,7 @@ function registerDesktopProtocol(): void {
   desktopProtocolRegistered = true;
 }
 
-function dispatchMenuAction(action: string): void {
+function dispatchMenuAction(action: DesktopMenuAction): void {
   const existingWindow =
     BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0];
   const targetWindow = existingWindow ?? createWindow();
@@ -618,6 +619,12 @@ function configureApplicationMenu(): void {
         { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
         { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
         { role: "zoomOut" },
+        { type: "separator" },
+        {
+          label: "Toggle Notes",
+          accelerator: "CmdOrCtrl+Shift+E",
+          click: () => dispatchMenuAction("toggle-notes"),
+        },
         { type: "separator" },
         { role: "togglefullscreen" },
       ],

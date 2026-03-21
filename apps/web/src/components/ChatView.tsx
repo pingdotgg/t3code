@@ -180,6 +180,7 @@ import {
   SendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { NOTES_SIDEBAR_DEFAULT_WIDTH_PX, clampNotesSidebarWidth } from "./notesSidebarLayout";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -338,6 +339,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const [notesSidebarOpen, setNotesSidebarOpen] = useState(false);
+  const [notesSidebarWidth, setNotesSidebarWidth] = useState(NOTES_SIDEBAR_DEFAULT_WIDTH_PX);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -1601,6 +1603,35 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return !open;
     });
+  }, []);
+  useEffect(() => {
+    const onMenuAction = window.desktopBridge?.onMenuAction;
+    if (typeof onMenuAction !== "function") {
+      return;
+    }
+
+    const unsubscribe = onMenuAction((action) => {
+      if (action !== "toggle-notes" || !activeProject) return;
+      toggleNotesSidebar();
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [activeProject, toggleNotesSidebar]);
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setNotesSidebarWidth((currentWidth) => {
+        const nextWidth = clampNotesSidebarWidth(currentWidth, window.innerWidth);
+        return nextWidth === currentWidth ? currentWidth : nextWidth;
+      });
+    };
+
+    handleWindowResize();
+    window.addEventListener("resize", handleWindowResize);
+    return () => {
+      window.removeEventListener("resize", handleWindowResize);
+    };
   }, []);
   const handleNotesChange = useCallback(
     (notes: string) => {
@@ -3804,7 +3835,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           "flex min-w-0 flex-1 items-center",
                           isComposerFooterCompact
                             ? "gap-1 overflow-hidden"
-                            : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible",
+                            : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-0",
                         )}
                       >
                         {/* Provider/model picker */}
@@ -4182,7 +4213,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
             projectId={activeProject.id}
             projectName={activeProject.name}
             notes={activeProject.notes ?? ""}
+            width={notesSidebarWidth}
             onNotesChange={handleNotesChange}
+            onWidthChange={setNotesSidebarWidth}
             onClose={() => setNotesSidebarOpen(false)}
           />
         ) : null}
