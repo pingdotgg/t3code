@@ -19,12 +19,15 @@ export interface ExecuteGitInput {
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
+  readonly truncateOutput?: boolean;
 }
 
 export interface ExecuteGitResult {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
+  readonly stdoutTruncated?: boolean;
+  readonly stderrTruncated?: boolean;
 }
 
 /**

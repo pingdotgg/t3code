@@ -37,6 +37,23 @@ layer("GitServiceLive", (it) => {
     }),
   );
 
+  it.effect("runGit can truncate oversized output when requested", () =>
+    Effect.gen(function* () {
+      const gitService = yield* GitService;
+      const result = yield* gitService.execute({
+        operation: "GitProcess.test.truncateOutput",
+        cwd: process.cwd(),
+        args: ["--version", "--build-options"],
+        maxOutputBytes: 16,
+        truncateOutput: true,
+      });
+
+      assert.equal(result.code, 0);
+      assert.ok(result.stdout.length <= 16);
+      assert.equal(result.stdoutTruncated, true);
+    }),
+  );
+
   it.effect("runGit fails with GitCommandError when non-zero exits are not allowed", () =>
     Effect.gen(function* () {
       const gitService = yield* GitService;

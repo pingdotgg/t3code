@@ -21,6 +21,8 @@ interface ExecuteGitOptions {
   timeoutMs?: number | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorMessage?: string | undefined;
+  maxOutputBytes?: number | undefined;
+  truncateOutput?: boolean | undefined;
 }
 
 function parseBranchAb(value: string): { ahead: number; behind: number } {
@@ -237,6 +239,8 @@ const makeGitCore = Effect.gen(function* () {
         args,
         allowNonZeroExit: true,
         ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
+        ...(options.truncateOutput !== undefined ? { truncateOutput: options.truncateOutput } : {}),
       })
       .pipe(
         Effect.flatMap((result) => {
@@ -793,12 +797,14 @@ const makeGitCore = Effect.gen(function* () {
         return null;
       }
 
-      const stagedPatch = yield* runGitStdout("GitCore.prepareCommitContext.stagedPatch", cwd, [
-        "diff",
-        "--cached",
-        "--patch",
-        "--minimal",
-      ]);
+      const stagedPatch = yield* executeGit(
+        "GitCore.prepareCommitContext.stagedPatch",
+        cwd,
+        ["diff", "--cached", "--patch", "--minimal"],
+        {
+          truncateOutput: true,
+        },
+      ).pipe(Effect.map((result) => result.stdout));
 
       return {
         stagedSummary,
