@@ -83,6 +83,7 @@ export interface Project {
   model: string;
   expanded: boolean;
   scripts: ProjectScript[];
+  notes?: string | null;
 }
 
 export interface Thread {

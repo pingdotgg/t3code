@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopMenuAction } from "@t3tools/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -13,6 +13,10 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
 
+function isDesktopMenuAction(action: unknown): action is DesktopMenuAction {
+  return action === "open-settings" || action === "toggle-notes";
+}
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => wsUrl,
   pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL),
@@ -22,7 +26,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   openExternal: (url: string) => ipcRenderer.invoke(OPEN_EXTERNAL_CHANNEL, url),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
-      if (typeof action !== "string") return;
+      if (!isDesktopMenuAction(action)) return;
       listener(action);
     };
 

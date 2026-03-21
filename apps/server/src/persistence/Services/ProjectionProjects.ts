@@ -18,6 +18,7 @@ export const ProjectionProject = Schema.Struct({
   workspaceRoot: Schema.String,
   defaultModel: Schema.NullOr(Schema.String),
   scripts: Schema.Array(ProjectScript),
+  notes: Schema.optional(Schema.NullOr(Schema.String)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),

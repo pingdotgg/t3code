@@ -89,6 +89,7 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
+import ProjectNotesSidebar from "./ProjectNotesSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   BotIcon,
@@ -99,6 +100,7 @@ import {
   ListTodoIcon,
   LockIcon,
   LockOpenIcon,
+  StickyNoteIcon,
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -178,6 +180,7 @@ import {
   SendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { NOTES_SIDEBAR_DEFAULT_WIDTH_PX, clampNotesSidebarWidth } from "./notesSidebarLayout";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -335,6 +338,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
+  const [notesSidebarOpen, setNotesSidebarOpen] = useState(false);
+  const [notesSidebarWidth, setNotesSidebarWidth] = useState(NOTES_SIDEBAR_DEFAULT_WIDTH_PX);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -1138,6 +1143,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "diff.toggle"),
     [keybindings],
   );
+  const notesToggleShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "notes.toggle"),
+    [keybindings],
+  );
   const onToggleDiff = useCallback(() => {
     void navigate({
       to: "/$threadId",
@@ -1581,10 +1590,65 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
       } else {
         planSidebarDismissedForTurnRef.current = null;
+        setNotesSidebarOpen(false);
       }
       return !open;
     });
   }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+  const toggleNotesSidebar = useCallback(() => {
+    setNotesSidebarOpen((open) => {
+      if (!open) {
+        setPlanSidebarOpen(false);
+        planSidebarDismissedForTurnRef.current = null;
+      }
+      return !open;
+    });
+  }, []);
+  useEffect(() => {
+    const onMenuAction = window.desktopBridge?.onMenuAction;
+    if (typeof onMenuAction !== "function") {
+      return;
+    }
+
+    const unsubscribe = onMenuAction((action) => {
+      if (action !== "toggle-notes" || !activeProject) return;
+      toggleNotesSidebar();
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [activeProject, toggleNotesSidebar]);
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setNotesSidebarWidth((currentWidth) => {
+        const nextWidth = clampNotesSidebarWidth(currentWidth, window.innerWidth);
+        return nextWidth === currentWidth ? currentWidth : nextWidth;
+      });
+    };
+
+    handleWindowResize();
+    window.addEventListener("resize", handleWindowResize);
+    return () => {
+      window.removeEventListener("resize", handleWindowResize);
+    };
+  }, []);
+  const handleNotesChange = useCallback(
+    (notes: string) => {
+      if (!activeProject) return;
+      const nextNotes = notes === "" ? null : notes;
+      if ((activeProject.notes ?? null) === nextNotes) return;
+      const api = readNativeApi();
+      if (!api) return;
+      void api.orchestration.dispatchCommand({
+        type: "project.meta.update",
+        commandId: newCommandId(),
+        projectId: activeProject.id,
+        notes: nextNotes,
+      });
+    },
+    [activeProject],
+  );
 
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
@@ -2165,6 +2229,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "notes.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleNotesSidebar();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2187,6 +2258,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     splitTerminal,
     keybindings,
     onToggleDiff,
+    toggleNotesSidebar,
     toggleTerminalVisibility,
   ]);
 
@@ -3763,7 +3835,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           "flex min-w-0 flex-1 items-center",
                           isComposerFooterCompact
                             ? "gap-1 overflow-hidden"
-                            : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible",
+                            : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-0",
                         )}
                       >
                         {/* Provider/model picker */}
@@ -3789,10 +3861,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             )}
                             interactionMode={interactionMode}
                             planSidebarOpen={planSidebarOpen}
+                            notesSidebarOpen={notesSidebarOpen}
                             runtimeMode={runtimeMode}
                             traitsMenuContent={providerTraitsMenuContent}
                             onToggleInteractionMode={toggleInteractionMode}
                             onTogglePlanSidebar={togglePlanSidebar}
+                            onToggleNotesSidebar={toggleNotesSidebar}
                             onToggleRuntimeMode={toggleRuntimeMode}
                           />
                         ) : (
@@ -3882,6 +3956,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 >
                                   <ListTodoIcon />
                                   <span className="sr-only sm:not-sr-only">Plan</span>
+                                </Button>
+                              </>
+                            ) : null}
+
+                            {activeProject ? (
+                              <>
+                                <Separator
+                                  orientation="vertical"
+                                  className="mx-0.5 hidden h-4 sm:block"
+                                />
+                                <Button
+                                  variant="ghost"
+                                  className={cn(
+                                    "shrink-0 whitespace-nowrap px-2 sm:px-3",
+                                    notesSidebarOpen
+                                      ? "text-blue-400 hover:text-blue-300"
+                                      : "text-muted-foreground/70 hover:text-foreground/80",
+                                  )}
+                                  size="sm"
+                                  type="button"
+                                  onClick={toggleNotesSidebar}
+                                  title={
+                                    notesSidebarOpen
+                                      ? "Hide notes"
+                                      : notesToggleShortcutLabel
+                                        ? `Show notes (${notesToggleShortcutLabel})`
+                                        : "Show notes"
+                                  }
+                                >
+                                  <StickyNoteIcon />
+                                  <span className="sr-only sm:not-sr-only">Notes</span>
                                 </Button>
                               </>
                             ) : null}
@@ -4101,6 +4206,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 planSidebarDismissedForTurnRef.current = turnKey;
               }
             }}
+          />
+        ) : null}
+        {notesSidebarOpen && activeProject ? (
+          <ProjectNotesSidebar
+            projectId={activeProject.id}
+            projectName={activeProject.name}
+            notes={activeProject.notes ?? ""}
+            width={notesSidebarWidth}
+            onNotesChange={handleNotesChange}
+            onWidthChange={setNotesSidebarWidth}
+            onClose={() => setNotesSidebarOpen(false)}
           />
         ) : null}
       </div>

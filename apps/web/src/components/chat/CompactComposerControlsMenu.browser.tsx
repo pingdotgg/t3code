@@ -46,6 +46,7 @@ async function mountMenu(props?: {
       activePlan={false}
       interactionMode="default"
       planSidebarOpen={false}
+      notesSidebarOpen={false}
       runtimeMode="approval-required"
       traitsMenuContent={
         provider === "codex" ? (
@@ -60,6 +61,7 @@ async function mountMenu(props?: {
       }
       onToggleInteractionMode={vi.fn()}
       onTogglePlanSidebar={vi.fn()}
+      onToggleNotesSidebar={vi.fn()}
       onToggleRuntimeMode={vi.fn()}
     />,
     { container: host },

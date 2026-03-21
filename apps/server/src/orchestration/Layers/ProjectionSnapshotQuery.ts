@@ -143,6 +143,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model AS "defaultModel",
           scripts_json AS "scripts",
+          notes,
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -537,6 +538,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             workspaceRoot: row.workspaceRoot,
             defaultModel: row.defaultModel,
             scripts: row.scripts,
+            notes: row.notes ?? null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             deletedAt: row.deletedAt,

@@ -1,6 +1,6 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
 import { memo, type ReactNode } from "react";
-import { EllipsisIcon, ListTodoIcon } from "lucide-react";
+import { EllipsisIcon, ListTodoIcon, StickyNoteIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -16,10 +16,12 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   activePlan: boolean;
   interactionMode: ProviderInteractionMode;
   planSidebarOpen: boolean;
+  notesSidebarOpen: boolean;
   runtimeMode: RuntimeMode;
   traitsMenuContent?: ReactNode;
   onToggleInteractionMode: () => void;
   onTogglePlanSidebar: () => void;
+  onToggleNotesSidebar: () => void;
   onToggleRuntimeMode: () => void;
 }) {
   return (
@@ -75,6 +77,11 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             </MenuItem>
           </>
         ) : null}
+        <MenuDivider />
+        <MenuItem onClick={props.onToggleNotesSidebar}>
+          <StickyNoteIcon className="size-4 shrink-0" />
+          {props.notesSidebarOpen ? "Hide notes" : "Show notes"}
+        </MenuItem>
       </MenuPopup>
     </Menu>
   );

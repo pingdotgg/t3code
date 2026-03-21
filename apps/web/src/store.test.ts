@@ -43,6 +43,7 @@ function makeState(thread: Thread): AppState {
         model: "gpt-5-codex",
         expanded: true,
         scripts: [],
+        notes: null,
       },
     ],
     threads: [thread],
@@ -87,6 +88,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         updatedAt: "2026-02-27T00:00:00.000Z",
         deletedAt: null,
         scripts: [],
+        notes: null,
       },
     ],
     threads: [thread],
@@ -105,6 +107,7 @@ function makeReadModelProject(
     updatedAt: "2026-02-27T00:00:00.000Z",
     deletedAt: null,
     scripts: [],
+    notes: null,
     ...overrides,
   };
 }
@@ -226,6 +229,22 @@ describe("store read model sync", () => {
     expect(next.threads[0]?.model).toBe("claude-sonnet-4-6");
   });
 
+  it("maps project notes from the read model", () => {
+    const initialState = makeState(makeThread());
+    const readModel = {
+      ...makeReadModel(makeReadModelThread({})),
+      projects: [
+        makeReadModelProject({
+          notes: "Follow up on the migration checklist.",
+        }),
+      ],
+    } satisfies OrchestrationReadModel;
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects[0]?.notes).toBe("Follow up on the migration checklist.");
+  });
+
   it("preserves the current project order when syncing incoming read model updates", () => {
     const project1 = ProjectId.makeUnsafe("project-1");
     const project2 = ProjectId.makeUnsafe("project-2");
@@ -239,6 +258,7 @@ describe("store read model sync", () => {
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
+          notes: null,
         },
         {
           id: project1,
@@ -247,6 +267,7 @@ describe("store read model sync", () => {
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
+          notes: null,
         },
       ],
       threads: [],

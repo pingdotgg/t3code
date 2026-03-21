@@ -38,6 +38,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               workspace_root,
               default_model,
               scripts_json,
+              notes,
               created_at,
               updated_at,
               deleted_at
@@ -48,6 +49,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               ${row.workspaceRoot},
               ${row.defaultModel},
               ${row.scripts},
+              ${row.notes ?? null},
               ${row.createdAt},
               ${row.updatedAt},
               ${row.deletedAt}
@@ -58,6 +60,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
               workspace_root = excluded.workspace_root,
               default_model = excluded.default_model,
               scripts_json = excluded.scripts_json,
+              notes = excluded.notes,
               created_at = excluded.created_at,
               updated_at = excluded.updated_at,
               deleted_at = excluded.deleted_at
@@ -75,6 +78,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model AS "defaultModel",
           scripts_json AS "scripts",
+          notes,
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -94,6 +98,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model AS "defaultModel",
           scripts_json AS "scripts",
+          notes,
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"

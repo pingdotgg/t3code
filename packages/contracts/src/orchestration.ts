@@ -146,6 +146,7 @@ export const OrchestrationProject = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
+  notes: Schema.optional(Schema.NullOr(Schema.String)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -318,6 +319,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(TrimmedNonEmptyString),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  notes: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const ProjectDeleteCommand = Schema.Struct({
@@ -622,6 +624,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  notes: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: IsoDateTime,
 });
 

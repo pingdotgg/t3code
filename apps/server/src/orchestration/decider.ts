@@ -106,6 +106,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
           ...(command.defaultModel !== undefined ? { defaultModel: command.defaultModel } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
+          ...(command.notes !== undefined ? { notes: command.notes } : {}),
           updatedAt: occurredAt,
         },
       };
