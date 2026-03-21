@@ -48,6 +48,7 @@ import { ProviderService, type ProviderServiceShape } from "./provider/Services/
 import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
+import { GitHubCli, type GitHubCliShape } from "./git/Services/GitHubCli.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
@@ -491,6 +492,7 @@ describe("WebSocket Server", () => {
       open?: OpenShape;
       gitManager?: GitManagerShape;
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
+      gitHubCli?: Pick<GitHubCliShape, "createRepository">;
       terminalManager?: TerminalManagerShape;
     } = {},
   ): Promise<Http.Server> {
@@ -528,6 +530,9 @@ describe("WebSocket Server", () => {
       options.gitManager ? Layer.succeed(GitManager, options.gitManager) : Layer.empty,
       options.gitCore
         ? Layer.succeed(GitCore, options.gitCore as unknown as GitCoreShape)
+        : Layer.empty,
+      options.gitHubCli
+        ? Layer.succeed(GitHubCli, options.gitHubCli as unknown as GitHubCliShape)
         : Layer.empty,
       options.terminalManager
         ? Layer.succeed(TerminalManager, options.terminalManager)
@@ -1650,6 +1655,7 @@ describe("WebSocket Server", () => {
       }),
     );
     const initRepo = vi.fn(() => Effect.void);
+    const createRepository = vi.fn(() => Effect.void);
     const pullCurrentBranch = vi.fn(() =>
       Effect.fail(
         new GitCommandError({
@@ -1668,6 +1674,9 @@ describe("WebSocket Server", () => {
         initRepo,
         pullCurrentBranch,
       },
+      gitHubCli: {
+        createRepository,
+      },
     });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
@@ -1683,6 +1692,10 @@ describe("WebSocket Server", () => {
     const initResponse = await sendRequest(ws, WS_METHODS.gitInit, { cwd: "/repo/path" });
     expect(initResponse.error).toBeUndefined();
     expect(initRepo).toHaveBeenCalledWith({ cwd: "/repo/path" });
+    expect(createRepository).toHaveBeenCalledWith({
+      cwd: "/repo/path",
+      visibility: "private",
+    });
 
     const pullResponse = await sendRequest(ws, WS_METHODS.gitPull, { cwd: "/repo/path" });
     expect(pullResponse.result).toBeUndefined();
