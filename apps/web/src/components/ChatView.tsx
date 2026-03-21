@@ -135,6 +135,7 @@ import {
 } from "../composerDraftStore";
 import {
   appendTerminalContextsToPrompt,
+  deriveDisplayedUserMessageState,
   formatTerminalContextLabel,
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
@@ -2302,7 +2303,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   };
 
   const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
+    async (turnCount: number, promptToRestore?: string) => {
       const api = readNativeApi();
       if (!api || !activeThread || isRevertingCheckpoint) return;
 
@@ -2338,8 +2339,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
         );
       }
       setIsRevertingCheckpoint(false);
+
+      // Restore the reverted user prompt into the composer after state settles.
+      // We use setTimeout to defer past the server state sync (throttled at ~100ms)
+      // so the restored prompt is not overwritten by re-renders from the sync.
+      if (promptToRestore) {
+        setTimeout(() => {
+          promptRef.current = promptToRestore;
+          setPrompt(promptToRestore);
+          setComposerCursor(collapseExpandedComposerCursor(promptToRestore, promptToRestore.length));
+          scheduleComposerFocus();
+        }, 300);
+      }
     },
-    [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
+    [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, scheduleComposerFocus, setPrompt, setThreadError],
   );
 
   const onSend = async (e?: { preventDefault: () => void }) => {
@@ -3431,7 +3444,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (typeof targetTurnCount !== "number") {
       return;
     }
-    void onRevertToTurnCount(targetTurnCount);
+    // Find the user message and extract just the visible prompt text (stripping
+    // terminal context blocks and other metadata) so we can restore it into the
+    // composer after reverting.
+    const userMessage = timelineMessages.find((m) => m.id === messageId && m.role === "user");
+    const promptText = userMessage
+      ? deriveDisplayedUserMessageState(userMessage.text).visibleText
+      : undefined;
+    void onRevertToTurnCount(targetTurnCount, promptText);
   };
 
   // Empty state: no active thread
