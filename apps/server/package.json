@@ -6,6 +6,7 @@
     "url": "https://github.com/pingdotgg/t3code",
     "directory": "apps/server"
   },
+  "license": "MIT",
   "bin": {
     "t3": "./dist/index.mjs"
   },
