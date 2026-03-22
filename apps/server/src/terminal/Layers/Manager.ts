@@ -242,6 +242,23 @@ async function defaultSubprocessChecker(terminalPid: number): Promise<boolean> {
   return checkPosixSubprocessActivity(terminalPid);
 }
 
+/**
+ * Strip terminal query responses (OSC color reports, DA responses) that
+ * should be consumed by the terminal emulator but leak into the saved
+ * history when the session is restored. These appear as visible gibberish
+ * like `10;rgb:f5f5/f5f5/f5f5` to the user.
+ */
+function stripTerminalQueryResponses(data: string): string {
+  // OSC responses: \x1b] ... ST  where ST is \x1b\\ or \x07
+  // Examples: \x1b]10;rgb:f5f5/f5f5/f5f5\x1b\\  (foreground color report)
+  //           \x1b]11;rgb:1616/1616/1616\x07      (background color report)
+  // DA responses: \x1b[ ... c   (Device Attributes)
+  // Example: \x1b[?1;2c
+  return data
+    .replace(/\x1b\][^\x07\x1b]*(?:\x1b\\|\x07)/g, "")
+    .replace(/\x1b\[\?[\d;]*c/g, "");
+}
+
 function capHistory(history: string, maxLines: number): string {
   if (history.length === 0) return history;
   const hasTrailingNewline = history.endsWith("\n");
@@ -694,7 +711,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   }
 
   private onProcessData(session: TerminalSessionState, data: string): void {
-    session.history = capHistory(`${session.history}${data}`, this.historyLineLimit);
+    const cleanData = stripTerminalQueryResponses(data);
+    session.history = capHistory(`${session.history}${cleanData}`, this.historyLineLimit);
     session.updatedAt = new Date().toISOString();
     this.queuePersist(session.threadId, session.terminalId, session.history);
     this.emitEvent({
