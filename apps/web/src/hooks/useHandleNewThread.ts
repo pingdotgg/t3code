@@ -63,6 +63,13 @@ export function useHandleNewThread() {
               ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
             });
           }
+          if (stickyModel) {
+            setProvider(storedDraftThread.threadId, inferProviderForModel(stickyModel));
+            setModel(storedDraftThread.threadId, stickyModel);
+          }
+          if (Object.keys(stickyModelOptions).length > 0) {
+            setModelOptions(storedDraftThread.threadId, stickyModelOptions);
+          }
           setProjectDraftThreadId(projectId, storedDraftThread.threadId);
           if (routeThreadId === storedDraftThread.threadId) {
             return;
