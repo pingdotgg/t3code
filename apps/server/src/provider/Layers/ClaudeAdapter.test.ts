@@ -328,6 +328,25 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("loads user and project Claude setting sources", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        cwd: "/tmp/workspace",
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.settingSources, ["user", "project"]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("ignores unsupported max effort for Sonnet 4.6", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

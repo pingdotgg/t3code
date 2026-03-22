@@ -2574,6 +2574,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
           ...(newSessionId ? { sessionId: newSessionId } : {}),
           includePartialMessages: true,
+          settingSources: ["user", "project"],
           canUseTool,
           env: process.env,
           ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
