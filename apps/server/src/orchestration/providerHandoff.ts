@@ -10,6 +10,7 @@ type HandoffMessage = {
 
 const MAX_HANDOFF_TRANSCRIPT_CHARS = 12_000;
 const MAX_HANDOFF_MESSAGES = 24;
+const TRUNCATED_TRANSCRIPT_SLICE_MARKER = "\n[Message truncated for length]";
 
 function formatAttachmentSummary(
   attachments: ReadonlyArray<ChatAttachment> | undefined,
@@ -37,10 +38,22 @@ function formatTranscriptMessage(message: HandoffMessage): string {
   return sections.join("\n");
 }
 
+function truncateTranscriptSlice(slice: string, maxChars: number): string {
+  if (slice.length <= maxChars) {
+    return slice;
+  }
+  if (maxChars <= TRUNCATED_TRANSCRIPT_SLICE_MARKER.length) {
+    return slice.slice(0, maxChars);
+  }
+  const availableChars = maxChars - TRUNCATED_TRANSCRIPT_SLICE_MARKER.length;
+  return `${slice.slice(0, availableChars)}${TRUNCATED_TRANSCRIPT_SLICE_MARKER}`;
+}
+
 function buildTranscript(messages: ReadonlyArray<HandoffMessage>): string {
   const slices: string[] = [];
   let usedChars = 0;
   let usedCount = 0;
+  let truncatedForLength = false;
 
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -48,19 +61,28 @@ function buildTranscript(messages: ReadonlyArray<HandoffMessage>): string {
       continue;
     }
     const nextSlice = formatTranscriptMessage(message);
-    const nextCost = nextSlice.length + 2;
-    if (usedCount > 0 && usedChars + nextCost > MAX_HANDOFF_TRANSCRIPT_CHARS) {
+    const separatorCost = usedCount > 0 ? 2 : 0;
+    const remainingChars = MAX_HANDOFF_TRANSCRIPT_CHARS - usedChars - separatorCost;
+    if (remainingChars <= 0) {
+      truncatedForLength = true;
+      break;
+    }
+    if (nextSlice.length > remainingChars) {
+      slices.unshift(truncateTranscriptSlice(nextSlice, remainingChars));
+      usedChars += remainingChars + separatorCost;
+      usedCount += 1;
+      truncatedForLength = true;
       break;
     }
     slices.unshift(nextSlice);
-    usedChars += nextCost;
+    usedChars += nextSlice.length + separatorCost;
     usedCount += 1;
     if (usedCount >= MAX_HANDOFF_MESSAGES || usedChars >= MAX_HANDOFF_TRANSCRIPT_CHARS) {
       break;
     }
   }
 
-  const truncated = slices.length < messages.length;
+  const truncated = truncatedForLength || slices.length < messages.length;
   return [truncated ? "[Earlier conversation omitted for brevity]\n" : null, slices.join("\n\n")]
     .filter((value): value is string => typeof value === "string" && value.length > 0)
     .join("");

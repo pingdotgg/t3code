@@ -858,6 +858,78 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("uses the handoff source model after an in-session reroute", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-reroute-source-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-reroute-source-1"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.model.set",
+        commandId: CommandId.makeUnsafe("cmd-model-rerouted-before-switch"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        model: "gpt-5.4",
+        source: "provider-reroute",
+        reason: "capacity",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.model.set",
+        commandId: CommandId.makeUnsafe("cmd-model-client-before-switch"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        model: "claude-sonnet-4-6",
+        source: "client",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-reroute-source-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-reroute-source-2"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+        handoffSourceModel: "gpt-5.4",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      input: expect.stringContaining("switching from GPT-5.4 to Claude Sonnet 4.6"),
+    });
+  });
+
   it("preserves handoff history when switching providers after the previous session stopped", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -902,6 +974,16 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
+        type: "thread.model.set",
+        commandId: CommandId.makeUnsafe("cmd-model-set-before-stopped-provider-switch"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        model: "claude-sonnet-4-6",
+        source: "client",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.makeUnsafe("cmd-turn-start-provider-stopped-2"),
         threadId: ThreadId.makeUnsafe("thread-1"),
@@ -913,6 +995,7 @@ describe("ProviderCommandReactor", () => {
         },
         provider: "claudeAgent",
         model: "claude-sonnet-4-6",
+        handoffSourceModel: "gpt-5-codex",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -929,6 +1012,9 @@ describe("ProviderCommandReactor", () => {
     });
     expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
       model: "claude-sonnet-4-6",
+    });
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      input: expect.stringContaining("switching from GPT-5 Codex to Claude Sonnet 4.6"),
     });
     expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
       input: expect.stringContaining("You are continuing an existing conversation"),

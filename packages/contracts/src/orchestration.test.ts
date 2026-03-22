@@ -273,6 +273,29 @@ it.effect("decodes thread model changed activity payload for user and reroute no
   }),
 );
 
+it.effect("decodes thread.turn.start handoff source model when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-start-handoff-model",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-1",
+        role: "user",
+        text: "continue",
+        attachments: [],
+      },
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+      handoffSourceModel: "gpt-5.4",
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.handoffSourceModel, "gpt-5.4");
+  }),
+);
+
 it.effect(
   "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
   () =>
@@ -294,6 +317,7 @@ it.effect("decodes thread.turn-start-requested source proposed plan metadata whe
     const parsed = yield* decodeThreadTurnStartRequestedPayload({
       threadId: "thread-2",
       messageId: "msg-2",
+      handoffSourceModel: "gpt-5.4",
       sourceProposedPlan: {
         threadId: "thread-1",
         planId: "plan-1",
@@ -304,6 +328,7 @@ it.effect("decodes thread.turn-start-requested source proposed plan metadata whe
       threadId: "thread-1",
       planId: "plan-1",
     });
+    assert.strictEqual(parsed.handoffSourceModel, "gpt-5.4");
   }),
 );
 

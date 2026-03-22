@@ -2625,6 +2625,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           attachments: turnAttachments,
         },
         model: selectedModel || undefined,
+        ...(serverThread?.model ? { handoffSourceModel: serverThread.model } : {}),
         ...(selectedModelOptionsForDispatch
           ? { modelOptions: selectedModelOptionsForDispatch }
           : {}),
@@ -2911,6 +2912,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           },
           provider: selectedProvider,
           model: selectedModel || undefined,
+          ...(activeThread.model ? { handoffSourceModel: activeThread.model } : {}),
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),

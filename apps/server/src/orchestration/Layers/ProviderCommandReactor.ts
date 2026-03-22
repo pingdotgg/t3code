@@ -419,6 +419,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly provider?: ProviderKind;
     readonly model?: string;
+    readonly handoffSourceModel?: string;
     readonly modelOptions?: ProviderModelOptions;
     readonly providerOptions?: ProviderStartOptions;
     readonly interactionMode?: "default" | "plan";
@@ -451,6 +452,8 @@ const make = Effect.gen(function* () {
         ? "in-session"
         : (yield* providerService.getCapabilities(activeSession.provider)).sessionModelSwitch;
     const modelForTurn = sessionModelSwitch === "unsupported" ? activeSession?.model : input.model;
+    const previousModelForHandoff =
+      input.handoffSourceModel ?? thread.model ?? ensuredSession.previousModel;
     const handoffPrompt =
       ensuredSession.providerSwitched &&
       ensuredSession.previousProvider !== undefined &&
@@ -459,7 +462,7 @@ const make = Effect.gen(function* () {
             messagesBeforeCurrent: getMessagesBeforeMessage(thread.messages, input.messageId),
             previousProvider: ensuredSession.previousProvider,
             nextProvider: ensuredSession.desiredProvider,
-            previousModel: ensuredSession.previousModel,
+            previousModel: previousModelForHandoff,
             nextModel: modelForTurn ?? ensuredSession.desiredModel,
             latestUserText: input.messageText,
             ...(input.attachments !== undefined ? { latestAttachments: input.attachments } : {}),
@@ -590,6 +593,9 @@ const make = Effect.gen(function* () {
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
+      ...(event.payload.handoffSourceModel !== undefined
+        ? { handoffSourceModel: event.payload.handoffSourceModel }
+        : {}),
       ...(event.payload.modelOptions !== undefined
         ? { modelOptions: event.payload.modelOptions }
         : {}),
