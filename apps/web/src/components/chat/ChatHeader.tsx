@@ -16,6 +16,7 @@ import { OpenInPicker } from "./OpenInPicker";
 
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
+  activeThreadBranch: string | null;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
   isGitRepo: boolean;
@@ -36,6 +37,7 @@ interface ChatHeaderProps {
 
 export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
+  activeThreadBranch,
   activeThreadTitle,
   activeProjectName,
   isGitRepo,
@@ -93,7 +95,13 @@ export const ChatHeader = memo(function ChatHeader({
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {activeProjectName && (
+          <GitActionsControl
+            gitCwd={gitCwd}
+            activeThreadId={activeThreadId}
+            activeThreadBranch={activeThreadBranch}
+          />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
