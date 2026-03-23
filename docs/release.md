@@ -17,6 +17,7 @@ This document covers how to run desktop releases from one tag, first without sig
 - Includes Electron auto-update metadata (for example `latest*.yml` and `*.blockmap`) in release assets.
 - Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing.
 - Signing is optional and auto-detected per platform from secrets.
+- Linux can also ship an optional `linux-installer/` bundle that wraps the released AppImage with desktop-focused install and maintenance helpers.
 
 ## Desktop auto-update notes
 
@@ -36,6 +37,10 @@ This document covers how to run desktop releases from one tag, first without sig
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
   - `latest*.yml` metadata
   - `*.blockmap` files (used for differential downloads)
+- Optional Linux installer bundle:
+  - keep `linux-installer/` as a separate bundle around the AppImage rather than replacing the AppImage artifact
+  - if distributing it in a release, package the directory as a `.tar.gz` so users can download, extract, and run `install-t3-code-linux.sh`
+  - document clearly that it targets Linux desktop integration gaps like launcher setup, FUSE fallback, and update/reinstall/uninstall actions
 - macOS metadata note:
   - `electron-updater` reads `latest-mac.yml` for both Intel and Apple Silicon.
   - The workflow merges the per-arch mac manifests into one `latest-mac.yml` before publishing the GitHub Release.

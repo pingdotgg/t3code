@@ -15,6 +15,8 @@ You can also just install the desktop app. It's cooler.
 
 Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
 
+On Linux, the AppImage is still the main release artifact. If your desktop does not integrate AppImages cleanly, there is also an optional installer bundle in `linux-installer/` that adds desktop integration, FUSE fallback handling, and update/reinstall/uninstall helpers for the existing AppImage release assets.
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.
