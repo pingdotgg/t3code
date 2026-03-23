@@ -25,7 +25,7 @@ jobs:
       targets: ${{ steps.collect.outputs.targets }}
     steps:
       - id: collect
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             if (context.eventName === "pull_request_target") {
@@ -77,7 +77,7 @@ jobs:
     steps:
       - id: vouch
         name: Check PR author trust
-        uses: mitchellh/vouch/action/check-user@v1
+        uses: mitchellh/vouch/action/check-user@c6d80ead49839655b61b422700b7a3bc9d0804a9 # v1.4.2
         with:
           user: ${{ matrix.target.user }}
           allow-fail: true
@@ -85,7 +85,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Sync PR labels
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
           PR_NUMBER: ${{ matrix.target.number }}
           VOUCH_STATUS: ${{ steps.vouch.outputs.status }}
