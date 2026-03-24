@@ -4,7 +4,6 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 import {
   canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
-  getCheckForUpdateButtonLabel,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   isDesktopUpdateButtonDisabled,
@@ -255,56 +254,11 @@ describe("canCheckForUpdate", () => {
   });
 });
 
-describe("getCheckForUpdateButtonLabel", () => {
-  it("returns the default label for null state", () => {
-    expect(getCheckForUpdateButtonLabel(null)).toBe("Check for Updates");
-  });
-
-  it("returns 'Checking…' while checking", () => {
-    expect(getCheckForUpdateButtonLabel({ ...baseState, status: "checking" })).toBe("Checking…");
-  });
-
-  it("returns 'Up to Date' when up-to-date", () => {
-    expect(getCheckForUpdateButtonLabel({ ...baseState, status: "up-to-date" })).toBe("Up to Date");
-  });
-
-  it("returns 'Download Update' when an update is available", () => {
-    expect(
-      getCheckForUpdateButtonLabel({
-        ...baseState,
-        status: "available",
-        availableVersion: "1.2.0",
-      }),
-    ).toBe("Download Update");
-  });
-
-  it("returns 'Downloading…' while downloading", () => {
-    expect(
-      getCheckForUpdateButtonLabel({ ...baseState, status: "downloading", downloadPercent: 30 }),
-    ).toBe("Downloading…");
-  });
-
-  it("returns 'Install Update' when downloaded", () => {
-    expect(
-      getCheckForUpdateButtonLabel({
-        ...baseState,
-        status: "downloaded",
-        downloadedVersion: "1.2.0",
-      }),
-    ).toBe("Install Update");
-  });
-
-  it("returns the default label for idle and error states", () => {
-    expect(getCheckForUpdateButtonLabel({ ...baseState, status: "idle" })).toBe(
-      "Check for Updates",
+describe("getDesktopUpdateButtonTooltip", () => {
+  it("returns 'Up to date' for non-actionable states", () => {
+    expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "idle" })).toBe("Up to date");
+    expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
+      "Up to date",
     );
-    expect(
-      getCheckForUpdateButtonLabel({
-        ...baseState,
-        status: "error",
-        errorContext: "check",
-        message: "fail",
-      }),
-    ).toBe("Check for Updates");
   });
 });

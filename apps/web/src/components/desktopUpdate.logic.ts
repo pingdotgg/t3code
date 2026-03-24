@@ -101,13 +101,3 @@ export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
     state.status !== "checking" && state.status !== "downloading" && state.status !== "disabled"
   );
 }
-
-export function getCheckForUpdateButtonLabel(state: DesktopUpdateState | null): string {
-  if (!state) return "Check for Updates";
-  if (state.status === "checking") return "Checking…";
-  if (state.status === "up-to-date") return "Up to Date";
-  if (state.status === "available") return "Download Update";
-  if (state.status === "downloading") return "Downloading…";
-  if (state.status === "downloaded") return "Install Update";
-  return "Check for Updates";
-}
