@@ -856,6 +856,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* terminalManager.clear(body);
       }
 
+      case WS_METHODS.terminalRead: {
+        const body = stripRequestTag(request.body);
+        return yield* terminalManager.read(body);
+      }
+
       case WS_METHODS.terminalRestart: {
         const body = stripRequestTag(request.body);
         return yield* terminalManager.restart(body);

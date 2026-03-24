@@ -59,6 +59,18 @@ export type TerminalResizeInput = Schema.Codec.Encoded<typeof TerminalResizeInpu
 export const TerminalClearInput = TerminalSessionInput;
 export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>;
 
+export const TerminalReadScope = Schema.Literal("tail");
+export type TerminalReadScope = typeof TerminalReadScope.Type;
+
+export const TerminalReadInput = Schema.Struct({
+  ...TerminalSessionInput.fields,
+  scope: TerminalReadScope,
+  maxLines: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
+    Schema.isLessThanOrEqualTo(500),
+  ),
+});
+export type TerminalReadInput = Schema.Codec.Encoded<typeof TerminalReadInput>;
+
 export const TerminalRestartInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
@@ -90,6 +102,13 @@ export const TerminalSessionSnapshot = Schema.Struct({
   updatedAt: Schema.String,
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
+
+export const TerminalRenderedSnapshot = Schema.Struct({
+  text: Schema.String,
+  totalLines: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  returnedLineCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type TerminalRenderedSnapshot = typeof TerminalRenderedSnapshot.Type;
 
 const TerminalEventBaseSchema = Schema.Struct({
   threadId: Schema.String.check(Schema.isNonEmpty()),

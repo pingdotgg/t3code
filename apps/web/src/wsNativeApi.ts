@@ -106,6 +106,7 @@ export function createWsNativeApi(): NativeApi {
       write: (input) => transport.request(WS_METHODS.terminalWrite, input),
       resize: (input) => transport.request(WS_METHODS.terminalResize, input),
       clear: (input) => transport.request(WS_METHODS.terminalClear, input),
+      read: (input) => transport.request(WS_METHODS.terminalRead, input),
       restart: (input) => transport.request(WS_METHODS.terminalRestart, input),
       close: (input) => transport.request(WS_METHODS.terminalClose, input),
       onEvent: (callback) =>

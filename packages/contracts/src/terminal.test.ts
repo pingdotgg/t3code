@@ -7,6 +7,8 @@ import {
   TerminalCloseInput,
   TerminalEvent,
   TerminalOpenInput,
+  TerminalReadInput,
+  TerminalRenderedSnapshot,
   TerminalResizeInput,
   TerminalSessionSnapshot,
   TerminalThreadInput,
@@ -139,6 +141,19 @@ describe("TerminalClearInput", () => {
   });
 });
 
+describe("TerminalReadInput", () => {
+  it("accepts tail snapshot reads", () => {
+    expect(
+      decodes(TerminalReadInput, {
+        threadId: "thread-1",
+        terminalId: "default",
+        scope: "tail",
+        maxLines: 100,
+      }),
+    ).toBe(true);
+  });
+});
+
 describe("TerminalCloseInput", () => {
   it("accepts optional deleteHistory", () => {
     expect(
@@ -163,6 +178,18 @@ describe("TerminalSessionSnapshot", () => {
         exitCode: null,
         exitSignal: null,
         updatedAt: new Date().toISOString(),
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("TerminalRenderedSnapshot", () => {
+  it("accepts rendered snapshot payloads", () => {
+    expect(
+      decodes(TerminalRenderedSnapshot, {
+        text: "tail line 1\ntail line 2",
+        totalLines: 42,
+        returnedLineCount: 2,
       }),
     ).toBe(true);
   });

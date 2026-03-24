@@ -10,6 +10,13 @@ import { VscodeEntryIcon } from "./VscodeEntryIcon";
 export type ComposerCommandItem =
   | {
       id: string;
+      type: "terminal";
+      terminalId: string;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "path";
       path: string;
       pathKind: ProjectEntry["kind"];
@@ -67,7 +74,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             {props.isLoading
               ? "Searching workspace files..."
               : props.triggerKind === "path"
-                ? "No matching files or folders."
+                ? "No matching terminals, files, or folders."
                 : "No matching command."}
           </p>
         )}
@@ -96,6 +103,11 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         props.onSelect(props.item);
       }}
     >
+      {props.item.type === "terminal" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          term
+        </Badge>
+      ) : null}
       {props.item.type === "path" ? (
         <VscodeEntryIcon
           pathValue={props.item.path}

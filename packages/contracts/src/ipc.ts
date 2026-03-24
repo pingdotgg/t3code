@@ -30,6 +30,8 @@ import type {
   TerminalCloseInput,
   TerminalEvent,
   TerminalOpenInput,
+  TerminalReadInput,
+  TerminalRenderedSnapshot,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalSessionSnapshot,
@@ -121,6 +123,7 @@ export interface NativeApi {
     write: (input: TerminalWriteInput) => Promise<void>;
     resize: (input: TerminalResizeInput) => Promise<void>;
     clear: (input: TerminalClearInput) => Promise<void>;
+    read: (input: TerminalReadInput) => Promise<TerminalRenderedSnapshot>;
     restart: (input: TerminalRestartInput) => Promise<TerminalSessionSnapshot>;
     close: (input: TerminalCloseInput) => Promise<void>;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;

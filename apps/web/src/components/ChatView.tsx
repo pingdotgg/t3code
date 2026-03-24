@@ -134,7 +134,9 @@ import {
   useComposerThreadDraft,
 } from "../composerDraftStore";
 import {
+  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   appendTerminalContextsToPrompt,
+  countInlineTerminalContextPlaceholders,
   formatTerminalContextLabel,
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
@@ -231,6 +233,10 @@ const terminalContextIdListsEqual = (
   ids: ReadonlyArray<string>,
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+
+function terminalLabelForIndex(index: number): string {
+  return `Terminal ${index + 1}`;
+}
 
 interface ChatViewProps {
   threadId: ThreadId;
@@ -1024,17 +1030,44 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
   );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const terminalMentionEntries = useMemo(
+    () =>
+      terminalState.terminalIds.map((terminalId, index) => ({
+        terminalId,
+        label: terminalLabelForIndex(index),
+      })),
+    [terminalState.terminalIds],
+  );
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return workspaceEntries.map((entry) => ({
+      const normalizedQuery = composerTrigger.query.trim().toLowerCase();
+      const terminalItems = terminalMentionEntries
+        .filter((entry) => {
+          if (!normalizedQuery) {
+            return true;
+          }
+          return (
+            entry.label.toLowerCase().includes(normalizedQuery) ||
+            entry.terminalId.toLowerCase().includes(normalizedQuery)
+          );
+        })
+        .map((entry) => ({
+          id: `terminal:${entry.terminalId}`,
+          type: "terminal" as const,
+          terminalId: entry.terminalId,
+          label: entry.label,
+          description: entry.terminalId,
+        }));
+      const pathItems = workspaceEntries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
-        type: "path",
+        type: "path" as const,
         path: entry.path,
         pathKind: entry.kind,
         label: basenameOfPath(entry.path),
         description: entry.parentPath ?? "",
       }));
+      return [...terminalItems, ...pathItems];
     }
 
     if (composerTrigger.kind === "slash-command") {
@@ -1086,7 +1119,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, searchableModelOptions, terminalMentionEntries, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -1193,11 +1226,103 @@ export default function ChatView({ threadId }: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
+  const commitComposerPromptState = useCallback(
+    (options: {
+      prompt: string;
+      cursor: number;
+      expandedCursor: number;
+      persistPrompt: boolean;
+    }) => {
+      promptRef.current = options.prompt;
+      const activePendingQuestion = activePendingProgress?.activeQuestion;
+      if (activePendingQuestion && activePendingUserInput) {
+        setPendingUserInputAnswersByRequestId((existing) => ({
+          ...existing,
+          [activePendingUserInput.requestId]: {
+            ...existing[activePendingUserInput.requestId],
+            [activePendingQuestion.id]: setPendingUserInputCustomAnswer(
+              existing[activePendingUserInput.requestId]?.[activePendingQuestion.id],
+              options.prompt,
+            ),
+          },
+        }));
+      } else if (options.persistPrompt) {
+        setPrompt(options.prompt);
+      }
+      setComposerCursor(options.cursor);
+      setComposerTrigger(detectComposerTrigger(options.prompt, options.expandedCursor));
+      window.requestAnimationFrame(() => {
+        composerEditorRef.current?.focusAt(options.cursor);
+      });
+    },
+    [
+      activePendingProgress?.activeQuestion,
+      activePendingUserInput,
+      setPendingUserInputAnswersByRequestId,
+      setPrompt,
+    ],
+  );
+  const resolvePromptReplacement = useCallback(
+    (
+      rangeStart: number,
+      rangeEnd: number,
+      replacement: string,
+      options?: { expectedText?: string },
+    ): { text: string; cursor: number; collapsedCursor: number } | null => {
+      const currentText = promptRef.current;
+      const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
+      const safeEnd = Math.max(safeStart, Math.min(currentText.length, rangeEnd));
+      if (
+        options?.expectedText !== undefined &&
+        currentText.slice(safeStart, safeEnd) !== options.expectedText
+      ) {
+        return null;
+      }
+      const next = replaceTextRange(currentText, rangeStart, rangeEnd, replacement);
+      return {
+        ...next,
+        collapsedCursor: collapseExpandedComposerCursor(next.text, next.cursor),
+      };
+    },
+    [],
+  );
+  const insertTerminalContextIntoDraft = useCallback(
+    (options: {
+      selection: TerminalContextSelection;
+      prompt: string;
+      cursor: number;
+      expandedCursor: number;
+      contextIndex: number;
+    }): boolean => {
+      if (!activeThread) {
+        return false;
+      }
+      const inserted = insertComposerDraftTerminalContext(
+        activeThread.id,
+        options.prompt,
+        {
+          id: randomUUID(),
+          threadId: activeThread.id,
+          createdAt: new Date().toISOString(),
+          ...options.selection,
+        },
+        options.contextIndex,
+      );
+      if (!inserted) {
+        return false;
+      }
+      commitComposerPromptState({
+        prompt: options.prompt,
+        cursor: options.cursor,
+        expandedCursor: options.expandedCursor,
+        persistPrompt: false,
+      });
+      return true;
+    },
+    [activeThread, commitComposerPromptState, insertComposerDraftTerminalContext],
+  );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
-      if (!activeThread) {
-        return;
-      }
       const snapshot = composerEditorRef.current?.readSnapshot() ?? {
         value: promptRef.current,
         cursor: composerCursor,
@@ -1212,28 +1337,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
         insertion.prompt,
         insertion.cursor,
       );
-      const inserted = insertComposerDraftTerminalContext(
-        activeThread.id,
-        insertion.prompt,
-        {
-          id: randomUUID(),
-          threadId: activeThread.id,
-          createdAt: new Date().toISOString(),
-          ...selection,
-        },
-        insertion.contextIndex,
-      );
-      if (!inserted) {
-        return;
-      }
-      promptRef.current = insertion.prompt;
-      setComposerCursor(nextCollapsedCursor);
-      setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
-      window.requestAnimationFrame(() => {
-        composerEditorRef.current?.focusAt(nextCollapsedCursor);
+      insertTerminalContextIntoDraft({
+        selection,
+        prompt: insertion.prompt,
+        cursor: nextCollapsedCursor,
+        expandedCursor: insertion.cursor,
+        contextIndex: insertion.contextIndex,
       });
     },
-    [activeThread, composerCursor, composerTerminalContexts, insertComposerDraftTerminalContext],
+    [composerCursor, composerTerminalContexts, insertTerminalContextIntoDraft],
   );
   const setTerminalOpen = useCallback(
     (open: boolean) => {
@@ -3156,44 +3268,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
       rangeEnd: number,
       replacement: string,
       options?: { expectedText?: string },
-    ): boolean => {
-      const currentText = promptRef.current;
-      const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
-      const safeEnd = Math.max(safeStart, Math.min(currentText.length, rangeEnd));
-      if (
-        options?.expectedText !== undefined &&
-        currentText.slice(safeStart, safeEnd) !== options.expectedText
-      ) {
-        return false;
+    ): { text: string; cursor: number } | null => {
+      const next = resolvePromptReplacement(rangeStart, rangeEnd, replacement, options);
+      if (!next) {
+        return null;
       }
-      const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
-      const nextCursor = collapseExpandedComposerCursor(next.text, next.cursor);
-      promptRef.current = next.text;
-      const activePendingQuestion = activePendingProgress?.activeQuestion;
-      if (activePendingQuestion && activePendingUserInput) {
-        setPendingUserInputAnswersByRequestId((existing) => ({
-          ...existing,
-          [activePendingUserInput.requestId]: {
-            ...existing[activePendingUserInput.requestId],
-            [activePendingQuestion.id]: setPendingUserInputCustomAnswer(
-              existing[activePendingUserInput.requestId]?.[activePendingQuestion.id],
-              next.text,
-            ),
-          },
-        }));
-      } else {
-        setPrompt(next.text);
-      }
-      setComposerCursor(nextCursor);
-      setComposerTrigger(
-        detectComposerTrigger(next.text, expandCollapsedComposerCursor(next.text, nextCursor)),
-      );
-      window.requestAnimationFrame(() => {
-        composerEditorRef.current?.focusAt(nextCursor);
+      commitComposerPromptState({
+        prompt: next.text,
+        cursor: next.collapsedCursor,
+        expandedCursor: next.cursor,
+        persistPrompt: true,
       });
-      return true;
+      return next;
     },
-    [activePendingProgress?.activeQuestion, activePendingUserInput, setPrompt],
+    [commitComposerPromptState, resolvePromptReplacement],
   );
 
   const readComposerSnapshot = useCallback((): {
@@ -3234,6 +3322,80 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
+      if (item.type === "terminal") {
+        const api = readNativeApi();
+        if (!api || !activeThread) {
+          return;
+        }
+        const replacement = `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const expectedText = snapshot.value.slice(trigger.rangeStart, replacementRangeEnd);
+        void (async () => {
+          try {
+            const terminalSnapshot = await api.terminal.read({
+              threadId: activeThread.id,
+              terminalId: item.terminalId,
+              scope: "tail",
+              maxLines: 100,
+            });
+            if (
+              terminalSnapshot.returnedLineCount === 0 ||
+              terminalSnapshot.text.trim().length === 0
+            ) {
+              throw new Error("Selected terminal has no recent output to add.");
+            }
+            const lineEnd = Math.max(1, terminalSnapshot.totalLines);
+            const lineStart = Math.max(
+              1,
+              lineEnd - Math.max(terminalSnapshot.returnedLineCount, 1) + 1,
+            );
+            const applied = resolvePromptReplacement(
+              trigger.rangeStart,
+              replacementRangeEnd,
+              replacement,
+              { expectedText },
+            );
+            if (!applied) {
+              return;
+            }
+            const nextCollapsedCursor = collapseExpandedComposerCursor(
+              applied.text,
+              applied.cursor,
+            );
+            const inserted = insertTerminalContextIntoDraft({
+              selection: {
+                terminalId: item.terminalId,
+                terminalLabel: item.label,
+                lineStart,
+                lineEnd,
+                text: terminalSnapshot.text,
+              },
+              prompt: applied.text,
+              cursor: nextCollapsedCursor,
+              expandedCursor: applied.cursor,
+              contextIndex: countInlineTerminalContextPlaceholders(
+                applied.text.slice(0, trigger.rangeStart),
+              ),
+            });
+            if (inserted) {
+              setComposerHighlightedItemId(null);
+            }
+          } catch (error) {
+            toastManager.add({
+              type: "error",
+              title: "Failed to capture terminal context",
+              description:
+                error instanceof Error ? error.message : "Unable to read terminal output.",
+              data: { threadId: activeThread.id },
+            });
+          }
+        })();
+        return;
+      }
       if (item.type === "path") {
         const replacement = `@${item.path} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -3289,9 +3451,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     },
     [
+      activeThread,
       applyPromptReplacement,
       handleInteractionModeChange,
+      insertTerminalContextIntoDraft,
       onProviderModelSelect,
+      resolvePromptReplacement,
       resolveActiveComposerTrigger,
     ],
   );

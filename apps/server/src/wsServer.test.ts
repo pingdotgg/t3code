@@ -37,6 +37,7 @@ import type {
   TerminalCloseInput,
   TerminalEvent,
   TerminalOpenInput,
+  TerminalRenderedSnapshot,
   TerminalResizeInput,
   TerminalSessionSnapshot,
   TerminalWriteInput,
@@ -156,6 +157,13 @@ class MockTerminalManager implements TerminalManagerShape {
         });
       });
     });
+
+  readonly read: TerminalManagerShape["read"] = () =>
+    Effect.succeed({
+      text: "tail line 1\ntail line 2",
+      totalLines: 42,
+      returnedLineCount: 2,
+    } satisfies TerminalRenderedSnapshot);
 
   readonly restart: TerminalManagerShape["restart"] = (input: TerminalOpenInput) =>
     Effect.sync(() => {
@@ -1381,6 +1389,19 @@ describe("WebSocket Server", () => {
       threadId: "thread-1",
     });
     expect(clear.error).toBeUndefined();
+
+    const read = await sendRequest(ws, WS_METHODS.terminalRead, {
+      threadId: "thread-1",
+      terminalId: "default",
+      scope: "tail",
+      maxLines: 100,
+    });
+    expect(read.error).toBeUndefined();
+    expect(read.result).toEqual({
+      text: "tail line 1\ntail line 2",
+      totalLines: 42,
+      returnedLineCount: 2,
+    });
 
     const restart = await sendRequest(ws, WS_METHODS.terminalRestart, {
       threadId: "thread-1",

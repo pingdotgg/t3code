@@ -7,6 +7,8 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalOpenInput,
+  TerminalReadInput,
+  TerminalRenderedSnapshot,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalWriteInput,
@@ -43,6 +45,8 @@ const decodeTerminalWriteInput = Schema.decodeUnknownSync(TerminalWriteInput);
 const decodeTerminalResizeInput = Schema.decodeUnknownSync(TerminalResizeInput);
 const decodeTerminalClearInput = Schema.decodeUnknownSync(TerminalClearInput);
 const decodeTerminalCloseInput = Schema.decodeUnknownSync(TerminalCloseInput);
+const decodeTerminalReadInput = Schema.decodeUnknownSync(TerminalReadInput);
+const ANSI_ESCAPE = "\u001B";
 
 type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
 
@@ -252,6 +256,150 @@ function capHistory(history: string, maxLines: number): string {
   if (lines.length <= maxLines) return history;
   const capped = lines.slice(lines.length - maxLines).join("\n");
   return hasTrailingNewline ? `${capped}\n` : capped;
+}
+
+function trimTrailingEmptyRenderedLines(lines: string[]): string[] {
+  let end = lines.length;
+  while (end > 0 && lines[end - 1]?.length === 0) {
+    end -= 1;
+  }
+  return end === lines.length ? lines : lines.slice(0, end);
+}
+
+function readAnsiEscapeSequence(
+  history: string,
+  startIndex: number,
+): { length: number; finalByte: string | null; parameters: string } | null {
+  if (history[startIndex] !== ANSI_ESCAPE) {
+    return null;
+  }
+
+  const nextChar = history[startIndex + 1];
+  if (!nextChar) {
+    return { length: 1, finalByte: null, parameters: "" };
+  }
+
+  if (nextChar === "]") {
+    let index = startIndex + 2;
+    while (index < history.length) {
+      const char = history[index];
+      if (char === "\u0007") {
+        return { length: index - startIndex + 1, finalByte: null, parameters: "" };
+      }
+      if (char === ANSI_ESCAPE && history[index + 1] === "\\") {
+        return { length: index - startIndex + 2, finalByte: null, parameters: "" };
+      }
+      index += 1;
+    }
+    return { length: history.length - startIndex, finalByte: null, parameters: "" };
+  }
+
+  if (nextChar === "[") {
+    let index = startIndex + 2;
+    while (index < history.length) {
+      const char = history[index];
+      if (!char) {
+        break;
+      }
+      const code = char.charCodeAt(0);
+      if (code >= 0x40 && code <= 0x7e) {
+        return {
+          length: index - startIndex + 1,
+          finalByte: char,
+          parameters: history.slice(startIndex + 2, index),
+        };
+      }
+      index += 1;
+    }
+    return { length: history.length - startIndex, finalByte: null, parameters: "" };
+  }
+
+  return { length: 2, finalByte: null, parameters: "" };
+}
+
+function parseEraseInLineMode(parameters: string): 0 | 1 | 2 {
+  if (parameters.length === 0) {
+    return 0;
+  }
+  const mode = Number(parameters.split(";").at(-1) ?? "0");
+  if (mode === 1 || mode === 2) {
+    return mode;
+  }
+  return 0;
+}
+
+function eraseRenderedLine(line: string[], cursor: number, mode: 0 | 1 | 2): string[] {
+  if (mode === 2) {
+    return [];
+  }
+  if (mode === 1) {
+    if (line.length === 0) {
+      return line;
+    }
+    const nextLine = [...line];
+    const end = Math.min(cursor, nextLine.length - 1);
+    for (let index = 0; index <= end; index += 1) {
+      nextLine[index] = " ";
+    }
+    return nextLine;
+  }
+  return line.slice(0, cursor);
+}
+
+function renderTerminalHistoryLines(history: string): string[] {
+  const lines: string[] = [];
+  let currentLine: string[] = [];
+  let cursor = 0;
+
+  const commitLine = () => {
+    lines.push(currentLine.join(""));
+    currentLine = [];
+    cursor = 0;
+  };
+
+  const normalizedHistory = history.replace(/\r\n/g, "\n");
+
+  for (let index = 0; index < normalizedHistory.length; index += 1) {
+    const char = normalizedHistory[index];
+    if (!char) {
+      continue;
+    }
+    if (char === ANSI_ESCAPE) {
+      const escapeSequence = readAnsiEscapeSequence(normalizedHistory, index);
+      if (!escapeSequence) {
+        continue;
+      }
+      if (escapeSequence.finalByte === "K") {
+        currentLine = eraseRenderedLine(
+          currentLine,
+          cursor,
+          parseEraseInLineMode(escapeSequence.parameters),
+        );
+      }
+      index += escapeSequence.length - 1;
+      continue;
+    }
+    if (char === "\n") {
+      commitLine();
+      continue;
+    }
+    if (char === "\r") {
+      cursor = 0;
+      continue;
+    }
+    if (cursor < currentLine.length) {
+      currentLine[cursor] = char;
+    } else {
+      while (currentLine.length < cursor) {
+        currentLine.push(" ");
+      }
+      currentLine.push(char);
+    }
+    cursor += 1;
+  }
+
+  lines.push(currentLine.join(""));
+  return trimTrailingEmptyRenderedLines(lines);
 }
 
 function legacySafeThreadId(threadId: string): string {
@@ -478,6 +626,27 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         createdAt: new Date().toISOString(),
       });
     });
+  }
+
+  async read(raw: TerminalReadInput): Promise<TerminalRenderedSnapshot> {
+    const input = decodeTerminalReadInput(raw);
+    if (input.scope !== "tail") {
+      throw new Error(`Unsupported terminal read scope: ${input.scope}`);
+    }
+
+    const session = this.sessions.get(toSessionKey(input.threadId, input.terminalId)) ?? null;
+    const history = session
+      ? session.history
+      : await this.readHistory(input.threadId, input.terminalId);
+    const renderedLines = this.renderHistoryLines(history);
+    const totalLines = renderedLines.length;
+    const tailLines = renderedLines.slice(Math.max(0, totalLines - input.maxLines));
+
+    return {
+      text: tailLines.join("\n"),
+      totalLines,
+      returnedLineCount: tailLines.length,
+    };
   }
 
   async restart(raw: TerminalRestartInput): Promise<TerminalSessionSnapshot> {
@@ -1089,6 +1258,13 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     return [...this.sessions.values()].filter((session) => session.threadId === threadId);
   }
 
+  private renderHistoryLines(history: string): string[] {
+    if (history.length === 0) {
+      return [];
+    }
+    return renderTerminalHistoryLines(history);
+  }
+
   private async deleteAllHistoryForThread(threadId: string): Promise<void> {
     const threadPrefix = `${toSafeThreadId(threadId)}_`;
     try {
@@ -1200,6 +1376,11 @@ export const TerminalManagerLive = Layer.effect(
         Effect.tryPromise({
           try: () => runtime.clear(input),
           catch: (cause) => new TerminalError({ message: "Failed to clear terminal", cause }),
+        }),
+      read: (input) =>
+        Effect.tryPromise({
+          try: () => runtime.read(input),
+          catch: (cause) => new TerminalError({ message: "Failed to read terminal", cause }),
         }),
       restart: (input) =>
         Effect.tryPromise({

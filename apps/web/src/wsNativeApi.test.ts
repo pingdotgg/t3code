@@ -336,6 +336,30 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards terminal read requests to the websocket terminal method", async () => {
+    requestMock.mockResolvedValue({
+      text: "tail line 1\ntail line 2",
+      totalLines: 42,
+      returnedLineCount: 2,
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.terminal.read({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      terminalId: "default",
+      scope: "tail",
+      maxLines: 100,
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.terminalRead, {
+      threadId: "thread-1",
+      terminalId: "default",
+      scope: "tail",
+      maxLines: 100,
+    });
+  });
+
   it("forwards context menu metadata to desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {
