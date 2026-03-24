@@ -374,26 +374,29 @@ const createTrace2Monitor = Effect.fn(function* (
   const readTraceDelta = deltaMutex.withPermit(
     fs.readFileString(traceFilePath).pipe(
       Effect.flatMap((contents) =>
-        Ref.modify(traceTailState, ({ processedChars, remainder }) => {
-          if (contents.length <= processedChars) {
-            return [[], { processedChars, remainder }];
-          }
+        Effect.uninterruptible(
+          Ref.modify(traceTailState, ({ processedChars, remainder }) => {
+            if (contents.length <= processedChars) {
+              return [[], { processedChars, remainder }];
+            }
 
-          const appended = contents.slice(processedChars);
-          const combined = remainder + appended;
-          const lines = combined.split("\n");
-          const nextRemainder = lines.pop() ?? "";
+            const appended = contents.slice(processedChars);
+            const combined = remainder + appended;
+            const lines = combined.split("\n");
+            const nextRemainder = lines.pop() ?? "";
 
-          return [
-            lines.map((line) => line.replace(/\r$/, "")),
-            {
-              processedChars: contents.length,
-              remainder: nextRemainder,
-            },
-          ];
-        }),
+            return [
+              lines.map((line) => line.replace(/\r$/, "")),
+              {
+                processedChars: contents.length,
+                remainder: nextRemainder,
+              },
+            ];
+          }).pipe(
+            Effect.flatMap((lines) => Effect.forEach(lines, handleTraceLine, { discard: true })),
+          ),
+        ),
       ),
-      Effect.flatMap((lines) => Effect.forEach(lines, handleTraceLine, { discard: true })),
       Effect.ignore({ log: true }),
     ),
   );
