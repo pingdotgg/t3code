@@ -24,6 +24,22 @@ import type {
 
 import type { GitCommandError } from "../Errors.ts";
 
+export interface ExecuteGitInput {
+  readonly operation: string;
+  readonly cwd: string;
+  readonly args: ReadonlyArray<string>;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly allowNonZeroExit?: boolean;
+  readonly timeoutMs?: number;
+  readonly maxOutputBytes?: number;
+}
+
+export interface ExecuteGitResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
 export interface GitStatusDetails extends Omit<GitStatusResult, "pr"> {
   upstreamRef: string | null;
 }
@@ -86,6 +102,11 @@ export interface GitSetBranchUpstreamInput {
  * GitCoreShape - Service API for low-level Git repository interactions.
  */
 export interface GitCoreShape {
+  /**
+   * Execute a raw Git command.
+   */
+  readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
+
   /**
    * Read Git status for a repository.
    */

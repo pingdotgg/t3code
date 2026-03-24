@@ -15,9 +15,8 @@ import {
   GitHubCli,
 } from "../Services/GitHubCli.ts";
 import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
-import { GitServiceLive } from "./GitService.ts";
-import { GitService } from "../Services/GitService.ts";
 import { GitCoreLive } from "./GitCore.ts";
+import { GitCore } from "../Services/GitCore.ts";
 import { makeGitManager } from "./GitManager.ts";
 import { ServerConfig } from "../../config.ts";
 
@@ -107,11 +106,11 @@ function runGit(
 ): Effect.Effect<
   { readonly code: number; readonly stdout: string; readonly stderr: string },
   GitCommandError,
-  GitService
+  GitCore
 > {
   return Effect.gen(function* () {
-    const gitService = yield* GitService;
-    return yield* gitService.execute({
+    const gitCore = yield* GitCore;
+    return yield* gitCore.execute({
       operation: "GitManager.test.runGit",
       cwd,
       args,
@@ -125,7 +124,7 @@ function initRepo(
 ): Effect.Effect<
   void,
   PlatformError.PlatformError | GitCommandError,
-  FileSystem.FileSystem | Scope.Scope | GitService
+  FileSystem.FileSystem | Scope.Scope | GitCore
 > {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -141,7 +140,7 @@ function initRepo(
 function createBareRemote(): Effect.Effect<
   string,
   PlatformError.PlatformError | GitCommandError,
-  FileSystem.FileSystem | Scope.Scope | GitService
+  FileSystem.FileSystem | Scope.Scope | GitCore
 > {
   return Effect.gen(function* () {
     const remoteDir = yield* makeTempDir("t3code-git-remote-");
@@ -480,7 +479,6 @@ function makeManager(input?: {
   });
 
   const gitCoreLayer = GitCoreLive.pipe(
-    Layer.provideMerge(GitServiceLive),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(ServerConfigLayer),
   );
@@ -497,7 +495,10 @@ function makeManager(input?: {
   );
 }
 
-const GitManagerTestLayer = Layer.provideMerge(GitServiceLive, NodeServices.layer);
+const GitManagerTestLayer = GitCoreLive.pipe(
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 it.layer(GitManagerTestLayer)("GitManager", (it) => {
   it.effect("status includes PR metadata when branch already has an open PR", () =>
