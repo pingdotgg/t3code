@@ -48,4 +48,11 @@ describe("ConnectionStatusBanner", () => {
     expect(markup).toContain("Disconnected from server");
     expect(markup).toContain("Attempting to reconnect");
   });
+
+  it("renders nothing when transport is disposed", () => {
+    const markup = renderToStaticMarkup(
+      <ConnectionStatusBanner initialIsOnline={true} initialTransportState="disposed" />,
+    );
+    expect(markup).toBe("");
+  });
 });
