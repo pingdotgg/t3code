@@ -458,6 +458,31 @@ describe("sortThreadsForSidebar", () => {
     ]);
   });
 
+  it("falls back to id ordering when threads have no sortable timestamps", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-1"),
+          createdAt: "" as never,
+          updatedAt: undefined,
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-2"),
+          createdAt: "" as never,
+          updatedAt: undefined,
+          messages: [],
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-1"),
+    ]);
+  });
+
   it("can sort threads by createdAt when configured", () => {
     const sorted = sortThreadsForSidebar(
       [

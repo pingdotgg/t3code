@@ -270,8 +270,10 @@ export function sortThreadsForSidebar<
   T extends Pick<Thread, "id" | "createdAt" | "updatedAt" | "messages">,
 >(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
   return threads.toSorted((left, right) => {
+    const rightTimestamp = getThreadSortTimestamp(right, sortOrder);
+    const leftTimestamp = getThreadSortTimestamp(left, sortOrder);
     const byTimestamp =
-      getThreadSortTimestamp(right, sortOrder) - getThreadSortTimestamp(left, sortOrder);
+      rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
     if (byTimestamp !== 0) return byTimestamp;
     return right.id.localeCompare(left.id);
   });
