@@ -32,6 +32,7 @@ export interface TerminalSessionState {
   status: TerminalSessionStatus;
   pid: number | null;
   history: string;
+  pendingHistoryControlSequence: string;
   exitCode: number | null;
   exitSignal: number | null;
   updatedAt: string;
