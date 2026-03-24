@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopBridge } from "@t3tools/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
+const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
@@ -11,7 +12,15 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
-const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
+let wsUrl: string | null = null;
+try {
+  const value = ipcRenderer.sendSync(GET_WS_URL_CHANNEL);
+  if (typeof value === "string" && value.length > 0) {
+    wsUrl = value;
+  }
+} catch {
+  wsUrl = null;
+}
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => wsUrl,
