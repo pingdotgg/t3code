@@ -1,6 +1,6 @@
-import { type ModelSlug, type ProviderKind } from "@t3tools/contracts";
+import { type ModelSlug, type ProviderKind, type ServerProviderStatus } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
 import { ChevronDownIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -54,11 +54,37 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   lockedProvider: ProviderKind | null;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
   activeProviderIconClassName?: string;
+  providerStatuses?: ReadonlyArray<ServerProviderStatus>;
   compact?: boolean;
   disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  // Derive which providers are unavailable based on server health checks.
+  // When providerStatuses is not provided, all statically-available providers remain selectable.
+  const unavailableProviders = useMemo(() => {
+    if (!props.providerStatuses || props.providerStatuses.length === 0) {
+      return null;
+    }
+    return new Set(
+      props.providerStatuses.filter((status) => !status.available).map((status) => status.provider),
+    );
+  }, [props.providerStatuses]);
+
+  const effectiveAvailableOptions = useMemo(() => {
+    if (!unavailableProviders) return AVAILABLE_PROVIDER_OPTIONS;
+    return AVAILABLE_PROVIDER_OPTIONS.filter((option) => !unavailableProviders.has(option.value));
+  }, [unavailableProviders]);
+
+  const effectiveUnavailableOptions = useMemo(() => {
+    if (!unavailableProviders) return UNAVAILABLE_PROVIDER_OPTIONS;
+    const healthUnavailable = AVAILABLE_PROVIDER_OPTIONS.filter((option) =>
+      unavailableProviders.has(option.value),
+    );
+    return [...healthUnavailable, ...UNAVAILABLE_PROVIDER_OPTIONS];
+  }, [unavailableProviders]);
+
   const activeProvider = props.lockedProvider ?? props.provider;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
   const selectedModelLabel =
@@ -139,7 +165,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           </MenuGroup>
         ) : (
           <>
-            {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
+            {effectiveAvailableOptions.map((option) => {
               const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
               return (
                 <MenuSub key={option.value}>
@@ -174,9 +200,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 </MenuSub>
               );
             })}
-            {UNAVAILABLE_PROVIDER_OPTIONS.length > 0 && <MenuDivider />}
-            {UNAVAILABLE_PROVIDER_OPTIONS.map((option) => {
+            {effectiveUnavailableOptions.length > 0 && <MenuDivider />}
+            {effectiveUnavailableOptions.map((option) => {
               const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
+              // Providers that are statically available but failed server health checks
+              // show "Not installed"; providers not yet supported show "Coming soon".
+              const isHealthUnavailable = AVAILABLE_PROVIDER_OPTIONS.some(
+                (available) => available.value === option.value,
+              );
               return (
                 <MenuItem key={option.value} disabled>
                   <OptionIcon
@@ -185,12 +216,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   />
                   <span>{option.label}</span>
                   <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
-                    Coming soon
+                    {isHealthUnavailable ? "Not installed" : "Coming soon"}
                   </span>
                 </MenuItem>
               );
             })}
-            {UNAVAILABLE_PROVIDER_OPTIONS.length === 0 && <MenuDivider />}
+            {effectiveUnavailableOptions.length === 0 && <MenuDivider />}
             {COMING_SOON_PROVIDER_OPTIONS.map((option) => {
               const OptionIcon = option.icon;
               return (
