@@ -20,6 +20,12 @@ const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> =
   codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
 };
 
+export function isKnownModelSlug(model: string | null | undefined, provider: ProviderKind): boolean {
+  if (typeof model !== "string") return false;
+  const normalized = normalizeModelSlug(model, provider);
+  return normalized !== null && MODEL_SLUG_SET_BY_PROVIDER[provider].has(normalized);
+}
+
 const CLAUDE_OPUS_4_6_MODEL = "claude-opus-4-6";
 const CLAUDE_SONNET_4_6_MODEL = "claude-sonnet-4-6";
 const CLAUDE_HAIKU_4_5_MODEL = "claude-haiku-4-5";

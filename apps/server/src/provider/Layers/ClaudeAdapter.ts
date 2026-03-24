@@ -18,6 +18,9 @@ import {
   type SettingSource,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -59,6 +62,7 @@ import {
   Queue,
   Random,
   Ref,
+  Schema,
   Stream,
 } from "effect";
 
@@ -76,6 +80,27 @@ import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapte
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "claudeAgent" as const;
+
+const SettingsJsonSchema = Schema.Struct({
+  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+
+/**
+ * Reads the `env` block from `~/.claude/settings.json` and returns it as a
+ * plain object. This is needed because GUI applications on macOS don't inherit
+ * shell environment variables, so the Claude binary would not receive API
+ * credentials from settings.json when spawned programmatically.
+ */
+const getClaudeEnvFromSettings = Effect.try({
+  try: () => {
+    const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
+    const content = fs.readFileSync(settingsPath, "utf-8");
+    const decoded = Schema.decodeUnknownSync(SettingsJsonSchema)(content);
+    return decoded.env ?? {};
+  },
+  catch: () => ({} as Record<string, string>),
+});
+
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -2585,7 +2610,11 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           ...(newSessionId ? { sessionId: newSessionId } : {}),
           includePartialMessages: true,
           canUseTool,
-          env: process.env,
+          env: (() => {
+            const result = Effect.runSync(Effect.result(getClaudeEnvFromSettings));
+            return result._tag === "Success" ? result.success : {};
+          })(),
+          settingSources: ["user"],
           ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         };
 
