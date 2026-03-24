@@ -219,7 +219,6 @@ interface ComposerDraftStoreState {
     attachments: PersistedComposerImageAttachment[],
   ) => void;
   clearComposerContent: (threadId: ThreadId) => void;
-  clearThreadDraft: (threadId: ThreadId) => void;
 }
 
 const EMPTY_PROVIDER_MODEL_OPTIONS = Object.freeze<ProviderModelOptions>({});
@@ -846,6 +845,53 @@ function readPersistedAttachmentIdsFromStorage(threadId: ThreadId): string[] {
   }
 }
 
+function verifyPersistedAttachments(
+  threadId: ThreadId,
+  attachments: PersistedComposerImageAttachment[],
+  set: (
+    partial:
+      | ComposerDraftStoreState
+      | Partial<ComposerDraftStoreState>
+      | ((
+          state: ComposerDraftStoreState,
+        ) => ComposerDraftStoreState | Partial<ComposerDraftStoreState>),
+    replace?: false,
+  ) => void,
+): void {
+  let persistedIdSet = new Set<string>();
+  try {
+    composerDebouncedStorage.flush();
+    persistedIdSet = new Set(readPersistedAttachmentIdsFromStorage(threadId));
+  } catch {
+    persistedIdSet = new Set();
+  }
+  set((state) => {
+    const current = state.draftsByThreadId[threadId];
+    if (!current) {
+      return state;
+    }
+    const imageIdSet = new Set(current.images.map((image) => image.id));
+    const persistedAttachments = attachments.filter(
+      (attachment) => imageIdSet.has(attachment.id) && persistedIdSet.has(attachment.id),
+    );
+    const nonPersistedImageIds = current.images
+      .map((image) => image.id)
+      .filter((imageId) => !persistedIdSet.has(imageId));
+    const nextDraft: ComposerThreadDraftState = {
+      ...current,
+      persistedAttachments,
+      nonPersistedImageIds,
+    };
+    const nextDraftsByThreadId = { ...state.draftsByThreadId };
+    if (shouldRemoveDraft(nextDraft)) {
+      delete nextDraftsByThreadId[threadId];
+    } else {
+      nextDraftsByThreadId[threadId] = nextDraft;
+    }
+    return { draftsByThreadId: nextDraftsByThreadId };
+  });
+}
+
 function hydreatePersistedComposerImageAttachment(
   attachment: PersistedComposerImageAttachment,
 ): File | null {
@@ -1142,12 +1188,19 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (threadId.length === 0) {
           return;
         }
+        const existing = get().draftsByThreadId[threadId];
+        if (existing) {
+          for (const image of existing.images) {
+            revokeObjectPreviewUrl(image.previewUrl);
+          }
+        }
         set((state) => {
           const hasDraftThread = state.draftThreadsByThreadId[threadId] !== undefined;
           const hasProjectMapping = Object.values(state.projectDraftThreadIdByProjectId).includes(
             threadId,
           );
-          if (!hasDraftThread && !hasProjectMapping) {
+          const hasComposerDraft = state.draftsByThreadId[threadId] !== undefined;
+          if (!hasDraftThread && !hasProjectMapping && !hasComposerDraft) {
             return state;
           }
           const nextProjectDraftThreadIdByProjectId = Object.fromEntries(
@@ -1157,7 +1210,10 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           ) as Record<ProjectId, ThreadId>;
           const { [threadId]: _removedDraftThread, ...restDraftThreadsByThreadId } =
             state.draftThreadsByThreadId;
+          const { [threadId]: _removedComposerDraft, ...restDraftsByThreadId } =
+            state.draftsByThreadId;
           return {
+            draftsByThreadId: restDraftsByThreadId,
             draftThreadsByThreadId: restDraftThreadsByThreadId,
             projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
           };
@@ -1662,32 +1718,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           return { draftsByThreadId: nextDraftsByThreadId };
         });
         Promise.resolve().then(() => {
-          const persistedIdSet = new Set(readPersistedAttachmentIdsFromStorage(threadId));
-          set((state) => {
-            const current = state.draftsByThreadId[threadId];
-            if (!current) {
-              return state;
-            }
-            const imageIdSet = new Set(current.images.map((image) => image.id));
-            const persistedAttachments = attachments.filter(
-              (attachment) => imageIdSet.has(attachment.id) && persistedIdSet.has(attachment.id),
-            );
-            const nonPersistedImageIds = current.images
-              .map((image) => image.id)
-              .filter((imageId) => !persistedIdSet.has(imageId));
-            const nextDraft: ComposerThreadDraftState = {
-              ...current,
-              persistedAttachments,
-              nonPersistedImageIds,
-            };
-            const nextDraftsByThreadId = { ...state.draftsByThreadId };
-            if (shouldRemoveDraft(nextDraft)) {
-              delete nextDraftsByThreadId[threadId];
-            } else {
-              nextDraftsByThreadId[threadId] = nextDraft;
-            }
-            return { draftsByThreadId: nextDraftsByThreadId };
-          });
+          verifyPersistedAttachments(threadId, attachments, set);
         });
       },
       clearComposerContent: (threadId) => {
@@ -1714,41 +1745,6 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             nextDraftsByThreadId[threadId] = nextDraft;
           }
           return { draftsByThreadId: nextDraftsByThreadId };
-        });
-      },
-      clearThreadDraft: (threadId) => {
-        if (threadId.length === 0) {
-          return;
-        }
-        const existing = get().draftsByThreadId[threadId];
-        if (existing) {
-          for (const image of existing.images) {
-            revokeObjectPreviewUrl(image.previewUrl);
-          }
-        }
-        set((state) => {
-          const hasComposerDraft = state.draftsByThreadId[threadId] !== undefined;
-          const hasDraftThread = state.draftThreadsByThreadId[threadId] !== undefined;
-          const hasProjectMapping = Object.values(state.projectDraftThreadIdByProjectId).includes(
-            threadId,
-          );
-          if (!hasComposerDraft && !hasDraftThread && !hasProjectMapping) {
-            return state;
-          }
-          const { [threadId]: _removedComposerDraft, ...restComposerDraftsByThreadId } =
-            state.draftsByThreadId;
-          const { [threadId]: _removedDraftThread, ...restDraftThreadsByThreadId } =
-            state.draftThreadsByThreadId;
-          const nextProjectDraftThreadIdByProjectId = Object.fromEntries(
-            Object.entries(state.projectDraftThreadIdByProjectId).filter(
-              ([, draftThreadId]) => draftThreadId !== threadId,
-            ),
-          ) as Record<ProjectId, ThreadId>;
-          return {
-            draftsByThreadId: restComposerDraftsByThreadId,
-            draftThreadsByThreadId: restDraftThreadsByThreadId,
-            projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
-          };
         });
       },
     }),

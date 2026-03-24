@@ -24,6 +24,23 @@ import type {
 
 import type { GitCommandError } from "../Errors.ts";
 
+export interface ExecuteGitInput {
+  readonly operation: string;
+  readonly cwd: string;
+  readonly args: ReadonlyArray<string>;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly allowNonZeroExit?: boolean;
+  readonly timeoutMs?: number;
+  readonly maxOutputBytes?: number;
+  readonly progress?: ExecuteGitProgress;
+}
+
+export interface ExecuteGitResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
 export interface GitStatusDetails extends Omit<GitStatusResult, "pr"> {
   upstreamRef: string | null;
 }
@@ -31,6 +48,35 @@ export interface GitStatusDetails extends Omit<GitStatusResult, "pr"> {
 export interface GitPreparedCommitContext {
   stagedSummary: string;
   stagedPatch: string;
+}
+
+export interface ExecuteGitProgress {
+  readonly onStdoutLine?: (line: string) => Effect.Effect<void, never>;
+  readonly onStderrLine?: (line: string) => Effect.Effect<void, never>;
+  readonly onHookStarted?: (hookName: string) => Effect.Effect<void, never>;
+  readonly onHookFinished?: (input: {
+    hookName: string;
+    exitCode: number | null;
+    durationMs: number | null;
+  }) => Effect.Effect<void, never>;
+}
+
+export interface GitCommitProgress {
+  readonly onOutputLine?: (input: {
+    stream: "stdout" | "stderr";
+    text: string;
+  }) => Effect.Effect<void, never>;
+  readonly onHookStarted?: (hookName: string) => Effect.Effect<void, never>;
+  readonly onHookFinished?: (input: {
+    hookName: string;
+    exitCode: number | null;
+    durationMs: number | null;
+  }) => Effect.Effect<void, never>;
+}
+
+export interface GitCommitOptions {
+  readonly timeoutMs?: number;
+  readonly progress?: GitCommitProgress;
 }
 
 export interface GitPushResult {
@@ -87,6 +133,11 @@ export interface GitSetBranchUpstreamInput {
  */
 export interface GitCoreShape {
   /**
+   * Execute a raw Git command.
+   */
+  readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
+
+  /**
    * Read Git status for a repository.
    */
   readonly status: (input: GitStatusInput) => Effect.Effect<GitStatusResult, GitCommandError>;
@@ -111,6 +162,7 @@ export interface GitCoreShape {
     cwd: string,
     subject: string,
     body: string,
+    options?: GitCommitOptions,
   ) => Effect.Effect<{ commitSha: string }, GitCommandError>;
 
   /**

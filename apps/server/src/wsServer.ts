@@ -704,7 +704,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.ignoreCause({ log: true }))]),
   );
 
-  const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
+  const routeRequest = Effect.fnUntraced(function* (ws: WebSocket, request: WebSocketRequest) {
     switch (request.body._tag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot:
         return yield* projectionReadModelQuery.getSnapshot();
@@ -793,7 +793,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.gitRunStackedAction: {
         const body = stripRequestTag(request.body);
-        return yield* gitManager.runStackedAction(body);
+        return yield* gitManager.runStackedAction(body, {
+          actionId: body.actionId,
+          progressReporter: {
+            publish: (event) =>
+              pushBus.publishClient(ws, WS_CHANNELS.gitActionProgress, event).pipe(Effect.asVoid),
+          },
+        });
       }
 
       case WS_METHODS.gitResolvePullRequest: {
@@ -915,7 +921,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       });
     }
 
-    const result = yield* Effect.exit(routeRequest(request.success));
+    const result = yield* Effect.exit(routeRequest(ws, request.success));
     if (Exit.isFailure(result)) {
       return yield* sendWsResponse({
         id: request.success.id,

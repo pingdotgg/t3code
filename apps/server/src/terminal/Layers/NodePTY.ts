@@ -84,7 +84,7 @@ class NodePtyProcess implements PtyProcess {
   }
 }
 
-export const NodePtyAdapterLive = Layer.effect(
+export const layer = Layer.effect(
   PtyAdapter,
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

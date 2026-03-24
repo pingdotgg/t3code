@@ -239,9 +239,11 @@ describe("wsNativeApi", () => {
     const api = createWsNativeApi();
     const onTerminalEvent = vi.fn();
     const onDomainEvent = vi.fn();
+    const onActionProgress = vi.fn();
 
     api.terminal.onEvent(onTerminalEvent);
     api.orchestration.onDomainEvent(onDomainEvent);
+    api.git.onActionProgress(onActionProgress);
 
     const terminalEvent = {
       threadId: "thread-1",
@@ -274,11 +276,28 @@ describe("wsNativeApi", () => {
       },
     } satisfies Extract<OrchestrationEvent, { type: "project.created" }>;
     emitPush(ORCHESTRATION_WS_CHANNELS.domainEvent, orchestrationEvent);
+    emitPush(WS_CHANNELS.gitActionProgress, {
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit",
+      kind: "phase_started",
+      phase: "commit",
+      label: "Committing...",
+    });
 
     expect(onTerminalEvent).toHaveBeenCalledTimes(1);
     expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
     expect(onDomainEvent).toHaveBeenCalledTimes(1);
     expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
+    expect(onActionProgress).toHaveBeenCalledTimes(1);
+    expect(onActionProgress).toHaveBeenCalledWith({
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit",
+      kind: "phase_started",
+      phase: "commit",
+      label: "Committing...",
+    });
   });
 
   it("wraps orchestration dispatch commands in the command envelope", async () => {
@@ -318,6 +337,26 @@ describe("wsNativeApi", () => {
       relativePath: "plan.md",
       contents: "# Plan\n",
     });
+  });
+
+  it("uses no client timeout for git.runStackedAction", async () => {
+    requestMock.mockResolvedValue({
+      action: "commit",
+      branch: { status: "skipped_not_requested" },
+      commit: { status: "created", commitSha: "abc1234", subject: "Test" },
+      push: { status: "skipped_not_requested" },
+      pr: { status: "skipped_not_requested" },
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.git.runStackedAction({ actionId: "action-1", cwd: "/repo", action: "commit" });
+
+    expect(requestMock).toHaveBeenCalledWith(
+      WS_METHODS.gitRunStackedAction,
+      { actionId: "action-1", cwd: "/repo", action: "commit" },
+      { timeoutMs: null },
+    );
   });
 
   it("forwards full-thread diff requests to the orchestration websocket method", async () => {

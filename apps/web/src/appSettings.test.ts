@@ -9,6 +9,7 @@ import {
   getCustomModelsByProvider,
   getCustomModelsForProvider,
   getDefaultCustomModelsForProvider,
+  getProviderStartOptions,
   MODEL_PROVIDER_SETTINGS,
   normalizeCustomModelSlugs,
   patchCustomModels,
@@ -118,6 +119,35 @@ describe("provider-specific custom models", () => {
   });
 });
 
+describe("getProviderStartOptions", () => {
+  it("returns only populated provider overrides", () => {
+    expect(
+      getProviderStartOptions({
+        claudeBinaryPath: "/usr/local/bin/claude",
+        codexBinaryPath: "",
+        codexHomePath: "/Users/you/.codex",
+      }),
+    ).toEqual({
+      claudeAgent: {
+        binaryPath: "/usr/local/bin/claude",
+      },
+      codex: {
+        homePath: "/Users/you/.codex",
+      },
+    });
+  });
+
+  it("returns undefined when no provider overrides are configured", () => {
+    expect(
+      getProviderStartOptions({
+        claudeBinaryPath: "",
+        codexBinaryPath: "",
+        codexHomePath: "",
+      }),
+    ).toBeUndefined();
+  });
+});
+
 describe("provider-indexed custom model settings", () => {
   const settings = {
     customCodexModels: ["custom/codex-model"],
@@ -209,6 +239,7 @@ describe("AppSettingsSchema", () => {
         }),
       ),
     ).toMatchObject({
+      claudeBinaryPath: "",
       codexBinaryPath: "/usr/local/bin/codex",
       codexHomePath: "",
       defaultThreadEnvMode: "local",

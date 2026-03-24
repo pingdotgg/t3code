@@ -7,6 +7,7 @@
  * @module GitManager
  */
 import {
+  GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
@@ -19,6 +20,15 @@ import {
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 import type { GitManagerServiceError } from "../Errors.ts";
+
+export interface GitActionProgressReporter {
+  readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
+}
+
+export interface GitRunStackedActionOptions {
+  readonly actionId?: string;
+  readonly progressReporter?: GitActionProgressReporter;
+}
 
 /**
  * GitManagerShape - Service API for high-level Git workflow actions.
@@ -51,6 +61,7 @@ export interface GitManagerShape {
    */
   readonly runStackedAction: (
     input: GitRunStackedActionInput,
+    options?: GitRunStackedActionOptions,
   ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
 }
 

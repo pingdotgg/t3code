@@ -206,4 +206,51 @@ describe("WsTransport", () => {
     await expect(requestPromise).resolves.toEqual({ projects: [] });
     transport.dispose();
   });
+
+  it("does not create a timeout for requests with timeoutMs null", async () => {
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const transport = new WsTransport("ws://localhost:3020");
+    const socket = getSocket();
+    socket.open();
+
+    const requestPromise = transport.request(
+      "git.runStackedAction",
+      { cwd: "/repo" },
+      { timeoutMs: null },
+    );
+    const sent = socket.sent.at(-1);
+    if (!sent) {
+      throw new Error("Expected request envelope to be sent");
+    }
+    const requestEnvelope = JSON.parse(sent) as { id: string };
+
+    socket.serverMessage(
+      JSON.stringify({
+        id: requestEnvelope.id,
+        result: { ok: true },
+      }),
+    );
+
+    await expect(requestPromise).resolves.toEqual({ ok: true });
+    expect(timeoutSpy.mock.calls.some(([callback]) => typeof callback === "function")).toBe(false);
+
+    transport.dispose();
+  });
+
+  it("rejects pending requests when the websocket closes", async () => {
+    const transport = new WsTransport("ws://localhost:3020");
+    const socket = getSocket();
+    socket.open();
+
+    const requestPromise = transport.request(
+      "git.runStackedAction",
+      { cwd: "/repo" },
+      { timeoutMs: null },
+    );
+
+    socket.close();
+
+    await expect(requestPromise).rejects.toThrow("WebSocket connection closed.");
+    transport.dispose();
+  });
 });

@@ -1,23 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { ChevronDownIcon, PlusIcon, RotateCcwIcon, Undo2Icon, XIcon } from "lucide-react";
+import { type ReactNode, useCallback, useState } from "react";
 import { type ProviderKind, DEFAULT_GIT_TEXT_GENERATION_MODEL } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   getAppModelOptions,
   getCustomModelsForProvider,
-  getDefaultCustomModelsForProvider,
   MAX_CUSTOM_MODEL_LENGTH,
   MODEL_PROVIDER_SETTINGS,
   patchCustomModels,
   useAppSettings,
 } from "../appSettings";
-import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { isElectron } from "../env";
-import { useTheme } from "../hooks/useTheme";
-import { serverConfigQueryOptions } from "../lib/serverReactQuery";
-import { ensureNativeApi } from "../nativeApi";
+import { APP_VERSION } from "../branding";
 import { Button } from "../components/ui/button";
+import { Collapsible, CollapsibleContent } from "../components/ui/collapsible";
 import { Input } from "../components/ui/input";
 import {
   Select,
@@ -26,9 +23,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
+import { SidebarTrigger } from "../components/ui/sidebar";
 import { Switch } from "../components/ui/switch";
-import { APP_VERSION } from "../branding";
-import { SidebarInset } from "~/components/ui/sidebar";
+import { SidebarInset } from "../components/ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
+import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { isElectron } from "../env";
+import { useTheme } from "../hooks/useTheme";
+import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { cn } from "../lib/utils";
+import { ensureNativeApi, readNativeApi } from "../nativeApi";
 
 const THEME_OPTIONS = [
   {
@@ -54,12 +58,145 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+type InstallBinarySettingsKey = "claudeBinaryPath" | "codexBinaryPath";
+type InstallProviderSettings = {
+  provider: ProviderKind;
+  title: string;
+  binaryPathKey: InstallBinarySettingsKey;
+  binaryPlaceholder: string;
+  binaryDescription: ReactNode;
+  homePathKey?: "codexHomePath";
+  homePlaceholder?: string;
+  homeDescription?: ReactNode;
+};
+
+const INSTALL_PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
+  {
+    provider: "codex",
+    title: "Codex",
+    binaryPathKey: "codexBinaryPath",
+    binaryPlaceholder: "Codex binary path",
+    binaryDescription: (
+      <>
+        Leave blank to use <code>codex</code> from your PATH.
+      </>
+    ),
+    homePathKey: "codexHomePath",
+    homePlaceholder: "CODEX_HOME",
+    homeDescription: "Optional custom Codex home and config directory.",
+  },
+  {
+    provider: "claudeAgent",
+    title: "Claude",
+    binaryPathKey: "claudeBinaryPath",
+    binaryPlaceholder: "Claude binary path",
+    binaryDescription: (
+      <>
+        Leave blank to use <code>claude</code> from your PATH.
+      </>
+    ),
+  },
+];
+
+function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        {title}
+      </h2>
+      <div className="relative overflow-hidden rounded-2xl border bg-card not-dark:bg-clip-padding text-card-foreground shadow-xs/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function SettingsRow({
+  title,
+  description,
+  status,
+  resetAction,
+  control,
+  children,
+  onClick,
+}: {
+  title: string;
+  description: string;
+  status?: ReactNode;
+  resetAction?: ReactNode;
+  control?: ReactNode;
+  children?: ReactNode;
+  onClick?: () => void;
+}) {
+  return (
+    <div
+      className="border-t border-border px-4 py-4 first:border-t-0 sm:px-5"
+      data-slot="settings-row"
+    >
+      <div
+        className={cn(
+          "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
+          onClick && "cursor-pointer",
+        )}
+        onClick={onClick}
+      >
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex min-h-5 items-center gap-1.5">
+            <h3 className="text-sm font-medium text-foreground">{title}</h3>
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+              {resetAction}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">{description}</p>
+          {status ? <div className="pt-1 text-[11px] text-muted-foreground">{status}</div> : null}
+        </div>
+        {control ? (
+          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {control}
+          </div>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function SettingResetButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`Reset ${label} to default`}
+            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+            onClick={(event) => {
+              event.stopPropagation();
+              onClick();
+            }}
+          >
+            <Undo2Icon className="size-3" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">Reset to default</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function SettingsRouteView() {
-  const { theme, setTheme, resolvedTheme } = useTheme();
-  const { settings, defaults, updateSettings } = useAppSettings();
+  const { theme, setTheme } = useTheme();
+  const { settings, defaults, updateSettings, resetSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [openInstallProviders, setOpenInstallProviders] = useState<Record<ProviderKind, boolean>>({
+    codex: Boolean(settings.codexBinaryPath || settings.codexHomePath),
+    claudeAgent: Boolean(settings.claudeBinaryPath),
+  });
+  const [selectedCustomModelProvider, setSelectedCustomModelProvider] =
+    useState<ProviderKind>("codex");
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -69,9 +206,11 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const [showAllCustomModels, setShowAllCustomModels] = useState(false);
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const claudeBinaryPath = settings.claudeBinaryPath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
 
@@ -80,11 +219,52 @@ function SettingsRouteView() {
     settings.customCodexModels,
     settings.textGenerationModel,
   );
+  const currentGitTextGenerationModel =
+    settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL;
+  const defaultGitTextGenerationModel =
+    defaults.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL;
+  const isGitTextGenerationModelDirty =
+    currentGitTextGenerationModel !== defaultGitTextGenerationModel;
   const selectedGitTextGenerationModelLabel =
-    gitTextGenerationModelOptions.find(
-      (option) =>
-        option.slug === (settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL),
-    )?.name ?? settings.textGenerationModel;
+    gitTextGenerationModelOptions.find((option) => option.slug === currentGitTextGenerationModel)
+      ?.name ?? currentGitTextGenerationModel;
+  const selectedCustomModelProviderSettings = MODEL_PROVIDER_SETTINGS.find(
+    (providerSettings) => providerSettings.provider === selectedCustomModelProvider,
+  )!;
+  const selectedCustomModelInput = customModelInputByProvider[selectedCustomModelProvider];
+  const selectedCustomModelError = customModelErrorByProvider[selectedCustomModelProvider] ?? null;
+  const totalCustomModels = settings.customCodexModels.length + settings.customClaudeModels.length;
+  const savedCustomModelRows = MODEL_PROVIDER_SETTINGS.flatMap((providerSettings) =>
+    getCustomModelsForProvider(settings, providerSettings.provider).map((slug) => ({
+      key: `${providerSettings.provider}:${slug}`,
+      provider: providerSettings.provider,
+      providerTitle: providerSettings.title,
+      slug,
+    })),
+  );
+  const visibleCustomModelRows = showAllCustomModels
+    ? savedCustomModelRows
+    : savedCustomModelRows.slice(0, 5);
+  const isInstallSettingsDirty =
+    settings.claudeBinaryPath !== defaults.claudeBinaryPath ||
+    settings.codexBinaryPath !== defaults.codexBinaryPath ||
+    settings.codexHomePath !== defaults.codexHomePath;
+  const changedSettingLabels = [
+    ...(theme !== "system" ? ["Theme"] : []),
+    ...(settings.timestampFormat !== defaults.timestampFormat ? ["Time format"] : []),
+    ...(settings.enableAssistantStreaming !== defaults.enableAssistantStreaming
+      ? ["Assistant output"]
+      : []),
+    ...(settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? ["New thread mode"] : []),
+    ...(settings.confirmThreadDelete !== defaults.confirmThreadDelete
+      ? ["Delete confirmation"]
+      : []),
+    ...(isGitTextGenerationModelDirty ? ["Git writing model"] : []),
+    ...(settings.customCodexModels.length > 0 || settings.customClaudeModels.length > 0
+      ? ["Custom models"]
+      : []),
+    ...(isInstallSettingsDirty ? ["Provider installs"] : []),
+  ];
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -173,76 +353,124 @@ function SettingsRouteView() {
     [settings, updateSettings],
   );
 
+  async function restoreDefaults() {
+    if (changedSettingLabels.length === 0) return;
+
+    const api = readNativeApi();
+    const confirmed = await (api ?? ensureNativeApi()).dialogs.confirm(
+      ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
+        "\n",
+      ),
+    );
+    if (!confirmed) return;
+
+    setTheme("system");
+    resetSettings();
+    setOpenInstallProviders({
+      codex: false,
+      claudeAgent: false,
+    });
+    setSelectedCustomModelProvider("codex");
+    setCustomModelInputByProvider({
+      codex: "",
+      claudeAgent: "",
+    });
+    setCustomModelErrorByProvider({});
+  }
+
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
+        {!isElectron && (
+          <header className="border-b border-border px-3 py-2 sm:px-5">
+            <div className="flex items-center gap-2">
+              <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+              <span className="text-sm font-medium text-foreground">Settings</span>
+              <div className="ms-auto flex items-center gap-2">
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={changedSettingLabels.length === 0}
+                  onClick={() => void restoreDefaults()}
+                >
+                  <RotateCcwIcon className="size-3.5" />
+                  Restore defaults
+                </Button>
+              </div>
+            </div>
+          </header>
+        )}
+
         {isElectron && (
           <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
             </span>
+            <div className="ms-auto flex items-center gap-2">
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={changedSettingLabels.length === 0}
+                onClick={() => void restoreDefaults()}
+              >
+                <RotateCcwIcon className="size-3.5" />
+                Restore defaults
+              </Button>
+            </div>
           </div>
         )}
 
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-            <header className="space-y-1">
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">Settings</h1>
-              <p className="text-sm text-muted-foreground">
-                Configure app-level preferences for this device.
-              </p>
-            </header>
+          <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+            <SettingsSection title="General">
+              <SettingsRow
+                title="Theme"
+                description="Choose how T3 Code looks across the app."
+                resetAction={
+                  theme !== "system" ? (
+                    <SettingResetButton label="theme" onClick={() => setTheme("system")} />
+                  ) : null
+                }
+                control={
+                  <Select
+                    value={theme}
+                    onValueChange={(value) => {
+                      if (value !== "system" && value !== "light" && value !== "dark") return;
+                      setTheme(value);
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
+                      <SelectValue>
+                        {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      {THEME_OPTIONS.map((option) => (
+                        <SelectItem hideIndicator key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                }
+              />
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Appearance</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Choose how T3 Code looks across the app.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <div className="space-y-2" role="radiogroup" aria-label="Theme preference">
-                  {THEME_OPTIONS.map((option) => {
-                    const selected = theme === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
-                          selected
-                            ? "border-primary/60 bg-primary/8 text-foreground"
-                            : "border-border bg-background text-muted-foreground hover:bg-accent"
-                        }`}
-                        onClick={() => setTheme(option.value)}
-                      >
-                        <span className="flex flex-col">
-                          <span className="text-sm font-medium">{option.label}</span>
-                          <span className="text-xs">{option.description}</span>
-                        </span>
-                        {selected ? (
-                          <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-                            Selected
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <p className="text-xs text-muted-foreground">
-                  Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
-                </p>
-
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">High contrast mode</p>
-                    <p className="text-xs text-muted-foreground">
-                      Strengthen muted text and low-contrast labels across light and dark mode.
-                    </p>
-                  </div>
+              <SettingsRow
+                title="High contrast"
+                description="Strengthen muted text and low-contrast labels across light and dark mode."
+                resetAction={
+                  settings.highContrastMode !== defaults.highContrastMode ? (
+                    <SettingResetButton
+                      label="high contrast"
+                      onClick={() =>
+                        updateSettings({
+                          highContrastMode: defaults.highContrastMode,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
                   <Switch
                     checked={settings.highContrastMode}
                     onCheckedChange={(checked) =>
@@ -252,506 +480,502 @@ function SettingsRouteView() {
                     }
                     aria-label="High contrast mode"
                   />
-                </div>
+                }
+              />
 
-                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Timestamp format</p>
-                    <p className="text-xs text-muted-foreground">
-                      System default follows your browser or OS time format. <code>12-hour</code>{" "}
-                      and <code>24-hour</code> force the hour cycle.
-                    </p>
-                  </div>
-                  <Select
-                    value={settings.timestampFormat}
-                    onValueChange={(value) => {
-                      if (value !== "locale" && value !== "12-hour" && value !== "24-hour") return;
-                      updateSettings({
-                        timestampFormat: value,
-                      });
-                    }}
-                  >
-                    <SelectTrigger className="w-40" aria-label="Timestamp format">
-                      <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup align="end">
-                      <SelectItem value="locale">{TIMESTAMP_FORMAT_LABELS.locale}</SelectItem>
-                      <SelectItem value="12-hour">{TIMESTAMP_FORMAT_LABELS["12-hour"]}</SelectItem>
-                      <SelectItem value="24-hour">{TIMESTAMP_FORMAT_LABELS["24-hour"]}</SelectItem>
-                    </SelectPopup>
-                  </Select>
-                </div>
-
-                {settings.timestampFormat !== defaults.timestampFormat ? (
-                  <div className="flex justify-end">
-                    <Button
-                      size="xs"
-                      variant="outline"
+              <SettingsRow
+                title="Time format"
+                description="System default follows your browser or OS clock preference."
+                resetAction={
+                  settings.timestampFormat !== defaults.timestampFormat ? (
+                    <SettingResetButton
+                      label="time format"
                       onClick={() =>
                         updateSettings({
                           timestampFormat: defaults.timestampFormat,
                         })
                       }
-                    >
-                      Restore default
-                    </Button>
-                  </div>
-                ) : null}
+                    />
+                  ) : null
+                }
+                control={
+                  <Select
+                    value={settings.timestampFormat}
+                    onValueChange={(value) => {
+                      if (value !== "locale" && value !== "12-hour" && value !== "24-hour") {
+                        return;
+                      }
+                      updateSettings({
+                        timestampFormat: value,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:w-40" aria-label="Timestamp format">
+                      <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      <SelectItem hideIndicator value="locale">
+                        {TIMESTAMP_FORMAT_LABELS.locale}
+                      </SelectItem>
+                      <SelectItem hideIndicator value="12-hour">
+                        {TIMESTAMP_FORMAT_LABELS["12-hour"]}
+                      </SelectItem>
+                      <SelectItem hideIndicator value="24-hour">
+                        {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                      </SelectItem>
+                    </SelectPopup>
+                  </Select>
+                }
+              />
 
-                {settings.highContrastMode !== defaults.highContrastMode ? (
-                  <div className="flex justify-end">
-                    <Button
-                      size="xs"
-                      variant="outline"
+              <SettingsRow
+                title="Assistant output"
+                description="Show token-by-token output while a response is in progress."
+                resetAction={
+                  settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
+                    <SettingResetButton
+                      label="assistant output"
                       onClick={() =>
                         updateSettings({
-                          highContrastMode: defaults.highContrastMode,
+                          enableAssistantStreaming: defaults.enableAssistantStreaming,
                         })
                       }
-                    >
-                      Restore high contrast default
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Codex App Server</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  These overrides apply to new sessions and let you use a non-default Codex install.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <label htmlFor="codex-binary-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Codex binary path</span>
-                  <Input
-                    id="codex-binary-path"
-                    value={codexBinaryPath}
-                    onChange={(event) => updateSettings({ codexBinaryPath: event.target.value })}
-                    placeholder="codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Leave blank to use <code>codex</code> from your PATH.
-                  </span>
-                </label>
-
-                <label htmlFor="codex-home-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">CODEX_HOME path</span>
-                  <Input
-                    id="codex-home-path"
-                    value={codexHomePath}
-                    onChange={(event) => updateSettings({ codexHomePath: event.target.value })}
-                    placeholder="/Users/you/.codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Optional custom Codex home/config directory.
-                  </span>
-                </label>
-
-                <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1">
-                    <p>Binary source</p>
-                    <p className="mt-1 break-all font-mono text-[11px] text-foreground">
-                      {codexBinaryPath || "PATH"}
-                    </p>
-                  </div>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    className="self-start"
-                    onClick={() =>
+                    />
+                  ) : null
+                }
+                control={
+                  <Switch
+                    checked={settings.enableAssistantStreaming}
+                    onCheckedChange={(checked) =>
                       updateSettings({
-                        codexBinaryPath: defaults.codexBinaryPath,
-                        codexHomePath: defaults.codexHomePath,
+                        enableAssistantStreaming: Boolean(checked),
                       })
                     }
+                    aria-label="Stream assistant messages"
+                  />
+                }
+              />
+
+              <SettingsRow
+                title="New threads"
+                description="Pick the default workspace mode for newly created draft threads."
+                resetAction={
+                  settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
+                    <SettingResetButton
+                      label="new threads"
+                      onClick={() =>
+                        updateSettings({
+                          defaultThreadEnvMode: defaults.defaultThreadEnvMode,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Select
+                    value={settings.defaultThreadEnvMode}
+                    onValueChange={(value) => {
+                      if (value !== "local" && value !== "worktree") return;
+                      updateSettings({
+                        defaultThreadEnvMode: value,
+                      });
+                    }}
                   >
-                    Reset codex overrides
-                  </Button>
-                </div>
-              </div>
-            </section>
+                    <SelectTrigger className="w-full sm:w-44" aria-label="Default thread mode">
+                      <SelectValue>
+                        {settings.defaultThreadEnvMode === "worktree" ? "New worktree" : "Local"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      <SelectItem hideIndicator value="local">
+                        Local
+                      </SelectItem>
+                      <SelectItem hideIndicator value="worktree">
+                        New worktree
+                      </SelectItem>
+                    </SelectPopup>
+                  </Select>
+                }
+              />
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Models</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Save additional provider model slugs so they appear in the chat model picker and
-                  `/model` command suggestions.
-                </p>
-              </div>
+              <SettingsRow
+                title="Delete confirmation"
+                description="Ask before deleting a thread and its chat history."
+                resetAction={
+                  settings.confirmThreadDelete !== defaults.confirmThreadDelete ? (
+                    <SettingResetButton
+                      label="delete confirmation"
+                      onClick={() =>
+                        updateSettings({
+                          confirmThreadDelete: defaults.confirmThreadDelete,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Switch
+                    checked={settings.confirmThreadDelete}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        confirmThreadDelete: Boolean(checked),
+                      })
+                    }
+                    aria-label="Confirm thread deletion"
+                  />
+                }
+              />
+            </SettingsSection>
 
-              <div className="space-y-5">
-                {MODEL_PROVIDER_SETTINGS.map((providerSettings) => {
-                  const provider = providerSettings.provider;
-                  const customModels = getCustomModelsForProvider(settings, provider);
-                  const customModelInput = customModelInputByProvider[provider];
-                  const customModelError = customModelErrorByProvider[provider] ?? null;
-                  return (
-                    <div
-                      key={provider}
-                      className="rounded-xl border border-border bg-background/50 p-4"
-                    >
-                      <div className="mb-4">
-                        <h3 className="text-sm font-medium text-foreground">
-                          {providerSettings.title}
-                        </h3>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {providerSettings.description}
-                        </p>
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-                          <label
-                            htmlFor={`custom-model-slug-${provider}`}
-                            className="block flex-1 space-y-1"
-                          >
-                            <span className="text-xs font-medium text-foreground">
-                              Custom model slug
-                            </span>
-                            <Input
-                              id={`custom-model-slug-${provider}`}
-                              value={customModelInput}
-                              onChange={(event) => {
-                                const value = event.target.value;
-                                setCustomModelInputByProvider((existing) => ({
-                                  ...existing,
-                                  [provider]: value,
-                                }));
-                                if (customModelError) {
-                                  setCustomModelErrorByProvider((existing) => ({
-                                    ...existing,
-                                    [provider]: null,
-                                  }));
-                                }
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key !== "Enter") return;
-                                event.preventDefault();
-                                addCustomModel(provider);
-                              }}
-                              placeholder={providerSettings.placeholder}
-                              spellCheck={false}
-                            />
-                            <span className="text-xs text-muted-foreground">
-                              Example: <code>{providerSettings.example}</code>
-                            </span>
-                          </label>
-
-                          <Button
-                            className="sm:mt-6"
-                            type="button"
-                            onClick={() => addCustomModel(provider)}
-                          >
-                            Add model
-                          </Button>
-                        </div>
-
-                        {customModelError ? (
-                          <p className="text-xs text-destructive">{customModelError}</p>
-                        ) : null}
-
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                            <p>Saved custom models: {customModels.length}</p>
-                            {customModels.length > 0 ? (
-                              <Button
-                                size="xs"
-                                variant="outline"
-                                onClick={() =>
-                                  updateSettings(
-                                    patchCustomModels(provider, [
-                                      ...getDefaultCustomModelsForProvider(defaults, provider),
-                                    ]),
-                                  )
-                                }
-                              >
-                                Reset custom models
-                              </Button>
-                            ) : null}
-                          </div>
-
-                          {customModels.length > 0 ? (
-                            <div className="space-y-2">
-                              {customModels.map((slug) => (
-                                <div
-                                  key={`${provider}:${slug}`}
-                                  className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
-                                >
-                                  <code className="min-w-0 flex-1 truncate text-xs text-foreground">
-                                    {slug}
-                                  </code>
-                                  <Button
-                                    size="xs"
-                                    variant="ghost"
-                                    onClick={() => removeCustomModel(provider, slug)}
-                                  >
-                                    Remove
-                                  </Button>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="rounded-lg border border-dashed border-border bg-background px-3 py-4 text-xs text-muted-foreground">
-                              No custom models saved yet.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Git</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Configure the model used for generating commit messages, PR titles, and branch
-                  names.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-4 rounded-lg border border-border bg-background px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground">Text generation model</p>
-                  <p className="text-xs text-muted-foreground">
-                    Model used for auto-generated git content.
-                  </p>
-                </div>
-                <Select
-                  value={settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL}
-                  onValueChange={(value) => {
-                    if (value) {
+            <SettingsSection title="Models">
+              <SettingsRow
+                title="Git writing model"
+                description="Used for generated commit messages, PR titles, and branch names."
+                resetAction={
+                  isGitTextGenerationModelDirty ? (
+                    <SettingResetButton
+                      label="git writing model"
+                      onClick={() =>
+                        updateSettings({
+                          textGenerationModel: defaults.textGenerationModel,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Select
+                    value={currentGitTextGenerationModel}
+                    onValueChange={(value) => {
+                      if (!value) return;
                       updateSettings({
                         textGenerationModel: value,
                       });
-                    }
-                  }}
-                >
-                  <SelectTrigger
-                    className="w-full shrink-0 sm:w-48"
-                    aria-label="Git text generation model"
+                    }}
                   >
-                    <SelectValue>{selectedGitTextGenerationModelLabel}</SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup align="end">
-                    {gitTextGenerationModelOptions.map((option) => (
-                      <SelectItem key={option.slug} value={option.slug}>
-                        {option.name}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              </div>
+                    <SelectTrigger
+                      className="w-full sm:w-52"
+                      aria-label="Git text generation model"
+                    >
+                      <SelectValue>{selectedGitTextGenerationModelLabel}</SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      {gitTextGenerationModelOptions.map((option) => (
+                        <SelectItem hideIndicator key={option.slug} value={option.slug}>
+                          {option.name}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                }
+              />
 
-              {settings.textGenerationModel !== defaults.textGenerationModel ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        textGenerationModel: defaults.textGenerationModel,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Threads</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Choose the default workspace mode for newly created draft threads.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Default to New worktree</p>
-                  <p className="text-xs text-muted-foreground">
-                    New threads start in New worktree mode instead of Local.
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.defaultThreadEnvMode === "worktree"}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      defaultThreadEnvMode: checked ? "worktree" : "local",
-                    })
-                  }
-                  aria-label="Default new threads to New worktree mode"
-                />
-              </div>
-
-              {settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        defaultThreadEnvMode: defaults.defaultThreadEnvMode,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Responses</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Control how assistant output is rendered during a turn.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Stream assistant messages</p>
-                  <p className="text-xs text-muted-foreground">
-                    Show token-by-token output while a response is in progress.
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.enableAssistantStreaming}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      enableAssistantStreaming: Boolean(checked),
-                    })
-                  }
-                  aria-label="Stream assistant messages"
-                />
-              </div>
-
-              {settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        enableAssistantStreaming: defaults.enableAssistantStreaming,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Keybindings</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Open the persisted <code>keybindings.json</code> file to edit advanced bindings
-                  directly.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-foreground">Config file path</p>
-                    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
-                      {keybindingsConfigPath ?? "Resolving keybindings path..."}
-                    </p>
+              <SettingsRow
+                title="Custom models"
+                description="Add custom model slugs for supported providers."
+                resetAction={
+                  totalCustomModels > 0 ? (
+                    <SettingResetButton
+                      label="custom models"
+                      onClick={() => {
+                        updateSettings({
+                          customCodexModels: defaults.customCodexModels,
+                          customClaudeModels: defaults.customClaudeModels,
+                        });
+                        setCustomModelErrorByProvider({});
+                        setShowAllCustomModels(false);
+                      }}
+                    />
+                  ) : null
+                }
+              >
+                <div className="mt-4 border-t border-border pt-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Select
+                      value={selectedCustomModelProvider}
+                      onValueChange={(value) => {
+                        if (value !== "codex" && value !== "claudeAgent") {
+                          return;
+                        }
+                        setSelectedCustomModelProvider(value);
+                      }}
+                    >
+                      <SelectTrigger
+                        size="sm"
+                        className="w-full sm:w-40"
+                        aria-label="Custom model provider"
+                      >
+                        <SelectValue>{selectedCustomModelProviderSettings.title}</SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="start" alignItemWithTrigger={false}>
+                        {MODEL_PROVIDER_SETTINGS.map((providerSettings) => (
+                          <SelectItem
+                            hideIndicator
+                            className="min-h-7 text-sm"
+                            key={providerSettings.provider}
+                            value={providerSettings.provider}
+                          >
+                            {providerSettings.title}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                    <Input
+                      id="custom-model-slug"
+                      value={selectedCustomModelInput}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setCustomModelInputByProvider((existing) => ({
+                          ...existing,
+                          [selectedCustomModelProvider]: value,
+                        }));
+                        if (selectedCustomModelError) {
+                          setCustomModelErrorByProvider((existing) => ({
+                            ...existing,
+                            [selectedCustomModelProvider]: null,
+                          }));
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        addCustomModel(selectedCustomModelProvider);
+                      }}
+                      placeholder={selectedCustomModelProviderSettings.example}
+                      spellCheck={false}
+                    />
+                    <Button
+                      className="shrink-0"
+                      variant="outline"
+                      onClick={() => addCustomModel(selectedCustomModelProvider)}
+                    >
+                      <PlusIcon className="size-3.5" />
+                      Add
+                    </Button>
                   </div>
+
+                  {selectedCustomModelError ? (
+                    <p className="mt-2 text-xs text-destructive">{selectedCustomModelError}</p>
+                  ) : null}
+
+                  {totalCustomModels > 0 ? (
+                    <div className="mt-3">
+                      <div>
+                        {visibleCustomModelRows.map((row) => (
+                          <div
+                            key={row.key}
+                            className="group grid grid-cols-[minmax(5rem,6rem)_minmax(0,1fr)_auto] items-center gap-3 border-t border-border/60 px-4 py-2 first:border-t-0"
+                          >
+                            <span className="truncate text-xs text-muted-foreground">
+                              {row.providerTitle}
+                            </span>
+                            <code className="min-w-0 truncate text-sm text-foreground">
+                              {row.slug}
+                            </code>
+                            <button
+                              type="button"
+                              className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 hover:opacity-100"
+                              aria-label={`Remove ${row.slug}`}
+                              onClick={() => removeCustomModel(row.provider, row.slug)}
+                            >
+                              <XIcon className="size-3.5 text-muted-foreground hover:text-foreground" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {savedCustomModelRows.length > 5 ? (
+                        <button
+                          type="button"
+                          className="mt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                          onClick={() => setShowAllCustomModels((value) => !value)}
+                        >
+                          {showAllCustomModels
+                            ? "Show less"
+                            : `Show more (${savedCustomModelRows.length - 5})`}
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </SettingsRow>
+            </SettingsSection>
+
+            <SettingsSection title="Advanced">
+              <SettingsRow
+                title="Provider installs"
+                description="Override the CLI used for new sessions."
+                resetAction={
+                  isInstallSettingsDirty ? (
+                    <SettingResetButton
+                      label="provider installs"
+                      onClick={() => {
+                        updateSettings({
+                          claudeBinaryPath: defaults.claudeBinaryPath,
+                          codexBinaryPath: defaults.codexBinaryPath,
+                          codexHomePath: defaults.codexHomePath,
+                        });
+                        setOpenInstallProviders({
+                          codex: false,
+                          claudeAgent: false,
+                        });
+                      }}
+                    />
+                  ) : null
+                }
+              >
+                <div className="mt-4">
+                  <div className="space-y-2">
+                    {INSTALL_PROVIDER_SETTINGS.map((providerSettings) => {
+                      const isOpen = openInstallProviders[providerSettings.provider];
+                      const isDirty =
+                        providerSettings.provider === "codex"
+                          ? settings.codexBinaryPath !== defaults.codexBinaryPath ||
+                            settings.codexHomePath !== defaults.codexHomePath
+                          : settings.claudeBinaryPath !== defaults.claudeBinaryPath;
+                      const binaryPathValue =
+                        providerSettings.binaryPathKey === "claudeBinaryPath"
+                          ? claudeBinaryPath
+                          : codexBinaryPath;
+
+                      return (
+                        <Collapsible
+                          key={providerSettings.provider}
+                          open={isOpen}
+                          onOpenChange={(open) =>
+                            setOpenInstallProviders((existing) => ({
+                              ...existing,
+                              [providerSettings.provider]: open,
+                            }))
+                          }
+                        >
+                          <div className="overflow-hidden rounded-xl border border-border/70">
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-3 px-4 py-3 text-left"
+                              onClick={() =>
+                                setOpenInstallProviders((existing) => ({
+                                  ...existing,
+                                  [providerSettings.provider]: !existing[providerSettings.provider],
+                                }))
+                              }
+                            >
+                              <span className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                                {providerSettings.title}
+                              </span>
+                              {isDirty ? (
+                                <span className="text-[11px] text-muted-foreground">Custom</span>
+                              ) : null}
+                              <ChevronDownIcon
+                                className={cn(
+                                  "size-4 shrink-0 text-muted-foreground transition-transform",
+                                  isOpen && "rotate-180",
+                                )}
+                              />
+                            </button>
+
+                            <CollapsibleContent>
+                              <div className="border-t border-border/70 px-4 py-4">
+                                <div className="space-y-3">
+                                  <label
+                                    htmlFor={`provider-install-${providerSettings.binaryPathKey}`}
+                                    className="block"
+                                  >
+                                    <span className="block text-xs font-medium text-foreground">
+                                      {providerSettings.title} binary path
+                                    </span>
+                                    <Input
+                                      id={`provider-install-${providerSettings.binaryPathKey}`}
+                                      className="mt-1"
+                                      value={binaryPathValue}
+                                      onChange={(event) =>
+                                        updateSettings(
+                                          providerSettings.binaryPathKey === "claudeBinaryPath"
+                                            ? { claudeBinaryPath: event.target.value }
+                                            : { codexBinaryPath: event.target.value },
+                                        )
+                                      }
+                                      placeholder={providerSettings.binaryPlaceholder}
+                                      spellCheck={false}
+                                    />
+                                    <span className="mt-1 block text-xs text-muted-foreground">
+                                      {providerSettings.binaryDescription}
+                                    </span>
+                                  </label>
+
+                                  {providerSettings.homePathKey ? (
+                                    <label
+                                      htmlFor={`provider-install-${providerSettings.homePathKey}`}
+                                      className="block"
+                                    >
+                                      <span className="block text-xs font-medium text-foreground">
+                                        CODEX_HOME path
+                                      </span>
+                                      <Input
+                                        id={`provider-install-${providerSettings.homePathKey}`}
+                                        className="mt-1"
+                                        value={codexHomePath}
+                                        onChange={(event) =>
+                                          updateSettings({
+                                            codexHomePath: event.target.value,
+                                          })
+                                        }
+                                        placeholder={providerSettings.homePlaceholder}
+                                        spellCheck={false}
+                                      />
+                                      {providerSettings.homeDescription ? (
+                                        <span className="mt-1 block text-xs text-muted-foreground">
+                                          {providerSettings.homeDescription}
+                                        </span>
+                                      ) : null}
+                                    </label>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </CollapsibleContent>
+                          </div>
+                        </Collapsible>
+                      );
+                    })}
+                  </div>
+                </div>
+              </SettingsRow>
+
+              <SettingsRow
+                title="Keybindings"
+                description="Open the persisted `keybindings.json` file to edit advanced bindings directly."
+                status={
+                  <>
+                    <span className="block break-all font-mono text-[11px] text-foreground">
+                      {keybindingsConfigPath ?? "Resolving keybindings path..."}
+                    </span>
+                    {openKeybindingsError ? (
+                      <span className="mt-1 block text-destructive">{openKeybindingsError}</span>
+                    ) : (
+                      <span className="mt-1 block">Opens in your preferred editor.</span>
+                    )}
+                  </>
+                }
+                control={
                   <Button
                     size="xs"
                     variant="outline"
                     disabled={!keybindingsConfigPath || isOpeningKeybindings}
                     onClick={openKeybindingsFile}
                   >
-                    {isOpeningKeybindings ? "Opening..." : "Open keybindings.json"}
+                    {isOpeningKeybindings ? "Opening..." : "Open file"}
                   </Button>
-                </div>
+                }
+              />
 
-                <p className="text-xs text-muted-foreground">
-                  Opens in your preferred editor selection.
-                </p>
-                {openKeybindingsError ? (
-                  <p className="text-xs text-destructive">{openKeybindingsError}</p>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Safety</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Additional guardrails for destructive local actions.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Confirm thread deletion</p>
-                  <p className="text-xs text-muted-foreground">
-                    Ask for confirmation before deleting a thread and its chat history.
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.confirmThreadDelete}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      confirmThreadDelete: Boolean(checked),
-                    })
-                  }
-                  aria-label="Confirm thread deletion"
-                />
-              </div>
-
-              {settings.confirmThreadDelete !== defaults.confirmThreadDelete ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        confirmThreadDelete: defaults.confirmThreadDelete,
-                      })
-                    }
-                  >
-                    Restore default
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">About</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Application version and environment information.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Version</p>
-                  <p className="text-xs text-muted-foreground">
-                    Current version of the application.
-                  </p>
-                </div>
-                <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
-              </div>
-            </section>
+              <SettingsRow
+                title="Version"
+                description="Current application version."
+                control={
+                  <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
+                }
+              />
+            </SettingsSection>
           </div>
         </div>
       </div>
