@@ -347,13 +347,16 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           progress.lastOutputLine = null;
           break;
         case "action_finished":
-          progress.phaseStartedAtMs = null;
-          progress.hookStartedAtMs = null;
-          break;
+          // Don't clear timestamps here — the HTTP response handler (line 496)
+          // sets activeGitActionProgressRef to null and shows the success toast.
+          // Clearing timestamps early causes the "Running for Xs" description
+          // to disappear before the success state renders, leaving a bare
+          // "Pushing..." toast in the gap between the WS event and HTTP response.
+          return;
         case "action_failed":
-          progress.phaseStartedAtMs = null;
-          progress.hookStartedAtMs = null;
-          break;
+          // Same reasoning as action_finished — let the HTTP error handler
+          // manage the final toast state to avoid a flash of bare title.
+          return;
       }
 
       updateActiveProgressToast();
