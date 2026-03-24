@@ -117,11 +117,13 @@ export function gitRunStackedActionMutationOptions(input: {
   return mutationOptions({
     mutationKey: gitMutationKeys.runStackedAction(input.cwd),
     mutationFn: async ({
+      actionId,
       action,
       commitMessage,
       featureBranch,
       filePaths,
     }: {
+      actionId: string;
       action: GitStackedAction;
       commitMessage?: string;
       featureBranch?: boolean;
@@ -130,6 +132,7 @@ export function gitRunStackedActionMutationOptions(input: {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Git action is unavailable.");
       return api.git.runStackedAction({
+        actionId,
         cwd: input.cwd,
         action,
         ...(commitMessage ? { commitMessage } : {}),

@@ -4,6 +4,7 @@ import { Schema } from "effect";
 import {
   GitCreateWorktreeInput,
   GitPreparePullRequestThreadInput,
+  GitRunStackedActionInput,
   GitResolvePullRequestResult,
 } from "./git";
 
@@ -11,6 +12,7 @@ const decodeCreateWorktreeInput = Schema.decodeUnknownSync(GitCreateWorktreeInpu
 const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadInput,
 );
+const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
 
 describe("GitCreateWorktreeInput", () => {
@@ -54,5 +56,18 @@ describe("GitResolvePullRequestResult", () => {
 
     expect(parsed.pullRequest.number).toBe(42);
     expect(parsed.pullRequest.headBranch).toBe("feature/pr-threads");
+  });
+});
+
+describe("GitRunStackedActionInput", () => {
+  it("requires a client-provided actionId for progress correlation", () => {
+    const parsed = decodeRunStackedActionInput({
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit",
+    });
+
+    expect(parsed.actionId).toBe("action-1");
+    expect(parsed.action).toBe("commit");
   });
 });

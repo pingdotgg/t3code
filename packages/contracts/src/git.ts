@@ -8,6 +8,20 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
 export const GitStackedAction = Schema.Literals(["commit", "commit_push", "commit_push_pr"]);
 export type GitStackedAction = typeof GitStackedAction.Type;
+export const GitActionProgressPhase = Schema.Literals(["branch", "commit", "push", "pr"]);
+export type GitActionProgressPhase = typeof GitActionProgressPhase.Type;
+export const GitActionProgressKind = Schema.Literals([
+  "action_started",
+  "phase_started",
+  "hook_started",
+  "hook_output",
+  "hook_finished",
+  "action_finished",
+  "action_failed",
+]);
+export type GitActionProgressKind = typeof GitActionProgressKind.Type;
+export const GitActionProgressStream = Schema.Literals(["stdout", "stderr"]);
+export type GitActionProgressStream = typeof GitActionProgressStream.Type;
 const GitCommitStepStatus = Schema.Literals(["created", "skipped_no_changes"]);
 const GitPushStepStatus = Schema.Literals([
   "pushed",
@@ -58,6 +72,7 @@ export const GitPullInput = Schema.Struct({
 export type GitPullInput = typeof GitPullInput.Type;
 
 export const GitRunStackedActionInput = Schema.Struct({
+  actionId: TrimmedNonEmptyStringSchema,
   cwd: TrimmedNonEmptyStringSchema,
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
@@ -211,3 +226,62 @@ export const GitPullResult = Schema.Struct({
   upstreamBranch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type GitPullResult = typeof GitPullResult.Type;
+
+const GitActionProgressBase = Schema.Struct({
+  actionId: TrimmedNonEmptyStringSchema,
+  cwd: TrimmedNonEmptyStringSchema,
+  action: GitStackedAction,
+});
+
+const GitActionStartedEvent = Schema.Struct({
+  ...GitActionProgressBase.fields,
+  kind: Schema.Literal("action_started"),
+  phases: Schema.Array(GitActionProgressPhase),
+});
+const GitActionPhaseStartedEvent = Schema.Struct({
+  ...GitActionProgressBase.fields,
+  kind: Schema.Literal("phase_started"),
+  phase: GitActionProgressPhase,
+  label: TrimmedNonEmptyStringSchema,
+});
+const GitActionHookStartedEvent = Schema.Struct({
+  ...GitActionProgressBase.fields,
+  kind: Schema.Literal("hook_started"),
+  hookName: TrimmedNonEmptyStringSchema,
+});
+const GitActionHookOutputEvent = Schema.Struct({
+  ...GitActionProgressBase.fields,
+  kind: Schema.Literal("hook_output"),
+  hookName: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  stream: GitActionProgressStream,
+  text: TrimmedNonEmptyStringSchema,
+});
+const GitActionHookFinishedEvent = Schema.Struct({
+  ...GitActionProgressBase.fields,
+  kind: Schema.Literal("hook_finished"),
+  hookName: TrimmedNonEmptyStringSchema,
+  exitCode: Schema.NullOr(Schema.Int),
+  durationMs: Schema.NullOr(NonNegativeInt),
+});
+const GitActionFinishedEvent = Schema.Struct({
+  ...GitActionProgressBase.fields,
+  kind: Schema.Literal("action_finished"),
+  result: GitRunStackedActionResult,
+});
+const GitActionFailedEvent = Schema.Struct({
+  ...GitActionProgressBase.fields,
+  kind: Schema.Literal("action_failed"),
+  phase: Schema.NullOr(GitActionProgressPhase),
+  message: TrimmedNonEmptyStringSchema,
+});
+
+export const GitActionProgressEvent = Schema.Union([
+  GitActionStartedEvent,
+  GitActionPhaseStartedEvent,
+  GitActionHookStartedEvent,
+  GitActionHookOutputEvent,
+  GitActionHookFinishedEvent,
+  GitActionFinishedEvent,
+  GitActionFailedEvent,
+]);
+export type GitActionProgressEvent = typeof GitActionProgressEvent.Type;
