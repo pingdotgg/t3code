@@ -1575,6 +1575,39 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
         return { branches, isRepo: true, hasOriginRemote: remoteNames.includes("origin") };
       });
 
+    /**
+     * Discover git-ignored `.env*` files in `sourceCwd` and symlink them into
+     * `worktreePath` at the same relative paths.  Uses `git ls-files` so we
+     * respect the project's own `.gitignore` rules without maintaining a
+     * separate skip-list for directories like `node_modules`.
+     */
+    const symlinkEnvFiles = (sourceCwd: string, worktreePath: string) =>
+      Effect.gen(function* () {
+        const envFiles = yield* runGitStdout(
+          "GitCore.symlinkEnvFiles",
+          sourceCwd,
+          ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", ":(glob)**/.env*"],
+          true,
+        ).pipe(Effect.map((stdout) => stdout.split("\0").filter((entry) => entry.length > 0)));
+
+        if (envFiles.length === 0) return;
+
+        for (const relativePath of envFiles) {
+          const source = path.join(sourceCwd, relativePath);
+          const target = path.join(worktreePath, relativePath);
+          const targetDir = path.dirname(target);
+
+          // Ensure parent directory exists in the worktree
+          yield* fileSystem
+            .makeDirectory(targetDir, { recursive: true })
+            .pipe(Effect.ignore);
+
+          yield* fileSystem
+            .symlink(source, target)
+            .pipe(Effect.ignore);
+        }
+      });
+
     const createWorktree: GitCoreShape["createWorktree"] = (input) =>
       Effect.gen(function* () {
         const targetBranch = input.newBranch ?? input.branch;
@@ -1588,6 +1621,10 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
         yield* executeGit("GitCore.createWorktree", input.cwd, args, {
           fallbackErrorMessage: "git worktree add failed",
         });
+
+        // Symlink git-ignored .env* files from the source repo into the worktree
+        // so that environment configuration is available in worktree sessions.
+        yield* symlinkEnvFiles(input.cwd, worktreePath);
 
         return {
           worktree: {
