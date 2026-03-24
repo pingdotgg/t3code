@@ -32,8 +32,10 @@ import {
   ProjectId,
   ThreadId,
   type GitStatusResult,
+  type ProviderKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { inferProviderForModel } from "@t3tools/shared/model";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
@@ -91,6 +93,10 @@ import {
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import {
+  PROVIDER_ICON_BY_PROVIDER,
+  providerIconClassName,
+} from "./chat/ProviderModelPicker";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -103,6 +109,13 @@ function formatRelativeTime(iso: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function resolveThreadProvider(
+  thread: { session: { provider: ProviderKind } | null; model: string },
+  draftProvider: ProviderKind | null | undefined,
+): ProviderKind {
+  return thread.session?.provider ?? draftProvider ?? inferProviderForModel(thread.model);
 }
 
 interface TerminalStatusIndicator {
@@ -262,6 +275,7 @@ export default function Sidebar() {
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
+  const draftsByThreadId = useComposerDraftStore((store) => store.draftsByThreadId);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const clearProjectDraftThreadId = useComposerDraftStore(
@@ -1463,6 +1477,11 @@ export default function Sidebar() {
                                   selectThreadTerminalState(terminalStateByThreadId, thread.id)
                                     .runningTerminalIds,
                                 );
+                                const threadProvider = resolveThreadProvider(
+                                  thread,
+                                  draftsByThreadId[thread.id]?.provider,
+                                );
+                                const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[threadProvider];
 
                                 return (
                                   <SidebarMenuSubItem
@@ -1519,6 +1538,11 @@ export default function Sidebar() {
                                       }}
                                     >
                                       <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                                        {ProviderIcon && (
+                                          <ProviderIcon
+                                            className={`size-3 shrink-0 ${providerIconClassName(threadProvider, "text-muted-foreground")}`}
+                                          />
+                                        )}
                                         {prStatus && (
                                           <Tooltip>
                                             <TooltipTrigger
