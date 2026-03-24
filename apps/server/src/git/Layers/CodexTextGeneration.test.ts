@@ -374,7 +374,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
           message: "Please investigate websocket reconnect regressions after a worktree restore.",
         });
 
-        expect(generated.title).toBe("Investigate websocket reconnect regressions aft...");
+        expect(generated.title).toBe("Investigate websocket reconnect regressions after...");
       }),
     ),
   );
