@@ -296,6 +296,7 @@ export class WsTransport {
       return;
     }
 
+    this.state = "reconnecting";
     const delay =
       RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)] ??
       RECONNECT_DELAYS_MS[0]!;
