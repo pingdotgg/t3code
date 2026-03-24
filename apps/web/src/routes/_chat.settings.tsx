@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRightIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import { ChevronRightIcon, PlusIcon, RotateCcwIcon, Undo2Icon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
 import { type ProviderKind, DEFAULT_GIT_TEXT_GENERATION_MODEL } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
@@ -26,6 +26,7 @@ import {
 import { SidebarTrigger } from "../components/ui/sidebar";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "../components/ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
@@ -74,6 +75,7 @@ function SettingsRow({
   title,
   description,
   status,
+  resetAction,
   control,
   children,
   onClick,
@@ -81,6 +83,7 @@ function SettingsRow({
   title: string;
   description: string;
   status?: ReactNode;
+  resetAction?: ReactNode;
   control?: ReactNode;
   children?: ReactNode;
   onClick?: () => void;
@@ -98,7 +101,12 @@ function SettingsRow({
         onClick={onClick}
       >
         <div className="min-w-0 flex-1 space-y-1">
-          <h3 className="text-sm font-medium text-foreground">{title}</h3>
+          <div className="flex min-h-5 items-center gap-1.5">
+            <h3 className="text-sm font-medium text-foreground">{title}</h3>
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+              {resetAction}
+            </span>
+          </div>
           <p className="text-xs text-muted-foreground">{description}</p>
           {status ? <div className="pt-1 text-[11px] text-muted-foreground">{status}</div> : null}
         </div>
@@ -110,6 +118,30 @@ function SettingsRow({
       </div>
       {children}
     </div>
+  );
+}
+
+function SettingResetButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`Reset ${label} to default`}
+            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+            onClick={(event) => {
+              event.stopPropagation();
+              onClick();
+            }}
+          >
+            <Undo2Icon className="size-3" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">Reset to default</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -344,6 +376,11 @@ function SettingsRouteView() {
               <SettingsRow
                 title="Theme"
                 description="Choose how T3 Code looks across the app."
+                resetAction={
+                  theme !== "system" ? (
+                    <SettingResetButton label="theme" onClick={() => setTheme("system")} />
+                  ) : null
+                }
                 control={
                   <Select
                     value={theme}
@@ -371,6 +408,18 @@ function SettingsRouteView() {
               <SettingsRow
                 title="Time format"
                 description="System default follows your browser or OS clock preference."
+                resetAction={
+                  settings.timestampFormat !== defaults.timestampFormat ? (
+                    <SettingResetButton
+                      label="time format"
+                      onClick={() =>
+                        updateSettings({
+                          timestampFormat: defaults.timestampFormat,
+                        })
+                      }
+                    />
+                  ) : null
+                }
                 control={
                   <Select
                     value={settings.timestampFormat}
@@ -404,6 +453,18 @@ function SettingsRouteView() {
               <SettingsRow
                 title="Assistant output"
                 description="Show token-by-token output while a response is in progress."
+                resetAction={
+                  settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
+                    <SettingResetButton
+                      label="assistant output"
+                      onClick={() =>
+                        updateSettings({
+                          enableAssistantStreaming: defaults.enableAssistantStreaming,
+                        })
+                      }
+                    />
+                  ) : null
+                }
                 control={
                   <Switch
                     checked={settings.enableAssistantStreaming}
@@ -420,6 +481,18 @@ function SettingsRouteView() {
               <SettingsRow
                 title="New threads"
                 description="Pick the default workspace mode for newly created draft threads."
+                resetAction={
+                  settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
+                    <SettingResetButton
+                      label="new threads"
+                      onClick={() =>
+                        updateSettings({
+                          defaultThreadEnvMode: defaults.defaultThreadEnvMode,
+                        })
+                      }
+                    />
+                  ) : null
+                }
                 control={
                   <Select
                     value={settings.defaultThreadEnvMode}
@@ -450,6 +523,18 @@ function SettingsRouteView() {
               <SettingsRow
                 title="Delete confirmation"
                 description="Ask before deleting a thread and its chat history."
+                resetAction={
+                  settings.confirmThreadDelete !== defaults.confirmThreadDelete ? (
+                    <SettingResetButton
+                      label="delete confirmation"
+                      onClick={() =>
+                        updateSettings({
+                          confirmThreadDelete: defaults.confirmThreadDelete,
+                        })
+                      }
+                    />
+                  ) : null
+                }
                 control={
                   <Switch
                     checked={settings.confirmThreadDelete}
@@ -468,6 +553,18 @@ function SettingsRouteView() {
               <SettingsRow
                 title="Git writing model"
                 description="Used for generated commit messages, PR titles, and branch names."
+                resetAction={
+                  settings.textGenerationModel !== defaults.textGenerationModel ? (
+                    <SettingResetButton
+                      label="git writing model"
+                      onClick={() =>
+                        updateSettings({
+                          textGenerationModel: defaults.textGenerationModel,
+                        })
+                      }
+                    />
+                  ) : null
+                }
                 control={
                   <Select
                     value={settings.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL}
@@ -498,6 +595,21 @@ function SettingsRouteView() {
               <SettingsRow
                 title="Custom models"
                 description="Add custom model slugs for supported providers."
+                resetAction={
+                  totalCustomModels > 0 ? (
+                    <SettingResetButton
+                      label="custom models"
+                      onClick={() => {
+                        updateSettings({
+                          customCodexModels: defaults.customCodexModels,
+                          customClaudeModels: defaults.customClaudeModels,
+                        });
+                        setCustomModelErrorByProvider({});
+                        setShowAllCustomModels(false);
+                      }}
+                    />
+                  ) : null
+                }
               >
                 <div className="mt-4 border-t border-border pt-4">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -617,6 +729,21 @@ function SettingsRouteView() {
                   title="Codex install"
                   description="Only needed if you want new sessions to use a non-default Codex install."
                   onClick={() => setIsCodexInstallOpen((open) => !open)}
+                  resetAction={
+                    settings.codexBinaryPath !== defaults.codexBinaryPath ||
+                    settings.codexHomePath !== defaults.codexHomePath ? (
+                      <SettingResetButton
+                        label="Codex install"
+                        onClick={() => {
+                          updateSettings({
+                            codexBinaryPath: defaults.codexBinaryPath,
+                            codexHomePath: defaults.codexHomePath,
+                          });
+                          setIsCodexInstallOpen(false);
+                        }}
+                      />
+                    ) : null
+                  }
                   control={
                     <ChevronRightIcon
                       className={cn(
