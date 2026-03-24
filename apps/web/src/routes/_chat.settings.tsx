@@ -252,6 +252,7 @@ function SettingsRouteView() {
   const changedSettingLabels = [
     ...(theme !== "system" ? ["Theme"] : []),
     ...(settings.timestampFormat !== defaults.timestampFormat ? ["Time format"] : []),
+    ...(settings.diffWordWrap !== defaults.diffWordWrap ? ["Diff line wrapping"] : []),
     ...(settings.enableAssistantStreaming !== defaults.enableAssistantStreaming
       ? ["Assistant output"]
       : []),
@@ -497,6 +498,34 @@ function SettingsRouteView() {
                       </SelectItem>
                     </SelectPopup>
                   </Select>
+                }
+              />
+
+              <SettingsRow
+                title="Diff line wrapping"
+                description="Set the default wrap state when the diff panel opens. The in-panel wrap toggle only affects the current diff session."
+                resetAction={
+                  settings.diffWordWrap !== defaults.diffWordWrap ? (
+                    <SettingResetButton
+                      label="diff line wrapping"
+                      onClick={() =>
+                        updateSettings({
+                          diffWordWrap: defaults.diffWordWrap,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Switch
+                    checked={settings.diffWordWrap}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        diffWordWrap: Boolean(checked),
+                      })
+                    }
+                    aria-label="Wrap diff lines by default"
+                  />
                 }
               />
 
