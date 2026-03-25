@@ -160,6 +160,43 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_HOME, resolve("/tmp/my-t3"));
       }),
     );
+
+    it.effect("does not export backend bootstrap env for dev:desktop", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev:desktop",
+          baseEnv: {
+            T3CODE_PORT: "3773",
+            T3CODE_AUTH_TOKEN: "stale-token",
+            T3CODE_MODE: "web",
+            T3CODE_NO_BROWSER: "0",
+            T3CODE_HOST: "0.0.0.0",
+            VITE_WS_URL: "ws://localhost:3773",
+          },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: "/tmp/my-t3",
+          authToken: "fresh-token",
+          noBrowser: true,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: "127.0.0.1",
+          port: 4222,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3CODE_HOME, resolve("/tmp/my-t3"));
+        assert.equal(env.PORT, "5733");
+        assert.equal(env.ELECTRON_RENDERER_PORT, "5733");
+        assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:5733");
+        assert.equal(env.T3CODE_PORT, undefined);
+        assert.equal(env.T3CODE_AUTH_TOKEN, undefined);
+        assert.equal(env.T3CODE_MODE, undefined);
+        assert.equal(env.T3CODE_NO_BROWSER, undefined);
+        assert.equal(env.T3CODE_HOST, undefined);
+        assert.equal(env.VITE_WS_URL, undefined);
+      }),
+    );
   });
 
   describe("findFirstAvailableOffset", () => {
