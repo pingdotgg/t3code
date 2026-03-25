@@ -121,6 +121,54 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       });
     }),
   );
+
+  it.effect("uses the configured system editor from VISUAL or EDITOR", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-configured-editor-" });
+      const editorPath = path.join(dir, "custom editor.CMD");
+      yield* fs.writeFileString(editorPath, "@echo off\r\n");
+      const launch = yield* resolveEditorLaunch(
+        { cwd: "C:\\workspace", editor: "system-editor" },
+        "win32",
+        {
+          PATH: dir,
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          VISUAL: `"${editorPath}" --reuse-window`,
+        },
+      );
+      assert.deepEqual(launch, {
+        command: editorPath,
+        args: ["--reuse-window", "C:\\workspace"],
+      });
+    }),
+  );
+
+  it.effect(
+    "uses configured known editor commands even when the default binary is unavailable",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-configured-vscode-" });
+        const editorPath = path.join(dir, "code.CMD");
+        yield* fs.writeFileString(editorPath, "@echo off\r\n");
+        const launch = yield* resolveEditorLaunch(
+          { cwd: "C:\\workspace\\src\\open.ts:71:5", editor: "vscode" },
+          "win32",
+          {
+            PATH: "",
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            VISUAL: `"${editorPath}" --reuse-window`,
+          },
+        );
+        assert.deepEqual(launch, {
+          command: editorPath,
+          args: ["--reuse-window", "--goto", "C:\\workspace\\src\\open.ts:71:5"],
+        });
+      }),
+  );
 });
 
 it.layer(NodeServices.layer)("launchDetached", (it) => {
@@ -227,6 +275,38 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
       assert.deepEqual(editors, ["cursor", "file-manager"]);
+    }),
+  );
+
+  it.effect("adds the configured system editor when it is available but unknown", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+
+      yield* fs.writeFileString(path.join(dir, "custom-editor"), "#!/bin/sh\n");
+      yield* fs.writeFileString(path.join(dir, "cursor"), "#!/bin/sh\n");
+      const editors = resolveAvailableEditors("linux", {
+        PATH: dir,
+        VISUAL: "custom-editor --reuse-window",
+      });
+      assert.deepEqual(editors, ["cursor", "system-editor"]);
+    }),
+  );
+
+  it.effect("reuses built-in editor ids when VISUAL points at a known editor path", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editors-known-" });
+      const editorPath = path.join(dir, "code.CMD");
+      yield* fs.writeFileString(editorPath, "@echo off\r\n");
+      const editors = resolveAvailableEditors("win32", {
+        PATH: "",
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        VISUAL: `"${editorPath}" --reuse-window`,
+      });
+      assert.deepEqual(editors, ["vscode"]);
     }),
   );
 });

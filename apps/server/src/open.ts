@@ -38,6 +38,13 @@ interface CommandAvailabilityOptions {
 }
 
 const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const CONFIGURED_EDITOR_ENV_KEYS = ["VISUAL", "EDITOR"] as const;
+const SHELL_WORD_PATTERN = /"([^"]*)"|'([^']*)'|([^\s]+)/g;
+
+interface ResolvedConfiguredEditor {
+  readonly editorId: EditorId;
+  readonly launch: EditorLaunch;
+}
 
 function shouldUseGotoFlag(editorId: EditorId, target: string): boolean {
   return (
@@ -62,6 +69,65 @@ function stripWrappingQuotes(value: string): string {
 
 function resolvePathEnvironmentVariable(env: NodeJS.ProcessEnv): string {
   return env.PATH ?? env.Path ?? env.path ?? "";
+}
+
+function tokenizeCommand(value: string): ReadonlyArray<string> {
+  const tokens: string[] = [];
+  for (const match of value.matchAll(SHELL_WORD_PATTERN)) {
+    const token = match[1] ?? match[2] ?? match[3];
+    if (!token) {
+      continue;
+    }
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+function resolveCommandIdentity(command: string): string {
+  const trimmed = command.trim();
+  if (trimmed.length === 0) {
+    return "";
+  }
+  const parts = trimmed.split(/[\\/]/);
+  const lastSegment = parts[parts.length - 1] ?? trimmed;
+  const extension = extname(lastSegment);
+  const commandName = extension.length > 0 ? lastSegment.slice(0, -extension.length) : lastSegment;
+  return commandName.toLowerCase();
+}
+
+function resolveConfiguredEditor(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): ResolvedConfiguredEditor | null {
+  for (const envKey of CONFIGURED_EDITOR_ENV_KEYS) {
+    const rawValue = env[envKey]?.trim();
+    if (!rawValue) {
+      continue;
+    }
+
+    const [command, ...args] = tokenizeCommand(rawValue);
+    if (!command) {
+      continue;
+    }
+    if (!isCommandAvailable(command, { platform, env })) {
+      continue;
+    }
+
+    const builtInEditor = EDITORS.find(
+      (editor) =>
+        editor.command &&
+        resolveCommandIdentity(editor.command) === resolveCommandIdentity(command),
+    );
+    return {
+      editorId: builtInEditor?.id ?? "system-editor",
+      launch: {
+        command,
+        args,
+      },
+    };
+  }
+
+  return null;
 }
 
 function resolveWindowsPathExtensions(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
@@ -166,12 +232,23 @@ export function resolveAvailableEditors(
   env: NodeJS.ProcessEnv = process.env,
 ): ReadonlyArray<EditorId> {
   const available: EditorId[] = [];
+  const configuredEditor = resolveConfiguredEditor(env, platform);
 
   for (const editor of EDITORS) {
-    const command = editor.command ?? fileManagerCommandForPlatform(platform);
-    if (isCommandAvailable(command, { platform, env })) {
+    if (editor.id === "system-editor") {
+      continue;
+    }
+
+    const command =
+      editor.id === "file-manager" ? fileManagerCommandForPlatform(platform) : editor.command;
+    const isConfiguredEditor = configuredEditor?.editorId === editor.id;
+    if ((command && isCommandAvailable(command, { platform, env })) || isConfiguredEditor) {
       available.push(editor.id);
     }
+  }
+
+  if (configuredEditor?.editorId === "system-editor") {
+    available.push("system-editor");
   }
 
   return available;
@@ -206,10 +283,30 @@ export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
 export const resolveEditorLaunch = Effect.fnUntraced(function* (
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<EditorLaunch, OpenError> {
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });
+  }
+
+  const configuredEditor = resolveConfiguredEditor(env, platform);
+  if (configuredEditor && configuredEditor.editorId === input.editor) {
+    return shouldUseGotoFlag(input.editor, input.cwd)
+      ? {
+          command: configuredEditor.launch.command,
+          args: [...configuredEditor.launch.args, "--goto", input.cwd],
+        }
+      : {
+          command: configuredEditor.launch.command,
+          args: [...configuredEditor.launch.args, input.cwd],
+        };
+  }
+
+  if (editorDef.id === "system-editor") {
+    return yield* new OpenError({
+      message: "System editor is not configured. Set VISUAL or EDITOR to use it.",
+    });
   }
 
   if (editorDef.command) {
