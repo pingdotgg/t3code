@@ -156,7 +156,7 @@ export function resolveBundledCopilotCliPathFrom(input: {
     join(githubScopeDir, packageName, binaryName),
   );
   const sdkSiblingLoaderPath = join(githubScopeDir, "copilot", COPILOT_NPM_LOADER);
-  for (const candidate of dedupePaths([...sdkSiblingBinaryCandidates, ...sdkSiblingLoaderPath])) {
+  for (const candidate of dedupePaths([...sdkSiblingBinaryCandidates, sdkSiblingLoaderPath])) {
     if (exists(candidate)) {
       return candidate;
     }
