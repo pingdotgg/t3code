@@ -4,6 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { type SessionEvent } from "@github/copilot-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, it, vi } from "@effect/vitest";
+import { beforeEach } from "vitest";
 
 import { Effect, Fiber, Layer, Stream } from "effect";
 
@@ -432,8 +433,14 @@ reasoningLayer("CopilotAdapterLive reasoning", (it) => {
   );
 });
 
-const toolEventSession = new FakeCopilotSession("copilot-session-tool-events");
-const toolEventClient = new FakeCopilotClient(toolEventSession);
+let toolEventSession: FakeCopilotSession;
+let toolEventClient: FakeCopilotClient;
+
+beforeEach(() => {
+  toolEventSession = new FakeCopilotSession("copilot-session-tool-events");
+  toolEventClient = new FakeCopilotClient(toolEventSession);
+});
+
 const toolEventLayer = it.layer(
   makeCopilotAdapterLive({
     clientFactory: () => toolEventClient,
@@ -537,8 +544,14 @@ toolEventLayer("CopilotAdapterLive tool event mapping", (it) => {
   );
 });
 
-const toolTitleSession = new FakeCopilotSession("copilot-session-tool-titles");
-const toolTitleClient = new FakeCopilotClient(toolTitleSession);
+let toolTitleSession: FakeCopilotSession;
+let toolTitleClient: FakeCopilotClient;
+
+beforeEach(() => {
+  toolTitleSession = new FakeCopilotSession("copilot-session-tool-titles");
+  toolTitleClient = new FakeCopilotClient(toolTitleSession);
+});
+
 const toolTitleLayer = it.layer(
   makeCopilotAdapterLive({
     clientFactory: () => toolTitleClient,
@@ -700,7 +713,7 @@ toolTitleLayer("CopilotAdapterLive tool titles", (it) => {
         attachments: [],
       });
 
-      const eventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 3).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -766,7 +779,7 @@ toolTitleLayer("CopilotAdapterLive tool titles", (it) => {
         attachments: [],
       });
 
-      const eventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 3).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
