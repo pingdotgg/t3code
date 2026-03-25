@@ -108,6 +108,7 @@ interface ActiveCopilotSession extends CopilotTurnTrackingState {
   lastError: string | undefined;
   toolItemTypesByCallId: Map<string, ToolLifecycleItemType>;
   toolTitlesByCallId: Map<string, string>;
+  toolDetailsByCallId: Map<string, string>;
   pendingApprovalResolvers: Map<string, PendingApprovalRequest>;
   pendingUserInputResolvers: Map<string, PendingUserInputRequest>;
   unsubscribe: () => void;
@@ -518,14 +519,58 @@ function toolTitleFromItemType(itemType: ToolLifecycleItemType, toolName?: strin
   }
 }
 
+function summarizeArgumentList(value: unknown): string | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const values = value
+    .map((entry) => normalizeString(entry))
+    .filter((entry): entry is string => entry !== undefined);
+  const [firstValue] = values;
+  if (!firstValue) {
+    return undefined;
+  }
+  return values.length === 1 ? firstValue : `${firstValue} +${values.length - 1} more`;
+}
+
+function toolArgumentDetail(argumentsValue: { readonly [k: string]: unknown } | undefined) {
+  if (!argumentsValue) {
+    return undefined;
+  }
+
+  for (const key of ["path", "directory", "dir", "pattern", "glob", "query", "url", "command"]) {
+    const value = normalizeString(argumentsValue[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  for (const key of ["paths", "files", "globs", "patterns"]) {
+    const value = summarizeArgumentList(argumentsValue[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 function toolDetailFromEvent(data: {
   readonly toolName?: string;
   readonly mcpToolName?: string;
   readonly mcpServerName?: string;
+  readonly arguments?: {
+    readonly [k: string]: unknown;
+  };
 }) {
-  return trimToUndefined(
-    [data.mcpServerName, data.mcpToolName ?? data.toolName].filter(Boolean).join(" / "),
-  );
+  const argumentDetail = toolArgumentDetail(data.arguments);
+  if (argumentDetail) {
+    return argumentDetail;
+  }
+  if (data.mcpToolName || data.mcpServerName) {
+    return trimToUndefined([data.mcpServerName, data.mcpToolName ?? data.toolName].join(" / "));
+  }
+  return undefined;
 }
 
 function toolResultSummaryContent(
@@ -543,6 +588,29 @@ function toolResultDetailContent(
     | undefined,
 ): string | undefined {
   return trimToUndefined(result?.detailedContent) ?? trimToUndefined(result?.content);
+}
+
+function completedToolDetail(input: {
+  readonly itemType: ToolLifecycleItemType;
+  readonly success: boolean;
+  readonly startedDetail: string | undefined;
+  readonly resultDetail: string | undefined;
+}): string | undefined {
+  if (!input.success) {
+    return input.resultDetail ?? input.startedDetail;
+  }
+
+  if (
+    input.startedDetail &&
+    (input.itemType === "dynamic_tool_call" ||
+      input.itemType === "file_change" ||
+      input.itemType === "web_search" ||
+      input.itemType === "image_view")
+  ) {
+    return input.startedDetail;
+  }
+
+  return input.resultDetail ?? input.startedDetail;
 }
 
 function looksLikeDiffDetail(detail: string | undefined): boolean {
@@ -761,6 +829,7 @@ function createSessionRecord(input: {
     pendingTurnUsage: undefined,
     toolItemTypesByCallId: new Map(),
     toolTitlesByCallId: new Map(),
+    toolDetailsByCallId: new Map(),
     pendingApprovalResolvers: input.pendingApprovalResolvers,
     pendingUserInputResolvers: input.pendingUserInputResolvers,
     unsubscribe: () => undefined,
@@ -1206,19 +1275,23 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
             },
           ];
         case "tool.execution_complete": {
-          const completedDetail = toolResultDetailContent(event.data.result);
-          const diffChangedFiles = extractChangedFilesFromDiff(completedDetail);
+          const resultDetail = toolResultDetailContent(event.data.result);
           const completedItemType =
-            diffChangedFiles.length > 0
-              ? "file_change"
-              : (record.toolItemTypesByCallId.get(event.data.toolCallId) ??
-                (event.data.result?.contents?.some((content) => content.type === "terminal")
-                  ? "command_execution"
-                  : "dynamic_tool_call"));
+            record.toolItemTypesByCallId.get(event.data.toolCallId) ??
+            (event.data.result?.contents?.some((content) => content.type === "terminal")
+              ? "command_execution"
+              : "dynamic_tool_call");
+          const diffChangedFiles =
+            completedItemType === "file_change" ? extractChangedFilesFromDiff(resultDetail) : [];
           const completedTitle =
-            (diffChangedFiles.length > 0 ? "File change" : undefined) ??
             record.toolTitlesByCallId.get(event.data.toolCallId) ??
             toolTitleFromItemType(completedItemType);
+          const completedDetail = completedToolDetail({
+            itemType: completedItemType,
+            success: event.data.success,
+            startedDetail: record.toolDetailsByCallId.get(event.data.toolCallId),
+            resultDetail,
+          });
           const completedSummary = toolResultSummaryContent(event.data.result);
           return [
             {
@@ -1514,6 +1587,10 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           event.data.toolCallId,
           toolTitleFromItemType(itemType, event.data.toolName),
         );
+        const toolDetail = toolDetailFromEvent(event.data);
+        if (toolDetail) {
+          record.toolDetailsByCallId.set(event.data.toolCallId, toolDetail);
+        }
       }
 
       void writeNativeEvent(record.threadId, event);
@@ -1539,6 +1616,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
       if (event.type === "tool.execution_complete") {
         record.toolItemTypesByCallId.delete(event.data.toolCallId);
         record.toolTitlesByCallId.delete(event.data.toolCallId);
+        record.toolDetailsByCallId.delete(event.data.toolCallId);
       }
       if (event.type === "assistant.turn_end") {
         markTurnAwaitingCompletion(record);

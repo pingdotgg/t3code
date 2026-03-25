@@ -27,6 +27,7 @@ import {
   GlobeIcon,
   HammerIcon,
   type LucideIcon,
+  SearchIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -801,16 +802,29 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
 }
 
 function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+  workEntry: Pick<
+    TimelineWorkEntry,
+    "detail" | "command" | "changedFiles" | "itemType" | "toolTitle" | "label"
+  >,
 ) {
   if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
-  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
+  const workEntryTitle = workEntryTitleKey(workEntry);
+  if (firstPath && (workEntry.itemType === "file_change" || workEntryTitle === "file change")) {
+    return workEntry.changedFiles!.length === 1
+      ? firstPath
+      : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
+  }
+  if (workEntry.detail) return workEntry.detail;
   if (!firstPath) return null;
   return workEntry.changedFiles!.length === 1
     ? firstPath
     : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
+}
+
+function workEntryTitleKey(workEntry: Pick<TimelineWorkEntry, "toolTitle" | "label">): string {
+  const title = workEntry.toolTitle ?? workEntry.label;
+  return title.trim().toLowerCase();
 }
 
 function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
@@ -826,6 +840,22 @@ function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
   }
   if (workEntry.itemType === "web_search") return GlobeIcon;
   if (workEntry.itemType === "image_view") return EyeIcon;
+
+  const toolTitle = workEntryTitleKey(workEntry);
+  if (toolTitle === "read file" || toolTitle === "view file" || toolTitle === "image view") {
+    return EyeIcon;
+  }
+  if (
+    toolTitle === "glob" ||
+    toolTitle === "grep" ||
+    toolTitle === "search files" ||
+    toolTitle === "list directory"
+  ) {
+    return SearchIcon;
+  }
+  if (toolTitle === "file change") {
+    return SquarePenIcon;
+  }
 
   switch (workEntry.itemType) {
     case "mcp_tool_call":

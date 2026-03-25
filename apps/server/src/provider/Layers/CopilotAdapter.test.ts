@@ -154,6 +154,17 @@ function makeCopilotModelSelection(
   };
 }
 
+function diffDetailedContent(path: string) {
+  return [
+    `diff --git a/${path} b/${path}`,
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+  ].join("\n");
+}
+
 const modeSession = new FakeCopilotSession("copilot-session-mode");
 const modeClient = new FakeCopilotClient(modeSession);
 const modeLayer = it.layer(
@@ -664,32 +675,33 @@ toolTitleLayer("CopilotAdapterLive tool titles", (it) => {
       } satisfies SessionEvent);
 
       const events = Array.from(yield* Fiber.join(eventsFiber)).filter(
-        (event) => event.type === "item.started" || event.type === "item.completed",
+        (event) => event.type === "item.completed",
       );
       assert.deepStrictEqual(
         events.map((event) =>
-          "payload" in event && event.payload && typeof event.payload === "object"
+          event.payload && typeof event.payload === "object"
             ? {
-                type: event.type,
-                itemType: "itemType" in event.payload ? event.payload.itemType : undefined,
-                title: "title" in event.payload ? event.payload.title : undefined,
+                itemType: event.payload.itemType,
+                title: event.payload.title,
+                detail: event.payload.detail,
               }
-            : { type: event.type, itemType: undefined, title: undefined },
+            : null,
         ),
         [
-          { type: "item.started", itemType: "dynamic_tool_call", title: "Read file" },
-          { type: "item.completed", itemType: "dynamic_tool_call", title: "Read file" },
-          { type: "item.started", itemType: "dynamic_tool_call", title: "Grep" },
-          { type: "item.completed", itemType: "dynamic_tool_call", title: "Grep" },
           {
-            type: "item.started",
             itemType: "dynamic_tool_call",
-            title: "List directory",
+            title: "Read file",
+            detail: "README.md",
           },
           {
-            type: "item.completed",
+            itemType: "dynamic_tool_call",
+            title: "Grep",
+            detail: "Copilot",
+          },
+          {
             itemType: "dynamic_tool_call",
             title: "List directory",
+            detail: ".",
           },
         ],
       );
@@ -762,7 +774,7 @@ toolTitleLayer("CopilotAdapterLive tool titles", (it) => {
     }),
   );
 
-  it.effect("maps diff-like Copilot detailedContent to a file change completion", () =>
+  it.effect("keeps diff-like detailedContent from read tools as a read-style tool call", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const session = yield* adapter.startSession({
@@ -792,6 +804,9 @@ toolTitleLayer("CopilotAdapterLive tool titles", (it) => {
         data: {
           toolCallId: "tool-call-diff",
           toolName: "view",
+          arguments: {
+            path: "apps/web/src/foo.ts",
+          },
         },
       } satisfies SessionEvent);
       toolTitleSession.emit({
@@ -804,14 +819,73 @@ toolTitleLayer("CopilotAdapterLive tool titles", (it) => {
           success: true,
           result: {
             content: "Updated file",
-            detailedContent: [
-              "diff --git a/apps/web/src/foo.ts b/apps/web/src/foo.ts",
-              "--- a/apps/web/src/foo.ts",
-              "+++ b/apps/web/src/foo.ts",
-              "@@ -1 +1 @@",
-              "-old",
-              "+new",
-            ].join("\n"),
+            detailedContent: diffDetailedContent("apps/web/src/foo.ts"),
+          },
+        },
+      } satisfies SessionEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completedEvent = events.find((event) => event.type === "item.completed");
+
+      assert.equal(completedEvent?.type, "item.completed");
+      if (completedEvent?.type === "item.completed") {
+        assert.equal(completedEvent.payload.itemType, "dynamic_tool_call");
+        assert.equal(completedEvent.payload.title, "Read file");
+        assert.equal(completedEvent.payload.detail, "apps/web/src/foo.ts");
+        assert.deepStrictEqual(
+          (completedEvent.payload.data as { changes?: Array<{ path: string }> }).changes,
+          undefined,
+        );
+      }
+    }),
+  );
+
+  it.effect("maps diff-like detailedContent from edit tools to a file change completion", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const session = yield* adapter.startSession({
+        provider: "copilot",
+        threadId: asThreadId("thread-tool-edit-diff-file-change"),
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 4).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "Apply an edit",
+        attachments: [],
+      });
+
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 3).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      toolTitleSession.emit({
+        id: "evt-tool-start-edit-diff",
+        timestamp: new Date().toISOString(),
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-call-edit-diff",
+          toolName: "edit",
+          arguments: {
+            path: "apps/web/src/foo.ts",
+          },
+        },
+      } satisfies SessionEvent);
+      toolTitleSession.emit({
+        id: "evt-tool-complete-edit-diff",
+        timestamp: new Date().toISOString(),
+        parentId: "evt-tool-start-edit-diff",
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-call-edit-diff",
+          success: true,
+          result: {
+            content: "Updated file",
+            detailedContent: diffDetailedContent("apps/web/src/foo.ts"),
           },
         },
       } satisfies SessionEvent);
@@ -823,6 +897,7 @@ toolTitleLayer("CopilotAdapterLive tool titles", (it) => {
       if (completedEvent?.type === "item.completed") {
         assert.equal(completedEvent.payload.itemType, "file_change");
         assert.equal(completedEvent.payload.title, "File change");
+        assert.equal(completedEvent.payload.detail, "apps/web/src/foo.ts");
         assert.deepStrictEqual(
           (completedEvent.payload.data as { changes?: Array<{ path: string }> }).changes,
           [{ path: "apps/web/src/foo.ts" }],
