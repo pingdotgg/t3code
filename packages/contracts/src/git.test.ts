@@ -65,9 +65,28 @@ describe("GitRunStackedActionInput", () => {
       actionId: "action-1",
       cwd: "/repo",
       action: "commit",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4-mini",
+      },
     });
 
     expect(parsed.actionId).toBe("action-1");
     expect(parsed.action).toBe("commit");
+  });
+
+  it("accepts git text generation as a modelSelection", () => {
+    const parsed = decodeRunStackedActionInput({
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit_push_pr",
+      modelSelection: {
+        provider: "claudeAgent",
+        model: "claude-haiku-4-5",
+      },
+    });
+
+    expect(parsed.modelSelection?.provider).toBe("claudeAgent");
+    expect(parsed.modelSelection?.model).toBe("claude-haiku-4-5");
   });
 });

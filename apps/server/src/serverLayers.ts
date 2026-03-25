@@ -30,7 +30,7 @@ import { KeybindingsLive } from "./keybindings";
 import { GitManagerLive } from "./git/Layers/GitManager";
 import { GitCoreLive } from "./git/Layers/GitCore";
 import { GitHubCliLive } from "./git/Layers/GitHubCli";
-import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
+import { RoutingTextGenerationLive } from "./git/Layers/RoutingTextGeneration";
 import { PtyAdapter } from "./terminal/Services/PTY";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
@@ -85,7 +85,7 @@ export function makeServerProviderLayer(): Layer.Layer<
 }
 
 export function makeServerRuntimeServicesLayer() {
-  const textGenerationLayer = CodexTextGenerationLive;
+  const textGenerationLayer = RoutingTextGenerationLive;
   const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(GitCoreLive));
 
   const orchestrationLayer = OrchestrationEngineLive.pipe(

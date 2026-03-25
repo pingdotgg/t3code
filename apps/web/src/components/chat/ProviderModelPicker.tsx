@@ -1,9 +1,10 @@
 import { type ModelSlug, type ProviderKind } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { memo, useState } from "react";
+import type { VariantProps } from "class-variance-authority";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
 import { ChevronDownIcon } from "lucide-react";
-import { Button } from "../ui/button";
+import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
   MenuGroup,
@@ -56,6 +57,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   activeProviderIconClassName?: string;
   compact?: boolean;
   disabled?: boolean;
+  triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
+  triggerClassName?: string;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -92,10 +95,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         render={
           <Button
             size="sm"
-            variant="ghost"
+            variant={props.triggerVariant ?? "ghost"}
             className={cn(
               "min-w-0 justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 [&_svg]:mx-0",
               props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56 sm:px-3",
+              props.triggerClassName,
             )}
             disabled={props.disabled}
           />

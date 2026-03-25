@@ -21,6 +21,7 @@ async function mountPicker(props: {
   provider: ProviderKind;
   model: ModelSlug;
   lockedProvider: ProviderKind | null;
+  triggerVariant?: "ghost" | "outline";
 }) {
   const host = document.createElement("div");
   document.body.append(host);
@@ -31,6 +32,7 @@ async function mountPicker(props: {
       model={props.model}
       lockedProvider={props.lockedProvider}
       modelOptionsByProvider={MODEL_OPTIONS_BY_PROVIDER}
+      triggerVariant={props.triggerVariant}
       onProviderModelChange={onProviderModelChange}
     />,
     { container: host },
@@ -152,6 +154,26 @@ describe("ProviderModelPicker", () => {
         "claudeAgent",
         "claude-sonnet-4-6",
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("accepts outline trigger styling", async () => {
+    const mounted = await mountPicker({
+      provider: "codex",
+      model: "gpt-5-codex",
+      lockedProvider: null,
+      triggerVariant: "outline",
+    });
+
+    try {
+      const button = document.querySelector("button");
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error("Expected picker trigger button to be rendered.");
+      }
+      expect(button.className).toContain("border-input");
+      expect(button.className).toContain("bg-popover");
     } finally {
       await mounted.cleanup();
     }

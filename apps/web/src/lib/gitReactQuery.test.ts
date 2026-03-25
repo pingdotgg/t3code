@@ -29,7 +29,14 @@ describe("git mutation options", () => {
   const queryClient = new QueryClient();
 
   it("attaches cwd-scoped mutation key for runStackedAction", () => {
-    const options = gitRunStackedActionMutationOptions({ cwd: "/repo/a", queryClient });
+    const options = gitRunStackedActionMutationOptions({
+      cwd: "/repo/a",
+      queryClient,
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+    });
     expect(options.mutationKey).toEqual(gitMutationKeys.runStackedAction("/repo/a"));
   });
 

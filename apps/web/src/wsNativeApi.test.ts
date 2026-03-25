@@ -353,11 +353,27 @@ describe("wsNativeApi", () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
-    await api.git.runStackedAction({ actionId: "action-1", cwd: "/repo", action: "commit" });
+    await api.git.runStackedAction({
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4-mini",
+      },
+    });
 
     expect(requestMock).toHaveBeenCalledWith(
       WS_METHODS.gitRunStackedAction,
-      { actionId: "action-1", cwd: "/repo", action: "commit" },
+      {
+        actionId: "action-1",
+        cwd: "/repo",
+        action: "commit",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.4-mini",
+        },
+      },
       { timeoutMs: null },
     );
   });

@@ -29,6 +29,7 @@ const CLAUDE_THREAD_ID = ThreadId.makeUnsafe("thread-claude-traits");
 function ClaudeTraitsPickerHarness(props: {
   model: string;
   fallbackModelSelection: ModelSelection | null;
+  triggerVariant?: "ghost" | "outline";
 }) {
   const prompt = useComposerThreadDraft(CLAUDE_THREAD_ID).prompt;
   const setPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -54,6 +55,7 @@ function ClaudeTraitsPickerHarness(props: {
       prompt={prompt}
       modelOptions={modelOptions?.claudeAgent}
       onPromptChange={handlePromptChange}
+      triggerVariant={props.triggerVariant}
     />
   );
 }
@@ -68,6 +70,7 @@ async function mountClaudePicker(props?: {
     fastMode?: boolean;
   } | null;
   skipDraftModelOptions?: boolean;
+  triggerVariant?: "ghost" | "outline";
 }) {
   const model = props?.model ?? "claude-opus-4-6";
   const claudeOptions = !props?.skipDraftModelOptions ? props?.options : undefined;
@@ -110,7 +113,11 @@ async function mountClaudePicker(props?: {
         } satisfies ModelSelection)
       : null;
   const screen = await render(
-    <ClaudeTraitsPickerHarness model={model} fallbackModelSelection={fallbackModelSelection} />,
+    <ClaudeTraitsPickerHarness
+      model={model}
+      fallbackModelSelection={fallbackModelSelection}
+      {...(props?.triggerVariant ? { triggerVariant: props.triggerVariant } : {})}
+    />,
     { container: host },
   );
 
@@ -233,6 +240,19 @@ describe("TraitsPicker (Claude)", () => {
         effort: "max",
       },
     });
+  });
+
+  it("accepts outline trigger styling", async () => {
+    await using _ = await mountClaudePicker({
+      triggerVariant: "outline",
+    });
+
+    const button = document.querySelector("button");
+    if (!(button instanceof HTMLButtonElement)) {
+      throw new Error("Expected traits trigger button to be rendered.");
+    }
+    expect(button.className).toContain("border-input");
+    expect(button.className).toContain("bg-popover");
   });
 });
 

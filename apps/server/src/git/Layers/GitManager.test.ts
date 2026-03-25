@@ -21,6 +21,11 @@ import { GitCore } from "../Services/GitCore.ts";
 import { makeGitManager } from "./GitManager.ts";
 import { ServerConfig } from "../../config.ts";
 
+const DEFAULT_TEST_MODEL_SELECTION = {
+  provider: "codex",
+  model: "gpt-5.4-mini",
+} as const;
+
 interface FakeGhScenario {
   prListSequence?: string[];
   prListByHeadSelector?: Record<string, string>;
@@ -461,6 +466,7 @@ function runStackedAction(
     {
       ...input,
       actionId: input.actionId ?? "test-action-id",
+      modelSelection: DEFAULT_TEST_MODEL_SELECTION,
     },
     options,
   );

@@ -21,7 +21,7 @@ import {
 } from "@t3tools/shared/model";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
-import { resolveAppModelSelection } from "./appSettings";
+import { resolveAppModelSelection } from "./modelSelection";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
 import {
   type TerminalContextDraft,

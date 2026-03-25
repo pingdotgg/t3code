@@ -24,7 +24,7 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
-import { isGitRepository } from "../../git/isRepo.ts";
+import { isGitRepository } from "../../git/Utils.ts";
 
 type ReactorInput =
   | {
