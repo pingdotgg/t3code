@@ -23,6 +23,12 @@ const decodeResolvedRule = Schema.decodeUnknownEffect(ResolvedKeybindingRule as 
 
 it.effect("parses keybinding rules", () =>
   Effect.gen(function* () {
+    const parsedSidebar = yield* decode(KeybindingRule, {
+      key: "mod+b",
+      command: "sidebar.toggle",
+    });
+    assert.strictEqual(parsedSidebar.command, "sidebar.toggle");
+
     const parsed = yield* decode(KeybindingRule, {
       key: "mod+j",
       command: "terminal.toggle",
@@ -110,6 +116,17 @@ it.effect("parses resolved keybindings arrays", () =>
   Effect.gen(function* () {
     const parsed = yield* decode(ResolvedKeybindingsConfig, [
       {
+        command: "sidebar.toggle",
+        shortcut: {
+          key: "b",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      },
+      {
         command: "terminal.toggle",
         shortcut: {
           key: "j",
@@ -121,7 +138,7 @@ it.effect("parses resolved keybindings arrays", () =>
         },
       },
     ]);
-    assert.lengthOf(parsed, 1);
+    assert.lengthOf(parsed, 2);
   }),
 );
 

@@ -19,6 +19,7 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
 
 ```json
 [
+  { "key": "mod+b", "command": "sidebar.toggle" },
   { "key": "mod+j", "command": "terminal.toggle" },
   { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
   { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
@@ -46,6 +47,7 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 
 ### Available Commands
 
+- `sidebar.toggle`: open/close the main thread sidebar in both desktop and web
 - `terminal.toggle`: open/close terminal drawer
 - `terminal.split`: split terminal (in focused terminal context by default)
 - `terminal.new`: create new terminal (in focused terminal context by default)

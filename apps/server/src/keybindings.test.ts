@@ -75,6 +75,23 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
   it.effect("compiles valid rule with parsed when AST", () =>
     Effect.sync(() => {
+      const compiledSidebar = compileResolvedKeybindingRule({
+        key: "mod+b",
+        command: "sidebar.toggle",
+      });
+
+      assert.deepEqual(compiledSidebar, {
+        command: "sidebar.toggle",
+        shortcut: {
+          key: "b",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      });
+
       const compiled = compileResolvedKeybindingRule({
         key: "mod+d",
         command: "terminal.split",

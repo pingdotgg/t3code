@@ -174,6 +174,14 @@ export function isTerminalToggleShortcut(
   return matchesCommandShortcut(event, keybindings, "terminal.toggle", options);
 }
 
+export function isSidebarToggleShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.toggle", options);
+}
+
 export function isTerminalSplitShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,

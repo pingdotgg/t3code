@@ -13,6 +13,7 @@ import {
   useAppSettings,
 } from "../appSettings";
 import { APP_VERSION } from "../branding";
+import { SidebarToggleButton } from "../components/SidebarToggleButton";
 import { Button } from "../components/ui/button";
 import { Collapsible, CollapsibleContent } from "../components/ui/collapsible";
 import { Input } from "../components/ui/input";
@@ -23,16 +24,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { SidebarTrigger } from "../components/ui/sidebar";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
+import { shortcutLabelForCommand } from "../keybindings";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { cn } from "../lib/utils";
 import { ensureNativeApi, readNativeApi } from "../nativeApi";
+import { useSidebar } from "../components/ui/sidebar";
 
 const THEME_OPTIONS = [
   {
@@ -186,6 +188,7 @@ function SettingResetButton({ label, onClick }: { label: string; onClick: () => 
 }
 
 function SettingsRouteView() {
+  const { open: sidebarOpen } = useSidebar();
   const { theme, setTheme } = useTheme();
   const { settings, defaults, updateSettings, resetSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
@@ -212,6 +215,10 @@ function SettingsRouteView() {
   const codexHomePath = settings.codexHomePath;
   const claudeBinaryPath = settings.claudeBinaryPath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const sidebarToggleShortcutLabel = shortcutLabelForCommand(
+    serverConfigQuery.data?.keybindings ?? [],
+    "sidebar.toggle",
+  );
   const availableEditors = serverConfigQuery.data?.availableEditors;
 
   const gitTextGenerationModelOptions = getAppModelOptions(
@@ -385,7 +392,10 @@ function SettingsRouteView() {
         {!isElectron && (
           <header className="border-b border-border px-3 py-2 sm:px-5">
             <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+              <SidebarToggleButton
+                className="size-7 shrink-0"
+                shortcutLabel={sidebarToggleShortcutLabel}
+              />
               <span className="text-sm font-medium text-foreground">Settings</span>
               <div className="ms-auto flex items-center gap-2">
                 <Button
@@ -403,7 +413,16 @@ function SettingsRouteView() {
         )}
 
         {isElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
+          <div
+            className={cn(
+              "drag-region flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-5",
+              !sidebarOpen && "pl-[90px]",
+            )}
+          >
+            <SidebarToggleButton
+              className="size-7 shrink-0 no-drag"
+              shortcutLabel={sidebarToggleShortcutLabel}
+            />
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
             </span>

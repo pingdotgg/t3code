@@ -26,6 +26,27 @@ interface ThreadTerminalState {
 }
 
 const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
+const noopStorage = {
+  getItem: () => null,
+  removeItem: () => undefined,
+  setItem: () => undefined,
+};
+
+function getTerminalStateStorage() {
+  if (typeof localStorage === "undefined") {
+    return noopStorage;
+  }
+
+  if (
+    typeof localStorage.getItem !== "function" ||
+    typeof localStorage.setItem !== "function" ||
+    typeof localStorage.removeItem !== "function"
+  ) {
+    return noopStorage;
+  }
+
+  return localStorage;
+}
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {
   const ids = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
@@ -542,7 +563,7 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
     {
       name: TERMINAL_STATE_STORAGE_KEY,
       version: 1,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(getTerminalStateStorage),
       partialize: (state) => ({
         terminalStateByThreadId: state.terminalStateByThreadId,
       }),

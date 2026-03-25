@@ -65,6 +65,7 @@ type WhenToken =
   | { type: "rparen" };
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
+  { key: "mod+b", command: "sidebar.toggle" },
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },

@@ -12,6 +12,7 @@ import {
   isChatNewLocalShortcut,
   isDiffToggleShortcut,
   isOpenFavoriteEditorShortcut,
+  isSidebarToggleShortcut,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
@@ -76,6 +77,7 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
 }
 
 const DEFAULT_BINDINGS = compile([
+  { shortcut: modShortcut("b"), command: "sidebar.toggle" },
   { shortcut: modShortcut("j"), command: "terminal.toggle" },
   {
     shortcut: modShortcut("d"),
@@ -101,6 +103,24 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
 ]);
+
+describe("isSidebarToggleShortcut", () => {
+  it("matches Cmd+B on macOS", () => {
+    assert.isTrue(
+      isSidebarToggleShortcut(event({ key: "b", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+  });
+
+  it("matches Ctrl+B on non-macOS", () => {
+    assert.isTrue(
+      isSidebarToggleShortcut(event({ key: "b", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Win32",
+      }),
+    );
+  });
+});
 
 describe("isTerminalToggleShortcut", () => {
   it("matches Cmd+J on macOS", () => {
@@ -236,6 +256,10 @@ describe("shortcutLabelForCommand", () => {
 
   it("returns labels for non-terminal commands", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⇧⌘O");
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.toggle", "MacIntel"),
+      "⌘B",
+    );
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
