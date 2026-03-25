@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import url("https://cdn.jsdelivr.net/npm/geist@1.4.1/dist/fonts/geist-sans/style.min.css");
+@import url("https://cdn.jsdelivr.net/npm/geist@1.4.1/dist/fonts/geist-mono/style.min.css");
 
 @custom-variant dark (&:is(.dark, .dark *));
 
@@ -122,7 +124,7 @@
 
 body {
   font-family:
-    "DM Sans",
+    "Geist",
     -apple-system,
     BlinkMacSystemFont,
     "Segoe UI",
@@ -131,6 +133,9 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100vh;
+  font-feature-settings: "ss01", "ss02", "cv01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html,
@@ -160,7 +165,7 @@ pre,
 code,
 textarea,
 input {
-  font-family: "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: "Geist Mono", "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
 /* Window drag region (frameless titlebar) */
@@ -260,7 +265,7 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown blockquote,
 .chat-markdown pre,
 .chat-markdown table {
-  margin: 0.65rem 0;
+  margin: 0.5rem 0;
 }
 
 .chat-markdown ul {
@@ -305,15 +310,15 @@ label:has(> select#reasoning-effort) select {
 
 .chat-markdown blockquote {
   border-left: 2px solid var(--border);
-  padding-left: 0.8rem;
+  padding-left: 0.75rem;
   color: var(--muted-foreground);
+  font-style: normal;
 }
 
 .chat-markdown :not(pre) > code {
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
+  border-radius: 0.25rem;
   background: var(--muted);
-  padding: 0.1rem 0.35rem;
+  padding: 0.125rem 0.3rem;
   color: var(--foreground);
   font-size: 0.75rem;
 }
@@ -321,23 +326,22 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown pre {
   max-width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: 0.5rem;
   background: var(--muted);
-  padding: 0.8rem 0.9rem;
+  padding: 0.75rem 0.875rem;
 }
 
 .chat-markdown pre code {
   border: none;
   background: transparent;
   padding: 0;
-  line-height: 1.5;
-  font-size: 0.875rem;
+  line-height: 1.55;
+  font-size: 0.8125rem;
 }
 
 .chat-markdown .chat-markdown-codeblock {
   position: relative;
-  margin: 0.65rem 0;
+  margin: 0.5rem 0;
 }
 
 .chat-markdown .chat-markdown-codeblock pre {

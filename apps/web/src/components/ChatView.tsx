@@ -3579,7 +3579,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             >
               <div
                 className={cn(
-                  "group rounded-[22px] p-px transition-colors duration-200",
+                  "group rounded-2xl p-px transition-colors duration-200",
                   composerProviderState.composerFrameClassName,
                 )}
                 onDragEnter={onComposerDragEnter}
@@ -3589,20 +3589,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
               >
                 <div
                   className={cn(
-                    "rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring/45",
+                    "rounded-[15px] border bg-card transition-colors duration-200 focus-within:border-ring/35",
                     isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
                     composerProviderState.composerSurfaceClassName,
                   )}
                 >
                   {activePendingApproval ? (
-                    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                    <div className="rounded-t-[14px] border-b border-border/65 bg-muted/20">
                       <ComposerPendingApprovalPanel
                         approval={activePendingApproval}
                         pendingCount={pendingApprovals.length}
                       />
                     </div>
                   ) : pendingUserInputs.length > 0 ? (
-                    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                    <div className="rounded-t-[14px] border-b border-border/65 bg-muted/20">
                       <ComposerPendingUserInputPanel
                         pendingUserInputs={pendingUserInputs}
                         respondingRequestIds={respondingRequestIds}
@@ -3613,7 +3613,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       />
                     </div>
                   ) : showPlanFollowUpPrompt && activeProposedPlan ? (
-                    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                    <div className="rounded-t-[14px] border-b border-border/65 bg-muted/20">
                       <ComposerPlanFollowUpBanner
                         key={activeProposedPlan.id}
                         planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
