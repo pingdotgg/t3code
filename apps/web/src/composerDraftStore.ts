@@ -475,12 +475,20 @@ function normalizeProviderModelOptions(
       : claudeCandidate?.fastMode === false
         ? false
         : undefined;
+  const claudeContextWindow =
+    typeof claudeCandidate?.contextWindow === "string" && claudeCandidate.contextWindow.length > 0
+      ? claudeCandidate.contextWindow
+      : undefined;
   const claude =
-    claudeThinking !== undefined || claudeEffort !== undefined || claudeFastMode !== undefined
+    claudeThinking !== undefined ||
+    claudeEffort !== undefined ||
+    claudeFastMode !== undefined ||
+    claudeContextWindow !== undefined
       ? {
           ...(claudeThinking !== undefined ? { thinking: claudeThinking } : {}),
           ...(claudeEffort !== undefined ? { effort: claudeEffort } : {}),
           ...(claudeFastMode !== undefined ? { fastMode: claudeFastMode } : {}),
+          ...(claudeContextWindow !== undefined ? { contextWindow: claudeContextWindow } : {}),
         }
       : undefined;
 

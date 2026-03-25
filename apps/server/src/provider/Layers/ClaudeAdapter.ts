@@ -40,7 +40,12 @@ import {
   type UserInputQuestion,
   ClaudeCodeEffort,
 } from "@t3tools/contracts";
-import { hasEffortLevel, applyClaudePromptEffortPrefix, trimOrNull } from "@t3tools/shared/model";
+import {
+  hasEffortLevel,
+  applyClaudePromptEffortPrefix,
+  resolveClaudeApiModelId,
+  trimOrNull,
+} from "@t3tools/shared/model";
 import {
   Cause,
   DateTime,
@@ -2727,6 +2732,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const claudeBinaryPath = claudeSettings.binaryPath;
         const modelSelection =
           input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
+        const apiModelId = modelSelection?.model
+          ? resolveClaudeApiModelId(modelSelection.model, modelSelection.options)
+          : undefined;
         const requestedEffort = trimOrNull(modelSelection?.options?.effort ?? null);
         const caps = getClaudeModelCapabilities(modelSelection?.model);
         const effort =
@@ -2746,7 +2754,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
-          ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+          ...(apiModelId ? { model: apiModelId } : {}),
           pathToClaudeCodeExecutable: claudeBinaryPath,
           settingSources: [...CLAUDE_SETTING_SOURCES],
           ...(effectiveEffort ? { effort: effectiveEffort } : {}),
@@ -2840,7 +2848,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           threadId,
           payload: {
             config: {
-              ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+              ...(apiModelId ? { model: apiModelId } : {}),
               ...(input.cwd ? { cwd: input.cwd } : {}),
               ...(effectiveEffort ? { effort: effectiveEffort } : {}),
               ...(permissionMode ? { permissionMode } : {}),
@@ -2893,8 +2901,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }
 
         if (modelSelection?.model) {
+          const apiModelId = resolveClaudeApiModelId(modelSelection.model, modelSelection.options);
           yield* Effect.tryPromise({
-            try: () => context.query.setModel(modelSelection.model),
+            try: () => context.query.setModel(apiModelId),
             catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
           });
         }
