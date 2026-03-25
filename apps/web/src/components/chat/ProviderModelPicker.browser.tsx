@@ -71,6 +71,51 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("opens provider submenus with a visible gap from the parent menu", async () => {
+    const mounted = await mountPicker({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      lockedProvider: null,
+    });
+
+    try {
+      await page.getByRole("button").click();
+      const providerTrigger = page.getByRole("menuitem", { name: "Codex" });
+      await providerTrigger.hover();
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain("GPT-5 Codex");
+      });
+
+      const providerTriggerElement = Array.from(
+        document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+      ).find((element) => element.textContent?.includes("Codex"));
+      if (!providerTriggerElement) {
+        throw new Error("Expected the Codex provider trigger to be mounted.");
+      }
+
+      const providerTriggerRect = providerTriggerElement.getBoundingClientRect();
+      const modelElement = Array.from(
+        document.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
+      ).find((element) => element.textContent?.includes("GPT-5 Codex"));
+      if (!modelElement) {
+        throw new Error("Expected the submenu model option to be mounted.");
+      }
+
+      const submenuPopup = modelElement.closest('[data-slot="menu-sub-content"]');
+      if (!(submenuPopup instanceof HTMLElement)) {
+        throw new Error("Expected submenu popup to be mounted.");
+      }
+
+      const submenuRect = submenuPopup.getBoundingClientRect();
+
+      expect(submenuRect.left).toBeGreaterThanOrEqual(providerTriggerRect.right);
+      expect(submenuRect.left - providerTriggerRect.right).toBeGreaterThanOrEqual(2);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows models directly when the provider is locked mid-thread", async () => {
     const mounted = await mountPicker({
       provider: "claudeAgent",
