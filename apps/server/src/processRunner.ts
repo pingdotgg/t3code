@@ -1,5 +1,7 @@
 import { type ChildProcess as ChildProcessHandle, spawn, spawnSync } from "node:child_process";
 
+import { resolveShellCommand } from "./windowsShell";
+
 export interface ProcessRunOptions {
   cwd?: string | undefined;
   timeoutMs?: number | undefined;
@@ -135,11 +137,14 @@ export async function runProcess(
   const outputMode = options.outputMode ?? "error";
 
   return new Promise<ProcessRunResult>((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env,
+    const resolvedCommand = resolveShellCommand(command, args, { cwd: options.cwd });
+    const child = spawn(resolvedCommand.command, resolvedCommand.args, {
+      cwd: resolvedCommand.cwd,
+      env: resolvedCommand.env
+        ? { ...(options.env ?? process.env), ...resolvedCommand.env }
+        : options.env,
       stdio: "pipe",
-      shell: process.platform === "win32",
+      shell: resolvedCommand.shell,
     });
 
     let stdout = "";
