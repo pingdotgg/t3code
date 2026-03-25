@@ -341,6 +341,26 @@ function GeneralPreferencesSection() {
       />
 
       <SettingsRow
+        title="Diff line wrapping"
+        description="Wrap long lines in the diff viewer instead of scrolling horizontally."
+        resetAction={
+          settings.diffWordWrap !== defaults.diffWordWrap ? (
+            <SettingResetButton
+              label="diff line wrapping"
+              onClick={() => updateSettings({ diffWordWrap: defaults.diffWordWrap })}
+            />
+          ) : null
+        }
+        control={
+          <Switch
+            checked={settings.diffWordWrap}
+            onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
+            aria-label="Wrap long lines in diffs"
+          />
+        }
+      />
+
+      <SettingsRow
         title="Assistant output"
         description="Show token-by-token output while a response is in progress."
         resetAction={
