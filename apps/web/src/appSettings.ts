@@ -55,6 +55,7 @@ export const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   defaultThreadEnvMode: EnvMode.pipe(withDefaults(() => "local" as const satisfies EnvMode)),
+  confirmThreadArchive: Schema.Boolean.pipe(withDefaults(() => false)),
   confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
   enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => false)),
   timestampFormat: TimestampFormat.pipe(withDefaults(() => DEFAULT_TIMESTAMP_FORMAT)),

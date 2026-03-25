@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
-
-import { AdvancedSettingsPanel } from "../components/settings/SettingsPanels";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_chat/settings/advanced")({
-  component: AdvancedSettingsPanel,
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/general", replace: true });
+  },
 });

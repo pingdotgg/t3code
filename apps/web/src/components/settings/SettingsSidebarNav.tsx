@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { ArchiveIcon, ArrowLeftIcon, CogIcon, CpuIcon, Settings2Icon } from "lucide-react";
+import { ArchiveIcon, ArrowLeftIcon, Settings2Icon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
 import {
@@ -12,11 +12,7 @@ import {
   SidebarSeparator,
 } from "../ui/sidebar";
 
-export type SettingsSectionPath =
-  | "/settings/general"
-  | "/settings/models"
-  | "/settings/advanced"
-  | "/settings/archived";
+export type SettingsSectionPath = "/settings/general" | "/settings/archived";
 
 const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
@@ -24,8 +20,6 @@ const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
-  { label: "Models", to: "/settings/models", icon: CpuIcon },
-  { label: "Advanced", to: "/settings/advanced", icon: CogIcon },
   { label: "Archived Threads", to: "/settings/archived", icon: ArchiveIcon },
 ];
 

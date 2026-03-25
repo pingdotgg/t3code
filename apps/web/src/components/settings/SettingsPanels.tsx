@@ -1,6 +1,6 @@
 import {
   ArchiveIcon,
-  ArchiveXIcon,
+  ArchiveX,
   ChevronDownIcon,
   FolderIcon,
   PlusIcon,
@@ -90,10 +90,10 @@ const INSTALL_PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
 ] as const;
 
 const DEFAULT_CUSTOM_MODEL_PROVIDER = "codex" as const;
-const EMPTY_CUSTOM_MODEL_INPUT_BY_PROVIDER = { codex: "", claudeAgent: "" } satisfies Record<
-  ProviderKind,
-  string
->;
+const EMPTY_CUSTOM_MODEL_INPUT_BY_PROVIDER = {
+  codex: "",
+  claudeAgent: "",
+} satisfies Record<ProviderKind, string>;
 
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -207,6 +207,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
+      ...(settings.confirmThreadArchive !== defaults.confirmThreadArchive
+        ? ["Archive confirmation"]
+        : []),
       ...(settings.confirmThreadDelete !== defaults.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
@@ -217,12 +220,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(isInstallSettingsDirty ? ["Provider installs"] : []),
     ],
     [
+      defaults.confirmThreadArchive,
       defaults.confirmThreadDelete,
       defaults.defaultThreadEnvMode,
       defaults.enableAssistantStreaming,
       defaults.timestampFormat,
       isGitTextGenerationModelDirty,
       isInstallSettingsDirty,
+      settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.customClaudeModels.length,
       settings.customCodexModels.length,
@@ -255,175 +260,213 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 export function GeneralSettingsPanel() {
-  const { theme, setTheme } = useTheme();
-  const { settings, defaults, updateSettings } = useAppSettings();
-
   return (
     <SettingsPageContainer>
-      <SettingsSection>
-        <SettingsRow
-          title="Theme"
-          description="Choose how T3 Code looks across the app."
-          resetAction={
-            theme !== "system" ? (
-              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
-            ) : null
-          }
-          control={
-            <Select
-              value={theme}
-              onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  setTheme(value);
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
-                <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Time format"
-          description="System default follows your browser or OS clock preference."
-          resetAction={
-            settings.timestampFormat !== defaults.timestampFormat ? (
-              <SettingResetButton
-                label="time format"
-                onClick={() => updateSettings({ timestampFormat: defaults.timestampFormat })}
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.timestampFormat}
-              onValueChange={(value) => {
-                if (value === "locale" || value === "12-hour" || value === "24-hour") {
-                  updateSettings({ timestampFormat: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Timestamp format">
-                <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="locale">
-                  {TIMESTAMP_FORMAT_LABELS.locale}
-                </SelectItem>
-                <SelectItem hideIndicator value="12-hour">
-                  {TIMESTAMP_FORMAT_LABELS["12-hour"]}
-                </SelectItem>
-                <SelectItem hideIndicator value="24-hour">
-                  {TIMESTAMP_FORMAT_LABELS["24-hour"]}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Assistant output"
-          description="Show token-by-token output while a response is in progress."
-          resetAction={
-            settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
-              <SettingResetButton
-                label="assistant output"
-                onClick={() =>
-                  updateSettings({ enableAssistantStreaming: defaults.enableAssistantStreaming })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.enableAssistantStreaming}
-              onCheckedChange={(checked) =>
-                updateSettings({ enableAssistantStreaming: Boolean(checked) })
-              }
-              aria-label="Stream assistant messages"
-            />
-          }
-        />
-
-        <SettingsRow
-          title="New threads"
-          description="Pick the default workspace mode for newly created draft threads."
-          resetAction={
-            settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
-              <SettingResetButton
-                label="new threads"
-                onClick={() =>
-                  updateSettings({ defaultThreadEnvMode: defaults.defaultThreadEnvMode })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.defaultThreadEnvMode}
-              onValueChange={(value) => {
-                if (value === "local" || value === "worktree") {
-                  updateSettings({ defaultThreadEnvMode: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-44" aria-label="Default thread mode">
-                <SelectValue>
-                  {settings.defaultThreadEnvMode === "worktree" ? "New worktree" : "Local"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="local">
-                  Local
-                </SelectItem>
-                <SelectItem hideIndicator value="worktree">
-                  New worktree
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Delete confirmation"
-          description="Ask before deleting a thread and its chat history."
-          resetAction={
-            settings.confirmThreadDelete !== defaults.confirmThreadDelete ? (
-              <SettingResetButton
-                label="delete confirmation"
-                onClick={() =>
-                  updateSettings({ confirmThreadDelete: defaults.confirmThreadDelete })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmThreadDelete}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmThreadDelete: Boolean(checked) })
-              }
-              aria-label="Confirm thread deletion"
-            />
-          }
-        />
-      </SettingsSection>
+      <GeneralPreferencesSection />
+      <ModelSettingsSection />
+      <AdvancedSettingsSection />
     </SettingsPageContainer>
   );
 }
 
-export function ModelsSettingsPanel() {
+function GeneralPreferencesSection() {
+  const { theme, setTheme } = useTheme();
+  const { settings, defaults, updateSettings } = useAppSettings();
+
+  return (
+    <SettingsSection>
+      <SettingsRow
+        title="Theme"
+        description="Choose how T3 Code looks across the app."
+        resetAction={
+          theme !== "system" ? (
+            <SettingResetButton label="theme" onClick={() => setTheme("system")} />
+          ) : null
+        }
+        control={
+          <Select
+            value={theme}
+            onValueChange={(value) => {
+              if (value === "system" || value === "light" || value === "dark") {
+                setTheme(value);
+              }
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
+              <SelectValue>
+                {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {THEME_OPTIONS.map((option) => (
+                <SelectItem hideIndicator key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+
+      <SettingsRow
+        title="Time format"
+        description="System default follows your browser or OS clock preference."
+        resetAction={
+          settings.timestampFormat !== defaults.timestampFormat ? (
+            <SettingResetButton
+              label="time format"
+              onClick={() => updateSettings({ timestampFormat: defaults.timestampFormat })}
+            />
+          ) : null
+        }
+        control={
+          <Select
+            value={settings.timestampFormat}
+            onValueChange={(value) => {
+              if (value === "locale" || value === "12-hour" || value === "24-hour") {
+                updateSettings({ timestampFormat: value });
+              }
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-40" aria-label="Timestamp format">
+              <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="locale">
+                {TIMESTAMP_FORMAT_LABELS.locale}
+              </SelectItem>
+              <SelectItem hideIndicator value="12-hour">
+                {TIMESTAMP_FORMAT_LABELS["12-hour"]}
+              </SelectItem>
+              <SelectItem hideIndicator value="24-hour">
+                {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      />
+
+      <SettingsRow
+        title="Assistant output"
+        description="Show token-by-token output while a response is in progress."
+        resetAction={
+          settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
+            <SettingResetButton
+              label="assistant output"
+              onClick={() =>
+                updateSettings({
+                  enableAssistantStreaming: defaults.enableAssistantStreaming,
+                })
+              }
+            />
+          ) : null
+        }
+        control={
+          <Switch
+            checked={settings.enableAssistantStreaming}
+            onCheckedChange={(checked) =>
+              updateSettings({ enableAssistantStreaming: Boolean(checked) })
+            }
+            aria-label="Stream assistant messages"
+          />
+        }
+      />
+
+      <SettingsRow
+        title="New threads"
+        description="Pick the default workspace mode for newly created draft threads."
+        resetAction={
+          settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
+            <SettingResetButton
+              label="new threads"
+              onClick={() =>
+                updateSettings({
+                  defaultThreadEnvMode: defaults.defaultThreadEnvMode,
+                })
+              }
+            />
+          ) : null
+        }
+        control={
+          <Select
+            value={settings.defaultThreadEnvMode}
+            onValueChange={(value) => {
+              if (value === "local" || value === "worktree") {
+                updateSettings({ defaultThreadEnvMode: value });
+              }
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-44" aria-label="Default thread mode">
+              <SelectValue>
+                {settings.defaultThreadEnvMode === "worktree" ? "New worktree" : "Local"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="local">
+                Local
+              </SelectItem>
+              <SelectItem hideIndicator value="worktree">
+                New worktree
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      />
+
+      <SettingsRow
+        title="Archive confirmation"
+        description="Require a second click on the inline archive action before a thread is archived."
+        resetAction={
+          settings.confirmThreadArchive !== defaults.confirmThreadArchive ? (
+            <SettingResetButton
+              label="archive confirmation"
+              onClick={() =>
+                updateSettings({
+                  confirmThreadArchive: defaults.confirmThreadArchive,
+                })
+              }
+            />
+          ) : null
+        }
+        control={
+          <Switch
+            checked={settings.confirmThreadArchive}
+            onCheckedChange={(checked) =>
+              updateSettings({ confirmThreadArchive: Boolean(checked) })
+            }
+            aria-label="Confirm thread archiving"
+          />
+        }
+      />
+
+      <SettingsRow
+        title="Delete confirmation"
+        description="Ask before deleting a thread and its chat history."
+        resetAction={
+          settings.confirmThreadDelete !== defaults.confirmThreadDelete ? (
+            <SettingResetButton
+              label="delete confirmation"
+              onClick={() =>
+                updateSettings({
+                  confirmThreadDelete: defaults.confirmThreadDelete,
+                })
+              }
+            />
+          ) : null
+        }
+        control={
+          <Switch
+            checked={settings.confirmThreadDelete}
+            onCheckedChange={(checked) => updateSettings({ confirmThreadDelete: Boolean(checked) })}
+            aria-label="Confirm thread deletion"
+          />
+        }
+      />
+    </SettingsSection>
+  );
+}
+
+function ModelSettingsSection() {
   const { settings, defaults, updateSettings } = useAppSettings();
   const [selectedCustomModelProvider, setSelectedCustomModelProvider] = useState<ProviderKind>(
     DEFAULT_CUSTOM_MODEL_PROVIDER,
@@ -501,8 +544,14 @@ export function ModelsSettingsPanel() {
         return;
       }
       updateSettings(patchCustomModels(provider, [...customModels, normalized]));
-      setCustomModelInputByProvider((existing) => ({ ...existing, [provider]: "" }));
-      setCustomModelErrorByProvider((existing) => ({ ...existing, [provider]: null }));
+      setCustomModelInputByProvider((existing) => ({
+        ...existing,
+        [provider]: "",
+      }));
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: null,
+      }));
     },
     [customModelInputByProvider, settings, updateSettings],
   );
@@ -515,180 +564,183 @@ export function ModelsSettingsPanel() {
           getCustomModelsForProvider(settings, provider).filter((model) => model !== slug),
         ),
       );
-      setCustomModelErrorByProvider((existing) => ({ ...existing, [provider]: null }));
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: null,
+      }));
     },
     [settings, updateSettings],
   );
 
   return (
-    <SettingsPageContainer>
-      <SettingsSection>
-        <SettingsRow
-          title="Git writing model"
-          description="Used for generated commit messages, PR titles, and branch names."
-          resetAction={
-            isGitTextGenerationModelDirty ? (
-              <SettingResetButton
-                label="git writing model"
-                onClick={() =>
-                  updateSettings({ textGenerationModel: defaults.textGenerationModel })
-                }
-              />
-            ) : null
-          }
-          control={
+    <SettingsSection>
+      <SettingsRow
+        title="Git writing model"
+        description="Used for generated commit messages, PR titles, and branch names."
+        resetAction={
+          isGitTextGenerationModelDirty ? (
+            <SettingResetButton
+              label="git writing model"
+              onClick={() =>
+                updateSettings({
+                  textGenerationModel: defaults.textGenerationModel,
+                })
+              }
+            />
+          ) : null
+        }
+        control={
+          <Select
+            value={currentGitTextGenerationModel}
+            onValueChange={(value) => {
+              if (value) {
+                updateSettings({ textGenerationModel: value });
+              }
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-52" aria-label="Git text generation model">
+              <SelectValue>{selectedGitTextGenerationModelLabel}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {gitTextGenerationModelOptions.map((option) => (
+                <SelectItem hideIndicator key={option.slug} value={option.slug}>
+                  {option.name}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+
+      <SettingsRow
+        title="Custom models"
+        description="Add custom model slugs for supported providers."
+        resetAction={
+          totalCustomModels > 0 ? (
+            <SettingResetButton
+              label="custom models"
+              onClick={() => {
+                updateSettings({
+                  customCodexModels: defaults.customCodexModels,
+                  customClaudeModels: defaults.customClaudeModels,
+                });
+                setCustomModelErrorByProvider({});
+                setShowAllCustomModels(false);
+              }}
+            />
+          ) : null
+        }
+      >
+        <div className="mt-4 border-t border-border pt-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Select
-              value={currentGitTextGenerationModel}
+              value={selectedCustomModelProvider}
               onValueChange={(value) => {
-                if (value) {
-                  updateSettings({ textGenerationModel: value });
+                if (value === "codex" || value === "claudeAgent") {
+                  setSelectedCustomModelProvider(value);
                 }
               }}
             >
-              <SelectTrigger className="w-full sm:w-52" aria-label="Git text generation model">
-                <SelectValue>{selectedGitTextGenerationModelLabel}</SelectValue>
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label="Custom model provider"
+              >
+                <SelectValue>{selectedCustomModelProviderSettings.title}</SelectValue>
               </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {gitTextGenerationModelOptions.map((option) => (
-                  <SelectItem hideIndicator key={option.slug} value={option.slug}>
-                    {option.name}
+              <SelectPopup align="start" alignItemWithTrigger={false}>
+                {MODEL_PROVIDER_SETTINGS.map((providerSettings) => (
+                  <SelectItem
+                    hideIndicator
+                    className="min-h-7 text-sm"
+                    key={providerSettings.provider}
+                    value={providerSettings.provider}
+                  >
+                    {providerSettings.title}
                   </SelectItem>
                 ))}
               </SelectPopup>
             </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Custom models"
-          description="Add custom model slugs for supported providers."
-          resetAction={
-            totalCustomModels > 0 ? (
-              <SettingResetButton
-                label="custom models"
-                onClick={() => {
-                  updateSettings({
-                    customCodexModels: defaults.customCodexModels,
-                    customClaudeModels: defaults.customClaudeModels,
-                  });
-                  setCustomModelErrorByProvider({});
-                  setShowAllCustomModels(false);
-                }}
-              />
-            ) : null
-          }
-        >
-          <div className="mt-4 border-t border-border pt-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Select
-                value={selectedCustomModelProvider}
-                onValueChange={(value) => {
-                  if (value === "codex" || value === "claudeAgent") {
-                    setSelectedCustomModelProvider(value);
-                  }
-                }}
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="w-full sm:w-40"
-                  aria-label="Custom model provider"
-                >
-                  <SelectValue>{selectedCustomModelProviderSettings.title}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="start" alignItemWithTrigger={false}>
-                  {MODEL_PROVIDER_SETTINGS.map((providerSettings) => (
-                    <SelectItem
-                      hideIndicator
-                      className="min-h-7 text-sm"
-                      key={providerSettings.provider}
-                      value={providerSettings.provider}
-                    >
-                      {providerSettings.title}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-              <Input
-                value={selectedCustomModelInput}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setCustomModelInputByProvider((existing) => ({
+            <Input
+              value={selectedCustomModelInput}
+              onChange={(event) => {
+                const value = event.target.value;
+                setCustomModelInputByProvider((existing) => ({
+                  ...existing,
+                  [selectedCustomModelProvider]: value,
+                }));
+                if (selectedCustomModelError) {
+                  setCustomModelErrorByProvider((existing) => ({
                     ...existing,
-                    [selectedCustomModelProvider]: value,
+                    [selectedCustomModelProvider]: null,
                   }));
-                  if (selectedCustomModelError) {
-                    setCustomModelErrorByProvider((existing) => ({
-                      ...existing,
-                      [selectedCustomModelProvider]: null,
-                    }));
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    addCustomModel(selectedCustomModelProvider);
-                  }
-                }}
-                placeholder={selectedCustomModelProviderSettings.example}
-                spellCheck={false}
-              />
-              <Button
-                className="shrink-0"
-                variant="outline"
-                onClick={() => addCustomModel(selectedCustomModelProvider)}
-              >
-                <PlusIcon className="size-3.5" />
-                Add
-              </Button>
-            </div>
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  addCustomModel(selectedCustomModelProvider);
+                }
+              }}
+              placeholder={selectedCustomModelProviderSettings.example}
+              spellCheck={false}
+            />
+            <Button
+              className="shrink-0"
+              variant="outline"
+              onClick={() => addCustomModel(selectedCustomModelProvider)}
+            >
+              <PlusIcon className="size-3.5" />
+              Add
+            </Button>
+          </div>
 
-            {selectedCustomModelError ? (
-              <p className="mt-2 text-xs text-destructive">{selectedCustomModelError}</p>
-            ) : null}
+          {selectedCustomModelError ? (
+            <p className="mt-2 text-xs text-destructive">{selectedCustomModelError}</p>
+          ) : null}
 
-            {totalCustomModels > 0 ? (
-              <div className="mt-3">
-                {visibleCustomModelRows.map((row) => (
-                  <div
-                    key={row.key}
-                    className="group grid grid-cols-[minmax(5rem,6rem)_minmax(0,1fr)_auto] items-center gap-3 border-t border-border/60 px-4 py-2 first:border-t-0"
-                  >
-                    <span className="truncate text-xs text-muted-foreground">
-                      {row.providerTitle}
-                    </span>
-                    <code className="min-w-0 truncate text-sm text-foreground">{row.slug}</code>
-                    <button
-                      type="button"
-                      className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 hover:opacity-100"
-                      aria-label={`Remove ${row.slug}`}
-                      onClick={() => removeCustomModel(row.provider, row.slug)}
-                    >
-                      <XIcon className="size-3.5 text-muted-foreground hover:text-foreground" />
-                    </button>
-                  </div>
-                ))}
-
-                {savedCustomModelRows.length > 5 ? (
+          {totalCustomModels > 0 ? (
+            <div className="mt-3">
+              {visibleCustomModelRows.map((row) => (
+                <div
+                  key={row.key}
+                  className="group grid grid-cols-[minmax(5rem,6rem)_minmax(0,1fr)_auto] items-center gap-3 border-t border-border/60 px-4 py-2 first:border-t-0"
+                >
+                  <span className="truncate text-xs text-muted-foreground">
+                    {row.providerTitle}
+                  </span>
+                  <code className="min-w-0 truncate text-sm text-foreground">{row.slug}</code>
                   <button
                     type="button"
-                    className="mt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                    onClick={() => setShowAllCustomModels((value) => !value)}
+                    className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 hover:opacity-100"
+                    aria-label={`Remove ${row.slug}`}
+                    onClick={() => removeCustomModel(row.provider, row.slug)}
                   >
-                    {showAllCustomModels
-                      ? "Show less"
-                      : `Show more (${savedCustomModelRows.length - 5})`}
+                    <XIcon className="size-3.5 text-muted-foreground hover:text-foreground" />
                   </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        </SettingsRow>
-      </SettingsSection>
-    </SettingsPageContainer>
+                </div>
+              ))}
+
+              {savedCustomModelRows.length > 5 ? (
+                <button
+                  type="button"
+                  className="mt-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  onClick={() => setShowAllCustomModels((value) => !value)}
+                >
+                  {showAllCustomModels
+                    ? "Show less"
+                    : `Show more (${savedCustomModelRows.length - 5})`}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </SettingsRow>
+    </SettingsSection>
   );
 }
 
-export function AdvancedSettingsPanel() {
+function AdvancedSettingsSection() {
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
@@ -729,179 +781,179 @@ export function AdvancedSettingsPanel() {
   }, [availableEditors, keybindingsConfigPath]);
 
   return (
-    <SettingsPageContainer>
-      <SettingsSection>
-        <SettingsRow
-          title="Provider installs"
-          description="Override the CLI used for new sessions."
-          resetAction={
-            isInstallSettingsDirty ? (
-              <SettingResetButton
-                label="provider installs"
-                onClick={() => {
-                  updateSettings({
-                    claudeBinaryPath: defaults.claudeBinaryPath,
-                    codexBinaryPath: defaults.codexBinaryPath,
-                    codexHomePath: defaults.codexHomePath,
-                  });
-                  setOpenInstallProviders({
-                    codex: false,
-                    claudeAgent: false,
-                  });
-                }}
-              />
-            ) : null
-          }
-        >
-          <div className="mt-4">
-            <div className="space-y-2">
-              {INSTALL_PROVIDER_SETTINGS.map((providerSettings) => {
-                const isOpen = openInstallProviders[providerSettings.provider];
-                const isDirty =
-                  providerSettings.provider === "codex"
-                    ? settings.codexBinaryPath !== defaults.codexBinaryPath ||
-                      settings.codexHomePath !== defaults.codexHomePath
-                    : settings.claudeBinaryPath !== defaults.claudeBinaryPath;
-                const binaryPathValue =
-                  providerSettings.binaryPathKey === "claudeBinaryPath"
-                    ? settings.claudeBinaryPath
-                    : settings.codexBinaryPath;
+    <SettingsSection>
+      <SettingsRow
+        title="Provider installs"
+        description="Override the CLI used for new sessions."
+        resetAction={
+          isInstallSettingsDirty ? (
+            <SettingResetButton
+              label="provider installs"
+              onClick={() => {
+                updateSettings({
+                  claudeBinaryPath: defaults.claudeBinaryPath,
+                  codexBinaryPath: defaults.codexBinaryPath,
+                  codexHomePath: defaults.codexHomePath,
+                });
+                setOpenInstallProviders({
+                  codex: false,
+                  claudeAgent: false,
+                });
+              }}
+            />
+          ) : null
+        }
+      >
+        <div className="mt-4">
+          <div className="space-y-2">
+            {INSTALL_PROVIDER_SETTINGS.map((providerSettings) => {
+              const isOpen = openInstallProviders[providerSettings.provider];
+              const isDirty =
+                providerSettings.provider === "codex"
+                  ? settings.codexBinaryPath !== defaults.codexBinaryPath ||
+                    settings.codexHomePath !== defaults.codexHomePath
+                  : settings.claudeBinaryPath !== defaults.claudeBinaryPath;
+              const binaryPathValue =
+                providerSettings.binaryPathKey === "claudeBinaryPath"
+                  ? settings.claudeBinaryPath
+                  : settings.codexBinaryPath;
 
-                return (
-                  <Collapsible
-                    key={providerSettings.provider}
-                    open={isOpen}
-                    onOpenChange={(open) =>
-                      setOpenInstallProviders((existing) => ({
-                        ...existing,
-                        [providerSettings.provider]: open,
-                      }))
-                    }
-                  >
-                    <div className="overflow-hidden rounded-xl border border-border/70">
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-3 px-4 py-3 text-left"
-                        onClick={() =>
-                          setOpenInstallProviders((existing) => ({
-                            ...existing,
-                            [providerSettings.provider]: !existing[providerSettings.provider],
-                          }))
-                        }
-                      >
-                        <span className="min-w-0 flex-1 text-sm font-medium text-foreground">
-                          {providerSettings.title}
-                        </span>
-                        {isDirty ? (
-                          <span className="text-[11px] text-muted-foreground">Custom</span>
-                        ) : null}
-                        <ChevronDownIcon
-                          className={cn(
-                            "size-4 shrink-0 text-muted-foreground transition-transform",
-                            isOpen && "rotate-180",
-                          )}
-                        />
-                      </button>
+              return (
+                <Collapsible
+                  key={providerSettings.provider}
+                  open={isOpen}
+                  onOpenChange={(open) =>
+                    setOpenInstallProviders((existing) => ({
+                      ...existing,
+                      [providerSettings.provider]: open,
+                    }))
+                  }
+                >
+                  <div className="overflow-hidden rounded-xl border border-border/70">
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left"
+                      onClick={() =>
+                        setOpenInstallProviders((existing) => ({
+                          ...existing,
+                          [providerSettings.provider]: !existing[providerSettings.provider],
+                        }))
+                      }
+                    >
+                      <span className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                        {providerSettings.title}
+                      </span>
+                      {isDirty ? (
+                        <span className="text-[11px] text-muted-foreground">Custom</span>
+                      ) : null}
+                      <ChevronDownIcon
+                        className={cn(
+                          "size-4 shrink-0 text-muted-foreground transition-transform",
+                          isOpen && "rotate-180",
+                        )}
+                      />
+                    </button>
 
-                      <CollapsibleContent>
-                        <div className="border-t border-border/70 px-4 py-4">
-                          <div className="space-y-3">
+                    <CollapsibleContent>
+                      <div className="border-t border-border/70 px-4 py-4">
+                        <div className="space-y-3">
+                          <label
+                            htmlFor={`provider-install-${providerSettings.binaryPathKey}`}
+                            className="block"
+                          >
+                            <span className="block text-xs font-medium text-foreground">
+                              {providerSettings.title} binary path
+                            </span>
+                            <Input
+                              id={`provider-install-${providerSettings.binaryPathKey}`}
+                              className="mt-1"
+                              value={binaryPathValue}
+                              onChange={(event) =>
+                                updateSettings(
+                                  providerSettings.binaryPathKey === "claudeBinaryPath"
+                                    ? { claudeBinaryPath: event.target.value }
+                                    : { codexBinaryPath: event.target.value },
+                                )
+                              }
+                              placeholder={providerSettings.binaryPlaceholder}
+                              spellCheck={false}
+                            />
+                            <span className="mt-1 block text-xs text-muted-foreground">
+                              {providerSettings.binaryDescription}
+                            </span>
+                          </label>
+
+                          {providerSettings.homePathKey ? (
                             <label
-                              htmlFor={`provider-install-${providerSettings.binaryPathKey}`}
+                              htmlFor={`provider-install-${providerSettings.homePathKey}`}
                               className="block"
                             >
                               <span className="block text-xs font-medium text-foreground">
-                                {providerSettings.title} binary path
+                                CODEX_HOME path
                               </span>
                               <Input
-                                id={`provider-install-${providerSettings.binaryPathKey}`}
+                                id={`provider-install-${providerSettings.homePathKey}`}
                                 className="mt-1"
-                                value={binaryPathValue}
+                                value={settings.codexHomePath}
                                 onChange={(event) =>
-                                  updateSettings(
-                                    providerSettings.binaryPathKey === "claudeBinaryPath"
-                                      ? { claudeBinaryPath: event.target.value }
-                                      : { codexBinaryPath: event.target.value },
-                                  )
+                                  updateSettings({
+                                    codexHomePath: event.target.value,
+                                  })
                                 }
-                                placeholder={providerSettings.binaryPlaceholder}
+                                placeholder={providerSettings.homePlaceholder}
                                 spellCheck={false}
                               />
-                              <span className="mt-1 block text-xs text-muted-foreground">
-                                {providerSettings.binaryDescription}
-                              </span>
-                            </label>
-
-                            {providerSettings.homePathKey ? (
-                              <label
-                                htmlFor={`provider-install-${providerSettings.homePathKey}`}
-                                className="block"
-                              >
-                                <span className="block text-xs font-medium text-foreground">
-                                  CODEX_HOME path
+                              {providerSettings.homeDescription ? (
+                                <span className="mt-1 block text-xs text-muted-foreground">
+                                  {providerSettings.homeDescription}
                                 </span>
-                                <Input
-                                  id={`provider-install-${providerSettings.homePathKey}`}
-                                  className="mt-1"
-                                  value={settings.codexHomePath}
-                                  onChange={(event) =>
-                                    updateSettings({ codexHomePath: event.target.value })
-                                  }
-                                  placeholder={providerSettings.homePlaceholder}
-                                  spellCheck={false}
-                                />
-                                {providerSettings.homeDescription ? (
-                                  <span className="mt-1 block text-xs text-muted-foreground">
-                                    {providerSettings.homeDescription}
-                                  </span>
-                                ) : null}
-                              </label>
-                            ) : null}
-                          </div>
+                              ) : null}
+                            </label>
+                          ) : null}
                         </div>
-                      </CollapsibleContent>
-                    </div>
-                  </Collapsible>
-                );
-              })}
-            </div>
+                      </div>
+                    </CollapsibleContent>
+                  </div>
+                </Collapsible>
+              );
+            })}
           </div>
-        </SettingsRow>
+        </div>
+      </SettingsRow>
 
-        <SettingsRow
-          title="Keybindings"
-          description="Open the persisted `keybindings.json` file to edit advanced bindings directly."
-          status={
-            <>
-              <span className="block break-all font-mono text-[11px] text-foreground">
-                {keybindingsConfigPath ?? "Resolving keybindings path..."}
-              </span>
-              {openKeybindingsError ? (
-                <span className="mt-1 block text-destructive">{openKeybindingsError}</span>
-              ) : (
-                <span className="mt-1 block">Opens in your preferred editor.</span>
-              )}
-            </>
-          }
-          control={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!keybindingsConfigPath || isOpeningKeybindings}
-              onClick={openKeybindingsFile}
-            >
-              {isOpeningKeybindings ? "Opening..." : "Open file"}
-            </Button>
-          }
-        />
+      <SettingsRow
+        title="Keybindings"
+        description="Open the persisted `keybindings.json` file to edit advanced bindings directly."
+        status={
+          <>
+            <span className="block break-all font-mono text-[11px] text-foreground">
+              {keybindingsConfigPath ?? "Resolving keybindings path..."}
+            </span>
+            {openKeybindingsError ? (
+              <span className="mt-1 block text-destructive">{openKeybindingsError}</span>
+            ) : (
+              <span className="mt-1 block">Opens in your preferred editor.</span>
+            )}
+          </>
+        }
+        control={
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!keybindingsConfigPath || isOpeningKeybindings}
+            onClick={openKeybindingsFile}
+          >
+            {isOpeningKeybindings ? "Opening..." : "Open file"}
+          </Button>
+        }
+      />
 
-        <SettingsRow
-          title="Version"
-          description="Current application version."
-          control={<code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>}
-        />
-      </SettingsSection>
-    </SettingsPageContainer>
+      <SettingsRow
+        title="Version"
+        description="Current application version."
+        control={<code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>}
+      />
+    </SettingsSection>
   );
 }
 
@@ -909,6 +961,7 @@ export function ArchivedThreadsPanel() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
+  const [hoveredThreadId, setHoveredThreadId] = useState<ThreadId | null>(null);
 
   const archivedGroups = useMemo(() => {
     const projectById = new Map(projects.map((project) => [project.id, project] as const));
@@ -985,9 +1038,14 @@ export function ArchivedThreadsPanel() {
                   {projectThreads.map((thread) => (
                     <div
                       key={thread.id}
-                      className="group relative flex w-full items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-3 text-left transition-colors hover:bg-accent"
+                      className="flex w-full items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-3 text-left transition-colors hover:bg-accent"
+                      onMouseEnter={() => setHoveredThreadId(thread.id)}
+                      onMouseLeave={() =>
+                        setHoveredThreadId((current) => (current === thread.id ? null : current))
+                      }
                       onContextMenu={(event) => {
                         event.preventDefault();
+                        setHoveredThreadId((current) => (current === thread.id ? null : current));
                         void handleArchivedThreadContextMenu(thread.id, {
                           x: event.clientX,
                           y: event.clientY,
@@ -1002,29 +1060,32 @@ export function ArchivedThreadsPanel() {
                           Archived {formatRelativeTime(thread.archivedAt ?? thread.createdAt)}
                         </div>
                       </div>
-                      <div className="relative shrink-0 pl-3">
-                        <div className="text-[11px] text-muted-foreground/70 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
-                          {formatRelativeTime(thread.createdAt)}
-                        </div>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          className="absolute inset-y-1/2 right-0 h-8 -translate-y-1/2 rounded-lg px-2.5 text-xs font-medium opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-                          onClick={() =>
-                            void unarchiveThread(thread.id).catch((error) => {
-                              toastManager.add({
-                                type: "error",
-                                title: "Failed to unarchive thread",
-                                description:
-                                  error instanceof Error ? error.message : "An error occurred.",
-                              });
-                            })
-                          }
-                        >
-                          <ArchiveXIcon className="size-3.5" />
-                          <span>Unarchive</span>
-                        </Button>
+                      <div className="flex min-w-20 shrink-0 justify-end pl-3">
+                        {hoveredThreadId === thread.id ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="h-7 rounded-full px-2.5 gap-1.5 "
+                            onClick={() =>
+                              void unarchiveThread(thread.id).catch((error) => {
+                                toastManager.add({
+                                  type: "error",
+                                  title: "Failed to unarchive thread",
+                                  description:
+                                    error instanceof Error ? error.message : "An error occurred.",
+                                });
+                              })
+                            }
+                          >
+                            <ArchiveX size="3.5" />
+                            <span>Unarchive</span>
+                          </Button>
+                        ) : (
+                          <div className="text-[11px] text-muted-foreground/70">
+                            {formatRelativeTime(thread.createdAt)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
