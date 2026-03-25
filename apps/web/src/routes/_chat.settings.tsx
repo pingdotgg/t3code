@@ -13,7 +13,9 @@ import {
   patchCustomModels,
   resolveAppModelSelectionState,
 } from "../modelSelection";
-import { APP_VERSION } from "../branding";
+import { APP_VERSION, GITHUB_REPO_URL } from "../branding";
+import { ChangelogDialog } from "../components/ChangelogDialog";
+import { GitHubIcon } from "../components/Icons";
 import { Button } from "../components/ui/button";
 import { Collapsible, CollapsibleContent } from "../components/ui/collapsible";
 import { Input } from "../components/ui/input";
@@ -35,7 +37,7 @@ import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { cn } from "../lib/utils";
-import { ensureNativeApi, readNativeApi } from "../nativeApi";
+import { ensureNativeApi, openExternalUrl, readNativeApi } from "../nativeApi";
 
 const THEME_OPTIONS = [
   {
@@ -192,6 +194,7 @@ function SettingsRouteView() {
   const { theme, setTheme } = useTheme();
   const { settings, defaults, updateSettings, resetSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const [settingsChangelogOpen, setSettingsChangelogOpen] = useState(false);
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
   const [openInstallProviders, setOpenInstallProviders] = useState<Record<ProviderKind, boolean>>({
@@ -992,10 +995,38 @@ function SettingsRouteView() {
                 title="Version"
                 description="Current application version."
                 control={
-                  <code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-muted-foreground underline decoration-muted-foreground/30 underline-offset-2 transition-colors hover:text-foreground"
+                      onClick={() => setSettingsChangelogOpen(true)}
+                    >
+                      {APP_VERSION}
+                    </button>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                            onClick={() => openExternalUrl(GITHUB_REPO_URL)}
+                          >
+                            <GitHubIcon className="size-3.5" />
+                          </button>
+                        }
+                      />
+                      <TooltipPopup side="top">Open GitHub repository</TooltipPopup>
+                    </Tooltip>
+                  </div>
                 }
               />
             </SettingsSection>
+
+            <ChangelogDialog
+              open={settingsChangelogOpen}
+              onOpenChange={setSettingsChangelogOpen}
+              highlightVersion={APP_VERSION}
+            />
           </div>
         </div>
       </div>

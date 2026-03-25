@@ -24,3 +24,13 @@ export function ensureNativeApi(): NativeApi {
   }
   return api;
 }
+
+/** Open a URL in the system browser, using the native API when available. */
+export function openExternalUrl(url: string): void {
+  const api = readNativeApi();
+  if (api) {
+    void api.shell.openExternal(url);
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
