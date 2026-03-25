@@ -662,6 +662,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
     [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
   );
+  const selectedTextGenerationModel = settings.textGenerationModelSelection.model;
+  const providerOptionsForDispatch = useMemo(() => getProviderStartOptions(settings), [settings]);
   const selectedModelForPicker = selectedModel;
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
@@ -2710,7 +2712,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           attachments: turnAttachments,
         },
         modelSelection: selectedModelSelection,
-        textGenerationModel: settings.textGenerationModelSelection.model,
+        textGenerationModel: selectedTextGenerationModel,
         ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
@@ -2994,7 +2996,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             attachments: [],
           },
           modelSelection: selectedModelSelection,
-          textGenerationModel: settings.textGenerationModelSelection.model,
+          textGenerationModel: selectedTextGenerationModel,
           ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
@@ -3048,8 +3050,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftInteractionMode,
       setThreadError,
       settings.enableAssistantStreaming,
-      settings.textGenerationModelSelection.model,
       selectedModel,
+      selectedTextGenerationModel,
     ],
   );
 
@@ -3114,7 +3116,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             attachments: [],
           },
           modelSelection: selectedModelSelection,
-          textGenerationModel: settings.textGenerationModelSelection.model,
+          textGenerationModel: selectedTextGenerationModel,
           ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
@@ -3170,7 +3172,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider,
     settings.enableAssistantStreaming,
     providerOptionsForDispatch,
-    settings.textGenerationModelSelection.model,
+    selectedTextGenerationModel,
     syncServerReadModel,
     selectedModel,
   ]);
