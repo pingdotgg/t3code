@@ -3,6 +3,7 @@ import {
   type ClaudeCodeEffort,
   type CodexReasoningEffort,
   DEFAULT_REASONING_EFFORT_BY_PROVIDER,
+  type OrchestrationProposedPlanId,
   ProjectId,
   ProviderInteractionMode,
   ProviderKind,
@@ -14,6 +15,7 @@ import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import { DeepMutable } from "effect/Types";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import { randomUUID } from "~/lib/utils";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
 import {
@@ -26,7 +28,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 2;
+const COMPOSER_DRAFT_STORAGE_VERSION = 3;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -78,6 +80,13 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   modelOptions: Schema.optionalKey(ProviderModelOptions),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  deferredPlanImplementation: Schema.optionalKey(
+    Schema.Struct({
+      sourceThreadId: ThreadId,
+      sourcePlanId: Schema.String,
+      planMarkdown: Schema.String,
+    }),
+  ),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -126,6 +135,11 @@ interface ComposerThreadDraftState {
   modelOptions: ProviderModelOptions | null;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  deferredPlanImplementation: {
+    sourceThreadId: ThreadId;
+    sourcePlanId: OrchestrationProposedPlanId;
+    planMarkdown: string;
+  } | null;
 }
 
 export interface DraftThreadState {
@@ -162,6 +176,17 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
     },
   ) => void;
+  createProjectDraftThread: (
+    projectId: ProjectId,
+    options?: {
+      branch?: string | null;
+      worktreePath?: string | null;
+      createdAt?: string;
+      envMode?: DraftThreadEnvMode;
+      runtimeMode?: RuntimeMode;
+      interactionMode?: ProviderInteractionMode;
+    },
+  ) => ThreadId;
   setDraftThreadContext: (
     threadId: ThreadId,
     options: {
@@ -199,6 +224,17 @@ interface ComposerDraftStoreState {
   setInteractionMode: (
     threadId: ThreadId,
     interactionMode: ProviderInteractionMode | null | undefined,
+  ) => void;
+  setDeferredPlanImplementation: (
+    threadId: ThreadId,
+    metadata:
+      | {
+          sourceThreadId: ThreadId;
+          sourcePlanId: OrchestrationProposedPlanId;
+          planMarkdown: string;
+        }
+      | null
+      | undefined,
   ) => void;
   addImage: (threadId: ThreadId, image: ComposerImageAttachment) => void;
   addImages: (threadId: ThreadId, images: ComposerImageAttachment[]) => void;
@@ -249,6 +285,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   modelOptions: null,
   runtimeMode: null,
   interactionMode: null,
+  deferredPlanImplementation: null,
 });
 
 function createEmptyThreadDraft(): ComposerThreadDraftState {
@@ -263,6 +300,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     modelOptions: null,
     runtimeMode: null,
     interactionMode: null,
+    deferredPlanImplementation: null,
   };
 }
 
@@ -333,8 +371,36 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.model === null &&
     draft.modelOptions === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.deferredPlanImplementation === null
   );
+}
+
+function normalizeDeferredPlanImplementation(
+  value: unknown,
+): ComposerThreadDraftState["deferredPlanImplementation"] {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  const sourceThreadId = candidate.sourceThreadId;
+  const sourcePlanId = candidate.sourcePlanId;
+  const planMarkdown = candidate.planMarkdown;
+  if (
+    typeof sourceThreadId !== "string" ||
+    sourceThreadId.length === 0 ||
+    typeof sourcePlanId !== "string" ||
+    sourcePlanId.length === 0 ||
+    typeof planMarkdown !== "string" ||
+    planMarkdown.length === 0
+  ) {
+    return null;
+  }
+  return {
+    sourceThreadId: sourceThreadId as ThreadId,
+    sourcePlanId: sourcePlanId as OrchestrationProposedPlanId,
+    planMarkdown,
+  };
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
@@ -668,6 +734,9 @@ function normalizePersistedDraftsByThreadId(
         ? draftCandidate.interactionMode
         : null;
     const modelOptions = resolveModelOptions(draftCandidate, provider);
+    const deferredPlanImplementation = normalizeDeferredPlanImplementation(
+      draftCandidate.deferredPlanImplementation,
+    );
     const prompt = ensureInlineTerminalContextPlaceholders(
       promptCandidate,
       terminalContexts.length,
@@ -680,7 +749,8 @@ function normalizePersistedDraftsByThreadId(
       !model &&
       modelOptions === null &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      deferredPlanImplementation === null
     ) {
       continue;
     }
@@ -693,6 +763,7 @@ function normalizePersistedDraftsByThreadId(
       ...(modelOptions ? { modelOptions } : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(deferredPlanImplementation ? { deferredPlanImplementation } : {}),
     };
   }
 
@@ -756,7 +827,8 @@ function partializeComposerDraftStoreState(
       draft.model === null &&
       draft.modelOptions === null &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.deferredPlanImplementation === null
     ) {
       continue;
     }
@@ -781,6 +853,9 @@ function partializeComposerDraftStoreState(
       ...(draft.provider ? { provider: draft.provider } : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.deferredPlanImplementation
+        ? { deferredPlanImplementation: draft.deferredPlanImplementation }
+        : {}),
     };
     persistedDraftsByThreadId[threadId as ThreadId] = persistedDraft;
   }
@@ -963,6 +1038,9 @@ function toHydratedThreadDraft(
     modelOptions: persistedDraft.modelOptions ?? null,
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    deferredPlanImplementation: normalizeDeferredPlanImplementation(
+      persistedDraft.deferredPlanImplementation,
+    ),
   };
 }
 
@@ -996,6 +1074,14 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           return null;
         }
         return get().draftThreadsByThreadId[threadId] ?? null;
+      },
+      createProjectDraftThread: (projectId, options) => {
+        if (projectId.length === 0) {
+          throw new Error("Project ID is required to create a draft thread.");
+        }
+        const threadId = ThreadId.makeUnsafe(randomUUID());
+        get().setProjectDraftThreadId(projectId, threadId, options);
+        return threadId;
       },
       setProjectDraftThreadId: (projectId, threadId, options) => {
         if (projectId.length === 0 || threadId.length === 0) {
@@ -1460,6 +1546,33 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const nextDraft: ComposerThreadDraftState = {
             ...base,
             interactionMode: nextInteractionMode,
+          };
+          const nextDraftsByThreadId = { ...state.draftsByThreadId };
+          if (shouldRemoveDraft(nextDraft)) {
+            delete nextDraftsByThreadId[threadId];
+          } else {
+            nextDraftsByThreadId[threadId] = nextDraft;
+          }
+          return { draftsByThreadId: nextDraftsByThreadId };
+        });
+      },
+      setDeferredPlanImplementation: (threadId, metadata) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        const nextMetadata = normalizeDeferredPlanImplementation(metadata);
+        set((state) => {
+          const existing = state.draftsByThreadId[threadId];
+          if (!existing && nextMetadata === null) {
+            return state;
+          }
+          const base = existing ?? createEmptyThreadDraft();
+          if (Equal.equals(base.deferredPlanImplementation, nextMetadata)) {
+            return state;
+          }
+          const nextDraft: ComposerThreadDraftState = {
+            ...base,
+            deferredPlanImplementation: nextMetadata,
           };
           const nextDraftsByThreadId = { ...state.draftsByThreadId };
           if (shouldRemoveDraft(nextDraft)) {

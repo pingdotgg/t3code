@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { type OrchestrationProposedPlanId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -71,6 +71,8 @@ function resetComposerDraftStore() {
     stickyModelOptions: {},
   });
 }
+
+const DEFERRED_PLAN_ID = "plan-1" as OrchestrationProposedPlanId;
 
 describe("composerDraftStore addImages", () => {
   const threadId = ThreadId.makeUnsafe("thread-dedupe");
@@ -911,6 +913,117 @@ describe("composerDraftStore runtime and interaction settings", () => {
     store.setInteractionMode(threadId, null);
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+});
+
+describe("composerDraftStore deferred plan implementation", () => {
+  const threadId = ThreadId.makeUnsafe("thread-deferred-plan");
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("persists and hydrates deferred implementation metadata", () => {
+    const store = useComposerDraftStore.getState();
+    store.setDeferredPlanImplementation(threadId, {
+      sourceThreadId: ThreadId.makeUnsafe("thread-source"),
+      sourcePlanId: DEFERRED_PLAN_ID,
+      planMarkdown: "# Plan\n\n- step 1",
+    });
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadId?: Record<string, { deferredPlanImplementation?: Record<string, unknown> }>;
+    };
+
+    expect(persistedState.draftsByThreadId?.[threadId]?.deferredPlanImplementation).toEqual({
+      sourceThreadId: "thread-source",
+      sourcePlanId: "plan-1",
+      planMarkdown: "# Plan\n\n- step 1",
+    });
+
+    const mergedState = persistApi
+      .getOptions()
+      .merge(persistedState, useComposerDraftStore.getInitialState());
+
+    expect(mergedState.draftsByThreadId[threadId]?.deferredPlanImplementation).toEqual({
+      sourceThreadId: "thread-source",
+      sourcePlanId: "plan-1",
+      planMarkdown: "# Plan\n\n- step 1",
+    });
+  });
+
+  it("clears deferred implementation metadata when the draft is cleared", () => {
+    const store = useComposerDraftStore.getState();
+    store.setDeferredPlanImplementation(threadId, {
+      sourceThreadId: ThreadId.makeUnsafe("thread-source"),
+      sourcePlanId: DEFERRED_PLAN_ID,
+      planMarkdown: "# Plan\n\n- step 1",
+    });
+
+    store.clearThreadDraft(threadId);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+
+  it("migrates older persisted snapshots with metadata absent", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        migrate: (persistedState: unknown, version: number) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+
+    const migratedState = persistApi.getOptions().migrate(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "hello",
+            attachments: [],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectId: {},
+        stickyModel: null,
+        stickyModelOptions: {},
+      },
+      2,
+    );
+    const mergedState = persistApi
+      .getOptions()
+      .merge(migratedState, useComposerDraftStore.getInitialState());
+
+    expect(mergedState.draftsByThreadId[threadId]?.deferredPlanImplementation).toBeNull();
+  });
+
+  it("retains a draft when only deferred implementation metadata exists", () => {
+    const store = useComposerDraftStore.getState();
+    store.setDeferredPlanImplementation(threadId, {
+      sourceThreadId: ThreadId.makeUnsafe("thread-source"),
+      sourcePlanId: DEFERRED_PLAN_ID,
+      planMarkdown: "# Plan\n\n- step 1",
+    });
+
+    store.clearComposerContent(threadId);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+      deferredPlanImplementation: {
+        sourceThreadId: "thread-source",
+        sourcePlanId: "plan-1",
+        planMarkdown: "# Plan\n\n- step 1",
+      },
+    });
   });
 });
 

@@ -244,7 +244,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
   const markThreadVisited = useStore((store) => store.markThreadVisited);
-  const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const { settings } = useAppSettings();
@@ -275,6 +274,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const setComposerDraftProvider = useComposerDraftStore((store) => store.setProvider);
   const setComposerDraftModel = useComposerDraftStore((store) => store.setModel);
+  const setComposerDraftModelOptions = useComposerDraftStore((store) => store.setModelOptions);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -302,11 +302,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const createProjectDraftThread = useComposerDraftStore((store) => store.createProjectDraftThread);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
+  const setDeferredPlanImplementation = useComposerDraftStore(
+    (store) => store.setDeferredPlanImplementation,
+  );
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
@@ -571,6 +575,55 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [openOrReuseProjectDraftThread],
   );
 
+  const allocateImplementationDraftThread = useCallback((): ThreadId | null => {
+    if (!activeProject) {
+      return null;
+    }
+
+    const currentDraftThread = getDraftThread(threadId);
+    if (!isServerThread && currentDraftThread?.projectId === activeProject.id) {
+      return threadId;
+    }
+
+    const storedDraftThread = getDraftThreadByProjectId(activeProject.id);
+    if (storedDraftThread) {
+      if (storedDraftThread.threadId === threadId) {
+        return storedDraftThread.threadId;
+      }
+      const storedDraft =
+        useComposerDraftStore.getState().draftsByThreadId[storedDraftThread.threadId];
+      const storedDraftHasSendableContent = deriveComposerSendState({
+        prompt: storedDraft?.prompt ?? "",
+        imageCount: storedDraft?.images.length ?? 0,
+        terminalContexts: storedDraft?.terminalContexts ?? [],
+      }).hasSendableContent;
+      if (!storedDraftHasSendableContent && storedDraft?.deferredPlanImplementation == null) {
+        return storedDraftThread.threadId;
+      }
+    }
+
+    clearProjectDraftThreadId(activeProject.id);
+    return createProjectDraftThread(activeProject.id, {
+      createdAt: new Date().toISOString(),
+      runtimeMode,
+      interactionMode: DEFAULT_INTERACTION_MODE,
+      branch: activeThread?.branch ?? null,
+      worktreePath: activeThread?.worktreePath ?? null,
+      envMode: activeThread?.worktreePath ? "worktree" : "local",
+    });
+  }, [
+    activeProject,
+    activeThread?.branch,
+    activeThread?.worktreePath,
+    clearProjectDraftThreadId,
+    createProjectDraftThread,
+    getDraftThread,
+    getDraftThreadByProjectId,
+    isServerThread,
+    runtimeMode,
+    threadId,
+  ]);
+
   useEffect(() => {
     if (!activeThread?.id) return;
     if (!latestTurnSettled) return;
@@ -738,18 +791,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
+  const activeDeferredPlanImplementation = composerDraft.deferredPlanImplementation ?? null;
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
     latestTurnSettled &&
     hasActionableProposedPlan(activeProposedPlan);
+  const showDeferredImplementationPrompt =
+    pendingUserInputs.length === 0 &&
+    activeDeferredPlanImplementation !== null &&
+    !showPlanFollowUpPrompt;
   const activePendingApproval = pendingApprovals[0] ?? null;
   const isComposerApprovalState = activePendingApproval !== null;
   const hasComposerHeader =
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
-    (showPlanFollowUpPrompt && activeProposedPlan !== null);
-  const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+    (showPlanFollowUpPrompt && activeProposedPlan !== null) ||
+    showDeferredImplementationPrompt;
+  const composerFooterHasWideActions =
+    showPlanFollowUpPrompt || showDeferredImplementationPrompt || activePendingProgress !== null;
   const lastSyncedPendingInputRef = useRef<{
     requestId: string | null;
     questionId: string | null;
@@ -2354,7 +2414,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       onAdvanceActivePendingUserInput();
       return;
     }
-    const promptForSend = promptRef.current;
+    let promptForSend = promptRef.current;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -2381,8 +2441,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       return;
     }
+    if (showDeferredImplementationPrompt && activeDeferredPlanImplementation) {
+      const seededImplementationPrompt = buildPlanImplementationPrompt(
+        activeDeferredPlanImplementation.planMarkdown,
+      );
+      const deferredImplementationText = trimmed.length > 0 ? trimmed : seededImplementationPrompt;
+      promptRef.current = "";
+      clearComposerDraftContent(activeThread.id);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      promptForSend = deferredImplementationText;
+    }
+    const hasDeferredImplementationFallback =
+      showDeferredImplementationPrompt &&
+      activeDeferredPlanImplementation !== null &&
+      trimmed.length === 0;
+    const effectiveTrimmedPrompt = promptForSend.trim();
     const standaloneSlashCommand =
-      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
+      !showDeferredImplementationPrompt &&
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
@@ -2394,7 +2473,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerTrigger(null);
       return;
     }
-    if (!hasSendableContent) {
+    if (!hasSendableContent && !hasDeferredImplementationFallback) {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
           expiredTerminalContextCount,
@@ -2531,7 +2610,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           firstComposerImageName = firstComposerImage.name;
         }
       }
-      let titleSeed = trimmed;
+      let titleSeed = activeDeferredPlanImplementation?.planMarkdown
+        ? buildPlanImplementationThreadTitle(activeDeferredPlanImplementation.planMarkdown)
+        : effectiveTrimmedPrompt;
       if (!titleSeed) {
         if (firstComposerImageName) {
           titleSeed = `Image: ${firstComposerImageName}`;
@@ -2628,9 +2709,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
         interactionMode,
+        ...(activeDeferredPlanImplementation
+          ? {
+              sourceProposedPlan: {
+                threadId: activeDeferredPlanImplementation.sourceThreadId,
+                planId: activeDeferredPlanImplementation.sourcePlanId,
+              },
+            }
+          : {}),
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
+      if (activeDeferredPlanImplementation) {
+        setDeferredPlanImplementation(threadIdForSend, null);
+      }
     })().catch(async (err: unknown) => {
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         await api.orchestration
@@ -2966,9 +3058,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const onImplementPlanInNewThread = useCallback(async () => {
-    const api = readNativeApi();
     if (
-      !api ||
       !activeThread ||
       !activeProject ||
       !activeProposedPlan ||
@@ -2980,116 +3070,50 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
 
-    const createdAt = new Date().toISOString();
-    const nextThreadId = newThreadId();
     const planMarkdown = activeProposedPlan.planMarkdown;
-    const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
-    const outgoingImplementationPrompt = formatOutgoingPrompt({
-      provider: selectedProvider,
-      effort: selectedPromptEffort,
-      text: implementationPrompt,
+    const nextThreadId = allocateImplementationDraftThread();
+    if (!nextThreadId) {
+      return;
+    }
+
+    setComposerDraftPrompt(nextThreadId, buildPlanImplementationPrompt(planMarkdown));
+    setComposerDraftProvider(nextThreadId, selectedProvider);
+    setComposerDraftModel(nextThreadId, selectedModel);
+    setComposerDraftModelOptions(nextThreadId, selectedModelOptionsForDispatch);
+    setComposerDraftRuntimeMode(nextThreadId, runtimeMode);
+    setComposerDraftInteractionMode(nextThreadId, "default");
+    setDeferredPlanImplementation(nextThreadId, {
+      sourceThreadId: activeThread.id,
+      sourcePlanId: activeProposedPlan.id,
+      planMarkdown,
     });
-    const nextThreadTitle = truncateTitle(buildPlanImplementationThreadTitle(planMarkdown));
-    const nextThreadModel: ModelSlug =
-      selectedModel ||
-      (activeThread.model as ModelSlug) ||
-      (activeProject.model as ModelSlug) ||
-      DEFAULT_MODEL_BY_PROVIDER.codex;
 
-    sendInFlightRef.current = true;
-    beginSendPhase("sending-turn");
-    const finish = () => {
-      sendInFlightRef.current = false;
-      resetSendPhase();
-    };
-
-    await api.orchestration
-      .dispatchCommand({
-        type: "thread.create",
-        commandId: newCommandId(),
-        threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: nextThreadTitle,
-        model: nextThreadModel,
-        runtimeMode,
-        interactionMode: "default",
-        branch: activeThread.branch,
-        worktreePath: activeThread.worktreePath,
-        createdAt,
-      })
-      .then(() => {
-        return api.orchestration.dispatchCommand({
-          type: "thread.turn.start",
-          commandId: newCommandId(),
-          threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: outgoingImplementationPrompt,
-            attachments: [],
-          },
-          provider: selectedProvider,
-          model: selectedModel || undefined,
-          ...(selectedModelOptionsForDispatch
-            ? { modelOptions: selectedModelOptionsForDispatch }
-            : {}),
-          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
-          runtimeMode,
-          interactionMode: "default",
-          createdAt,
-        });
-      })
-      .then(() => api.orchestration.getSnapshot())
-      .then((snapshot) => {
-        syncServerReadModel(snapshot);
-        // Signal that the plan sidebar should open on the new thread.
-        planSidebarOpenOnNextThreadRef.current = true;
-        return navigate({
-          to: "/$threadId",
-          params: { threadId: nextThreadId },
-        });
-      })
-      .catch(async (err) => {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.delete",
-            commandId: newCommandId(),
-            threadId: nextThreadId,
-          })
-          .catch(() => undefined);
-        await api.orchestration
-          .getSnapshot()
-          .then((snapshot) => {
-            syncServerReadModel(snapshot);
-          })
-          .catch(() => undefined);
-        toastManager.add({
-          type: "error",
-          title: "Could not start implementation thread",
-          description:
-            err instanceof Error ? err.message : "An error occurred while creating the new thread.",
-        });
-      })
-      .then(finish, finish);
+    // Signal that the plan sidebar should open on the new thread.
+    planSidebarOpenOnNextThreadRef.current = true;
+    await navigate({
+      to: "/$threadId",
+      params: { threadId: nextThreadId },
+    });
   }, [
     activeProject,
     activeProposedPlan,
     activeThread,
-    beginSendPhase,
+    allocateImplementationDraftThread,
     isConnecting,
     isSendBusy,
     isServerThread,
     navigate,
-    resetSendPhase,
     runtimeMode,
-    selectedPromptEffort,
     selectedModel,
     selectedModelOptionsForDispatch,
-    providerOptionsForDispatch,
     selectedProvider,
-    settings.enableAssistantStreaming,
-    syncServerReadModel,
+    setComposerDraftInteractionMode,
+    setComposerDraftModel,
+    setComposerDraftModelOptions,
+    setComposerDraftPrompt,
+    setComposerDraftProvider,
+    setComposerDraftRuntimeMode,
+    setDeferredPlanImplementation,
   ]);
 
   const onProviderModelSelect = useCallback(
@@ -3619,6 +3643,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
                       />
                     </div>
+                  ) : showDeferredImplementationPrompt && activeDeferredPlanImplementation ? (
+                    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                      <ComposerPlanFollowUpBanner
+                        key={`${activeDeferredPlanImplementation.sourceThreadId}:${activeDeferredPlanImplementation.sourcePlanId}`}
+                        planTitle={
+                          proposedPlanTitle(activeDeferredPlanImplementation.planMarkdown) ?? null
+                        }
+                      />
+                    </div>
                   ) : null}
                   <div
                     className={cn(
@@ -3734,11 +3767,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             "Resolve this approval request to continue")
                           : activePendingProgress
                             ? "Type your own answer, or leave this blank to use the selected option"
-                            : showPlanFollowUpPrompt && activeProposedPlan
-                              ? "Add feedback to refine the plan, or leave this blank to implement it"
-                              : phase === "disconnected"
-                                ? "Ask for follow-up changes or attach images"
-                                : "Ask anything, @tag files/folders, or use / to show available commands"
+                            : showDeferredImplementationPrompt && activeDeferredPlanImplementation
+                              ? "Review or edit the implementation prompt, then click Implement"
+                              : showPlanFollowUpPrompt && activeProposedPlan
+                                ? "Add feedback to refine the plan, or leave this blank to implement it"
+                                : phase === "disconnected"
+                                  ? "Ask for follow-up changes or attach images"
+                                  : "Ask anything, @tag files/folders, or use / to show available commands"
                       }
                       disabled={isConnecting || isComposerApprovalState}
                     />
@@ -4003,6 +4038,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 </Menu>
                               </div>
                             )
+                          ) : showDeferredImplementationPrompt ? (
+                            <Button
+                              type="submit"
+                              size="sm"
+                              className="h-9 rounded-full px-4 sm:h-8"
+                              disabled={isSendBusy || isConnecting}
+                            >
+                              {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+                            </Button>
                           ) : (
                             <button
                               type="submit"

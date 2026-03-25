@@ -36,6 +36,7 @@ async function mountPicker(props?: {
     },
     runtimeMode: null,
     interactionMode: null,
+    deferredPlanImplementation: null,
   };
   useComposerDraftStore.setState({
     draftsByThreadId,

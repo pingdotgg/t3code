@@ -32,6 +32,7 @@ async function mountMenu(props?: {
     modelOptions: props?.modelOptions ?? null,
     runtimeMode: null,
     interactionMode: null,
+    deferredPlanImplementation: null,
   };
   useComposerDraftStore.setState({
     draftsByThreadId,

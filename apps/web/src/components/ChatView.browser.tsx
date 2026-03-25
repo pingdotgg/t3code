@@ -27,6 +27,7 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
+import { buildPlanImplementationPrompt } from "../proposedPlan";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
@@ -394,6 +395,47 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithActionablePlan(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-plan-actionable-target" as MessageId,
+    targetText: "plan thread",
+  });
+  const thread = snapshot.threads[0]!;
+  return {
+    ...snapshot,
+    threads: [
+      {
+        ...thread,
+        interactionMode: "plan",
+        latestTurn: {
+          turnId: "turn-plan-actionable" as never,
+          state: "completed",
+          requestedAt: isoAt(119),
+          startedAt: isoAt(120),
+          completedAt: isoAt(180),
+          assistantMessageId: null,
+        },
+        proposedPlans: [
+          {
+            id: "plan-browser-test" as never,
+            turnId: "turn-plan-actionable" as never,
+            planMarkdown: "# Ship plan mode follow-up\n\n- Step 1\n- Step 2",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: isoAt(170),
+            updatedAt: isoAt(171),
+          },
+        ],
+        session: {
+          ...thread.session!,
+          status: "ready",
+          activeTurnId: null,
+        },
+      },
+    ],
+  };
+}
+
 function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   const tag = body._tag;
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
@@ -573,6 +615,16 @@ async function waitForSendButton(): Promise<HTMLButtonElement> {
   return waitForElement(
     () => document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]'),
     "Unable to find send button.",
+  );
+}
+
+async function waitForButtonByText(text: string): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === text,
+      ) as HTMLButtonElement | null,
+    `Unable to find ${text} button.`,
   );
 }
 
@@ -1774,6 +1826,133 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Shortcut should create a fresh draft instead of reusing the promoted thread.",
       );
       expect(freshThreadPath).not.toBe(promotedThreadPath);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("defers plan implementation into a draft thread and sends selected adapter settings on Implement", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithActionablePlan(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            ...nextFixture.serverConfig.providers,
+            {
+              provider: "claudeAgent",
+              status: "ready",
+              available: true,
+              authStatus: "authenticated",
+              checkedAt: NOW_ISO,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const implementationMenuButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Implementation actions"]'),
+        "Unable to find implementation actions button.",
+      );
+      implementationMenuButton.click();
+
+      const implementInNewThreadButton = await waitForButtonByText("Implement in a new thread");
+      implementInNewThreadButton.click();
+
+      const draftThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should change to a deferred implementation draft thread UUID.",
+      );
+      const draftThreadId = draftThreadPath.slice(1) as ThreadId;
+
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            (request.command as { type?: string } | undefined)?.type === "thread.create",
+        ),
+      ).toBe(false);
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            (request.command as { type?: string } | undefined)?.type === "thread.turn.start",
+        ),
+      ).toBe(false);
+
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(
+        () => {
+          expect(composerEditor.textContent).toContain(
+            buildPlanImplementationPrompt("# Ship plan mode follow-up\n\n- Step 1\n- Step 2"),
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      await expect.element(page.getByRole("button", { name: "Implement" })).toBeInTheDocument();
+      expect(document.querySelector('button[aria-label="Send message"]')).toBeNull();
+      expect(document.body.textContent).not.toContain("Implement in a new thread");
+
+      const providerPickerButton = await waitForElement(
+        () =>
+          Array.from(
+            document.querySelectorAll<HTMLButtonElement>(
+              '[data-chat-composer-footer="true"] button',
+            ),
+          ).find((button) => button.textContent?.includes("GPT-5")) ?? null,
+        "Unable to find provider/model picker trigger.",
+      );
+      providerPickerButton.click();
+      await vi.waitFor(() => {
+        const text = document.body.textContent ?? "";
+        expect(text).toContain("Codex");
+        expect(text).toContain("Claude");
+      });
+      await page.getByText("Claude").click();
+      await page.getByRole("menuitemradio", { name: "Claude Opus 4.6" }).click();
+
+      await vi.waitFor(() => {
+        expect(useComposerDraftStore.getState().draftsByThreadId[draftThreadId]).toMatchObject({
+          provider: "claudeAgent",
+          model: "claude-opus-4-6",
+          deferredPlanImplementation: {
+            sourceThreadId: THREAD_ID,
+            sourcePlanId: "plan-browser-test",
+          },
+        });
+      });
+
+      const implementButton = await waitForButtonByText("Implement");
+      implementButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequests = wsRequests.filter(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          ) as Array<{ command?: Record<string, unknown> }>;
+          expect(
+            dispatchRequests.some((request) => request.command?.type === "thread.create"),
+          ).toBe(true);
+          const turnStartRequest = dispatchRequests.find(
+            (request) => request.command?.type === "thread.turn.start",
+          );
+          expect(turnStartRequest?.command).toMatchObject({
+            threadId: draftThreadId,
+            provider: "claudeAgent",
+            model: "claude-opus-4-6",
+            sourceProposedPlan: {
+              threadId: THREAD_ID,
+              planId: "plan-browser-test",
+            },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
