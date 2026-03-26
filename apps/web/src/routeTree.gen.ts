@@ -71,9 +71,19 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$threadId' | '/settings' | '/settings/archived' | '/settings/general'
+  fullPaths:
+    | '/'
+    | '/$threadId'
+    | '/settings'
+    | '/settings/archived'
+    | '/settings/general'
   fileRoutesByTo: FileRoutesByTo
-  to: '/$threadId' | '/settings' | '/' | '/settings/archived' | '/settings/general'
+  to:
+    | '/$threadId'
+    | '/settings'
+    | '/'
+    | '/settings/archived'
+    | '/settings/general'
   id:
     | '__root__'
     | '/_chat'
