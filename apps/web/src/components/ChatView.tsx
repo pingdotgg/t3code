@@ -24,10 +24,8 @@ import {
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
-  getDefaultModel,
   getProviderCapabilities,
   normalizeModelSlug,
-  resolveModelSlugForProvider,
   supportsClaudeAdaptiveReasoning,
 } from "@t3tools/shared/model";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -131,6 +129,7 @@ import {
   useAppSettings,
 } from "../appSettings";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { makeModelSelection, sameModelSelection } from "../lib/composerModelSelection";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -624,12 +623,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [selectedProvider],
   );
   const requiresStreamingDelivery = selectedProviderCapabilities.requiresStreamingDelivery;
-  const baseThreadModel = resolveModelSlugForProvider(
-    selectedProvider,
-    activeThread?.modelSelection?.model ??
-      activeProject?.defaultModelSelection?.model ??
-      getDefaultModel(selectedProvider),
-  );
   const customModelsByProvider = useMemo(() => getCustomModelsByProvider(settings), [settings]);
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadId,
@@ -649,13 +642,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [composerModelOptions, prompt, selectedModel, selectedProvider],
   );
   const selectedPromptEffort = composerProviderState.promptEffort;
-  const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
+  const selectedModelOptionsForDispatch =
+    composerProviderState.modelOptionsForDispatch?.[selectedProvider];
   const selectedModelSelection = useMemo<ModelSelection>(
-    () => ({
-      provider: selectedProvider,
-      model: selectedModel,
-      ...(selectedModelOptionsForDispatch ? { options: selectedModelOptionsForDispatch } : {}),
-    }),
+    () => makeModelSelection(selectedProvider, selectedModel, selectedModelOptionsForDispatch),
     [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
   );
   const providerOptionsForDispatch = useMemo(() => getProviderStartOptions(settings), [settings]);
@@ -1645,10 +1635,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       if (
         input.modelSelection !== undefined &&
-        (input.modelSelection.model !== serverThread.modelSelection.model ||
-          input.modelSelection.provider !== serverThread.modelSelection.provider ||
-          JSON.stringify(input.modelSelection.options ?? null) !==
-            JSON.stringify(serverThread.modelSelection.options ?? null))
+        !sameModelSelection(input.modelSelection, serverThread.modelSelection)
       ) {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
@@ -2586,14 +2573,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
       }
       const title = truncateTitle(titleSeed);
-      const threadCreateModelSelection: ModelSelection = {
-        provider: selectedProvider,
-        model:
-          selectedModel ||
+      const threadCreateModelSelection: ModelSelection = makeModelSelection(
+        selectedProvider,
+        selectedModel ||
           activeProject.defaultModelSelection?.model ||
           DEFAULT_MODEL_BY_PROVIDER.codex,
-        ...(selectedModelSelection.options ? { options: selectedModelSelection.options } : {}),
-      };
+        selectedModelSelection.options,
+      );
 
       if (isLocalDraftThread) {
         await api.orchestration.dispatchCommand({
@@ -2671,7 +2657,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         },
         modelSelection: selectedModelSelection,
         ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
-        provider: selectedProvider,
         assistantDeliveryMode:
           settings.enableAssistantStreaming || requiresStreamingDelivery ? "streaming" : "buffered",
         runtimeMode,
@@ -3146,10 +3131,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
       const resolvedModel = resolveAppModelSelection(provider, customModelsByProvider, model);
-      const nextModelSelection: ModelSelection = {
-        provider,
-        model: resolvedModel,
-      };
+      const nextModelSelection: ModelSelection = makeModelSelection(provider, resolvedModel);
       setComposerDraftModelSelection(activeThread.id, nextModelSelection);
       setStickyComposerModelSelection(nextModelSelection);
       scheduleComposerFocus();

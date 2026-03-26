@@ -143,11 +143,30 @@ function sanitizeRemoteName(value: string): string {
 }
 
 function normalizeRemoteUrl(value: string): string {
-  return value
-    .trim()
-    .replace(/\/+$/g, "")
-    .replace(/\.git$/i, "")
-    .toLowerCase();
+  const trimmed = value.trim();
+  const canonicalizePath = (path: string) =>
+    path
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/\.git$/i, "")
+      .toLowerCase();
+
+  const scpLike = /^([^@]+)@([^:]+):(.+)$/.exec(trimmed);
+  if (scpLike) {
+    const [, , host = "", path = ""] = scpLike;
+    return `${host.toLowerCase()}/${canonicalizePath(path)}`;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.host.toLowerCase();
+    const path = canonicalizePath(parsed.pathname);
+    return `${host}/${path}`;
+  } catch {
+    return trimmed
+      .replace(/\/+$/g, "")
+      .replace(/\.git$/i, "")
+      .toLowerCase();
+  }
 }
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {

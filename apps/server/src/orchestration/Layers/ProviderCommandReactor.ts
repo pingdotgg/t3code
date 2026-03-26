@@ -3,11 +3,11 @@ import {
   CommandId,
   DEFAULT_GIT_TEXT_GENERATION_MODEL,
   EventId,
+  type ModelSelection,
   type OrchestrationEvent,
-  type ProviderModelOptions,
   ProviderKind,
-  type ProviderStartOptions,
   type OrchestrationSession,
+  type ProviderStartOptions,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -76,16 +76,31 @@ const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const WORKTREE_BRANCH_PREFIX = "t3code";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 
-const sameModelOptions = (
-  left: ProviderModelOptions | undefined,
-  right: ProviderModelOptions | undefined,
+const normalizeJson = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeJson(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, normalizeJson(entry)]),
+    );
+  }
+  return value;
+};
+
+const sameModelSelection = (
+  left: ModelSelection | undefined,
+  right: ModelSelection | undefined,
 ): boolean => {
   if (left === right) return true;
-  if (left == null && right == null) return true;
-  if (left == null || right == null) return false;
-  const sortedStringify = (obj: unknown): string =>
-    JSON.stringify(obj, Object.keys(obj as Record<string, unknown>).sort());
-  return sortedStringify(left) === sortedStringify(right);
+  if (left == null || right == null) return left == null && right == null;
+  if (left.provider !== right.provider || left.model !== right.model) return false;
+  return (
+    JSON.stringify(normalizeJson(left.options ?? null)) ===
+    JSON.stringify(normalizeJson(right.options ?? null))
+  );
 };
 
 function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
@@ -165,7 +180,7 @@ const make = Effect.gen(function* () {
     );
 
   const threadProviderOptions = new Map<string, ProviderStartOptions>();
-  const threadModelOptions = new Map<string, ProviderModelOptions>();
+  const threadModelSelections = new Map<string, ModelSelection>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -222,9 +237,7 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     createdAt: string,
     options?: {
-      readonly provider?: ProviderKind;
-      readonly model?: string;
-      readonly modelOptions?: ProviderModelOptions;
+      readonly modelSelection?: ModelSelection;
       readonly providerOptions?: ProviderStartOptions;
     },
   ) {
@@ -241,25 +254,30 @@ const make = Effect.gen(function* () {
       ? thread.session.providerName
       : undefined;
     const threadProvider: ProviderKind = currentProvider ?? thread.modelSelection.provider;
+    const requestedModelSelection = options?.modelSelection;
     const explicitProviderSwitch =
-      options?.provider !== undefined && options.provider !== threadProvider;
-    const effectiveProvider: ProviderKind = explicitProviderSwitch
-      ? options.provider
-      : threadProvider;
+      requestedModelSelection !== undefined && requestedModelSelection.provider !== threadProvider;
+    if (explicitProviderSwitch && requestedModelSelection) {
+      return yield* new ProviderAdapterRequestError({
+        provider: threadProvider,
+        method: "thread.turn.start",
+        detail: `Thread '${threadId}' is bound to provider '${threadProvider}' and cannot switch to '${requestedModelSelection.provider}'.`,
+      });
+    }
+    const effectiveProvider: ProviderKind = requestedModelSelection?.provider ?? threadProvider;
     if (
-      options?.model !== undefined &&
-      inferProviderForModel(options.model, effectiveProvider) !== effectiveProvider
+      requestedModelSelection !== undefined &&
+      inferProviderForModel(requestedModelSelection.model, effectiveProvider) !== effectiveProvider
     ) {
       return yield* new ProviderAdapterRequestError({
         provider: effectiveProvider,
         method: "thread.turn.start",
-        detail: `Model '${options.model}' does not belong to provider '${effectiveProvider}' for thread '${threadId}'.`,
+        detail: `Model '${requestedModelSelection.model}' does not belong to provider '${effectiveProvider}' for thread '${threadId}'.`,
       });
     }
-    const preferredProvider: ProviderKind = explicitProviderSwitch
-      ? options.provider
-      : (currentProvider ?? threadProvider);
-    const desiredModel = options?.model ?? thread.modelSelection.model;
+    const preferredProvider: ProviderKind =
+      requestedModelSelection?.provider ?? currentProvider ?? threadProvider;
+    const desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
     const effectiveCwd = resolveThreadWorkspaceCwd({
       thread,
       projects: readModel.projects,
@@ -280,8 +298,7 @@ const make = Effect.gen(function* () {
           ? { provider: input?.provider ?? preferredProvider }
           : {}),
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-        ...(desiredModel ? { model: desiredModel } : {}),
-        ...(options?.modelOptions !== undefined ? { modelOptions: options.modelOptions } : {}),
+        ...(desiredModelSelection ? { modelSelection: desiredModelSelection } : {}),
         ...(options?.providerOptions !== undefined
           ? { providerOptions: options.providerOptions }
           : {}),
@@ -310,19 +327,22 @@ const make = Effect.gen(function* () {
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const providerChanged =
-        options?.provider !== undefined && options.provider !== currentProvider;
+        requestedModelSelection !== undefined &&
+        requestedModelSelection.provider !== (currentProvider ?? threadProvider);
       const activeSession = yield* resolveActiveSession(existingSessionThreadId);
       const sessionModelSwitch =
         currentProvider === undefined
           ? "in-session"
           : (yield* providerService.getCapabilities(currentProvider)).sessionModelSwitch;
-      const modelChanged = options?.model !== undefined && options.model !== activeSession?.model;
+      const modelChanged =
+        requestedModelSelection !== undefined &&
+        requestedModelSelection.model !== activeSession?.model;
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "restart-session";
-      const previousModelOptions = threadModelOptions.get(threadId);
+      const previousModelSelection = threadModelSelections.get(threadId) ?? thread.modelSelection;
       const shouldRestartForModelOptionsChange =
-        currentProvider === "claudeAgent" &&
-        options?.modelOptions !== undefined &&
-        !sameModelOptions(previousModelOptions, options.modelOptions);
+        requestedModelSelection?.provider === "claudeAgent" &&
+        requestedModelSelection.model === previousModelSelection.model &&
+        !sameModelSelection(previousModelSelection, requestedModelSelection);
 
       if (
         !runtimeModeChanged &&
@@ -341,7 +361,7 @@ const make = Effect.gen(function* () {
         threadId,
         existingSessionThreadId,
         currentProvider,
-        desiredProvider: options?.provider ?? currentProvider,
+        desiredProvider: requestedModelSelection?.provider ?? currentProvider,
         currentRuntimeMode: thread.session?.runtimeMode,
         desiredRuntimeMode: thread.runtimeMode,
         runtimeModeChanged,
@@ -353,7 +373,9 @@ const make = Effect.gen(function* () {
       });
       const restartedSession = yield* startProviderSession({
         ...(resumeCursor !== undefined ? { resumeCursor } : {}),
-        ...(options?.provider !== undefined ? { provider: options.provider } : {}),
+        ...(requestedModelSelection !== undefined
+          ? { provider: requestedModelSelection.provider }
+          : {}),
       });
       yield* Effect.logInfo("provider command reactor restarted provider session", {
         threadId,
@@ -367,7 +389,9 @@ const make = Effect.gen(function* () {
     }
 
     const startedSession = yield* startProviderSession(
-      options?.provider !== undefined ? { provider: options.provider } : undefined,
+      requestedModelSelection !== undefined
+        ? { provider: requestedModelSelection.provider }
+        : undefined,
     );
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
@@ -377,9 +401,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
-    readonly provider?: ProviderKind;
-    readonly model?: string;
-    readonly modelOptions?: ProviderModelOptions;
+    readonly modelSelection?: ModelSelection;
     readonly providerOptions?: ProviderStartOptions;
     readonly interactionMode?: "default" | "plan";
     readonly createdAt: string;
@@ -389,16 +411,14 @@ const make = Effect.gen(function* () {
       return;
     }
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
-      ...(input.provider !== undefined ? { provider: input.provider } : {}),
-      ...(input.model !== undefined ? { model: input.model } : {}),
-      ...(input.modelOptions !== undefined ? { modelOptions: input.modelOptions } : {}),
+      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
     });
     if (input.providerOptions !== undefined) {
       threadProviderOptions.set(input.threadId, input.providerOptions);
     }
-    if (input.modelOptions !== undefined) {
-      threadModelOptions.set(input.threadId, input.modelOptions);
+    if (input.modelSelection !== undefined) {
+      threadModelSelections.set(input.threadId, input.modelSelection);
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
@@ -411,14 +431,18 @@ const make = Effect.gen(function* () {
       activeSession === undefined
         ? "in-session"
         : (yield* providerService.getCapabilities(activeSession.provider)).sessionModelSwitch;
-    const modelForTurn = sessionModelSwitch === "unsupported" ? activeSession?.model : input.model;
+    const modelSelectionForTurn =
+      sessionModelSwitch === "unsupported"
+        ? activeSession?.model
+          ? { provider: activeSession.provider, model: activeSession.model }
+          : input.modelSelection
+        : input.modelSelection;
 
     yield* providerService.sendTurn({
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
-      ...(modelForTurn !== undefined ? { model: modelForTurn } : {}),
-      ...(input.modelOptions !== undefined ? { modelOptions: input.modelOptions } : {}),
+      ...(modelSelectionForTurn !== undefined ? { modelSelection: modelSelectionForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
     });
   });
@@ -531,10 +555,8 @@ const make = Effect.gen(function* () {
       threadId: event.payload.threadId,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
-      ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
-      ...(event.payload.modelOptions !== undefined
-        ? { modelOptions: event.payload.modelOptions }
+      ...(event.payload.modelSelection !== undefined
+        ? { modelSelection: event.payload.modelSelection }
         : {}),
       ...(event.payload.providerOptions !== undefined
         ? { providerOptions: event.payload.providerOptions }
@@ -705,12 +727,12 @@ const make = Effect.gen(function* () {
             return;
           }
           const cachedProviderOptions = threadProviderOptions.get(event.payload.threadId);
-          const cachedModelOptions = threadModelOptions.get(event.payload.threadId);
+          const cachedModelSelection = threadModelSelections.get(event.payload.threadId);
           yield* ensureSessionForThread(event.payload.threadId, event.occurredAt, {
             ...(cachedProviderOptions !== undefined
               ? { providerOptions: cachedProviderOptions }
               : {}),
-            ...(cachedModelOptions !== undefined ? { modelOptions: cachedModelOptions } : {}),
+            ...(cachedModelSelection !== undefined ? { modelSelection: cachedModelSelection } : {}),
           });
           return;
         }

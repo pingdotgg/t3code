@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { ThreadId, TurnId } from "@t3tools/contracts";
+import { ProviderItemId, ThreadId, TurnId } from "@t3tools/contracts";
 
 import { mapFactoryDroidNotification } from "./FactoryDroidRuntimeEvents.ts";
 
@@ -39,7 +39,7 @@ it("uses create_message text blocks as a fallback when no assistant delta was st
   assert.equal(event.itemId, "tool-1");
   assert.deepEqual(event.providerRefs, {
     providerTurnId: turnId,
-    providerItemId: "tool-1",
+    providerItemId: ProviderItemId.makeUnsafe("tool-1"),
   });
   assert.deepEqual(event.raw, {
     source: "factorydroid.jsonrpc.notification",
@@ -102,7 +102,7 @@ it("preserves raw payload and provider refs for tool results", () => {
   assert.equal(event.itemId, "tool-2");
   assert.deepEqual(event.providerRefs, {
     providerTurnId: turnId,
-    providerItemId: "tool-2",
+    providerItemId: ProviderItemId.makeUnsafe("tool-2"),
   });
   assert.deepEqual(event.raw, {
     source: "factorydroid.jsonrpc.notification",

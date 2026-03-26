@@ -649,8 +649,11 @@ function parseModelsFromExecHelp(helpText: string): ReadonlyArray<{ slug: string
     if (!inModels) continue;
     const match = MODEL_LINE_RE.exec(line);
     if (match) {
-      const slug = match[1].trim();
-      const rawName = match[2].trim();
+      const slugMatch = match[1];
+      const rawNameMatch = match[2];
+      if (!slugMatch || !rawNameMatch) continue;
+      const slug = slugMatch.trim();
+      const rawName = rawNameMatch.trim();
       if (slug.includes("[") || rawName.toLowerCase().includes("deprecated")) continue;
       models.push({ slug, name: rawName });
     }
