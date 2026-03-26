@@ -2,27 +2,22 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   type ModelSelection,
   type ProviderKind,
+  type ServerProvider,
 } from "@t3tools/contracts";
-import {
-  getDefaultModel,
-  getModelOptions,
-  normalizeModelSlug,
-  resolveSelectableModel,
-} from "@t3tools/shared/model";
+import { normalizeModelSlug, resolveSelectableModel } from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderRegistry";
+import { UnifiedSettings } from "@t3tools/contracts/settings";
+import {
+  getDefaultServerModel,
+  getProviderModels,
+  resolveSelectableProvider,
+} from "./providerModels";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 
-export type CustomModelSettings = {
-  customCodexModels: readonly string[];
-  customClaudeModels: readonly string[];
-};
-
 export type ProviderCustomModelConfig = {
   provider: ProviderKind;
-  settingsKey: keyof CustomModelSettings;
-  defaultSettingsKey: keyof CustomModelSettings;
   title: string;
   description: string;
   placeholder: string;
@@ -38,8 +33,6 @@ export interface AppModelOption {
 const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConfig> = {
   codex: {
     provider: "codex",
-    settingsKey: "customCodexModels",
-    defaultSettingsKey: "customCodexModels",
     title: "Codex",
     description: "Save additional Codex model slugs for the picker and `/model` command.",
     placeholder: "your-codex-model-slug",
@@ -47,8 +40,6 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
   },
   claudeAgent: {
     provider: "claudeAgent",
-    settingsKey: "customClaudeModels",
-    defaultSettingsKey: "customClaudeModels",
     title: "Claude",
     description: "Save additional Claude model slugs for the picker and `/model` command.",
     placeholder: "your-claude-model-slug",
@@ -56,20 +47,15 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
   },
 };
 
-const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
-  codex: new Set(getModelOptions("codex").map((option) => option.slug)),
-  claudeAgent: new Set(getModelOptions("claudeAgent").map((option) => option.slug)),
-};
-
 export const MODEL_PROVIDER_SETTINGS = Object.values(PROVIDER_CUSTOM_MODEL_CONFIG);
 
 export function normalizeCustomModelSlugs(
   models: Iterable<string | null | undefined>,
+  builtInModelSlugs: ReadonlySet<string>,
   provider: ProviderKind = "codex",
 ): string[] {
   const normalizedModels: string[] = [];
   const seen = new Set<string>();
-  const builtInModelSlugs = BUILT_IN_MODEL_SLUGS_BY_PROVIDER[provider];
 
   for (const candidate of models) {
     const normalized = normalizeModelSlug(candidate, provider);
@@ -92,52 +78,29 @@ export function normalizeCustomModelSlugs(
   return normalizedModels;
 }
 
-export function getCustomModelsForProvider(
-  settings: CustomModelSettings,
-  provider: ProviderKind,
-): readonly string[] {
-  return settings[PROVIDER_CUSTOM_MODEL_CONFIG[provider].settingsKey];
-}
-
-export function getDefaultCustomModelsForProvider(
-  defaults: CustomModelSettings,
-  provider: ProviderKind,
-): readonly string[] {
-  return defaults[PROVIDER_CUSTOM_MODEL_CONFIG[provider].defaultSettingsKey];
-}
-
-export function patchCustomModels(
-  provider: ProviderKind,
-  models: string[],
-): Partial<CustomModelSettings> {
-  return {
-    [PROVIDER_CUSTOM_MODEL_CONFIG[provider].settingsKey]: models,
-  };
-}
-
-export function getCustomModelsByProvider(
-  settings: CustomModelSettings,
-): Record<ProviderKind, readonly string[]> {
-  return {
-    codex: getCustomModelsForProvider(settings, "codex"),
-    claudeAgent: getCustomModelsForProvider(settings, "claudeAgent"),
-  };
-}
-
 export function getAppModelOptions(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
   provider: ProviderKind,
-  customModels: readonly string[],
   selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = getModelOptions(provider).map(({ slug, name }) => ({
-    slug,
-    name,
-    isCustom: false,
-  }));
+  const options: AppModelOption[] = getProviderModels(providers, provider).map(
+    ({ slug, name, isCustom }) => ({
+      slug,
+      name,
+      isCustom,
+    }),
+  );
   const seen = new Set(options.map((option) => option.slug));
   const trimmedSelectedModel = selectedModel?.trim().toLowerCase();
+  const builtInModelSlugs = new Set(
+    getProviderModels(providers, provider)
+      .filter((model) => !model.isCustom)
+      .map((model) => model.slug),
+  );
 
-  for (const slug of normalizeCustomModelSlugs(customModels, provider)) {
+  const customModels = settings.providers[provider].customModels;
+  for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs, provider)) {
     if (seen.has(slug)) {
       continue;
     }
@@ -171,52 +134,61 @@ export function getAppModelOptions(
 
 export function resolveAppModelSelection(
   provider: ProviderKind,
-  customModels: Record<ProviderKind, readonly string[]>,
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
   selectedModel: string | null | undefined,
 ): string {
-  const customModelsForProvider = customModels[provider];
-  const options = getAppModelOptions(provider, customModelsForProvider, selectedModel);
-  return resolveSelectableModel(provider, selectedModel, options) ?? getDefaultModel(provider);
+  const resolvedProvider = resolveSelectableProvider(providers, provider);
+  const options = getAppModelOptions(settings, providers, resolvedProvider, selectedModel);
+  return (
+    resolveSelectableModel(resolvedProvider, selectedModel, options) ??
+    getDefaultServerModel(providers, resolvedProvider)
+  );
 }
 
 export function getCustomModelOptionsByProvider(
-  settings: CustomModelSettings,
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
   selectedProvider?: ProviderKind | null,
   selectedModel?: string | null,
 ): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
-  const customModelsByProvider = getCustomModelsByProvider(settings);
   return {
     codex: getAppModelOptions(
+      settings,
+      providers,
       "codex",
-      customModelsByProvider.codex,
       selectedProvider === "codex" ? selectedModel : undefined,
     ),
     claudeAgent: getAppModelOptions(
+      settings,
+      providers,
       "claudeAgent",
-      customModelsByProvider.claudeAgent,
       selectedProvider === "claudeAgent" ? selectedModel : undefined,
     ),
   };
 }
 
 export function resolveAppModelSelectionState(
-  settings: CustomModelSettings & {
-    textGenerationModelSelection: ModelSelection | undefined;
-  },
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
   const selection = settings.textGenerationModelSelection ?? {
     provider: "codex" as const,
     model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
   };
-  const provider = selection.provider;
-  const customModelsByProvider = getCustomModelsByProvider(settings);
-  const model = resolveAppModelSelection(provider, customModelsByProvider, selection.model);
+  const provider = resolveSelectableProvider(providers, selection.provider);
+
+  // When the provider changed due to fallback (e.g. selected provider was disabled),
+  // don't carry over the old provider's model — use the fallback provider's default.
+  const selectedModel = provider === selection.provider ? selection.model : null;
+  const model = resolveAppModelSelection(provider, settings, providers, selectedModel);
   const { modelOptionsForDispatch } = getComposerProviderState({
     provider,
     model,
+    models: getProviderModels(providers, provider),
     prompt: "",
     modelOptions: {
-      [provider]: selection.options,
+      [provider]: provider === selection.provider ? selection.options : undefined,
     },
   });
 

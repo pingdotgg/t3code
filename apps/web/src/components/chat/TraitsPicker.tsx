@@ -3,11 +3,11 @@ import {
   type CodexModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
+  type ServerProviderModel,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
-  getModelCapabilities,
   isClaudeUltrathinkPrompt,
   trimOrNull,
   getDefaultEffort,
@@ -27,6 +27,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { useComposerDraftStore } from "../../composerDraftStore";
+import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 
 type ProviderOptions = ProviderModelOptions[ProviderKind];
@@ -65,12 +66,13 @@ function buildNextOptions(
 
 function getSelectedTraits(
   provider: ProviderKind,
+  models: ReadonlyArray<ServerProviderModel>,
   model: string | null | undefined,
   prompt: string,
   modelOptions: ProviderOptions | null | undefined,
   allowPromptInjectedEffort: boolean,
 ) {
-  const caps = getModelCapabilities(provider, model);
+  const caps = getProviderModelCapabilities(models, model, provider);
   const effortLevels = allowPromptInjectedEffort
     ? caps.reasoningEffortLevels
     : caps.reasoningEffortLevels.filter(
@@ -120,6 +122,7 @@ function getSelectedTraits(
 
 export interface TraitsMenuContentProps {
   provider: ProviderKind;
+  models: ReadonlyArray<ServerProviderModel>;
   model: string | null | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
@@ -131,6 +134,7 @@ export interface TraitsMenuContentProps {
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   provider,
+  models,
   model,
   prompt,
   onPromptChange,
@@ -156,7 +160,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     thinkingEnabled,
     fastModeEnabled,
     ultrathinkPromptControlled,
-  } = getSelectedTraits(provider, model, prompt, modelOptions, allowPromptInjectedEffort);
+  } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
   const defaultEffort = getDefaultEffort(caps);
 
   const handleEffortChange = useCallback(
@@ -260,6 +264,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
 
 export const TraitsPicker = memo(function TraitsPicker({
   provider,
+  models,
   model,
   prompt,
   onPromptChange,
@@ -277,7 +282,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     thinkingEnabled,
     fastModeEnabled,
     ultrathinkPromptControlled,
-  } = getSelectedTraits(provider, model, prompt, modelOptions, allowPromptInjectedEffort);
+  } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
 
   const effortLabel = effort
     ? (effortLevels.find((l) => l.value === effort)?.label ?? effort)
@@ -333,6 +338,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       <MenuPopup align="start">
         <TraitsMenuContent
           provider={provider}
+          models={models}
           model={model}
           prompt={prompt}
           onPromptChange={onPromptChange}

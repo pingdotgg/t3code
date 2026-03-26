@@ -6,6 +6,13 @@ export const serverQueryKeys = {
   config: () => ["server", "config"] as const,
 };
 
+/**
+ * Server config query options.
+ *
+ * `staleTime` is kept short so that push-driven `invalidateQueries` calls in
+ * the EventRouter always trigger a refetch, and so the query re-fetches when
+ * the component re-mounts (e.g. navigating away from settings and back).
+ */
 export function serverConfigQueryOptions() {
   return queryOptions({
     queryKey: serverQueryKeys.config(),
@@ -13,6 +20,5 @@ export function serverConfigQueryOptions() {
       const api = ensureNativeApi();
       return api.server.getConfig();
     },
-    staleTime: Infinity,
   });
 }

@@ -7,6 +7,7 @@ import { ServerConfig } from "../../config.ts";
 import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
 import { TextGenerationError } from "../Errors.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 const DEFAULT_TEST_MODEL_SELECTION = {
   provider: "codex" as const,
@@ -14,6 +15,7 @@ const DEFAULT_TEST_MODEL_SELECTION = {
 };
 
 const CodexTextGenerationTestLayer = CodexTextGenerationLive.pipe(
+  Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-codex-text-generation-test-",
@@ -22,7 +24,20 @@ const CodexTextGenerationTestLayer = CodexTextGenerationLive.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
-function makeFakeCodexBinary(dir: string) {
+function makeFakeCodexBinary(
+  dir: string,
+  input: {
+    output: string;
+    exitCode?: number;
+    stderr?: string;
+    requireImage?: boolean;
+    requireFastServiceTier?: boolean;
+    requireReasoningEffort?: string;
+    forbidReasoningEffort?: boolean;
+    stdinMustContain?: string;
+    stdinMustNotContain?: string;
+  },
+) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -35,12 +50,16 @@ function makeFakeCodexBinary(dir: string) {
       [
         "#!/bin/sh",
         'output_path=""',
+        'seen_image="0"',
+        'seen_fast_service_tier="0"',
+        'seen_reasoning_effort=""',
         "while [ $# -gt 0 ]; do",
         '  if [ "$1" = "--image" ]; then',
         "    shift",
         '    if [ -n "$1" ]; then',
         '      seen_image="1"',
         "    fi",
+        "    shift",
         "    continue",
         "  fi",
         '  if [ "$1" = "--config" ]; then',
@@ -53,55 +72,80 @@ function makeFakeCodexBinary(dir: string) {
         '        seen_reasoning_effort="$1"',
         "        ;;",
         "    esac",
+        "    shift",
         "    continue",
         "  fi",
         '  if [ "$1" = "--output-last-message" ]; then',
         "    shift",
         '    output_path="$1"',
+        "    shift",
+        "    continue",
         "  fi",
         "  shift",
         "done",
         'stdin_content="$(cat)"',
-        'if [ "$T3_FAKE_CODEX_REQUIRE_IMAGE" = "1" ] && [ "$seen_image" != "1" ]; then',
-        '  printf "%s\\n" "missing --image input" >&2',
-        "  exit 2",
-        "fi",
-        'if [ "$T3_FAKE_CODEX_REQUIRE_FAST_SERVICE_TIER" = "1" ] && [ "$seen_fast_service_tier" != "1" ]; then',
-        '  printf "%s\\n" "missing fast service tier config" >&2',
-        "  exit 5",
-        "fi",
-        'if [ -n "$T3_FAKE_CODEX_REQUIRE_REASONING_EFFORT" ] && [ "$seen_reasoning_effort" != "model_reasoning_effort=\\"$T3_FAKE_CODEX_REQUIRE_REASONING_EFFORT\\"" ]; then',
-        '  printf "%s\\n" "unexpected reasoning effort config: $seen_reasoning_effort" >&2',
-        "  exit 6",
-        "fi",
-        'if [ "$T3_FAKE_CODEX_FORBID_REASONING_EFFORT" = "1" ] && [ -n "$seen_reasoning_effort" ]; then',
-        '  printf "%s\\n" "reasoning effort config should be omitted: $seen_reasoning_effort" >&2',
-        "  exit 7",
-        "fi",
-        'if [ -n "$T3_FAKE_CODEX_STDIN_MUST_CONTAIN" ]; then',
-        '  printf "%s" "$stdin_content" | grep -F -- "$T3_FAKE_CODEX_STDIN_MUST_CONTAIN" >/dev/null || {',
-        '    printf "%s\\n" "stdin missing expected content" >&2',
-        "    exit 3",
-        "  }",
-        "fi",
-        'if [ -n "$T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN" ]; then',
-        '  if printf "%s" "$stdin_content" | grep -F -- "$T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN" >/dev/null; then',
-        '    printf "%s\\n" "stdin contained forbidden content" >&2',
-        "    exit 4",
-        "  fi",
-        "fi",
-        'if [ -n "$T3_FAKE_CODEX_STDERR" ]; then',
-        '  printf "%s\\n" "$T3_FAKE_CODEX_STDERR" >&2',
-        "fi",
+        ...(input.requireImage
+          ? [
+              'if [ "$seen_image" != "1" ]; then',
+              '  printf "%s\\n" "missing --image input" >&2',
+              `  exit 2`,
+              "fi",
+            ]
+          : []),
+        ...(input.requireFastServiceTier
+          ? [
+              'if [ "$seen_fast_service_tier" != "1" ]; then',
+              '  printf "%s\\n" "missing fast service tier config" >&2',
+              `  exit 5`,
+              "fi",
+            ]
+          : []),
+        ...(input.requireReasoningEffort !== undefined
+          ? [
+              `if [ "$seen_reasoning_effort" != "model_reasoning_effort=\\"${input.requireReasoningEffort}\\"" ]; then`,
+              '  printf "%s\\n" "unexpected reasoning effort config: $seen_reasoning_effort" >&2',
+              `  exit 6`,
+              "fi",
+            ]
+          : []),
+        ...(input.forbidReasoningEffort
+          ? [
+              'if [ -n "$seen_reasoning_effort" ]; then',
+              '  printf "%s\\n" "reasoning effort config should be omitted: $seen_reasoning_effort" >&2',
+              `  exit 7`,
+              "fi",
+            ]
+          : []),
+        ...(input.stdinMustContain !== undefined
+          ? [
+              `if ! printf "%s" "$stdin_content" | grep -F -- ${JSON.stringify(input.stdinMustContain)} >/dev/null; then`,
+              '  printf "%s\\n" "stdin missing expected content" >&2',
+              `  exit 3`,
+              "fi",
+            ]
+          : []),
+        ...(input.stdinMustNotContain !== undefined
+          ? [
+              `if printf "%s" "$stdin_content" | grep -F -- ${JSON.stringify(input.stdinMustNotContain)} >/dev/null; then`,
+              '  printf "%s\\n" "stdin contained forbidden content" >&2',
+              `  exit 4`,
+              "fi",
+            ]
+          : []),
+        ...(input.stderr !== undefined
+          ? [`printf "%s\\n" ${JSON.stringify(input.stderr)} >&2`]
+          : []),
         'if [ -n "$output_path" ]; then',
-        '  node -e \'const fs=require("node:fs"); const value=process.argv[2] ?? ""; fs.writeFileSync(process.argv[1], Buffer.from(value, "base64"));\' "$output_path" "${T3_FAKE_CODEX_OUTPUT_B64:-e30=}"',
+        "  cat > \"$output_path\" <<'__T3CODE_FAKE_CODEX_OUTPUT__'",
+        input.output,
+        "__T3CODE_FAKE_CODEX_OUTPUT__",
         "fi",
-        'exit "${T3_FAKE_CODEX_EXIT_CODE:-0}"',
+        `exit ${input.exitCode ?? 0}`,
         "",
       ].join("\n"),
     );
     yield* fs.chmod(codexPath, 0o755);
-    return binDir;
+    return codexPath;
   });
 }
 
@@ -123,146 +167,29 @@ function withFakeCodexEnv<A, E, R>(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
-      const binDir = yield* makeFakeCodexBinary(tempDir);
-      const previousPath = process.env.PATH;
-      const previousOutput = process.env.T3_FAKE_CODEX_OUTPUT_B64;
-      const previousExitCode = process.env.T3_FAKE_CODEX_EXIT_CODE;
-      const previousStderr = process.env.T3_FAKE_CODEX_STDERR;
-      const previousRequireImage = process.env.T3_FAKE_CODEX_REQUIRE_IMAGE;
-      const previousRequireFastServiceTier = process.env.T3_FAKE_CODEX_REQUIRE_FAST_SERVICE_TIER;
-      const previousRequireReasoningEffort = process.env.T3_FAKE_CODEX_REQUIRE_REASONING_EFFORT;
-      const previousForbidReasoningEffort = process.env.T3_FAKE_CODEX_FORBID_REASONING_EFFORT;
-      const previousStdinMustContain = process.env.T3_FAKE_CODEX_STDIN_MUST_CONTAIN;
-      const previousStdinMustNotContain = process.env.T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN;
-
-      yield* Effect.sync(() => {
-        process.env.PATH = `${binDir}:${previousPath ?? ""}`;
-        process.env.T3_FAKE_CODEX_OUTPUT_B64 = Buffer.from(input.output, "utf8").toString("base64");
-
-        if (input.exitCode !== undefined) {
-          process.env.T3_FAKE_CODEX_EXIT_CODE = String(input.exitCode);
-        } else {
-          delete process.env.T3_FAKE_CODEX_EXIT_CODE;
-        }
-
-        if (input.stderr !== undefined) {
-          process.env.T3_FAKE_CODEX_STDERR = input.stderr;
-        } else {
-          delete process.env.T3_FAKE_CODEX_STDERR;
-        }
-
-        if (input.requireImage) {
-          process.env.T3_FAKE_CODEX_REQUIRE_IMAGE = "1";
-        } else {
-          delete process.env.T3_FAKE_CODEX_REQUIRE_IMAGE;
-        }
-
-        if (input.requireFastServiceTier) {
-          process.env.T3_FAKE_CODEX_REQUIRE_FAST_SERVICE_TIER = "1";
-        } else {
-          delete process.env.T3_FAKE_CODEX_REQUIRE_FAST_SERVICE_TIER;
-        }
-
-        if (input.requireReasoningEffort !== undefined) {
-          process.env.T3_FAKE_CODEX_REQUIRE_REASONING_EFFORT = input.requireReasoningEffort;
-        } else {
-          delete process.env.T3_FAKE_CODEX_REQUIRE_REASONING_EFFORT;
-        }
-
-        if (input.forbidReasoningEffort) {
-          process.env.T3_FAKE_CODEX_FORBID_REASONING_EFFORT = "1";
-        } else {
-          delete process.env.T3_FAKE_CODEX_FORBID_REASONING_EFFORT;
-        }
-
-        if (input.stdinMustContain !== undefined) {
-          process.env.T3_FAKE_CODEX_STDIN_MUST_CONTAIN = input.stdinMustContain;
-        } else {
-          delete process.env.T3_FAKE_CODEX_STDIN_MUST_CONTAIN;
-        }
-
-        if (input.stdinMustNotContain !== undefined) {
-          process.env.T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN = input.stdinMustNotContain;
-        } else {
-          delete process.env.T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN;
-        }
+      const codexPath = yield* makeFakeCodexBinary(tempDir, input);
+      const serverSettings = yield* ServerSettingsService;
+      const previousSettings = yield* serverSettings.getSettings;
+      yield* serverSettings.updateSettings({
+        providers: {
+          codex: {
+            binaryPath: codexPath,
+          },
+        },
       });
-
-      return {
-        previousPath,
-        previousOutput,
-        previousExitCode,
-        previousStderr,
-        previousRequireImage,
-        previousRequireFastServiceTier,
-        previousRequireReasoningEffort,
-        previousForbidReasoningEffort,
-        previousStdinMustContain,
-        previousStdinMustNotContain,
-      };
+      return { serverSettings, previousBinaryPath: previousSettings.providers.codex.binaryPath };
     }),
     () => effect,
-    (previous) =>
-      Effect.sync(() => {
-        process.env.PATH = previous.previousPath;
-
-        if (previous.previousOutput === undefined) {
-          delete process.env.T3_FAKE_CODEX_OUTPUT_B64;
-        } else {
-          process.env.T3_FAKE_CODEX_OUTPUT_B64 = previous.previousOutput;
-        }
-
-        if (previous.previousExitCode === undefined) {
-          delete process.env.T3_FAKE_CODEX_EXIT_CODE;
-        } else {
-          process.env.T3_FAKE_CODEX_EXIT_CODE = previous.previousExitCode;
-        }
-
-        if (previous.previousStderr === undefined) {
-          delete process.env.T3_FAKE_CODEX_STDERR;
-        } else {
-          process.env.T3_FAKE_CODEX_STDERR = previous.previousStderr;
-        }
-
-        if (previous.previousRequireImage === undefined) {
-          delete process.env.T3_FAKE_CODEX_REQUIRE_IMAGE;
-        } else {
-          process.env.T3_FAKE_CODEX_REQUIRE_IMAGE = previous.previousRequireImage;
-        }
-
-        if (previous.previousRequireFastServiceTier === undefined) {
-          delete process.env.T3_FAKE_CODEX_REQUIRE_FAST_SERVICE_TIER;
-        } else {
-          process.env.T3_FAKE_CODEX_REQUIRE_FAST_SERVICE_TIER =
-            previous.previousRequireFastServiceTier;
-        }
-
-        if (previous.previousRequireReasoningEffort === undefined) {
-          delete process.env.T3_FAKE_CODEX_REQUIRE_REASONING_EFFORT;
-        } else {
-          process.env.T3_FAKE_CODEX_REQUIRE_REASONING_EFFORT =
-            previous.previousRequireReasoningEffort;
-        }
-
-        if (previous.previousForbidReasoningEffort === undefined) {
-          delete process.env.T3_FAKE_CODEX_FORBID_REASONING_EFFORT;
-        } else {
-          process.env.T3_FAKE_CODEX_FORBID_REASONING_EFFORT =
-            previous.previousForbidReasoningEffort;
-        }
-
-        if (previous.previousStdinMustContain === undefined) {
-          delete process.env.T3_FAKE_CODEX_STDIN_MUST_CONTAIN;
-        } else {
-          process.env.T3_FAKE_CODEX_STDIN_MUST_CONTAIN = previous.previousStdinMustContain;
-        }
-
-        if (previous.previousStdinMustNotContain === undefined) {
-          delete process.env.T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN;
-        } else {
-          process.env.T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN = previous.previousStdinMustNotContain;
-        }
-      }),
+    ({ serverSettings, previousBinaryPath }) =>
+      serverSettings
+        .updateSettings({
+          providers: {
+            codex: {
+              binaryPath: previousBinaryPath,
+            },
+          },
+        })
+        .pipe(Effect.asVoid),
   );
 }
 

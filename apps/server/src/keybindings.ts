@@ -23,6 +23,7 @@ import {
   Cache,
   Cause,
   Deferred,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -42,6 +43,7 @@ import {
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config";
+import { fromLenientJson } from "@t3tools/shared/schemaJson";
 
 export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
   "KeybindingsConfigParseError",
@@ -408,7 +410,7 @@ function encodeWhenAst(node: KeybindingWhenNode): string {
 
 const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(DEFAULT_KEYBINDINGS);
 
-const RawKeybindingsEntries = Schema.fromJsonString(Schema.Array(Schema.Unknown));
+const RawKeybindingsEntries = fromLenientJson(Schema.Array(Schema.Unknown));
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
 const PrettyJsonString = SchemaGetter.parseJson<string>().compose(
   SchemaGetter.stringifyJson({ space: 2 }),
@@ -672,6 +674,7 @@ const makeKeybindings = Effect.gen(function* () {
       Effect.tap(() => fs.makeDirectory(path.dirname(keybindingsConfigPath), { recursive: true })),
       Effect.tap((encoded) => fs.writeFileString(tempPath, encoded)),
       Effect.flatMap(() => fs.rename(tempPath, keybindingsConfigPath)),
+      Effect.ensuring(fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }))),
       Effect.mapError(
         (cause) =>
           new KeybindingsConfigError({
@@ -817,16 +820,25 @@ const makeKeybindings = Effect.gen(function* () {
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
-    yield* Stream.runForEach(fs.watch(keybindingsConfigDir), (event) => {
-      const isTargetConfigEvent =
-        event.path === keybindingsConfigFile ||
-        event.path === keybindingsConfigPath ||
-        path.resolve(keybindingsConfigDir, event.path) === keybindingsConfigPathResolved;
-      if (!isTargetConfigEvent) {
-        return Effect.void;
-      }
-      return revalidateAndEmitSafely;
-    }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope), Effect.asVoid);
+    // Debounce watch events so the file is fully written before we read it.
+    // Editors emit multiple events per save (truncate, write, rename) and
+    // `fs.watch` can fire before the content has been flushed to disk.
+    const debouncedKeybindingsEvents = fs.watch(keybindingsConfigDir).pipe(
+      Stream.filter((event) => {
+        return (
+          event.path === keybindingsConfigFile ||
+          event.path === keybindingsConfigPath ||
+          path.resolve(keybindingsConfigDir, event.path) === keybindingsConfigPathResolved
+        );
+      }),
+      Stream.debounce(Duration.millis(100)),
+    );
+
+    yield* Stream.runForEach(debouncedKeybindingsEvents, () => revalidateAndEmitSafely).pipe(
+      Effect.ignoreCause({ log: true }),
+      Effect.forkIn(watcherScope),
+      Effect.asVoid,
+    );
   });
 
   const start = Effect.gen(function* () {

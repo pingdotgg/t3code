@@ -5,6 +5,7 @@ import {
   type ContextMenuItem,
   type NativeApi,
   ServerConfigUpdatedPayload,
+  ServerProviderUpdatedPayload,
   WS_CHANNELS,
   WS_METHODS,
   type WsWelcomePayload,
@@ -16,6 +17,7 @@ import { WsTransport } from "./wsTransport";
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
+const providersUpdatedListeners = new Set<(payload: ServerProviderUpdatedPayload) => void>();
 const gitActionProgressListeners = new Set<(payload: GitActionProgressEvent) => void>();
 
 /**
@@ -64,6 +66,26 @@ export function onServerConfigUpdated(
   };
 }
 
+export function onServerProvidersUpdated(
+  listener: (payload: ServerProviderUpdatedPayload) => void,
+): () => void {
+  providersUpdatedListeners.add(listener);
+
+  const latestProviders =
+    instance?.transport.getLatestPush(WS_CHANNELS.serverProvidersUpdated)?.data ?? null;
+  if (latestProviders) {
+    try {
+      listener(latestProviders);
+    } catch {
+      // Swallow listener errors
+    }
+  }
+
+  return () => {
+    providersUpdatedListeners.delete(listener);
+  };
+}
+
 export function createWsNativeApi(): NativeApi {
   if (instance) return instance.api;
 
@@ -82,6 +104,16 @@ export function createWsNativeApi(): NativeApi {
   transport.subscribe(WS_CHANNELS.serverConfigUpdated, (message) => {
     const payload = message.data;
     for (const listener of serverConfigUpdatedListeners) {
+      try {
+        listener(payload);
+      } catch {
+        // Swallow listener errors
+      }
+    }
+  });
+  transport.subscribe(WS_CHANNELS.serverProvidersUpdated, (message) => {
+    const payload = message.data;
+    for (const listener of providersUpdatedListeners) {
       try {
         listener(payload);
       } catch {
@@ -178,7 +210,10 @@ export function createWsNativeApi(): NativeApi {
     },
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
+      refreshProviders: () => transport.request(WS_METHODS.serverRefreshProviders),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
+      getSettings: () => transport.request(WS_METHODS.serverGetSettings),
+      updateSettings: (patch) => transport.request(WS_METHODS.serverUpdateSettings, { patch }),
     },
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),

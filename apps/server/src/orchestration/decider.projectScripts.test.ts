@@ -188,7 +188,6 @@ describe("decider project scripts", () => {
     if (turnStartEvent?.type !== "thread.turn-start-requested") {
       return;
     }
-    expect(turnStartEvent.payload.assistantDeliveryMode).toBe("buffered");
     expect(turnStartEvent.payload).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
       messageId: asMessageId("message-user-1"),

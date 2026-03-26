@@ -22,12 +22,13 @@ import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
-import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
+import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry";
 import { Server } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { readBootstrapEnvelope } from "./bootstrap";
+import { ServerSettingsLive } from "./serverSettings";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -293,10 +294,11 @@ const LayerLive = (input: CliInput) =>
   Layer.empty.pipe(
     Layer.provideMerge(makeServerRuntimeServicesLayer()),
     Layer.provideMerge(makeServerProviderLayer()),
-    Layer.provideMerge(ProviderHealthLive),
+    Layer.provideMerge(ProviderRegistryLive),
     Layer.provideMerge(SqlitePersistence.layerConfig),
     Layer.provideMerge(ServerLoggerLive),
     Layer.provideMerge(AnalyticsServiceLayerLive),
+    Layer.provideMerge(ServerSettingsLive),
     Layer.provideMerge(ServerConfigLive(input)),
   );
 
@@ -331,12 +333,10 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
 });
 
-const makeServerProgram = (input: CliInput) =>
+const makeServerRuntimeProgram = (input: CliInput) =>
   Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
     const openDeps = yield* Open;
-    yield* cliConfig.fixPath;
 
     const config = yield* ServerConfig;
 
@@ -377,6 +377,13 @@ const makeServerProgram = (input: CliInput) =>
 
     return yield* stopSignal;
   }).pipe(Effect.provide(LayerLive(input)));
+
+const makeServerProgram = (input: CliInput) =>
+  Effect.gen(function* () {
+    const cliConfig = yield* CliConfig;
+    yield* cliConfig.fixPath;
+    return yield* makeServerRuntimeProgram(input);
+  });
 
 /**
  * These flags mirrors the environment variables and the config shape.

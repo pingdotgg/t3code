@@ -20,11 +20,7 @@ import { GitCoreLive } from "./GitCore.ts";
 import { GitCore } from "../Services/GitCore.ts";
 import { makeGitManager } from "./GitManager.ts";
 import { ServerConfig } from "../../config.ts";
-
-const DEFAULT_TEST_MODEL_SELECTION = {
-  provider: "codex",
-  model: "gpt-5.4-mini",
-} as const;
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 interface FakeGhScenario {
   prListSequence?: string[];
@@ -466,7 +462,6 @@ function runStackedAction(
     {
       ...input,
       actionId: input.actionId ?? "test-action-id",
-      modelSelection: DEFAULT_TEST_MODEL_SELECTION,
     },
     options,
   );
@@ -493,6 +488,8 @@ function makeManager(input?: {
     prefix: "t3-git-manager-test-",
   });
 
+  const serverSettingsLayer = ServerSettingsService.layerTest();
+
   const gitCoreLayer = GitCoreLive.pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(ServerConfigLayer),
@@ -502,6 +499,7 @@ function makeManager(input?: {
     Layer.succeed(GitHubCli, gitHubCli),
     Layer.succeed(TextGeneration, textGeneration),
     gitCoreLayer,
+    serverSettingsLayer,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 
   return makeGitManager.pipe(

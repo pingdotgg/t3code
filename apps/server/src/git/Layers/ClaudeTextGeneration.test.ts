@@ -6,8 +6,10 @@ import { expect } from "vitest";
 import { ServerConfig } from "../../config.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ClaudeTextGenerationLive } from "./ClaudeTextGeneration.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 const ClaudeTextGenerationTestLayer = ClaudeTextGenerationLive.pipe(
+  Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-claude-text-generation-test-",
