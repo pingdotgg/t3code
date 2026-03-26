@@ -1649,7 +1649,7 @@ function rebuildMainWindow(nextTitleBarMode: DesktopTitleBarMode): Promise<Deskt
       settled = true;
       isRebuildingMainWindow = false;
 
-      if (!applied && mainWindow === replacementWindow) {
+      if (!applied && (!mainWindow || mainWindow === replacementWindow)) {
         mainWindow = previousWindow.isDestroyed() ? null : previousWindow;
       }
 
