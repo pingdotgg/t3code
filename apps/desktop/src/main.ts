@@ -1631,14 +1631,23 @@ function rebuildMainWindow(nextTitleBarMode: DesktopTitleBarMode): Promise<Deskt
   isRebuildingMainWindow = true;
   pendingDesktopTitleBarMode = null;
 
-  const snapshot = snapshotWindow(previousWindow);
-  const replacementWindow = createWindow({
-    bounds: snapshot.bounds,
-    loadUrl: snapshot.url,
-    showOnReady: false,
-    titleBarMode: nextTitleBarMode,
-  });
-  mainWindow = replacementWindow;
+  let snapshot: WindowSnapshot;
+  let replacementWindow: BrowserWindow;
+
+  try {
+    snapshot = snapshotWindow(previousWindow);
+    replacementWindow = createWindow({
+      bounds: snapshot.bounds,
+      loadUrl: snapshot.url,
+      showOnReady: false,
+      titleBarMode: nextTitleBarMode,
+    });
+    mainWindow = replacementWindow;
+  } catch (error) {
+    isRebuildingMainWindow = false;
+    pendingDesktopTitleBarMode = null;
+    throw error;
+  }
 
   return new Promise<DesktopWindowState>((resolve) => {
     let settled = false;
