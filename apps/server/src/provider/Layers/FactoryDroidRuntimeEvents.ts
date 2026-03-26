@@ -68,11 +68,17 @@ function runtimeEventWithRaw(
   };
 }
 
+export interface ToolUseEntry {
+  readonly itemType: string;
+  readonly title: string;
+}
+
 interface NotifInput {
   readonly notif: Record<string, unknown>;
   readonly sawAssistantTextDelta: boolean;
   readonly threadId: ThreadId;
   readonly turnId?: TurnId;
+  readonly toolUseRegistry?: Map<string, ToolUseEntry>;
 }
 
 interface NotifResult {
@@ -111,6 +117,21 @@ export function mapFactoryDroidNotification(input: NotifInput): NotifResult {
         const itemType = toolNameToItemType(toolName);
         const toolInput = asObj(block.input);
         const itemId = asStr(block.id) ?? randomUUID();
+
+        // Register the tool use so tool_result can look up the original itemType.
+        if (input.toolUseRegistry) {
+          input.toolUseRegistry.set(itemId, {
+            itemType,
+            title:
+              itemType === "collab_agent_tool_call"
+                ? "Subagent task"
+                : itemType === "command_execution"
+                  ? `Ran command: ${toolName}`
+                  : itemType === "file_change"
+                    ? `File change: ${toolName}`
+                    : toolName,
+          });
+        }
         const detail =
           itemType === "collab_agent_tool_call"
             ? (asStr(toolInput?.description) ?? asStr(toolInput?.prompt) ?? toolName)
@@ -151,6 +172,10 @@ export function mapFactoryDroidNotification(input: NotifInput): NotifResult {
   if (type === "tool_result" && input.turnId) {
     const itemId = asStr(input.notif.toolUseId) ?? randomUUID();
     const detail = asStr(input.notif.content);
+    const registered = input.toolUseRegistry?.get(itemId);
+    input.toolUseRegistry?.delete(itemId);
+    const itemType = registered?.itemType ?? "dynamic_tool_call";
+    const title = registered?.title ?? "Tool";
     return {
       events: [
         {
@@ -160,9 +185,9 @@ export function mapFactoryDroidNotification(input: NotifInput): NotifResult {
           }),
           type: "item.completed",
           payload: {
-            itemType: "dynamic_tool_call",
+            itemType,
             status: "completed",
-            title: "Tool",
+            title,
             ...(detail ? { detail: detail.slice(0, 200) } : {}),
           },
         } as unknown as ProviderRuntimeEvent,

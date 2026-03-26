@@ -11,11 +11,14 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import readline from "node:readline";
 import {
+  ApprovalRequestId,
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderStartOptions,
+  type ProviderUserInputAnswers,
   ThreadId,
   TurnId,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 import { Effect, Layer, Queue, Stream } from "effect";
 
@@ -74,6 +77,14 @@ interface Ctx {
   turns: Array<{ id: TurnId; items: unknown[] }>;
   activeTurnId: TurnId | null;
   rpc: Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>;
+  pendingUserInputs: Map<
+    string,
+    {
+      readonly resolve: (answers: ProviderUserInputAnswers) => void;
+      readonly reject: (e: Error) => void;
+    }
+  >;
+  toolUseRegistry: Map<string, import("./FactoryDroidRuntimeEvents.ts").ToolUseEntry>;
   assistantBuf: string;
   reasoningBuf: string;
   sawDelta: boolean;
@@ -110,6 +121,8 @@ function makeCtx(session: ProviderSession, providerOptions?: ProviderStartOption
     turns: [],
     activeTurnId: null,
     rpc: new Map(),
+    pendingUserInputs: new Map(),
+    toolUseRegistry: new Map(),
     assistantBuf: "",
     reasoningBuf: "",
     sawDelta: false,
@@ -227,6 +240,9 @@ const makeAdapter = (options?: FactoryDroidAdapterLiveOptions) =>
         c.session = { ...c.session, status: "closed", activeTurnId: undefined, updatedAt: now() };
         for (const [, p] of c.rpc) p.reject(new Error("Session stopped"));
         c.rpc.clear();
+        for (const [, p] of c.pendingUserInputs) p.reject(new Error("Session stopped"));
+        c.pendingUserInputs.clear();
+        c.toolUseRegistry.clear();
         sessions.delete(c.session.threadId);
         if (emitExit) {
           yield* emit({
@@ -327,6 +343,7 @@ const makeAdapter = (options?: FactoryDroidAdapterLiveOptions) =>
               notif,
               sawAssistantTextDelta: c.sawDelta,
               threadId,
+              toolUseRegistry: c.toolUseRegistry,
               ...(turnId ? { turnId } : {}),
             });
             for (const e of events) emitSync(e);
@@ -341,9 +358,114 @@ const makeAdapter = (options?: FactoryDroidAdapterLiveOptions) =>
 
         if (t === "request") {
           const method = msg.method as string;
-          if (method === "droid.request_permission" || method === "droid.ask_user") {
+          if (method === "droid.request_permission") {
             child.stdin.write(
               rpcMsg("response", { id: msg.id, result: { selectedOption: "always_allow" } }) + "\n",
+            );
+          } else if (method === "droid.ask_user") {
+            const requestId = ApprovalRequestId.makeUnsafe(randomUUID());
+            const params = asObj(msg.params as Record<string, unknown>);
+            const rawQuestions = params && Array.isArray(params.questions) ? params.questions : [];
+
+            const questions: UserInputQuestion[] = rawQuestions
+              .map((q: Record<string, unknown>, idx: number) => {
+                const id = typeof q.id === "string" ? q.id : `q-${idx}`;
+                const index = typeof q.index === "number" ? q.index : idx + 1;
+                const header =
+                  typeof q.header === "string"
+                    ? q.header
+                    : typeof q.topic === "string"
+                      ? q.topic
+                      : `Question ${index}`;
+                const question =
+                  typeof q.question === "string"
+                    ? q.question
+                    : typeof q.text === "string"
+                      ? q.text
+                      : "";
+                const options = Array.isArray(q.options)
+                  ? (q.options as Array<Record<string, unknown> | string>).map((opt) => {
+                      if (typeof opt === "string") return { label: opt, description: "" };
+                      return {
+                        label: typeof opt.label === "string" ? opt.label : String(opt),
+                        description: typeof opt.description === "string" ? opt.description : "",
+                      };
+                    })
+                  : [];
+                return { id, header, question, options };
+              })
+              .filter((q: UserInputQuestion) => q.question.length > 0);
+
+            if (questions.length === 0 || c.stopped) {
+              child.stdin.write(
+                rpcMsg("response", { id: msg.id, result: { cancelled: true, answers: [] } }) + "\n",
+              );
+              return;
+            }
+
+            const promise = new Promise<ProviderUserInputAnswers>((resolve, reject) => {
+              c.pendingUserInputs.set(requestId, { resolve, reject });
+            });
+
+            const turnId = c.activeTurnId;
+            emitSync({
+              ...makeFactoryDroidBaseEvent(threadId),
+              ...(turnId ? { turnId } : {}),
+              type: "user-input.requested",
+              requestId,
+              payload: { questions },
+              providerRefs: turnId ? { providerTurnId: turnId } : undefined,
+              raw: {
+                source: "factorydroid.jsonrpc.request",
+                method: "droid.ask_user",
+                payload: params,
+              },
+            } as unknown as ProviderRuntimeEvent);
+
+            void promise.then(
+              (answers) => {
+                emitSync({
+                  ...makeFactoryDroidBaseEvent(threadId),
+                  ...(turnId ? { turnId } : {}),
+                  type: "user-input.resolved",
+                  requestId,
+                  payload: { answers },
+                  providerRefs: turnId ? { providerTurnId: turnId } : undefined,
+                  raw: {
+                    source: "factorydroid.jsonrpc.request",
+                    method: "droid.ask_user/resolved",
+                    payload: { answers },
+                  },
+                } as unknown as ProviderRuntimeEvent);
+
+                // Build the response in the Droid CLI's expected format:
+                // { cancelled: false, answers: [{ index, question, answer }] }
+                const droidAnswers: Array<{ index: number; question: string; answer: string }> = [];
+                for (let i = 0; i < questions.length; i++) {
+                  const q = questions[i]!;
+                  const rawQ = rawQuestions[i] as Record<string, unknown> | undefined;
+                  const answer = answers[q.id];
+                  if (answer != null) {
+                    droidAnswers.push({
+                      index: typeof rawQ?.index === "number" ? rawQ.index : i + 1,
+                      question: q.question,
+                      answer: String(answer),
+                    });
+                  }
+                }
+                child.stdin.write(
+                  rpcMsg("response", {
+                    id: msg.id,
+                    result: { cancelled: false, answers: droidAnswers },
+                  }) + "\n",
+                );
+              },
+              () => {
+                child.stdin.write(
+                  rpcMsg("response", { id: msg.id, result: { cancelled: true, answers: [] } }) +
+                    "\n",
+                );
+              },
             );
           }
         }
@@ -508,7 +630,23 @@ const makeAdapter = (options?: FactoryDroidAdapterLiveOptions) =>
           }),
         ),
       respondToRequest: (threadId) => requireCtx(threadId).pipe(Effect.asVoid),
-      respondToUserInput: (threadId) => requireCtx(threadId).pipe(Effect.asVoid),
+      respondToUserInput: (threadId, requestId, answers) =>
+        requireCtx(threadId).pipe(
+          Effect.flatMap((c) =>
+            Effect.sync(() => {
+              const pending = c.pendingUserInputs.get(requestId);
+              if (!pending) {
+                throw new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "item/tool/respondToUserInput",
+                  detail: `Unknown pending user-input request: ${requestId}`,
+                });
+              }
+              c.pendingUserInputs.delete(requestId);
+              pending.resolve(answers);
+            }),
+          ),
+        ),
       stopSession: (threadId) =>
         requireCtx(threadId).pipe(Effect.flatMap((c) => stopInternal(c, true))),
       listSessions: () =>
