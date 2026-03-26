@@ -163,6 +163,28 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       }
     }));
 
+  it("decodes legacy claudeCode provider as claudeAgent", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const sql = yield* SqlClient.SqlClient;
+
+      const threadId = ThreadId.makeUnsafe("thread-legacy-claude-code");
+
+      // Insert a row directly with the old "claudeCode" provider name
+      yield* sql`
+        INSERT INTO provider_session_runtime (
+          thread_id, provider_name, adapter_key, runtime_mode, status, last_seen_at, resume_cursor_json, runtime_payload_json
+        )
+        VALUES (${threadId}, 'claudeCode', 'claudeCode', 'full-access', 'running', '2026-01-01T00:00:00.000Z', NULL, NULL)
+      `;
+
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.equal(binding.value.provider, "claudeAgent");
+      }
+    }));
+
   it("rehydrates persisted mappings across layer restart", () =>
     Effect.gen(function* () {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-directory-"));
