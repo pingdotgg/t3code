@@ -178,6 +178,11 @@ async function applyDesktopTitleBarMode(mode: DesktopTitleBarMode): Promise<Desk
   const previousMode = currentDesktopTitleBarMode;
   persistDesktopTitleBarModeToDisk(mode);
 
+  if (isRebuildingMainWindow) {
+    pendingDesktopTitleBarMode = mode;
+    return resolveDesktopWindowState(mainWindow);
+  }
+
   if (mode !== currentDesktopTitleBarMode) {
     const nextState = await rebuildMainWindow(mode);
     if (nextState.titleBarMode !== mode) {
