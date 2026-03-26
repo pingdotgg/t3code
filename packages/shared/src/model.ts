@@ -91,7 +91,6 @@ export function getModelCapabilities(
   };
 }
 
-
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }
@@ -245,7 +244,6 @@ export function resolveApiModelId(modelSelection: ModelSelection): string {
   }
   return modelSelection.model;
 }
-
 
 export function applyClaudePromptEffortPrefix(
   text: string,

@@ -146,6 +146,7 @@ export function getCodexModelCapabilities(model: string | null | undefined): Mod
       reasoningEffortLevels: [],
       supportsFastMode: false,
       supportsThinkingToggle: false,
+      contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     }
   );
