@@ -612,7 +612,21 @@ const probeFactoryDroidCommand = (binaryPath: string, args: string[]) =>
       { concurrency: "unbounded" },
     );
     return { stdout, stderr, code: exitCode } satisfies CommandResult;
-  }).pipe(Effect.scoped, Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  }).pipe(Effect.scoped);
+
+const DROID_HELP_TIMEOUT_MS = 10_000;
+
+const probeFactoryDroidBinary = (binaryPath: string) =>
+  probeFactoryDroidCommand(binaryPath, ["--version"]).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.result,
+  );
+
+const probeFactoryDroidExecHelp = (binaryPath: string) =>
+  probeFactoryDroidCommand(binaryPath, ["exec", "--help"]).pipe(
+    Effect.timeoutOption(DROID_HELP_TIMEOUT_MS),
+    Effect.result,
+  );
 
 const MODEL_LINE_RE = /^\s{2}(\S+)\s{2,}(.+)$/;
 
@@ -652,7 +666,7 @@ export const checkFactoryDroidProviderStatus: Effect.Effect<
   const checkedAt = new Date().toISOString();
 
   for (const binaryPath of resolveFactoryDroidBinaryCandidates()) {
-    const versionProbe = yield* probeFactoryDroidCommand(binaryPath, ["--version"]);
+    const versionProbe = yield* probeFactoryDroidBinary(binaryPath);
 
     if (Result.isFailure(versionProbe)) continue;
 
@@ -671,7 +685,7 @@ export const checkFactoryDroidProviderStatus: Effect.Effect<
     if (versionOption.value.code !== 0) continue;
 
     let models: ReadonlyArray<{ slug: string; name: string }> | undefined;
-    const helpProbe = yield* probeFactoryDroidCommand(binaryPath, ["exec", "--help"]);
+    const helpProbe = yield* probeFactoryDroidExecHelp(binaryPath);
     if (
       Result.isSuccess(helpProbe) &&
       Option.isSome(helpProbe.success) &&
