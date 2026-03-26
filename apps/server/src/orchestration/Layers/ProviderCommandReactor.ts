@@ -459,40 +459,32 @@ const make = Effect.gen(function* () {
     readonly textGenerationModel?: string;
   }) {
     const attachments = input.attachments ?? [];
-    const { textGenerationModelSelection } = yield* serverSettingsService.getSettings;
-    yield* textGeneration
-      .generateThreadTitle({
+    yield* Effect.gen(function* () {
+      const { textGenerationModelSelection } = yield* serverSettingsService.getSettings;
+
+      const generated = yield* textGeneration.generateThreadTitle({
         cwd: input.cwd,
         message: input.messageText,
         ...(attachments.length > 0 ? { attachments } : {}),
         model: input.textGenerationModel ?? textGenerationModelSelection.model,
-      })
-      .pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("provider command reactor failed to generate thread title", {
-            threadId: input.threadId,
-            cwd: input.cwd,
-            reason: error.message,
-          }),
-        ),
-        Effect.flatMap((generated) => {
-          if (!generated) return Effect.void;
+      });
+      if (!generated) return;
 
-          return orchestrationEngine.dispatch({
-            type: "thread.meta.update",
-            commandId: serverCommandId("thread-title-rename"),
-            threadId: input.threadId,
-            title: generated.title,
-          });
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: serverCommandId("thread-title-rename"),
+        threadId: input.threadId,
+        title: generated.title,
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor failed to generate or rename thread title", {
+          threadId: input.threadId,
+          cwd: input.cwd,
+          cause: Cause.pretty(cause),
         }),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("provider command reactor failed to rename thread title", {
-            threadId: input.threadId,
-            cwd: input.cwd,
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
+      ),
+    );
   });
 
   const processTurnStartRequested = Effect.fnUntraced(function* (
