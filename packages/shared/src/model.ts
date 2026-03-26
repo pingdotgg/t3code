@@ -7,8 +7,10 @@ import {
   type CodexModelOptions,
   type CodexReasoningEffort,
   type ModelCapabilities,
+  type ModelSelection,
   type ModelSlug,
   type ProviderKind,
+  type ProviderModelOptions,
 } from "@t3tools/contracts";
 
 export interface SelectableModelOption {
@@ -168,6 +170,60 @@ export function normalizeCopilotModelOptions(
       ? resolvedReasoningEffort
       : undefined;
   return reasoningEffort ? { reasoningEffort } : undefined;
+}
+
+export function normalizeModelOptionsForProvider<P extends ProviderKind>(
+  provider: P,
+  caps: ModelCapabilities,
+  modelOptions: ProviderModelOptions[P] | null | undefined,
+): ProviderModelOptions[P] | undefined {
+  switch (provider) {
+    case "codex":
+      return normalizeCodexModelOptions(caps, modelOptions as CodexModelOptions | undefined) as
+        | ProviderModelOptions[P]
+        | undefined;
+    case "claudeAgent":
+      return normalizeClaudeModelOptions(caps, modelOptions as ClaudeModelOptions | undefined) as
+        | ProviderModelOptions[P]
+        | undefined;
+    case "copilot":
+      return normalizeCopilotModelOptions(caps, modelOptions as CopilotModelOptions | undefined) as
+        | ProviderModelOptions[P]
+        | undefined;
+  }
+}
+
+export function buildModelSelection<P extends ProviderKind>(
+  provider: P,
+  model: ModelSlug,
+  options?: ProviderModelOptions[P],
+): Extract<ModelSelection, { provider: P }> {
+  switch (provider) {
+    case "codex": {
+      const codexOptions = options as ProviderModelOptions["codex"] | undefined;
+      return (
+        codexOptions
+          ? { provider: "codex", model, options: codexOptions }
+          : { provider: "codex", model }
+      ) as Extract<ModelSelection, { provider: P }>;
+    }
+    case "claudeAgent": {
+      const claudeOptions = options as ProviderModelOptions["claudeAgent"] | undefined;
+      return (
+        claudeOptions
+          ? { provider: "claudeAgent", model, options: claudeOptions }
+          : { provider: "claudeAgent", model }
+      ) as Extract<ModelSelection, { provider: P }>;
+    }
+    case "copilot": {
+      const copilotOptions = options as ProviderModelOptions["copilot"] | undefined;
+      return (
+        copilotOptions
+          ? { provider: "copilot", model, options: copilotOptions }
+          : { provider: "copilot", model }
+      ) as Extract<ModelSelection, { provider: P }>;
+    }
+  }
 }
 
 export function applyClaudePromptEffortPrefix(

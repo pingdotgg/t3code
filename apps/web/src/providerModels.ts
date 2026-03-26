@@ -1,19 +1,15 @@
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
   type ClaudeModelOptions,
   type CopilotModelOptions,
   type CodexModelOptions,
+  DEFAULT_MODEL_BY_PROVIDER,
   type ModelCapabilities,
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import {
-  getDefaultEffort,
-  hasEffortLevel,
-  normalizeModelSlug,
-  trimOrNull,
-} from "@t3tools/shared/model";
+import { normalizeModelOptionsForProvider, normalizeModelSlug } from "@t3tools/shared/model";
+import { COPILOT_BUILT_IN_MODELS } from "@t3tools/shared/copilot";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = {
   reasoningEffortLevels: [],
@@ -26,7 +22,11 @@ export function getProviderModels(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderKind,
 ): ReadonlyArray<ServerProviderModel> {
-  return providers.find((candidate) => candidate.provider === provider)?.models ?? [];
+  const snapshotModels = providers.find((candidate) => candidate.provider === provider)?.models;
+  if (snapshotModels) {
+    return snapshotModels;
+  }
+  return provider === "copilot" ? COPILOT_BUILT_IN_MODELS : [];
 }
 
 export function getProviderSnapshot(
@@ -75,58 +75,17 @@ export function getDefaultServerModel(
   );
 }
 
-export function normalizeCodexModelOptionsWithCapabilities(
+export const normalizeCodexModelOptionsWithCapabilities = (
   caps: ModelCapabilities,
   modelOptions: CodexModelOptions | null | undefined,
-): CodexModelOptions | undefined {
-  const defaultReasoningEffort = getDefaultEffort(caps);
-  const reasoningEffort = trimOrNull(modelOptions?.reasoningEffort) ?? defaultReasoningEffort;
-  const fastModeEnabled = modelOptions?.fastMode === true;
-  const nextOptions: CodexModelOptions = {
-    ...(reasoningEffort && reasoningEffort !== defaultReasoningEffort
-      ? { reasoningEffort: reasoningEffort as CodexModelOptions["reasoningEffort"] }
-      : {}),
-    ...(fastModeEnabled ? { fastMode: true } : {}),
-  };
-  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
-}
+) => normalizeModelOptionsForProvider("codex", caps, modelOptions);
 
-export function normalizeClaudeModelOptionsWithCapabilities(
+export const normalizeClaudeModelOptionsWithCapabilities = (
   caps: ModelCapabilities,
   modelOptions: ClaudeModelOptions | null | undefined,
-): ClaudeModelOptions | undefined {
-  const defaultReasoningEffort = getDefaultEffort(caps);
-  const resolvedEffort = trimOrNull(modelOptions?.effort);
-  const isPromptInjected = caps.promptInjectedEffortLevels.includes(resolvedEffort ?? "");
-  const effort =
-    resolvedEffort &&
-    !isPromptInjected &&
-    hasEffortLevel(caps, resolvedEffort) &&
-    resolvedEffort !== defaultReasoningEffort
-      ? resolvedEffort
-      : undefined;
-  const thinking =
-    caps.supportsThinkingToggle && modelOptions?.thinking === false ? false : undefined;
-  const fastMode = caps.supportsFastMode && modelOptions?.fastMode === true ? true : undefined;
-  const nextOptions: ClaudeModelOptions = {
-    ...(thinking === false ? { thinking: false } : {}),
-    ...(effort ? { effort } : {}),
-    ...(fastMode ? { fastMode: true } : {}),
-  };
-  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
-}
+) => normalizeModelOptionsForProvider("claudeAgent", caps, modelOptions);
 
-export function normalizeCopilotModelOptionsWithCapabilities(
+export const normalizeCopilotModelOptionsWithCapabilities = (
   caps: ModelCapabilities,
   modelOptions: CopilotModelOptions | null | undefined,
-): CopilotModelOptions | undefined {
-  const defaultReasoningEffort = getDefaultEffort(caps);
-  const reasoningEffort = trimOrNull(modelOptions?.reasoningEffort);
-  const nextOptions: CopilotModelOptions =
-    reasoningEffort &&
-    hasEffortLevel(caps, reasoningEffort) &&
-    reasoningEffort !== defaultReasoningEffort
-      ? { reasoningEffort: reasoningEffort as CopilotModelOptions["reasoningEffort"] }
-      : {};
-  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
-}
+) => normalizeModelOptionsForProvider("copilot", caps, modelOptions);

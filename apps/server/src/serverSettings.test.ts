@@ -58,6 +58,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             binaryPath: "/usr/local/bin/claude",
             customModels: ["claude-custom"],
           },
+          copilot: {
+            binaryPath: "/usr/local/bin/copilot",
+            configDir: "/Users/julius/.config/copilot",
+            customModels: ["copilot-custom"],
+          },
         },
         textGenerationModelSelection: {
           provider: "codex",
@@ -93,6 +98,12 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         binaryPath: "/usr/local/bin/claude",
         customModels: ["claude-custom"],
       });
+      assert.deepEqual(next.providers.copilot, {
+        enabled: true,
+        binaryPath: "/usr/local/bin/copilot",
+        configDir: "/Users/julius/.config/copilot",
+        customModels: ["copilot-custom"],
+      });
       assert.deepEqual(next.textGenerationModelSelection, {
         provider: "codex",
         model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
@@ -117,6 +128,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           claudeAgent: {
             binaryPath: "  /opt/homebrew/bin/claude  ",
           },
+          copilot: {
+            binaryPath: "  /opt/homebrew/bin/copilot  ",
+            configDir: "   /Users/julius/.config/copilot   ",
+          },
         },
       });
 
@@ -129,6 +144,12 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,
         binaryPath: "/opt/homebrew/bin/claude",
+        customModels: [],
+      });
+      assert.deepEqual(next.providers.copilot, {
+        enabled: true,
+        binaryPath: "/opt/homebrew/bin/copilot",
+        configDir: "/Users/julius/.config/copilot",
         customModels: [],
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),

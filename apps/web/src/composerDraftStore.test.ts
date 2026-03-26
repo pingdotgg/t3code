@@ -78,7 +78,7 @@ function resetComposerDraftStore() {
 }
 
 function modelSelection(
-  provider: "codex" | "claudeAgent",
+  provider: "codex" | "claudeAgent" | "copilot",
   model: string,
   options?: ModelSelection["options"],
 ): ModelSelection {
@@ -656,6 +656,25 @@ describe("composerDraftStore modelSelection", () => {
     ).toEqual(modelSelection("codex", "gpt-5.4"));
   });
 
+  it("stores Copilot reasoning effort without dropping the provider selection", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelSelection(
+      threadId,
+      modelSelection("copilot", "gpt-5.4-mini", {
+        reasoningEffort: "medium",
+      }),
+    );
+
+    expect(
+      useComposerDraftStore.getState().draftsByThreadId[threadId]?.modelSelectionByProvider.copilot,
+    ).toEqual(
+      modelSelection("copilot", "gpt-5.4-mini", {
+        reasoningEffort: "medium",
+      }),
+    );
+  });
+
   it("replaces only the targeted provider options on the current model selection", () => {
     const store = useComposerDraftStore.getState();
 
@@ -931,6 +950,27 @@ describe("composerDraftStore sticky composer settings", () => {
         claudeAgent: modelSelection("claudeAgent", "claude-opus-4-6"),
       },
       activeProvider: "claudeAgent",
+    });
+  });
+
+  it("applies sticky Copilot selections to new drafts", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.makeUnsafe("thread-sticky-copilot");
+
+    store.setStickyModelSelection(
+      modelSelection("copilot", "gpt-5.4", {
+        reasoningEffort: "high",
+      }),
+    );
+    store.applyStickyState(threadId);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+      modelSelectionByProvider: {
+        copilot: modelSelection("copilot", "gpt-5.4", {
+          reasoningEffort: "high",
+        }),
+      },
+      activeProvider: "copilot",
     });
   });
 });

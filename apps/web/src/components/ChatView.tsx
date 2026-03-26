@@ -6,7 +6,6 @@ import {
   type ModelSelection,
   type ProjectScript,
   type ModelSlug,
-  type ProviderModelOptions,
   type ProviderKind,
   type ProjectEntry,
   type ProjectId,
@@ -23,7 +22,11 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
-import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  buildModelSelection,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
@@ -636,34 +639,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-  const selectedModelSelection = useMemo<ModelSelection>(() => {
-    if (selectedProvider === "codex") {
-      const options = selectedModelOptionsForDispatch as
-        | NonNullable<ProviderModelOptions["codex"]>
-        | undefined;
-      return options
-        ? { provider: "codex", model: selectedModel, options }
-        : { provider: "codex", model: selectedModel };
-    }
-    if (selectedProvider === "claudeAgent") {
-      const options = selectedModelOptionsForDispatch as
-        | NonNullable<ProviderModelOptions["claudeAgent"]>
-        | undefined;
-      return options
-        ? {
-            provider: "claudeAgent",
-            model: selectedModel,
-            options,
-          }
-        : { provider: "claudeAgent", model: selectedModel };
-    }
-    const options = selectedModelOptionsForDispatch as
-      | NonNullable<ProviderModelOptions["copilot"]>
-      | undefined;
-    return options
-      ? { provider: "copilot", model: selectedModel, options }
-      : { provider: "copilot", model: selectedModel };
-  }, [selectedModel, selectedModelOptionsForDispatch, selectedProvider]);
+  const selectedModelSelection = useMemo<ModelSelection>(
+    () => buildModelSelection(selectedProvider, selectedModel, selectedModelOptionsForDispatch),
+    [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
+  );
   const selectedModelForPicker = selectedModel;
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
@@ -2594,42 +2573,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         selectedModel ||
         activeProject.defaultModelSelection?.model ||
         DEFAULT_MODEL_BY_PROVIDER.codex;
-      const threadCreateModelSelection: ModelSelection =
-        selectedProvider === "codex"
-          ? (selectedModelSelection.options as
-              | NonNullable<ProviderModelOptions["codex"]>
-              | undefined)
-            ? {
-                provider: "codex",
-                model: nextThreadModel,
-                options: selectedModelSelection.options as NonNullable<
-                  ProviderModelOptions["codex"]
-                >,
-              }
-            : { provider: "codex", model: nextThreadModel }
-          : selectedProvider === "claudeAgent"
-            ? (selectedModelSelection.options as
-                | NonNullable<ProviderModelOptions["claudeAgent"]>
-                | undefined)
-              ? {
-                  provider: "claudeAgent",
-                  model: nextThreadModel,
-                  options: selectedModelSelection.options as NonNullable<
-                    ProviderModelOptions["claudeAgent"]
-                  >,
-                }
-              : { provider: "claudeAgent", model: nextThreadModel }
-            : (selectedModelSelection.options as
-                  | NonNullable<ProviderModelOptions["copilot"]>
-                  | undefined)
-              ? {
-                  provider: "copilot",
-                  model: nextThreadModel,
-                  options: selectedModelSelection.options as NonNullable<
-                    ProviderModelOptions["copilot"]
-                  >,
-                }
-              : { provider: "copilot", model: nextThreadModel };
+      const threadCreateModelSelection: ModelSelection = buildModelSelection(
+        selectedProvider,
+        nextThreadModel,
+        selectedModelSelection.options,
+      );
 
       if (isLocalDraftThread) {
         await api.orchestration.dispatchCommand({

@@ -23,7 +23,6 @@ import {
 import {
   CopilotClient,
   type CopilotClientOptions,
-  type ModelInfo,
   type PermissionRequest,
   type PermissionRequestResult,
   type SessionEvent,
@@ -50,7 +49,14 @@ import {
   recordTurnUsage,
   type CopilotTurnTrackingState,
 } from "./copilotTurnTracking.ts";
-import { normalizeCopilotCliPathOverride, resolveBundledCopilotCliPath } from "./copilotCliPath.ts";
+import {
+  loadCopilotSupportedModels,
+  resolveCopilotRuntimeConfig,
+  resolveCopilotSelectedModel,
+  stopCopilotClient,
+  trimToUndefined,
+  validateCopilotReasoningEffort,
+} from "./copilotSdk.ts";
 import { CopilotAdapter, type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 import type {
   ProviderThreadSnapshot,
@@ -147,7 +153,7 @@ interface CopilotSessionHandle {
 
 interface CopilotClientHandle {
   start(): Promise<void>;
-  listModels(): Promise<ModelInfo[]>;
+  listModels(): Promise<ReadonlyArray<import("@github/copilot-sdk").ModelInfo>>;
   createSession(
     config: Parameters<CopilotClient["createSession"]>[0],
   ): Promise<CopilotSessionHandle>;
@@ -203,12 +209,6 @@ function normalizeString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function trimToUndefined(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
 function makeCopilotSessionId(threadId: ThreadId): string {
   return `t3code-copilot-${threadId}`;
 }
@@ -219,20 +219,6 @@ async function closeCopilotSession(session: CopilotSessionHandle): Promise<void>
     return;
   }
   await session.destroy();
-}
-
-function stopCopilotClient(client: CopilotClientHandle): Effect.Effect<void> {
-  return Effect.tryPromise({
-    try: () => client.stop(),
-    catch: () => undefined,
-  }).pipe(
-    Effect.catch(() => Effect.void),
-    Effect.asVoid,
-  );
-}
-
-function mapSupportedModelsById(models: ReadonlyArray<ModelInfo>) {
-  return new Map(models.map((model) => [model.id, model]));
 }
 
 function getCopilotModelSelection(
@@ -1483,68 +1469,57 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           return;
         }
 
-        yield* Effect.tryPromise({
-          try: () => input.client.start(),
-          catch: (cause) =>
+        const supportedModels = yield* loadCopilotSupportedModels({
+          client: input.client,
+          onStartError: (cause) =>
             new ProviderAdapterProcessError({
               provider: PROVIDER,
               threadId: input.threadId,
               detail: toMessage(cause, "Failed to start GitHub Copilot client."),
               cause,
             }),
+          onListError: (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: toMessage(cause, "Failed to load GitHub Copilot model metadata."),
+              cause,
+            }),
+        });
+        const selectedModel = yield* resolveCopilotSelectedModel({
+          supportedModels,
+          model: input.model,
+          onMissingModel: (model) =>
+            new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "session.model",
+              issue: `GitHub Copilot model '${model}' is not available in the current Copilot runtime.`,
+            }),
         });
 
-        const supportedModels = mapSupportedModelsById(
-          yield* Effect.tryPromise({
-            try: () => input.client.listModels(),
-            catch: (cause) =>
-              new ProviderAdapterProcessError({
-                provider: PROVIDER,
-                threadId: input.threadId,
-                detail: toMessage(cause, "Failed to load GitHub Copilot model metadata."),
-                cause,
-              }),
-          }),
-        );
-        const selectedModel = input.model ? supportedModels.get(input.model) : undefined;
-
-        if (input.model && !selectedModel) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "session.model",
-            issue: `GitHub Copilot model '${input.model}' is not available in the current Copilot runtime.`,
-          });
-        }
-
-        if (!input.reasoningEffort) {
-          return;
-        }
-
-        if (!selectedModel) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "session.reasoningEffort",
-            issue:
-              "GitHub Copilot reasoning effort requires an explicit supported model selection.",
-          });
-        }
-
-        const supportedReasoningEfforts = selectedModel.supportedReasoningEfforts ?? [];
-        if (supportedReasoningEfforts.length === 0) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "session.reasoningEffort",
-            issue: `GitHub Copilot model '${selectedModel.id}' does not support reasoning effort configuration.`,
-          });
-        }
-
-        if (!supportedReasoningEfforts.includes(input.reasoningEffort)) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "session.reasoningEffort",
-            issue: `GitHub Copilot model '${selectedModel.id}' does not support reasoning effort '${input.reasoningEffort}'.`,
-          });
-        }
+        yield* validateCopilotReasoningEffort({
+          selectedModel,
+          reasoningEffort: input.reasoningEffort,
+          onMissingModel: () =>
+            new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "session.reasoningEffort",
+              issue:
+                "GitHub Copilot reasoning effort requires an explicit supported model selection.",
+            }),
+          onUnsupportedModel: (modelId) =>
+            new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "session.reasoningEffort",
+              issue: `GitHub Copilot model '${modelId}' does not support reasoning effort configuration.`,
+            }),
+          onUnsupportedReasoningEffort: (modelId, effort) =>
+            new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "session.reasoningEffort",
+              issue: `GitHub Copilot model '${modelId}' does not support reasoning effort '${effort}'.`,
+            }),
+        });
       });
 
     const reconfigureSession = (
@@ -1719,16 +1694,11 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
               }),
           ),
         );
-        const cliPath =
-          normalizeCopilotCliPathOverride(copilotSettings.binaryPath) ??
-          resolveBundledCopilotCliPath();
-        const configDir = trimToUndefined(copilotSettings.configDir);
+        const { clientOptions, configDir } = resolveCopilotRuntimeConfig(
+          copilotSettings,
+          input.cwd,
+        );
         const resumeSessionId = extractResumeSessionId(input.resumeCursor);
-        const clientOptions: CopilotClientOptions = {
-          ...(cliPath ? { cliPath } : {}),
-          ...(input.cwd ? { cwd: input.cwd } : {}),
-          logLevel: "error",
-        };
         const pendingApprovalResolvers = new Map<string, PendingApprovalRequest>();
         const pendingUserInputResolvers = new Map<string, PendingUserInputRequest>();
         const modelSelection = getCopilotModelSelection(input);

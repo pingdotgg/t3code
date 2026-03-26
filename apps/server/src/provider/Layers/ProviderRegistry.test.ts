@@ -30,6 +30,7 @@ import {
   readCodexConfigModelProvider,
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
+import { makeCheckCopilotProviderStatus } from "./CopilotProvider";
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
@@ -94,6 +95,29 @@ function failingSpawnerLayer(description: string) {
       ),
     ),
   );
+}
+
+class FakeCopilotProviderClient {
+  public startImpl = async () => undefined;
+  public getStatusImpl = async () => ({ version: "1.2.3" });
+  public getAuthStatusImpl = async () => ({ isAuthenticated: true });
+  public stopImpl = async () => [] as Error[];
+
+  start() {
+    return this.startImpl();
+  }
+
+  getStatus() {
+    return this.getStatusImpl();
+  }
+
+  getAuthStatus() {
+    return this.getAuthStatusImpl();
+  }
+
+  stop() {
+    return this.stopImpl();
+  }
 }
 
 function makeMutableServerSettingsService(
@@ -468,6 +492,136 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.status, "disabled");
           assert.strictEqual(status.installed, false);
           assert.strictEqual(status.message, "Codex is disabled in T3 Code settings.");
+        }),
+      );
+    });
+
+    describe("checkCopilotProviderStatus", () => {
+      it.effect("skips Copilot probes entirely when the provider is disabled", () =>
+        Effect.gen(function* () {
+          const checkCopilotProviderStatus = makeCheckCopilotProviderStatus({
+            clientFactory: () => {
+              throw new Error("client factory should not be called when disabled");
+            },
+          });
+          const status = yield* checkCopilotProviderStatus().pipe(
+            Effect.provide(
+              ServerSettingsService.layerTest({
+                providers: {
+                  copilot: {
+                    enabled: false,
+                  },
+                },
+              }),
+            ),
+          );
+
+          assert.strictEqual(status.provider, "copilot");
+          assert.strictEqual(status.enabled, false);
+          assert.strictEqual(status.status, "disabled");
+          assert.strictEqual(status.message, "GitHub Copilot is disabled in T3 Code settings.");
+        }),
+      );
+
+      it.effect("reports a missing Copilot CLI as not installed", () =>
+        Effect.gen(function* () {
+          const client = new FakeCopilotProviderClient();
+          client.startImpl = async () => {
+            throw new Error("spawn copilot ENOENT");
+          };
+          const checkCopilotProviderStatus = makeCheckCopilotProviderStatus({
+            clientFactory: () => client,
+          });
+          const status = yield* checkCopilotProviderStatus();
+
+          assert.strictEqual(status.provider, "copilot");
+          assert.strictEqual(status.installed, false);
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.authStatus, "unknown");
+          assert.strictEqual(
+            status.message,
+            "GitHub Copilot CLI is not installed or could not be resolved.",
+          );
+        }),
+      );
+
+      it.effect("reports Copilot startup timeouts predictably", () =>
+        Effect.gen(function* () {
+          const client = new FakeCopilotProviderClient();
+          client.startImpl = () => new Promise<undefined>(() => undefined);
+          const checkCopilotProviderStatus = makeCheckCopilotProviderStatus({
+            clientFactory: () => client,
+            timeoutMs: 1,
+          });
+          const status = yield* checkCopilotProviderStatus();
+
+          assert.strictEqual(status.provider, "copilot");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.authStatus, "unknown");
+          assert.strictEqual(
+            status.message,
+            "GitHub Copilot CLI health check timed out while starting the SDK client.",
+          );
+        }),
+      );
+
+      it.effect("returns ready when Copilot is installed and authenticated", () =>
+        Effect.gen(function* () {
+          const client = new FakeCopilotProviderClient();
+          let lastClientOptions: unknown;
+          const checkCopilotProviderStatus = makeCheckCopilotProviderStatus({
+            clientFactory: (options) => {
+              lastClientOptions = options;
+              return client;
+            },
+          });
+          const status = yield* checkCopilotProviderStatus().pipe(
+            Effect.provide(
+              ServerSettingsService.layerTest({
+                providers: {
+                  copilot: {
+                    binaryPath: "/tmp/copilot",
+                    configDir: "/tmp/copilot-config",
+                    customModels: ["custom-copilot-model"],
+                  },
+                },
+              }),
+            ),
+          );
+
+          assert.strictEqual(status.provider, "copilot");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.authStatus, "authenticated");
+          assert.strictEqual(status.version, "1.2.3");
+          assert.deepStrictEqual(lastClientOptions, {
+            cliPath: "/tmp/copilot",
+            logLevel: "error",
+          });
+          assert.strictEqual(
+            status.models.some((model) => model.slug === "custom-copilot-model"),
+            true,
+          );
+        }),
+      );
+
+      it.effect("returns unauthenticated when Copilot auth status says login is required", () =>
+        Effect.gen(function* () {
+          const client = new FakeCopilotProviderClient();
+          client.getAuthStatusImpl = async () => ({
+            isAuthenticated: false,
+            statusMessage: "Run `github-copilot auth login` to continue.",
+          });
+          const checkCopilotProviderStatus = makeCheckCopilotProviderStatus({
+            clientFactory: () => client,
+          });
+          const status = yield* checkCopilotProviderStatus();
+
+          assert.strictEqual(status.provider, "copilot");
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.authStatus, "unauthenticated");
+          assert.strictEqual(status.message, "Run `github-copilot auth login` to continue.");
         }),
       );
     });

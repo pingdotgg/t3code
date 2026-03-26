@@ -1,11 +1,14 @@
 import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   type ModelSelection,
-  type ProviderModelOptions,
   type ProviderKind,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { normalizeModelSlug, resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  buildModelSelection,
+  normalizeModelSlug,
+  resolveSelectableModel,
+} from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderRegistry";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import {
@@ -225,22 +228,5 @@ export function resolveAppModelSelectionState(
     },
   });
 
-  if (provider === "codex") {
-    const options = modelOptionsForDispatch as
-      | NonNullable<ProviderModelOptions["codex"]>
-      | undefined;
-    return options ? { provider: "codex", model, options } : { provider: "codex", model };
-  }
-
-  if (provider === "copilot") {
-    const options = modelOptionsForDispatch as
-      | NonNullable<ProviderModelOptions["copilot"]>
-      | undefined;
-    return options ? { provider: "copilot", model, options } : { provider: "copilot", model };
-  }
-
-  const options = modelOptionsForDispatch as
-    | NonNullable<ProviderModelOptions["claudeAgent"]>
-    | undefined;
-  return options ? { provider: "claudeAgent", model, options } : { provider: "claudeAgent", model };
+  return buildModelSelection(provider, model, modelOptionsForDispatch);
 }

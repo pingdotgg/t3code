@@ -14,11 +14,10 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import {
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
-  type ProviderModelOptions,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+import { buildModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { useSettings, useUpdateSettings } from "../hooks/useSettings";
 import {
   getCustomModelOptionsByProvider,
@@ -890,36 +889,11 @@ function SettingsRouteView() {
                       triggerVariant="outline"
                       triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                       onModelOptionsChange={(nextOptions) => {
-                        const nextSelection =
-                          textGenProvider === "codex"
-                            ? nextOptions
-                              ? {
-                                  provider: "codex" as const,
-                                  model: textGenModel,
-                                  options: nextOptions as NonNullable<
-                                    ProviderModelOptions["codex"]
-                                  >,
-                                }
-                              : { provider: "codex" as const, model: textGenModel }
-                            : textGenProvider === "copilot"
-                              ? nextOptions
-                                ? {
-                                    provider: "copilot" as const,
-                                    model: textGenModel,
-                                    options: nextOptions as NonNullable<
-                                      ProviderModelOptions["copilot"]
-                                    >,
-                                  }
-                                : { provider: "copilot" as const, model: textGenModel }
-                              : nextOptions
-                                ? {
-                                    provider: "claudeAgent" as const,
-                                    model: textGenModel,
-                                    options: nextOptions as NonNullable<
-                                      ProviderModelOptions["claudeAgent"]
-                                    >,
-                                  }
-                                : { provider: "claudeAgent" as const, model: textGenModel };
+                        const nextSelection = buildModelSelection(
+                          textGenProvider,
+                          textGenModel,
+                          nextOptions,
+                        );
                         updateSettings({
                           textGenerationModelSelection: resolveAppModelSelectionState(
                             {

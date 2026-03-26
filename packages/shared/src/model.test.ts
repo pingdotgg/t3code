@@ -3,14 +3,17 @@ import {
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   type ModelCapabilities,
+  type ProviderModelOptions,
 } from "@t3tools/contracts";
 
 import {
   applyClaudePromptEffortPrefix,
+  buildModelSelection,
   getDefaultEffort,
   hasEffortLevel,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
+  normalizeModelOptionsForProvider,
   resolveModelSlug,
   resolveModelSlugForProvider,
   resolveSelectableModel,
@@ -107,5 +110,46 @@ describe("misc helpers", () => {
   it("trims strings to null", () => {
     expect(trimOrNull("  hi  ")).toBe("hi");
     expect(trimOrNull("   ")).toBeNull();
+  });
+});
+
+describe("buildModelSelection", () => {
+  it("builds provider-specific selections without widening the union", () => {
+    expect(buildModelSelection("codex", "gpt-5.4", { fastMode: true })).toEqual({
+      provider: "codex",
+      model: "gpt-5.4",
+      options: { fastMode: true },
+    });
+    expect(buildModelSelection("claudeAgent", "claude-sonnet-4-6", { effort: "medium" })).toEqual({
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+      options: { effort: "medium" },
+    });
+    expect(buildModelSelection("copilot", "gpt-5.4-mini", { reasoningEffort: "low" })).toEqual({
+      provider: "copilot",
+      model: "gpt-5.4-mini",
+      options: { reasoningEffort: "low" },
+    });
+  });
+});
+
+describe("normalizeModelOptionsForProvider", () => {
+  it("normalizes provider model options through the shared helper", () => {
+    expect(
+      normalizeModelOptionsForProvider("codex", codexCaps, {
+        reasoningEffort: "high",
+        fastMode: true,
+      }),
+    ).toEqual<ProviderModelOptions["codex"]>({ fastMode: true });
+    expect(
+      normalizeModelOptionsForProvider("claudeAgent", claudeCaps, {
+        effort: "medium",
+      }),
+    ).toEqual<ProviderModelOptions["claudeAgent"]>({ effort: "medium" });
+    expect(
+      normalizeModelOptionsForProvider("copilot", codexCaps, {
+        reasoningEffort: "xhigh",
+      }),
+    ).toEqual<ProviderModelOptions["copilot"]>({ reasoningEffort: "xhigh" });
   });
 });

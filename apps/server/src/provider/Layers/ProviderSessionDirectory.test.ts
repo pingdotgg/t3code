@@ -204,4 +204,50 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
 
       fs.rmSync(tempDir, { recursive: true, force: true });
     }));
+
+  it("persists Copilot provider bindings across restart", () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-directory-copilot-"));
+      const dbPath = path.join(tempDir, "orchestration.sqlite");
+      const directoryLayer = makeDirectoryLayer(makeSqlitePersistenceLive(dbPath));
+      const threadId = ThreadId.makeUnsafe("thread-copilot-restart");
+
+      yield* Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory;
+        yield* directory.upsert({
+          provider: "copilot",
+          threadId,
+          status: "running",
+          resumeCursor: {
+            sessionId: "copilot-session-1",
+          },
+          runtimePayload: {
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+          },
+        });
+      }).pipe(Effect.provide(directoryLayer));
+
+      yield* Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory;
+        const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+        const provider = yield* directory.getProvider(threadId);
+        const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+
+        assert.equal(provider, "copilot");
+        assert.equal(Option.isSome(runtime), true);
+        if (Option.isSome(runtime)) {
+          assert.equal(runtime.value.providerName, "copilot");
+          assert.deepEqual(runtime.value.resumeCursor, {
+            sessionId: "copilot-session-1",
+          });
+          assert.deepEqual(runtime.value.runtimePayload, {
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+          });
+        }
+      }).pipe(Effect.provide(directoryLayer));
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }));
 });

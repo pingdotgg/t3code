@@ -12,6 +12,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./copilot": {
+      "types": "./src/copilot.ts",
+      "import": "./src/copilot.ts"
+    },
     "./logging": {
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"

@@ -6,18 +6,14 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import {
+  normalizeModelOptionsForProvider,
   isClaudeUltrathinkPrompt,
   trimOrNull,
   getDefaultEffort,
   hasEffortLevel,
 } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
-import {
-  getProviderModelCapabilities,
-  normalizeClaudeModelOptionsWithCapabilities,
-  normalizeCopilotModelOptionsWithCapabilities,
-  normalizeCodexModelOptionsWithCapabilities,
-} from "../../providerModels";
+import { getProviderModelCapabilities } from "../../providerModels";
 import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
@@ -88,10 +84,10 @@ function getProviderStateFromCapabilities(
   // Normalize options for dispatch
   const normalizedOptions =
     provider === "codex"
-      ? normalizeCodexModelOptionsWithCapabilities(caps, modelOptions?.codex)
+      ? normalizeModelOptionsForProvider("codex", caps, modelOptions?.codex)
       : provider === "claudeAgent"
-        ? normalizeClaudeModelOptionsWithCapabilities(caps, modelOptions?.claudeAgent)
-        : normalizeCopilotModelOptionsWithCapabilities(caps, modelOptions?.copilot);
+        ? normalizeModelOptionsForProvider("claudeAgent", caps, modelOptions?.claudeAgent)
+        : normalizeModelOptionsForProvider("copilot", caps, modelOptions?.copilot);
 
   // Ultrathink styling (driven by capabilities data, not provider identity)
   const ultrathinkActive =

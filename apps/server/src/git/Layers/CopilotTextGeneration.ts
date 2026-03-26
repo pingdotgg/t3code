@@ -9,17 +9,20 @@ import {
   approveAll,
   CopilotClient,
   type CopilotClientOptions,
-  type ModelInfo,
   type SessionEvent,
 } from "@github/copilot-sdk";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
-  normalizeCopilotCliPathOverride,
-  resolveBundledCopilotCliPath,
-} from "../../provider/Layers/copilotCliPath.ts";
+  loadCopilotSupportedModels,
+  materializeCopilotAttachments,
+  resolveCopilotRuntimeConfig,
+  resolveCopilotSelectedModel,
+  selectCopilotReasoningEffort,
+  stopCopilotClient,
+  validateCopilotReasoningEffort,
+} from "../../provider/Layers/copilotSdk.ts";
 import { TextGenerationError } from "../Errors.ts";
 import {
   buildBranchNamePrompt,
@@ -50,7 +53,7 @@ interface CopilotTextGenerationSessionHandle {
 interface CopilotTextGenerationClientHandle {
   start(): Promise<void>;
   stop(): Promise<ReadonlyArray<Error>>;
-  listModels(): Promise<ReadonlyArray<ModelInfo>>;
+  listModels(): Promise<ReadonlyArray<import("@github/copilot-sdk").ModelInfo>>;
   createSession(config: {
     model?: string;
     reasoningEffort?: CodexReasoningEffort;
@@ -60,10 +63,6 @@ interface CopilotTextGenerationClientHandle {
     onEvent?: (event: SessionEvent) => void;
     onPermissionRequest?: unknown;
   }): Promise<CopilotTextGenerationSessionHandle>;
-}
-
-function mapSupportedModelsById(models: ReadonlyArray<ModelInfo>) {
-  return new Map(models.map((model) => [model.id, model]));
 }
 
 function buildStrictJsonPrompt(prompt: string): string {
@@ -148,32 +147,6 @@ function decodeStructuredOutput<
   });
 }
 
-function materializeCopilotAttachments(
-  attachmentsDir: string,
-  attachments: ReadonlyArray<ChatAttachment> | undefined,
-): Array<{ type: "file"; path: string; displayName?: string }> {
-  if (!attachments || attachments.length === 0) {
-    return [];
-  }
-
-  const results: Array<{ type: "file"; path: string; displayName?: string }> = [];
-  for (const attachment of attachments) {
-    const resolvedPath = resolveAttachmentPath({
-      attachmentsDir,
-      attachment,
-    });
-    if (!resolvedPath) {
-      continue;
-    }
-    results.push({
-      type: "file",
-      path: resolvedPath,
-      displayName: attachment.name,
-    });
-  }
-  return results;
-}
-
 const makeCopilotTextGeneration = (options?: CopilotTextGenerationLiveOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig;
@@ -203,72 +176,76 @@ const makeCopilotTextGeneration = (options?: CopilotTextGenerationLiveOptions) =
             ),
           ),
         );
-        const cliPath =
-          normalizeCopilotCliPathOverride(copilotSettings.binaryPath) ??
-          resolveBundledCopilotCliPath();
+        const { clientOptions, configDir } = resolveCopilotRuntimeConfig(
+          copilotSettings,
+          input.cwd,
+        );
         return yield* Effect.acquireUseRelease(
           Effect.sync(
-            () =>
-              options?.clientFactory?.({
-                ...(cliPath ? { cliPath } : {}),
-                ...(input.cwd ? { cwd: input.cwd } : {}),
-                logLevel: "error",
-              }) ??
-              new CopilotClient({
-                ...(cliPath ? { cliPath } : {}),
-                ...(input.cwd ? { cwd: input.cwd } : {}),
-                logLevel: "error",
-              }),
+            () => options?.clientFactory?.(clientOptions) ?? new CopilotClient(clientOptions),
           ),
           (client) =>
             Effect.gen(function* () {
-              const supportedModels = mapSupportedModelsById(
-                yield* Effect.tryPromise({
-                  try: async () => {
-                    await client.start();
-                    return await client.listModels();
-                  },
-                  catch: (cause) =>
-                    normalizeCliError(
-                      "copilot",
-                      input.operation,
-                      cause,
-                      "Failed to start GitHub Copilot client",
-                    ),
-                }),
-              );
-              const selectedModel = supportedModels.get(input.modelSelection.model);
+              const supportedModels = yield* loadCopilotSupportedModels({
+                client,
+                onStartError: (cause) =>
+                  normalizeCliError(
+                    "copilot",
+                    input.operation,
+                    cause,
+                    "Failed to start GitHub Copilot client",
+                  ),
+                onListError: (cause) =>
+                  normalizeCliError(
+                    "copilot",
+                    input.operation,
+                    cause,
+                    "Failed to load GitHub Copilot model metadata",
+                  ),
+              });
+              const selectedModel = yield* resolveCopilotSelectedModel({
+                supportedModels,
+                model: input.modelSelection.model,
+                onMissingModel: (model) =>
+                  new TextGenerationError({
+                    operation: input.operation,
+                    detail: `GitHub Copilot model '${model}' is not available in the current Copilot runtime.`,
+                  }),
+              });
+
+              const explicitReasoningEffort = input.modelSelection.options?.reasoningEffort;
+              yield* validateCopilotReasoningEffort({
+                selectedModel,
+                reasoningEffort: explicitReasoningEffort,
+                onMissingModel: () =>
+                  new TextGenerationError({
+                    operation: input.operation,
+                    detail:
+                      "GitHub Copilot reasoning effort requires an explicit supported model selection.",
+                  }),
+                onUnsupportedModel: (modelId) =>
+                  new TextGenerationError({
+                    operation: input.operation,
+                    detail: `GitHub Copilot model '${modelId}' does not support reasoning effort configuration.`,
+                  }),
+                onUnsupportedReasoningEffort: (modelId, effort) =>
+                  new TextGenerationError({
+                    operation: input.operation,
+                    detail: `GitHub Copilot model '${modelId}' does not support reasoning effort '${effort}'.`,
+                  }),
+              });
               if (!selectedModel) {
                 return yield* new TextGenerationError({
                   operation: input.operation,
-                  detail: `GitHub Copilot model '${input.modelSelection.model}' is not available in the current Copilot runtime.`,
+                  detail:
+                    "GitHub Copilot reasoning effort requires an explicit supported model selection.",
                 });
               }
-
-              const explicitReasoningEffort = input.modelSelection.options?.reasoningEffort;
-              const effectiveReasoningEffort =
-                explicitReasoningEffort ??
-                (selectedModel.supportedReasoningEfforts?.includes(
-                  COPILOT_GIT_TEXT_GENERATION_REASONING_EFFORT,
-                )
-                  ? COPILOT_GIT_TEXT_GENERATION_REASONING_EFFORT
-                  : undefined);
-
-              if (explicitReasoningEffort) {
-                const supportedReasoningEfforts = selectedModel.supportedReasoningEfforts ?? [];
-                if (supportedReasoningEfforts.length === 0) {
-                  return yield* new TextGenerationError({
-                    operation: input.operation,
-                    detail: `GitHub Copilot model '${selectedModel.id}' does not support reasoning effort configuration.`,
-                  });
-                }
-                if (!supportedReasoningEfforts.includes(explicitReasoningEffort)) {
-                  return yield* new TextGenerationError({
-                    operation: input.operation,
-                    detail: `GitHub Copilot model '${selectedModel.id}' does not support reasoning effort '${explicitReasoningEffort}'.`,
-                  });
-                }
-              }
+              const effectiveReasoningEffort = selectCopilotReasoningEffort({
+                selectedModel,
+                explicitReasoningEffort,
+                fallbackReasoningEffort: COPILOT_GIT_TEXT_GENERATION_REASONING_EFFORT,
+              });
 
               const attachments = materializeCopilotAttachments(
                 serverConfig.attachmentsDir,
@@ -289,7 +266,7 @@ const makeCopilotTextGeneration = (options?: CopilotTextGenerationLiveOptions) =
                       ? { reasoningEffort: effectiveReasoningEffort }
                       : {}),
                     ...(input.cwd ? { workingDirectory: input.cwd } : {}),
-                    ...(copilotSettings.configDir ? { configDir: copilotSettings.configDir } : {}),
+                    ...(configDir ? { configDir } : {}),
                     streaming: false,
                     onEvent: (event) => {
                       if (event.type === "assistant.turn_start") {
@@ -349,13 +326,7 @@ const makeCopilotTextGeneration = (options?: CopilotTextGenerationLiveOptions) =
                 outputSchema: input.outputSchema,
               });
             }),
-          (client) =>
-            Effect.promise(() =>
-              client
-                .stop()
-                .then(() => undefined)
-                .catch(() => undefined),
-            ),
+          (client) => stopCopilotClient(client),
         );
       });
 
