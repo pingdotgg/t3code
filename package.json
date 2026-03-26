@@ -69,5 +69,8 @@
     "workerDirectory": [
       "apps/web/public"
     ]
-  }
+  },
+  "trustedDependencies": [
+    "node-pty"
+  ]
 }
