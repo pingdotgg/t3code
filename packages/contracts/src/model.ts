@@ -18,6 +18,7 @@ export const ClaudeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
   effort: Schema.optional(Schema.Literals(CLAUDE_CODE_EFFORT_OPTIONS)),
   fastMode: Schema.optional(Schema.Boolean),
+  contextWindow: Schema.optional(Schema.String),
 });
 export type ClaudeModelOptions = typeof ClaudeModelOptions.Type;
 
@@ -34,17 +35,23 @@ export const EffortOption = Schema.Struct({
 });
 export type EffortOption = typeof EffortOption.Type;
 
+export const ContextWindowOption = Schema.Struct({
+  value: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  isDefault: Schema.optional(Schema.Boolean),
+});
+export type ContextWindowOption = typeof ContextWindowOption.Type;
+
 export const ModelCapabilities = Schema.Struct({
   reasoningEffortLevels: Schema.Array(EffortOption),
   supportsFastMode: Schema.Boolean,
   supportsThinkingToggle: Schema.Boolean,
+  contextWindowOptions: Schema.Array(ContextWindowOption),
   promptInjectedEffortLevels: Schema.Array(TrimmedNonEmptyString),
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
-export type ModelSlug = string & {};
-
-export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, ModelSlug> = {
+export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   codex: "gpt-5.4",
   claudeAgent: "claude-sonnet-4-6",
 };
@@ -57,7 +64,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind,
   claudeAgent: "claude-haiku-4-5",
 };
 
-export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, ModelSlug>> = {
+export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, string>> = {
   codex: {
     "5.4": "gpt-5.4",
     "5.3": "gpt-5.3-codex",

@@ -9,7 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import { Effect, Equal, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { getDefaultEffort, hasEffortLevel, trimOrNull } from "@t3tools/shared/model";
+import { resolveContextWindow, resolveEffort } from "@t3tools/shared/model";
 
 import {
   buildServerProvider,
@@ -42,6 +42,10 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       ],
       supportsFastMode: true,
       supportsThinkingToggle: false,
+      contextWindowOptions: [
+        { value: "200k", label: "200k" },
+        { value: "1m", label: "1M", isDefault: true },
+      ],
       promptInjectedEffortLevels: ["ultrathink"],
     } satisfies ModelCapabilities,
   },
@@ -58,6 +62,10 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       ],
       supportsFastMode: false,
       supportsThinkingToggle: false,
+      contextWindowOptions: [
+        { value: "200k", label: "200k" },
+        { value: "1m", label: "1M", isDefault: true },
+      ],
       promptInjectedEffortLevels: ["ultrathink"],
     } satisfies ModelCapabilities,
   },
@@ -69,6 +77,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       reasoningEffortLevels: [],
       supportsFastMode: false,
       supportsThinkingToggle: true,
+      contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     } satisfies ModelCapabilities,
   },
@@ -81,6 +90,7 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
       reasoningEffortLevels: [],
       supportsFastMode: false,
       supportsThinkingToggle: false,
+      contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     }
   );
@@ -91,23 +101,16 @@ export function normalizeClaudeModelOptions(
   modelOptions: ClaudeModelOptions | null | undefined,
 ): ClaudeModelOptions | undefined {
   const caps = getClaudeModelCapabilities(model);
-  const defaultReasoningEffort = getDefaultEffort(caps);
-  const resolvedEffort = trimOrNull(modelOptions?.effort);
-  const isPromptInjected = caps.promptInjectedEffortLevels.includes(resolvedEffort ?? "");
-  const effort =
-    resolvedEffort &&
-    !isPromptInjected &&
-    hasEffortLevel(caps, resolvedEffort) &&
-    resolvedEffort !== defaultReasoningEffort
-      ? resolvedEffort
-      : undefined;
+  const effort = resolveEffort(caps, modelOptions?.effort);
   const thinking =
     caps.supportsThinkingToggle && modelOptions?.thinking === false ? false : undefined;
   const fastMode = caps.supportsFastMode && modelOptions?.fastMode === true ? true : undefined;
+  const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
   const nextOptions: ClaudeModelOptions = {
     ...(thinking === false ? { thinking: false } : {}),
-    ...(effort ? { effort } : {}),
+    ...(effort ? { effort: effort as ClaudeModelOptions["effort"] } : {}),
     ...(fastMode ? { fastMode: true } : {}),
+    ...(contextWindow ? { contextWindow } : {}),
   };
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }

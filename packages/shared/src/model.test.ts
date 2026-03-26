@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_MODEL,
-  DEFAULT_MODEL_BY_PROVIDER,
-  type ModelCapabilities,
-} from "@t3tools/contracts";
+import { DEFAULT_MODEL_BY_PROVIDER, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
   applyClaudePromptEffortPrefix,
+  getDefaultContextWindow,
   getDefaultEffort,
+  hasContextWindowOption,
   hasEffortLevel,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
+  resolveApiModelId,
+  resolveContextWindow,
+  resolveEffort,
   resolveModelSlug,
   resolveModelSlugForProvider,
   resolveSelectableModel,
@@ -24,6 +25,7 @@ const codexCaps: ModelCapabilities = {
   ],
   supportsFastMode: true,
   supportsThinkingToggle: false,
+  contextWindowOptions: [],
   promptInjectedEffortLevels: [],
 };
 
@@ -35,6 +37,10 @@ const claudeCaps: ModelCapabilities = {
   ],
   supportsFastMode: false,
   supportsThinkingToggle: false,
+  contextWindowOptions: [
+    { value: "200k", label: "200k" },
+    { value: "1m", label: "1M", isDefault: true },
+  ],
   promptInjectedEffortLevels: ["ultrathink"],
 };
 
@@ -54,14 +60,15 @@ describe("normalizeModelSlug", () => {
 
 describe("resolveModelSlug", () => {
   it("returns defaults when the model is missing", () => {
-    expect(resolveModelSlug(undefined)).toBe(DEFAULT_MODEL);
+    expect(resolveModelSlug(undefined, "codex")).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
+
     expect(resolveModelSlugForProvider("claudeAgent", undefined)).toBe(
       DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
     );
   });
 
   it("preserves normalized unknown models", () => {
-    expect(resolveModelSlug("custom/internal-model")).toBe("custom/internal-model");
+    expect(resolveModelSlug("custom/internal-model", "codex")).toBe("custom/internal-model");
   });
 });
 
@@ -89,6 +96,42 @@ describe("capability helpers", () => {
   });
 });
 
+describe("resolveEffort", () => {
+  it("returns the explicit value when supported and not prompt-injected", () => {
+    expect(resolveEffort(codexCaps, "xhigh")).toBe("xhigh");
+    expect(resolveEffort(codexCaps, "high")).toBe("high");
+    expect(resolveEffort(claudeCaps, "medium")).toBe("medium");
+  });
+
+  it("falls back to default when value is unsupported", () => {
+    expect(resolveEffort(codexCaps, "bogus")).toBe("high");
+    expect(resolveEffort(claudeCaps, "bogus")).toBe("high");
+  });
+
+  it("returns the default when no value is provided", () => {
+    expect(resolveEffort(codexCaps, undefined)).toBe("high");
+    expect(resolveEffort(codexCaps, null)).toBe("high");
+    expect(resolveEffort(codexCaps, "")).toBe("high");
+    expect(resolveEffort(codexCaps, "  ")).toBe("high");
+  });
+
+  it("excludes prompt-injected efforts and falls back to default", () => {
+    expect(resolveEffort(claudeCaps, "ultrathink")).toBe("high");
+  });
+
+  it("returns undefined for models with no effort levels", () => {
+    const noCaps: ModelCapabilities = {
+      reasoningEffortLevels: [],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    };
+    expect(resolveEffort(noCaps, undefined)).toBeUndefined();
+    expect(resolveEffort(noCaps, "high")).toBeUndefined();
+  });
+});
+
 describe("misc helpers", () => {
   it("detects ultrathink prompts", () => {
     expect(isClaudeUltrathinkPrompt("Ultrathink:\nInvestigate")).toBe(true);
@@ -107,5 +150,79 @@ describe("misc helpers", () => {
   it("trims strings to null", () => {
     expect(trimOrNull("  hi  ")).toBe("hi");
     expect(trimOrNull("   ")).toBeNull();
+  });
+});
+
+describe("context window helpers", () => {
+  it("reads default context window", () => {
+    expect(getDefaultContextWindow(claudeCaps)).toBe("1m");
+  });
+
+  it("returns null for models without context window options", () => {
+    expect(getDefaultContextWindow(codexCaps)).toBeNull();
+  });
+
+  it("checks context window support", () => {
+    expect(hasContextWindowOption(claudeCaps, "1m")).toBe(true);
+    expect(hasContextWindowOption(claudeCaps, "200k")).toBe(true);
+    expect(hasContextWindowOption(claudeCaps, "bogus")).toBe(false);
+    expect(hasContextWindowOption(codexCaps, "1m")).toBe(false);
+  });
+});
+
+describe("resolveContextWindow", () => {
+  it("returns the explicit value when supported", () => {
+    expect(resolveContextWindow(claudeCaps, "200k")).toBe("200k");
+    expect(resolveContextWindow(claudeCaps, "1m")).toBe("1m");
+  });
+
+  it("falls back to default when value is unsupported", () => {
+    expect(resolveContextWindow(claudeCaps, "bogus")).toBe("1m");
+  });
+
+  it("returns the default when no value is provided", () => {
+    expect(resolveContextWindow(claudeCaps, undefined)).toBe("1m");
+    expect(resolveContextWindow(claudeCaps, null)).toBe("1m");
+    expect(resolveContextWindow(claudeCaps, "")).toBe("1m");
+  });
+
+  it("returns undefined for models with no context window options", () => {
+    expect(resolveContextWindow(codexCaps, undefined)).toBeUndefined();
+    expect(resolveContextWindow(codexCaps, "1m")).toBeUndefined();
+  });
+});
+
+describe("resolveApiModelId", () => {
+  it("appends [1m] suffix for 1m context window", () => {
+    expect(
+      resolveApiModelId({
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+        options: { contextWindow: "1m" },
+      }),
+    ).toBe("claude-opus-4-6[1m]");
+  });
+
+  it("returns the model as-is for 200k context window", () => {
+    expect(
+      resolveApiModelId({
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+        options: { contextWindow: "200k" },
+      }),
+    ).toBe("claude-opus-4-6");
+  });
+
+  it("returns the model as-is when no context window is set", () => {
+    expect(resolveApiModelId({ provider: "claudeAgent", model: "claude-opus-4-6" })).toBe(
+      "claude-opus-4-6",
+    );
+    expect(
+      resolveApiModelId({ provider: "claudeAgent", model: "claude-opus-4-6", options: {} }),
+    ).toBe("claude-opus-4-6");
+  });
+
+  it("returns the model as-is for Codex selections", () => {
+    expect(resolveApiModelId({ provider: "codex", model: "gpt-5.4" })).toBe("gpt-5.4");
   });
 });

@@ -40,7 +40,12 @@ import {
   type UserInputQuestion,
   ClaudeCodeEffort,
 } from "@t3tools/contracts";
-import { hasEffortLevel, applyClaudePromptEffortPrefix, trimOrNull } from "@t3tools/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  resolveApiModelId,
+  resolveEffort,
+  trimOrNull,
+} from "@t3tools/shared/model";
 import {
   Cause,
   DateTime,
@@ -506,16 +511,15 @@ const CLAUDE_SETTING_SOURCES = [
 function buildPromptText(input: ProviderSendTurnInput): string {
   const rawEffort =
     input.modelSelection?.provider === "claudeAgent" ? input.modelSelection.options?.effort : null;
-  const requestedEffort = trimOrNull(rawEffort);
   const claudeModel =
     input.modelSelection?.provider === "claudeAgent" ? input.modelSelection.model : undefined;
   const caps = getClaudeModelCapabilities(claudeModel);
+
+  // For prompt injection, we check if the raw effort is a prompt-injected level (e.g. "ultrathink").
+  // resolveEffort strips prompt-injected values (returning the default instead), so we check the raw value directly.
+  const trimmedEffort = trimOrNull(rawEffort);
   const promptEffort =
-    requestedEffort === "ultrathink" && caps.reasoningEffortLevels.length > 0
-      ? "ultrathink"
-      : requestedEffort && hasEffortLevel(caps, requestedEffort)
-        ? requestedEffort
-        : null;
+    trimmedEffort && caps.promptInjectedEffortLevels.includes(trimmedEffort) ? trimmedEffort : null;
   return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
 }
 
@@ -2727,10 +2731,10 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const claudeBinaryPath = claudeSettings.binaryPath;
         const modelSelection =
           input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
-        const requestedEffort = trimOrNull(modelSelection?.options?.effort ?? null);
         const caps = getClaudeModelCapabilities(modelSelection?.model);
-        const effort =
-          requestedEffort && hasEffortLevel(caps, requestedEffort) ? requestedEffort : null;
+        const apiModelId = modelSelection ? resolveApiModelId(modelSelection) : undefined;
+        const effort = (resolveEffort(caps, modelSelection?.options?.effort) ??
+          null) as ClaudeCodeEffort | null;
         const fastMode = modelSelection?.options?.fastMode === true && caps.supportsFastMode;
         const thinking =
           typeof modelSelection?.options?.thinking === "boolean" && caps.supportsThinkingToggle
@@ -2746,7 +2750,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
-          ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+          ...(apiModelId ? { model: apiModelId } : {}),
           pathToClaudeCodeExecutable: claudeBinaryPath,
           settingSources: [...CLAUDE_SETTING_SOURCES],
           ...(effectiveEffort ? { effort: effectiveEffort } : {}),
@@ -2840,7 +2844,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           threadId,
           payload: {
             config: {
-              ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+              ...(apiModelId ? { model: apiModelId } : {}),
               ...(input.cwd ? { cwd: input.cwd } : {}),
               ...(effectiveEffort ? { effort: effectiveEffort } : {}),
               ...(permissionMode ? { permissionMode } : {}),
@@ -2893,8 +2897,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }
 
         if (modelSelection?.model) {
+          const apiModelId = resolveApiModelId(modelSelection);
           yield* Effect.tryPromise({
-            try: () => context.query.setModel(modelSelection.model),
+            try: () => context.query.setModel(apiModelId),
             catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
           });
         }

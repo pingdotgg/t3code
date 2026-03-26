@@ -10,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import { Effect, Equal, FileSystem, Layer, Option, Path, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { getDefaultEffort, trimOrNull } from "@t3tools/shared/model";
+import { resolveEffort } from "@t3tools/shared/model";
 
 import {
   buildServerProvider,
@@ -48,6 +48,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       ],
       supportsFastMode: true,
       supportsThinkingToggle: false,
+      contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     },
   },
@@ -64,6 +65,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       ],
       supportsFastMode: true,
       supportsThinkingToggle: false,
+      contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     },
   },
@@ -80,6 +82,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       ],
       supportsFastMode: true,
       supportsThinkingToggle: false,
+      contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     },
   },
@@ -96,6 +99,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       ],
       supportsFastMode: true,
       supportsThinkingToggle: false,
+      contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     },
   },
@@ -112,6 +116,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       ],
       supportsFastMode: true,
       supportsThinkingToggle: false,
+      contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     },
   },
@@ -128,6 +133,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       ],
       supportsFastMode: true,
       supportsThinkingToggle: false,
+      contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     },
   },
@@ -140,6 +146,7 @@ export function getCodexModelCapabilities(model: string | null | undefined): Mod
       reasoningEffortLevels: [],
       supportsFastMode: false,
       supportsThinkingToggle: false,
+      contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     }
   );
@@ -150,11 +157,10 @@ export function normalizeCodexModelOptions(
   modelOptions: CodexModelOptions | null | undefined,
 ): CodexModelOptions | undefined {
   const caps = getCodexModelCapabilities(model);
-  const defaultReasoningEffort = getDefaultEffort(caps);
-  const reasoningEffort = trimOrNull(modelOptions?.reasoningEffort) ?? defaultReasoningEffort;
+  const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
   const fastModeEnabled = modelOptions?.fastMode === true;
   const nextOptions: CodexModelOptions = {
-    ...(reasoningEffort && reasoningEffort !== defaultReasoningEffort
+    ...(reasoningEffort
       ? { reasoningEffort: reasoningEffort as CodexModelOptions["reasoningEffort"] }
       : {}),
     ...(fastModeEnabled ? { fastMode: true } : {}),

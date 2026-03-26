@@ -11,7 +11,9 @@ import {
   isClaudeUltrathinkPrompt,
   trimOrNull,
   getDefaultEffort,
-  hasEffortLevel,
+  getDefaultContextWindow,
+  hasContextWindowOption,
+  resolveEffort,
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
@@ -53,6 +55,16 @@ function getRawEffort(
   return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.effort);
 }
 
+function getRawContextWindow(
+  provider: ProviderKind,
+  modelOptions: ProviderOptions | null | undefined,
+): string | null {
+  if (provider === "claudeAgent") {
+    return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.contextWindow);
+  }
+  return null;
+}
+
 function buildNextOptions(
   provider: ProviderKind,
   modelOptions: ProviderOptions | null | undefined,
@@ -78,21 +90,10 @@ function getSelectedTraits(
     : caps.reasoningEffortLevels.filter(
         (option) => !caps.promptInjectedEffortLevels.includes(option.value),
       );
-  const defaultEffort = getDefaultEffort(caps);
 
   // Resolve effort from options (provider-specific key)
-  const resolvedEffort = getRawEffort(provider, modelOptions);
-
-  // Filter out prompt-injected efforts from the "current effort" display
-  const isPromptInjected = resolvedEffort
-    ? caps.promptInjectedEffortLevels.includes(resolvedEffort)
-    : false;
-  const effort =
-    resolvedEffort && !isPromptInjected && hasEffortLevel(caps, resolvedEffort)
-      ? resolvedEffort
-      : defaultEffort && hasEffortLevel(caps, defaultEffort)
-        ? defaultEffort
-        : null;
+  const rawEffort = getRawEffort(provider, modelOptions);
+  const effort = resolveEffort(caps, rawEffort) ?? null;
 
   // Thinking toggle (only for models that support it)
   const thinkingEnabled = caps.supportsThinkingToggle
@@ -103,6 +104,15 @@ function getSelectedTraits(
   const fastModeEnabled =
     caps.supportsFastMode &&
     (modelOptions as { fastMode?: boolean } | undefined)?.fastMode === true;
+
+  // Context window
+  const contextWindowOptions = caps.contextWindowOptions;
+  const rawContextWindow = getRawContextWindow(provider, modelOptions);
+  const defaultContextWindow = getDefaultContextWindow(caps);
+  const contextWindow =
+    rawContextWindow && hasContextWindowOption(caps, rawContextWindow)
+      ? rawContextWindow
+      : defaultContextWindow;
 
   // Prompt-controlled effort (e.g. ultrathink in prompt text)
   const ultrathinkPromptControlled =
@@ -116,6 +126,9 @@ function getSelectedTraits(
     effortLevels,
     thinkingEnabled,
     fastModeEnabled,
+    contextWindowOptions,
+    contextWindow,
+    defaultContextWindow,
     ultrathinkPromptControlled,
   };
 }
@@ -159,6 +172,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     effortLevels,
     thinkingEnabled,
     fastModeEnabled,
+    contextWindowOptions,
+    contextWindow,
+    defaultContextWindow,
     ultrathinkPromptControlled,
   } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
   const defaultEffort = getDefaultEffort(caps);
@@ -194,7 +210,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     ],
   );
 
-  if (effort === null && thinkingEnabled === null) {
+  if (effort === null && thinkingEnabled === null && contextWindowOptions.length <= 1) {
     return null;
   }
 
@@ -258,6 +274,33 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           </MenuGroup>
         </>
       ) : null}
+      {contextWindowOptions.length > 1 ? (
+        <>
+          <MenuDivider />
+          <MenuGroup>
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+              Context Window
+            </div>
+            <MenuRadioGroup
+              value={contextWindow ?? defaultContextWindow ?? ""}
+              onValueChange={(value) => {
+                updateModelOptions(
+                  buildNextOptions(provider, modelOptions, {
+                    contextWindow: value,
+                  }),
+                );
+              }}
+            >
+              {contextWindowOptions.map((option) => (
+                <MenuRadioItem key={option.value} value={option.value}>
+                  {option.label}
+                  {option.value === defaultContextWindow ? " (default)" : ""}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuGroup>
+        </>
+      ) : null}
     </>
   );
 });
@@ -281,12 +324,19 @@ export const TraitsPicker = memo(function TraitsPicker({
     effortLevels,
     thinkingEnabled,
     fastModeEnabled,
+    contextWindowOptions,
+    contextWindow,
+    defaultContextWindow,
     ultrathinkPromptControlled,
   } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
 
   const effortLabel = effort
     ? (effortLevels.find((l) => l.value === effort)?.label ?? effort)
     : null;
+  const contextWindowLabel =
+    contextWindowOptions.length > 1 && contextWindow !== defaultContextWindow
+      ? (contextWindowOptions.find((o) => o.value === contextWindow)?.label ?? null)
+      : null;
   const triggerLabel = [
     ultrathinkPromptControlled
       ? "Ultrathink"
@@ -296,6 +346,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           ? null
           : `Thinking ${thinkingEnabled ? "On" : "Off"}`,
     ...(caps.supportsFastMode && fastModeEnabled ? ["Fast"] : []),
+    ...(contextWindowLabel ? [contextWindowLabel] : []),
   ]
     .filter(Boolean)
     .join(" · ");

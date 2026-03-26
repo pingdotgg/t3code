@@ -1,16 +1,10 @@
 import {
-  type ModelSlug,
   type ProviderKind,
   type ProviderModelOptions,
   type ServerProviderModel,
   type ThreadId,
 } from "@t3tools/contracts";
-import {
-  isClaudeUltrathinkPrompt,
-  trimOrNull,
-  getDefaultEffort,
-  hasEffortLevel,
-} from "@t3tools/shared/model";
+import { isClaudeUltrathinkPrompt, resolveEffort } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
 import {
   getProviderModelCapabilities,
@@ -21,7 +15,7 @@ import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
   provider: ProviderKind;
-  model: ModelSlug;
+  model: string;
   models: ReadonlyArray<ServerProviderModel>;
   prompt: string;
   modelOptions: ProviderModelOptions | null | undefined;
@@ -40,7 +34,7 @@ type ProviderRegistryEntry = {
   getState: (input: ComposerProviderStateInput) => ComposerProviderState;
   renderTraitsMenuContent: (input: {
     threadId: ThreadId;
-    model: ModelSlug;
+    model: string;
     models: ReadonlyArray<ServerProviderModel>;
     modelOptions: ProviderModelOptions[ProviderKind] | undefined;
     prompt: string;
@@ -48,7 +42,7 @@ type ProviderRegistryEntry = {
   }) => ReactNode;
   renderTraitsPicker: (input: {
     threadId: ThreadId;
-    model: ModelSlug;
+    model: string;
     models: ReadonlyArray<ServerProviderModel>;
     modelOptions: ProviderModelOptions[ProviderKind] | undefined;
     prompt: string;
@@ -72,17 +66,7 @@ function getProviderStateFromCapabilities(
         : null
     : null;
 
-  const draftEffort = trimOrNull(rawEffort);
-  const defaultEffort = getDefaultEffort(caps);
-  const isPromptInjected = draftEffort
-    ? caps.promptInjectedEffortLevels.includes(draftEffort)
-    : false;
-  const promptEffort =
-    draftEffort && !isPromptInjected && hasEffortLevel(caps, draftEffort)
-      ? draftEffort
-      : defaultEffort && hasEffortLevel(caps, defaultEffort)
-        ? defaultEffort
-        : null;
+  const promptEffort = resolveEffort(caps, rawEffort) ?? null;
 
   // Normalize options for dispatch
   const normalizedOptions =
@@ -180,7 +164,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
 export function renderProviderTraitsMenuContent(input: {
   provider: ProviderKind;
   threadId: ThreadId;
-  model: ModelSlug;
+  model: string;
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ProviderModelOptions[ProviderKind] | undefined;
   prompt: string;
@@ -199,7 +183,7 @@ export function renderProviderTraitsMenuContent(input: {
 export function renderProviderTraitsPicker(input: {
   provider: ProviderKind;
   threadId: ThreadId;
-  model: ModelSlug;
+  model: string;
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ProviderModelOptions[ProviderKind] | undefined;
   prompt: string;

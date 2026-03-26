@@ -1,4 +1,4 @@
-import { type ProjectEntry, type ModelSlug, type ProviderKind } from "@t3tools/contracts";
+import { type ProjectEntry, type ProviderKind } from "@t3tools/contracts";
 import { memo } from "react";
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { BotIcon } from "lucide-react";
@@ -27,7 +27,7 @@ export type ComposerCommandItem =
       id: string;
       type: "model";
       provider: ProviderKind;
-      model: ModelSlug;
+      model: string;
       label: string;
       description: string;
     };
