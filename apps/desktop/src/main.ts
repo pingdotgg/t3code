@@ -111,6 +111,7 @@ let desktopSettingsSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let currentDesktopTitleBarMode: DesktopTitleBarMode = DEFAULT_DESKTOP_TITLE_BAR_MODE;
 let pendingDesktopTitleBarMode: DesktopTitleBarMode | null = null;
 let isRebuildingMainWindow = false;
+let isApplyingDesktopTitleBarModeFromIpc = false;
 const desktopTitleBarModeByWindow = new WeakMap<BrowserWindow, DesktopTitleBarMode>();
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
@@ -175,13 +176,19 @@ function persistDesktopTitleBarModeToDisk(mode: DesktopTitleBarMode): void {
 }
 
 function resolveDesktopWindowState(window: BrowserWindow | null): DesktopWindowState {
+  const activeWindow = window && !window.isDestroyed() ? window : null;
+
   return {
-    isFullScreen: window?.isFullScreen() ?? false,
-    isMaximized: window?.isMaximized() ?? false,
+    isFullScreen: activeWindow?.isFullScreen() ?? false,
+    isMaximized: activeWindow?.isMaximized() ?? false,
     platform: resolveDesktopWindowPlatform(process.platform),
     titleBarMode:
-      (window ? desktopTitleBarModeByWindow.get(window) : undefined) ?? currentDesktopTitleBarMode,
-    zoomFactor: window?.webContents.getZoomFactor() ?? 1,
+      (activeWindow ? desktopTitleBarModeByWindow.get(activeWindow) : undefined) ??
+      currentDesktopTitleBarMode,
+    zoomFactor:
+      activeWindow && !activeWindow.webContents.isDestroyed()
+        ? activeWindow.webContents.getZoomFactor()
+        : 1,
   };
 }
 
@@ -1284,20 +1291,26 @@ function registerIpcHandlers(): void {
       return resolveDesktopWindowState(mainWindow);
     }
 
-    const previousMode = currentDesktopTitleBarMode;
-    persistDesktopTitleBarModeToDisk(mode);
+    isApplyingDesktopTitleBarModeFromIpc = true;
 
-    if (mode !== currentDesktopTitleBarMode) {
-      const nextState = await rebuildMainWindow(mode);
-      if (nextState.titleBarMode !== mode) {
-        persistDesktopTitleBarModeToDisk(previousMode);
+    try {
+      const previousMode = currentDesktopTitleBarMode;
+      persistDesktopTitleBarModeToDisk(mode);
+
+      if (mode !== currentDesktopTitleBarMode) {
+        const nextState = await rebuildMainWindow(mode);
+        if (nextState.titleBarMode !== mode) {
+          persistDesktopTitleBarModeToDisk(previousMode);
+        }
+        return nextState;
       }
-      return nextState;
-    }
 
-    currentDesktopTitleBarMode = mode;
-    emitDesktopWindowState(mainWindow);
-    return resolveDesktopWindowState(mainWindow);
+      currentDesktopTitleBarMode = mode;
+      emitDesktopWindowState(mainWindow);
+      return resolveDesktopWindowState(mainWindow);
+    } finally {
+      isApplyingDesktopTitleBarModeFromIpc = false;
+    }
   });
 
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
@@ -1406,8 +1419,9 @@ function registerIpcHandlers(): void {
       owner.close();
     }
 
-    emitDesktopWindowState(owner);
-    return resolveDesktopWindowState(owner);
+    const nextOwner = owner.isDestroyed() ? null : owner;
+    emitDesktopWindowState(nextOwner);
+    return resolveDesktopWindowState(nextOwner);
   });
 
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);
@@ -1709,6 +1723,11 @@ function rebuildMainWindow(nextTitleBarMode: DesktopTitleBarMode): Promise<Deskt
 }
 
 function syncDesktopTitleBarModeFromDisk(): void {
+  if (isApplyingDesktopTitleBarModeFromIpc) {
+    scheduleDesktopTitleBarModeSync();
+    return;
+  }
+
   const nextTitleBarMode = readDesktopTitleBarModeFromDisk();
   if (nextTitleBarMode === currentDesktopTitleBarMode) {
     return;
