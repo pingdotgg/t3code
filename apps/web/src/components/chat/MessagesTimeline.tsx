@@ -15,7 +15,7 @@ import {
   useVirtualizer,
 } from "@tanstack/react-virtual";
 import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
-import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "../../chat-scroll";
+import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX } from "../../chat-scroll";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
@@ -59,32 +59,16 @@ import {
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
+const USER_MESSAGE_TEXT_CLASS =
+  "wrap-break-word whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/90";
 
 /**
  * Wrapper that uses the streaming text buffer to smoothly reveal assistant
- * message text between server snapshot updates. Also keeps the scroll
- * container pinned to the bottom while new text is being revealed.
+ * message text between server snapshot updates. Scroll-pinning is handled
+ * by ChatView's existing auto-scroll system on each store update.
  */
-function StreamingAssistantMessage({
-  text,
-  cwd,
-  scrollContainer,
-}: {
-  text: string;
-  cwd: string | undefined;
-  scrollContainer: HTMLDivElement | null;
-}) {
+function StreamingAssistantMessage({ text, cwd }: { text: string; cwd: string | undefined }) {
   const displayedText = useStreamingText(text, true);
-
-  // Keep the scroll container pinned to the bottom as text is progressively
-  // revealed (the element grows between store-driven scroll adjustments).
-  useEffect(() => {
-    if (!scrollContainer) return;
-    if (isScrollContainerNearBottom(scrollContainer)) {
-      scrollContainer.scrollTo({ top: scrollContainer.scrollHeight });
-    }
-  });
-
   return <ChatMarkdown text={displayedText} cwd={cwd} isStreaming />;
 }
 
@@ -483,11 +467,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               )}
               <div className="min-w-0 px-1 py-0.5">
                 {row.message.streaming ? (
-                  <StreamingAssistantMessage
-                    text={messageText}
-                    cwd={markdownCwd}
-                    scrollContainer={scrollContainer}
-                  />
+                  <StreamingAssistantMessage text={messageText} cwd={markdownCwd} />
                 ) : (
                   <ChatMarkdown text={messageText} cwd={markdownCwd} isStreaming={false} />
                 )}
@@ -750,11 +730,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           );
         }
 
-        return (
-          <div className="wrap-break-word whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/90">
-            {inlineNodes}
-          </div>
-        );
+        return <div className={USER_MESSAGE_TEXT_CLASS}>{inlineNodes}</div>;
       }
     }
 
@@ -778,22 +754,14 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       return null;
     }
 
-    return (
-      <div className="wrap-break-word whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground/90">
-        {inlineNodes}
-      </div>
-    );
+    return <div className={USER_MESSAGE_TEXT_CLASS}>{inlineNodes}</div>;
   }
 
   if (props.text.length === 0) {
     return null;
   }
 
-  return (
-    <pre className="whitespace-pre-wrap wrap-break-word font-sans text-[13.5px] leading-relaxed text-foreground/90">
-      {props.text}
-    </pre>
-  );
+  return <pre className={cn(USER_MESSAGE_TEXT_CLASS, "font-sans")}>{props.text}</pre>;
 });
 
 function workToneIcon(tone: TimelineWorkEntry["tone"]): {

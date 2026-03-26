@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 
+/** Fraction of the remaining backlog to reveal per animation frame (~ease-out). */
+const BACKLOG_REVEAL_FRACTION = 0.35;
+/** Minimum characters advanced per frame to guarantee forward progress. */
+const MIN_CHARS_PER_FRAME = 2;
+/** Snap forward to the next newline within this many chars to avoid mid-line markdown breaks. */
+const NEWLINE_SNAP_LOOKAHEAD = 40;
+/** Minimum milliseconds between React re-renders (limits markdown re-parsing cost). */
+const RENDER_THROTTLE_MS = 32;
+
 /**
  * Smoothly reveals streaming text by buffering incoming content and
  * advancing the visible portion incrementally via requestAnimationFrame.
@@ -14,33 +23,30 @@ import { useEffect, useRef, useState } from "react";
  * snaps forward to the next newline boundary when one is within reach.
  */
 export function useStreamingText(targetText: string, isStreaming: boolean): string {
-  // Track the number of characters we have revealed so far.
-  // Initialised to full length so existing text is shown on mount.
   const revealedRef = useRef(targetText.length);
   const targetRef = useRef(targetText);
-  const streamingRef = useRef(isStreaming);
-  // A simple counter to trigger React re-renders without holding a copy of
-  // the (potentially large) displayed text in state.
+  // Counter to trigger React re-renders without holding the displayed text
+  // string in state.
   const [, rerender] = useState(0);
 
   targetRef.current = targetText;
-  streamingRef.current = isStreaming;
 
-  // ── Snap to full text when streaming ends ─────────────────────────
+  // Snap to full text when streaming ends.
   useEffect(() => {
     if (!isStreaming) {
       revealedRef.current = targetText.length;
     }
   }, [isStreaming, targetText]);
 
-  // ── RAF animation loop — runs only while streaming ────────────────
+  // RAF animation loop — runs only while streaming.
   useEffect(() => {
     if (!isStreaming) return;
 
     let rafId = 0;
     let active = true;
+    let lastRenderTs = 0;
 
-    const loop = () => {
+    const loop = (timestamp: number) => {
       if (!active) return;
       const target = targetRef.current;
       let current = revealedRef.current;
@@ -53,22 +59,26 @@ export function useStreamingText(targetText: string, isStreaming: boolean): stri
 
       if (current < target.length) {
         const backlog = target.length - current;
-        // Adaptive speed: reveal ~35% of the remaining backlog per frame.
-        // This creates a natural ease-out that stays ahead of the 100ms
-        // server throttle cadence while keeping the flow visually smooth.
-        let nextPos = current + Math.max(2, Math.ceil(backlog * 0.35));
+        let nextPos =
+          current + Math.max(MIN_CHARS_PER_FRAME, Math.ceil(backlog * BACKLOG_REVEAL_FRACTION));
         nextPos = Math.min(nextPos, target.length);
 
-        // Snap forward to the next newline if one is within ~40 chars to
-        // avoid splitting a markdown line mid-syntax (which would cause
-        // ReactMarkdown to briefly render broken formatting).
+        // Snap forward to the next newline if one is within reach to avoid
+        // splitting a markdown line mid-syntax.
         const nextNewline = target.indexOf("\n", nextPos);
-        if (nextNewline !== -1 && nextNewline - nextPos < 40) {
+        if (nextNewline !== -1 && nextNewline - nextPos < NEWLINE_SNAP_LOOKAHEAD) {
           nextPos = nextNewline + 1;
         }
 
         revealedRef.current = Math.min(nextPos, target.length);
-        rerender((c) => c + 1);
+
+        // Throttle React re-renders to ~30fps to limit the cost of full
+        // ReactMarkdown parses while keeping the visual flow smooth.
+        const caughtUp = revealedRef.current >= target.length;
+        if (caughtUp || timestamp - lastRenderTs >= RENDER_THROTTLE_MS) {
+          lastRenderTs = timestamp;
+          rerender((c) => c + 1);
+        }
       }
 
       rafId = requestAnimationFrame(loop);
