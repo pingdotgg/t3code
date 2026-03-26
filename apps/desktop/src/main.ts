@@ -32,7 +32,11 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
-import { applyDesktopTitleBarModeSetting, readDesktopSettingsFromDisk } from "./desktopSettings";
+import {
+  applyDesktopTitleBarModeSetting,
+  readDesktopSettingsFromDisk,
+  writeDesktopSettingsToDisk,
+} from "./desktopSettings";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
@@ -71,8 +75,8 @@ const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const SETTINGS_STATE_DIR = Path.join(BASE_DIR, isDevelopment ? "dev" : "userdata");
-const SETTINGS_FILE_PATH = Path.join(SETTINGS_STATE_DIR, "settings.json");
+const DESKTOP_SETTINGS_DIR = Path.join(BASE_DIR, isDevelopment ? "dev" : "userdata");
+const DESKTOP_SETTINGS_FILE_PATH = Path.join(DESKTOP_SETTINGS_DIR, "desktop-settings.json");
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
 const USER_DATA_DIR_NAME = isDevelopment ? "t3code-dev" : "t3code";
@@ -106,12 +110,9 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
-let desktopSettingsWatcher: FS.FSWatcher | null = null;
-let desktopSettingsSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let currentDesktopTitleBarMode: DesktopTitleBarMode = DEFAULT_DESKTOP_TITLE_BAR_MODE;
 let pendingDesktopTitleBarMode: DesktopTitleBarMode | null = null;
 let isRebuildingMainWindow = false;
-let isApplyingDesktopTitleBarModeFromIpc = false;
 const desktopTitleBarModeByWindow = new WeakMap<BrowserWindow, DesktopTitleBarMode>();
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
@@ -152,7 +153,7 @@ function parseDesktopTitleBarMode(rawMode: unknown): DesktopTitleBarMode | null 
 }
 
 function readDesktopTitleBarModeFromDisk(): DesktopTitleBarMode {
-  const parsed = readDesktopSettingsFromDisk(SETTINGS_FILE_PATH) as {
+  const parsed = readDesktopSettingsFromDisk(DESKTOP_SETTINGS_FILE_PATH) as {
     desktopTitleBarMode?: unknown;
   };
   return getDesktopTitleBarMode(parsed.desktopTitleBarMode);
@@ -163,16 +164,14 @@ function shouldUseT3CodeTitleBar(mode: DesktopTitleBarMode): boolean {
 }
 
 function persistDesktopTitleBarModeToDisk(mode: DesktopTitleBarMode): void {
-  FS.mkdirSync(SETTINGS_STATE_DIR, { recursive: true });
-
-  const currentSettings = readDesktopSettingsFromDisk(SETTINGS_FILE_PATH);
+  const currentSettings = readDesktopSettingsFromDisk(DESKTOP_SETTINGS_FILE_PATH);
   const nextSettings = applyDesktopTitleBarModeSetting(
     currentSettings,
     mode,
     DEFAULT_DESKTOP_TITLE_BAR_MODE,
   );
 
-  FS.writeFileSync(SETTINGS_FILE_PATH, `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
+  writeDesktopSettingsToDisk(DESKTOP_SETTINGS_FILE_PATH, nextSettings);
 }
 
 function resolveDesktopWindowState(window: BrowserWindow | null): DesktopWindowState {
@@ -1291,26 +1290,20 @@ function registerIpcHandlers(): void {
       return resolveDesktopWindowState(mainWindow);
     }
 
-    isApplyingDesktopTitleBarModeFromIpc = true;
+    const previousMode = currentDesktopTitleBarMode;
+    persistDesktopTitleBarModeToDisk(mode);
 
-    try {
-      const previousMode = currentDesktopTitleBarMode;
-      persistDesktopTitleBarModeToDisk(mode);
-
-      if (mode !== currentDesktopTitleBarMode) {
-        const nextState = await rebuildMainWindow(mode);
-        if (nextState.titleBarMode !== mode) {
-          persistDesktopTitleBarModeToDisk(previousMode);
-        }
-        return nextState;
+    if (mode !== currentDesktopTitleBarMode) {
+      const nextState = await rebuildMainWindow(mode);
+      if (nextState.titleBarMode !== mode) {
+        persistDesktopTitleBarModeToDisk(previousMode);
       }
-
-      currentDesktopTitleBarMode = mode;
-      emitDesktopWindowState(mainWindow);
-      return resolveDesktopWindowState(mainWindow);
-    } finally {
-      isApplyingDesktopTitleBarModeFromIpc = false;
+      return nextState;
     }
+
+    currentDesktopTitleBarMode = mode;
+    emitDesktopWindowState(mainWindow);
+    return resolveDesktopWindowState(mainWindow);
   });
 
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
@@ -1495,15 +1488,6 @@ function resolveWindowLoadUrl(loadUrl: string | null | undefined): string {
   }
 
   return `${DESKTOP_SCHEME}://app/index.html`;
-}
-
-function clearDesktopSettingsSyncTimer(): void {
-  if (!desktopSettingsSyncTimer) {
-    return;
-  }
-
-  clearTimeout(desktopSettingsSyncTimer);
-  desktopSettingsSyncTimer = null;
 }
 
 function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
@@ -1722,58 +1706,6 @@ function rebuildMainWindow(nextTitleBarMode: DesktopTitleBarMode): Promise<Deskt
   });
 }
 
-function syncDesktopTitleBarModeFromDisk(): void {
-  if (isApplyingDesktopTitleBarModeFromIpc) {
-    scheduleDesktopTitleBarModeSync();
-    return;
-  }
-
-  const nextTitleBarMode = readDesktopTitleBarModeFromDisk();
-  if (nextTitleBarMode === currentDesktopTitleBarMode) {
-    return;
-  }
-
-  void rebuildMainWindow(nextTitleBarMode);
-}
-
-function scheduleDesktopTitleBarModeSync(): void {
-  clearDesktopSettingsSyncTimer();
-  desktopSettingsSyncTimer = setTimeout(() => {
-    desktopSettingsSyncTimer = null;
-    syncDesktopTitleBarModeFromDisk();
-  }, 100);
-}
-
-function stopDesktopSettingsWatcher(): void {
-  clearDesktopSettingsSyncTimer();
-
-  if (!desktopSettingsWatcher) {
-    return;
-  }
-
-  desktopSettingsWatcher.close();
-  desktopSettingsWatcher = null;
-}
-
-function startDesktopSettingsWatcher(): void {
-  stopDesktopSettingsWatcher();
-
-  FS.mkdirSync(SETTINGS_STATE_DIR, { recursive: true });
-
-  desktopSettingsWatcher = FS.watch(SETTINGS_STATE_DIR, (_eventType, fileName) => {
-    const normalizedFileName = typeof fileName === "string" ? fileName : null;
-
-    if (normalizedFileName !== null && normalizedFileName !== "settings.json") {
-      return;
-    }
-
-    scheduleDesktopTitleBarModeSync();
-  });
-  desktopSettingsWatcher.on("error", (error) => {
-    console.error("[desktop] settings watcher failed", error);
-  });
-}
-
 // Override Electron's userData path before the `ready` event so that
 // Chromium session data uses a filesystem-friendly directory name.
 // Must be called synchronously at the top level — before `app.whenReady()`.
@@ -1797,8 +1729,6 @@ async function bootstrap(): Promise<void> {
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");
-  startDesktopSettingsWatcher();
-  writeDesktopLogHeader("bootstrap desktop settings watcher started");
   startBackend();
   writeDesktopLogHeader("bootstrap backend start requested");
   mainWindow = createWindow();
@@ -1809,7 +1739,6 @@ app.on("before-quit", () => {
   isQuitting = true;
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
-  stopDesktopSettingsWatcher();
   stopBackend();
   restoreStdIoCapture?.();
 });
@@ -1848,7 +1777,6 @@ if (process.platform !== "win32") {
     isQuitting = true;
     writeDesktopLogHeader("SIGINT received");
     clearUpdatePollTimer();
-    stopDesktopSettingsWatcher();
     stopBackend();
     restoreStdIoCapture?.();
     app.quit();
@@ -1859,7 +1787,6 @@ if (process.platform !== "win32") {
     isQuitting = true;
     writeDesktopLogHeader("SIGTERM received");
     clearUpdatePollTimer();
-    stopDesktopSettingsWatcher();
     stopBackend();
     restoreStdIoCapture?.();
     app.quit();

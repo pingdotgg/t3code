@@ -375,6 +375,9 @@ function SettingsRouteView() {
       try {
         const nextWindowState = await setDesktopTitleBarMode(mode);
         setDesktopTitleBarModeSelection(nextWindowState.titleBarMode);
+        updateSettings({
+          desktopTitleBarMode: nextWindowState.titleBarMode,
+        });
       } catch (error) {
         setDesktopTitleBarModeSelection(effectiveDesktopTitleBarMode);
         queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() }).catch((reason) => {
@@ -383,7 +386,7 @@ function SettingsRouteView() {
         console.error("Failed to update window decoration", error);
       }
     },
-    [effectiveDesktopTitleBarMode, queryClient, setDesktopTitleBarMode],
+    [effectiveDesktopTitleBarMode, queryClient, setDesktopTitleBarMode, updateSettings],
   );
 
   const modelListRefs = useRef<Partial<Record<ProviderKind, HTMLDivElement | null>>>({});
