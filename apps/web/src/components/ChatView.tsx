@@ -21,6 +21,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -665,7 +666,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedTextGenerationModel = settings.textGenerationModelSelection.model;
   const providerOptionsForDispatch = useMemo(() => {
     const providerOptions = {
-      ...(settings.providers.codex.binaryPath || settings.providers.codex.homePath
+      ...(settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
+      settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath
         ? {
             codex: {
               binaryPath: settings.providers.codex.binaryPath,
@@ -673,7 +675,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
             },
           }
         : {}),
-      ...(settings.providers.claudeAgent.binaryPath
+      ...(settings.providers.claudeAgent.binaryPath !==
+      DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath
         ? {
             claudeAgent: {
               binaryPath: settings.providers.claudeAgent.binaryPath,
