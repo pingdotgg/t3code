@@ -148,6 +148,7 @@ interface ClaudeSessionContext {
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
+  currentApiModelId: string | undefined;
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -2809,6 +2810,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           streamFiber: undefined,
           startedAt,
           basePermissionMode: permissionMode,
+          currentApiModelId: apiModelId,
           resumeSessionId: sessionId,
           pendingApprovals,
           pendingUserInputs,
@@ -2898,10 +2900,17 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
 
         if (modelSelection?.model) {
           const apiModelId = resolveApiModelId(modelSelection);
-          yield* Effect.tryPromise({
-            try: () => context.query.setModel(apiModelId),
-            catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
-          });
+          if (context.currentApiModelId !== apiModelId) {
+            yield* Effect.tryPromise({
+              try: () => context.query.setModel(apiModelId),
+              catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
+            });
+            context.currentApiModelId = apiModelId;
+          }
+          context.session = {
+            ...context.session,
+            model: modelSelection.model,
+          };
         }
 
         // Apply interaction mode by switching the SDK's permission mode.
