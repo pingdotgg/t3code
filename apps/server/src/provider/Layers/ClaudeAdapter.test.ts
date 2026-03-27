@@ -3062,4 +3062,139 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect(
+    "emits interaction.mode.changed with plan when EnterPlanMode tool starts in stream",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        // Collect enough events: session.started, session.configured, session.state.changed,
+        // turn.started, interaction.mode.changed, item.started, turn.completed = 7
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "please plan this",
+          attachments: [],
+        });
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-plan-enter",
+          uuid: "stream-enter-plan-0",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: "tool-enter-plan-1",
+              name: "EnterPlanMode",
+              input: {},
+            },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session-plan-enter",
+          uuid: "result-enter-plan",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const modeChanged = runtimeEvents.find(
+          (event) => event.type === "interaction.mode.changed",
+        );
+        assert.equal(modeChanged?.type, "interaction.mode.changed");
+        if (modeChanged?.type === "interaction.mode.changed") {
+          assert.equal(modeChanged.payload.interactionMode, "plan");
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "emits interaction.mode.changed with default when ExitPlanMode tool starts in stream",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "exit plan mode",
+          interactionMode: "plan",
+          attachments: [],
+        });
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-plan-exit",
+          uuid: "stream-exit-plan-0",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: "tool-exit-plan-1",
+              name: "ExitPlanMode",
+              input: {
+                plan: "# My plan",
+              },
+            },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session-plan-exit",
+          uuid: "result-exit-plan",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const modeChanged = runtimeEvents.find(
+          (event) => event.type === "interaction.mode.changed",
+        );
+        assert.equal(modeChanged?.type, "interaction.mode.changed");
+        if (modeChanged?.type === "interaction.mode.changed") {
+          assert.equal(modeChanged.payload.interactionMode, "default");
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 });

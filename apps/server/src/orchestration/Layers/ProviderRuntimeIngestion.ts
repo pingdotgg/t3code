@@ -1210,6 +1210,19 @@ const make = Effect.gen(function* () {
         });
       }
 
+      if (
+        event.type === "interaction.mode.changed" &&
+        event.payload.interactionMode !== thread.interactionMode
+      ) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: providerCommandId(event, "interaction-mode-changed"),
+          threadId: thread.id,
+          interactionMode: event.payload.interactionMode,
+          createdAt: now,
+        });
+      }
+
       if (event.type === "turn.diff.updated") {
         const turnId = toTurnId(event.turnId);
         if (turnId && (yield* isGitRepoForThread(thread.id))) {

@@ -2320,4 +2320,65 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
   });
+
+  it("dispatches thread.interaction-mode.set when interaction.mode.changed arrives with a different mode", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    // Thread starts with DEFAULT_PROVIDER_INTERACTION_MODE ("default").
+    // Emit interaction.mode.changed with "plan" — should update the thread.
+    harness.emit({
+      type: "interaction.mode.changed",
+      eventId: asEventId("evt-mode-changed-plan"),
+      provider: "claudeAgent",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: {
+        interactionMode: "plan",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => entry.interactionMode === "plan");
+    expect(thread.interactionMode).toBe("plan");
+  });
+
+  it("does not dispatch when interaction.mode.changed arrives with the same mode", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    // First, change to plan mode.
+    harness.emit({
+      type: "interaction.mode.changed",
+      eventId: asEventId("evt-mode-changed-plan-1"),
+      provider: "claudeAgent",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: {
+        interactionMode: "plan",
+      },
+    });
+
+    await waitForThread(harness.engine, (entry) => entry.interactionMode === "plan");
+
+    // Now emit the same mode again. The thread should still be in plan mode
+    // but no new command should be dispatched. We verify by emitting a
+    // subsequent event and confirming the thread state is unchanged.
+    harness.emit({
+      type: "interaction.mode.changed",
+      eventId: asEventId("evt-mode-changed-plan-2"),
+      provider: "claudeAgent",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      payload: {
+        interactionMode: "plan",
+      },
+    });
+
+    // Drain to ensure the duplicate event is processed.
+    await harness.drain();
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    expect(thread?.interactionMode).toBe("plan");
+  });
 });

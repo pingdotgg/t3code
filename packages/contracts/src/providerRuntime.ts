@@ -12,7 +12,7 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas";
-import { ProviderKind } from "./orchestration";
+import { ProviderInteractionMode, ProviderKind } from "./orchestration";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -189,6 +189,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "files.persisted",
   "runtime.warning",
   "runtime.error",
+  "interaction.mode.changed",
 ]);
 export type ProviderRuntimeEventType = typeof ProviderRuntimeEventType.Type;
 
@@ -239,6 +240,7 @@ const DeprecationNoticeType = Schema.Literal("deprecation.notice");
 const FilesPersistedType = Schema.Literal("files.persisted");
 const RuntimeWarningType = Schema.Literal("runtime.warning");
 const RuntimeErrorType = Schema.Literal("runtime.error");
+const InteractionModeChangedType = Schema.Literal("interaction.mode.changed");
 
 const ProviderRuntimeEventBase = Schema.Struct({
   eventId: EventId,
@@ -940,6 +942,19 @@ const ProviderRuntimeErrorEvent = Schema.Struct({
 });
 export type ProviderRuntimeErrorEvent = typeof ProviderRuntimeErrorEvent.Type;
 
+const InteractionModeChangedPayload = Schema.Struct({
+  interactionMode: ProviderInteractionMode,
+});
+export type InteractionModeChangedPayload = typeof InteractionModeChangedPayload.Type;
+
+const ProviderRuntimeInteractionModeChangedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: InteractionModeChangedType,
+  payload: InteractionModeChangedPayload,
+});
+export type ProviderRuntimeInteractionModeChangedEvent =
+  typeof ProviderRuntimeInteractionModeChangedEvent.Type;
+
 export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeSessionStartedEvent,
   ProviderRuntimeSessionConfiguredEvent,
@@ -988,6 +1003,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeFilesPersistedEvent,
   ProviderRuntimeWarningEvent,
   ProviderRuntimeErrorEvent,
+  ProviderRuntimeInteractionModeChangedEvent,
 ]);
 export type ProviderRuntimeEventV2 = typeof ProviderRuntimeEventV2.Type;
 
