@@ -52,8 +52,9 @@ export const makeDrainableWorker = <A, E, R>(
     );
 
     yield* takeItem.pipe(
-      Effect.flatMap((item) => process(item)),
-      Effect.ensuring(TxRef.update(ref, (n) => n - 1)),
+      Effect.flatMap((item) =>
+        process(item).pipe(Effect.ensuring(TxRef.update(ref, (n) => n - 1))),
+      ),
       Effect.forever,
       Effect.forkScoped,
     );
