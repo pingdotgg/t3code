@@ -23,6 +23,16 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       value: "vscode",
     },
     {
+      label: "VS Code Insiders",
+      Icon: VisualStudioCode,
+      value: "vscode-insiders",
+    },
+    {
+      label: "VSCodium",
+      Icon: VisualStudioCode,
+      value: "vscodium",
+    },
+    {
       label: "Zed",
       Icon: Zed,
       value: "zed",
