@@ -29,6 +29,13 @@ export interface GitHubRepositoryCloneUrls {
   readonly sshUrl: string;
 }
 
+export interface GitHubRepositoryMetadata {
+  readonly nameWithOwner: string;
+  readonly defaultBranch: string | null;
+  readonly isFork: boolean;
+  readonly parentNameWithOwner: string | null;
+}
+
 /**
  * GitHubCliShape - Service API for executing GitHub CLI commands.
  */
@@ -68,10 +75,19 @@ export interface GitHubCliShape {
   }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
   /**
+   * Resolve repository metadata needed for fork-aware PR flows.
+   */
+  readonly getRepositoryMetadata: (input: {
+    readonly cwd: string;
+    readonly repository: string;
+  }) => Effect.Effect<GitHubRepositoryMetadata, GitHubCliError>;
+
+  /**
    * Create a pull request from branch context and body file.
    */
   readonly createPullRequest: (input: {
     readonly cwd: string;
+    readonly repository?: string;
     readonly baseBranch: string;
     readonly headSelector: string;
     readonly title: string;

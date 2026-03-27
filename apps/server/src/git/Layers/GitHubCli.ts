@@ -6,6 +6,7 @@ import { GitHubCliError } from "../Errors.ts";
 import {
   GitHubCli,
   type GitHubRepositoryCloneUrls,
+  type GitHubRepositoryMetadata,
   type GitHubCliShape,
   type GitHubPullRequestSummary,
 } from "../Services/GitHubCli.ts";
@@ -109,6 +110,25 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   sshUrl: TrimmedNonEmptyString,
 });
 
+const RawGitHubRepositoryMetadataSchema = Schema.Struct({
+  nameWithOwner: TrimmedNonEmptyString,
+  isFork: Schema.Boolean,
+  defaultBranchRef: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        name: TrimmedNonEmptyString,
+      }),
+    ),
+  ),
+  parent: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        nameWithOwner: TrimmedNonEmptyString,
+      }),
+    ),
+  ),
+});
+
 function normalizePullRequestSummary(
   raw: Schema.Schema.Type<typeof RawGitHubPullRequestSchema>,
 ): GitHubPullRequestSummary {
@@ -143,10 +163,25 @@ function normalizeRepositoryCloneUrls(
   };
 }
 
+function normalizeRepositoryMetadata(
+  raw: Schema.Schema.Type<typeof RawGitHubRepositoryMetadataSchema>,
+): GitHubRepositoryMetadata {
+  return {
+    nameWithOwner: raw.nameWithOwner,
+    defaultBranch: raw.defaultBranchRef?.name ?? null,
+    isFork: raw.isFork,
+    parentNameWithOwner: raw.parent?.nameWithOwner ?? null,
+  };
+}
+
 function decodeGitHubJson<S extends Schema.Top>(
   raw: string,
   schema: S,
-  operation: "listOpenPullRequests" | "getPullRequest" | "getRepositoryCloneUrls",
+  operation:
+    | "listOpenPullRequests"
+    | "getPullRequest"
+    | "getRepositoryCloneUrls"
+    | "getRepositoryMetadata",
   invalidDetail: string,
 ): Effect.Effect<S["Type"], GitHubCliError, S["DecodingServices"]> {
   return Schema.decodeEffect(Schema.fromJsonString(schema))(raw).pipe(
@@ -241,12 +276,35 @@ const makeGitHubCli = Effect.sync(() => {
         ),
         Effect.map(normalizeRepositoryCloneUrls),
       ),
+    getRepositoryMetadata: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "repo",
+          "view",
+          input.repository,
+          "--json",
+          "nameWithOwner,isFork,defaultBranchRef,parent",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeGitHubJson(
+            raw,
+            RawGitHubRepositoryMetadataSchema,
+            "getRepositoryMetadata",
+            "GitHub CLI returned invalid repository metadata JSON.",
+          ),
+        ),
+        Effect.map(normalizeRepositoryMetadata),
+      ),
     createPullRequest: (input) =>
       execute({
         cwd: input.cwd,
         args: [
           "pr",
           "create",
+          ...(input.repository ? ["--repo", input.repository] : []),
           "--base",
           input.baseBranch,
           "--head",

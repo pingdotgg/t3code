@@ -106,6 +106,53 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 
+  it.effect("reads repository metadata needed for fork-aware PR creation", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          nameWithOwner: "octocat/codething-mvp",
+          isFork: true,
+          defaultBranchRef: {
+            name: "main",
+          },
+          parent: {
+            nameWithOwner: "pingdotgg/codething-mvp",
+          },
+        }),
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.getRepositoryMetadata({
+          cwd: "/repo",
+          repository: "octocat/codething-mvp",
+        });
+      });
+
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "octocat/codething-mvp",
+        defaultBranch: "main",
+        isFork: true,
+        parentNameWithOwner: "pingdotgg/codething-mvp",
+      });
+      expect(mockedRunProcess).toHaveBeenCalledWith(
+        "gh",
+        [
+          "repo",
+          "view",
+          "octocat/codething-mvp",
+          "--json",
+          "nameWithOwner,isFork,defaultBranchRef,parent",
+        ],
+        expect.objectContaining({ cwd: "/repo" }),
+      );
+    }),
+  );
+
   it.effect("surfaces a friendly error when the pull request is not found", () =>
     Effect.gen(function* () {
       mockedRunProcess.mockRejectedValueOnce(
