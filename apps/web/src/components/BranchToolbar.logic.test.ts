@@ -6,6 +6,7 @@ import {
   resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,
   resolveBranchToolbarValue,
+  shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
@@ -265,5 +266,40 @@ describe("resolveBranchSelectionTarget", () => {
       nextWorktreePath: "/repo/.t3/worktrees/feature-a",
       reuseExistingWorktree: false,
     });
+  });
+});
+
+describe("shouldIncludeBranchPickerItem", () => {
+  it("keeps the synthetic checkout PR item visible for gh pr checkout input", () => {
+    expect(
+      shouldIncludeBranchPickerItem({
+        itemValue: "__checkout_pull_request__:1359",
+        normalizedQuery: "gh pr checkout 1359",
+        createBranchItemValue: "__create_new_branch__:gh pr checkout 1359",
+        checkoutPullRequestItemValue: "__checkout_pull_request__:1359",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the synthetic create-branch item visible for arbitrary branch input", () => {
+    expect(
+      shouldIncludeBranchPickerItem({
+        itemValue: "__create_new_branch__:feature/demo",
+        normalizedQuery: "feature/demo",
+        createBranchItemValue: "__create_new_branch__:feature/demo",
+        checkoutPullRequestItemValue: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("still filters ordinary branch items by query text", () => {
+    expect(
+      shouldIncludeBranchPickerItem({
+        itemValue: "main",
+        normalizedQuery: "gh pr checkout 1359",
+        createBranchItemValue: "__create_new_branch__:gh pr checkout 1359",
+        checkoutPullRequestItemValue: "__checkout_pull_request__:1359",
+      }),
+    ).toBe(false);
   });
 });
