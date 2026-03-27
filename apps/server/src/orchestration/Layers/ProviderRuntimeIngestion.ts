@@ -1182,13 +1182,7 @@ const make = Effect.gen(function* () {
           ? true
           : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
 
-        const isActiveTurnRuntimeError =
-          activeTurnId !== null && (eventTurnId === undefined || sameId(activeTurnId, eventTurnId));
-
-        // Some provider/runtime errors are advisory while the active turn continues
-        // streaming. Keep the projected session runnable until a terminal lifecycle
-        // event arrives.
-        if (shouldApplyRuntimeError && !isActiveTurnRuntimeError) {
+        if (shouldApplyRuntimeError) {
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: providerCommandId(event, "runtime-error-session-set"),

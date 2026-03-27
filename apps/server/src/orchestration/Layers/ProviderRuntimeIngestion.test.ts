@@ -1668,7 +1668,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(resolvedPayload?.requestType).toBe("command_execution_approval");
   });
 
-  it("maps runtime.error into errored session state when no turn is active", async () => {
+  it("maps runtime.error into errored session state", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
@@ -1693,53 +1693,6 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
-  });
-
-  it("keeps the session running when runtime.error arrives for the active turn", async () => {
-    const harness = await createHarness();
-    const now = new Date().toISOString();
-
-    harness.emit({
-      type: "turn.started",
-      eventId: asEventId("evt-runtime-error-turn-started"),
-      provider: "codex",
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      turnId: asTurnId("turn-runtime-error"),
-      payload: {},
-    });
-
-    await waitForThread(
-      harness.engine,
-      (entry) =>
-        entry.session?.status === "running" && entry.session?.activeTurnId === "turn-runtime-error",
-    );
-
-    harness.emit({
-      type: "runtime.error",
-      eventId: asEventId("evt-runtime-error-active-turn"),
-      provider: "codex",
-      createdAt: new Date().toISOString(),
-      threadId: asThreadId("thread-1"),
-      turnId: asTurnId("turn-runtime-error"),
-      payload: {
-        message: "The filename or extension is too long. (os error 206)",
-      },
-    });
-
-    const thread = await waitForThread(
-      harness.engine,
-      (entry) =>
-        entry.session?.status === "running" &&
-        entry.session?.activeTurnId === "turn-runtime-error" &&
-        entry.activities.some(
-          (activity: ProviderRuntimeTestActivity) =>
-            activity.id === "evt-runtime-error-active-turn" && activity.kind === "runtime.error",
-        ),
-    );
-    expect(thread.session?.status).toBe("running");
-    expect(thread.session?.activeTurnId).toBe("turn-runtime-error");
-    expect(thread.session?.lastError).toBeNull();
   });
 
   it("keeps the session running when a runtime.warning arrives during an active turn", async () => {
