@@ -337,7 +337,7 @@ export function BranchToolbarBranchSelector({
     resolvedActiveBranch,
   });
   const branchSelectorHighlightClassName =
-    "hover:bg-accent hover:text-accent-foreground data-selected:bg-accent/50 dark:data-selected:bg-input/64 data-selected:text-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground";
+    "hover:bg-accent dark:hover:bg-input/64 hover:text-accent-foreground data-selected:bg-accent/50 dark:data-selected:bg-input/64 data-selected:text-foreground data-highlighted:bg-accent dark:data-highlighted:bg-input/64 data-highlighted:text-accent-foreground";
 
   function renderPickerItem(itemValue: string, index: number, style?: CSSProperties) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
