@@ -212,22 +212,26 @@ function SettingsSection({
   title,
   icon,
   headerAction,
+  hideHeader = false,
   children,
 }: {
   title: string;
   icon?: ReactNode;
   headerAction?: ReactNode;
+  hideHeader?: boolean;
   children: ReactNode;
 }) {
   return (
     <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-          {icon}
-          {title}
-        </h2>
-        {headerAction}
-      </div>
+      {!hideHeader ? (
+        <div className="flex items-center justify-between">
+          <h2 className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            {icon}
+            {title}
+          </h2>
+          {headerAction}
+        </div>
+      ) : null}
       <div className="relative overflow-hidden rounded-2xl border bg-card text-card-foreground shadow-xs/5 not-dark:bg-clip-padding before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]">
         {children}
       </div>
@@ -243,7 +247,7 @@ function SettingsRow({
   control,
   children,
 }: {
-  title: string;
+  title: ReactNode;
   description: string;
   status?: ReactNode;
   resetAction?: ReactNode;
@@ -306,10 +310,9 @@ function SettingsPageContainer({ children }: { children: ReactNode }) {
   );
 }
 
-function DesktopUpdateCheckSection() {
+function AboutVersionSection() {
   const queryClient = useQueryClient();
   const updateStateQuery = useQuery(desktopUpdateStateQueryOptions());
-  const [checkError, setCheckError] = useState<string | null>(null);
 
   const updateState = updateStateQuery.data ?? null;
 
@@ -330,7 +333,6 @@ function DesktopUpdateCheckSection() {
   const handleButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
     if (!bridge) return;
-    setCheckError(null);
 
     const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
     const opts = desktopUpdateStateQueryOptions();
@@ -342,7 +344,11 @@ function DesktopUpdateCheckSection() {
           queryClient.setQueryData(opts.queryKey, result.state);
         })
         .catch((error: unknown) => {
-          setCheckError(error instanceof Error ? error.message : "Download failed.");
+          toastManager.add({
+            type: "error",
+            title: "Could not download update",
+            description: error instanceof Error ? error.message : "Download failed.",
+          });
         });
       return;
     }
@@ -359,7 +365,11 @@ function DesktopUpdateCheckSection() {
           queryClient.setQueryData(opts.queryKey, result.state);
         })
         .catch((error: unknown) => {
-          setCheckError(error instanceof Error ? error.message : "Install failed.");
+          toastManager.add({
+            type: "error",
+            title: "Could not install update",
+            description: error instanceof Error ? error.message : "Install failed.",
+          });
         });
       return;
     }
@@ -370,13 +380,20 @@ function DesktopUpdateCheckSection() {
       .then((result) => {
         queryClient.setQueryData(opts.queryKey, result.state);
         if (!result.checked) {
-          setCheckError(
-            result.state.message ?? "Automatic updates are not available in this build.",
-          );
+          toastManager.add({
+            type: "error",
+            title: "Could not check for updates",
+            description:
+              result.state.message ?? "Automatic updates are not available in this build.",
+          });
         }
       })
       .catch((error: unknown) => {
-        setCheckError(error instanceof Error ? error.message : "Update check failed.");
+        toastManager.add({
+          type: "error",
+          title: "Could not check for updates",
+          description: error instanceof Error ? error.message : "Update check failed.",
+        });
       });
   }, [queryClient, updateState]);
 
@@ -395,12 +412,13 @@ function DesktopUpdateCheckSection() {
 
   return (
     <SettingsRow
-      title="Updates"
-      description={
-        updateState?.checkedAt
-          ? `Last checked: ${new Date(updateState.checkedAt).toLocaleString()}`
-          : "Check for available updates."
+      title={
+        <span className="inline-flex items-center gap-2">
+          <span>Version</span>
+          <code className="text-[11px] font-medium text-muted-foreground">{APP_VERSION}</code>
+        </span>
       }
+      description="Current version of the application."
       control={
         <Tooltip>
           <TooltipTrigger
@@ -417,16 +435,6 @@ function DesktopUpdateCheckSection() {
           />
           {buttonTooltip ? <TooltipPopup>{buttonTooltip}</TooltipPopup> : null}
         </Tooltip>
-      }
-      status={
-        <>
-          {checkError ? <p className="text-xs text-destructive">{checkError}</p> : null}
-          {updateState?.status === "error" && updateState.errorContext === "check" ? (
-            <p className="text-xs text-destructive">
-              {updateState.message ?? "Could not check for updates."}
-            </p>
-          ) : null}
-        </>
       }
     />
   );
@@ -731,7 +739,7 @@ export function GeneralSettingsPanel() {
       : null;
   return (
     <SettingsPageContainer>
-      <SettingsSection title="General">
+      <SettingsSection title="General" hideHeader>
         <SettingsRow
           title="Theme"
           description="Choose how T3 Code looks across the app."
@@ -1391,12 +1399,6 @@ export function GeneralSettingsPanel() {
             </Button>
           }
         />
-
-        <SettingsRow
-          title="Version"
-          description="Current application version."
-          control={<code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>}
-        />
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -1405,13 +1407,12 @@ export function GeneralSettingsPanel() {
 export function AboutSettingsPanel() {
   return (
     <SettingsPageContainer>
-      <SettingsSection title="About" icon={<InfoIcon className="size-3.5" />}>
-        <SettingsRow
-          title="Version"
-          description="Current application version."
-          control={<code className="text-xs font-medium text-muted-foreground">{APP_VERSION}</code>}
-        />
-        {isElectron ? <DesktopUpdateCheckSection /> : null}
+      <SettingsSection title="About" icon={<InfoIcon className="size-3.5" />} hideHeader>
+        {isElectron ? (
+          <AboutVersionSection />
+        ) : (
+          <SettingsRow title="Version" description="Current application version." />
+        )}
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -1472,7 +1473,7 @@ export function ArchivedThreadsPanel() {
   return (
     <SettingsPageContainer>
       {archivedGroups.length === 0 ? (
-        <SettingsSection title="Archived threads">
+        <SettingsSection title="Archived threads" hideHeader>
           <Empty className="min-h-[22rem]">
             <EmptyMedia variant="icon">
               <ArchiveIcon />
