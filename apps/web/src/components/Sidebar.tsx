@@ -802,14 +802,21 @@ export default function Sidebar() {
     async (projectId: ProjectId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [{ id: "delete", label: "Remove project", destructive: true }],
-        position,
-      );
-      if (clicked !== "delete") return;
-
       const project = projects.find((entry) => entry.id === projectId);
       if (!project) return;
+
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "copy-path", label: "Copy Project Path" },
+          { id: "delete", label: "Remove project", destructive: true },
+        ],
+        position,
+      );
+      if (clicked === "copy-path") {
+        copyPathToClipboard(project.cwd, { path: project.cwd });
+        return;
+      }
+      if (clicked !== "delete") return;
 
       const projectThreads = threads.filter((thread) => thread.projectId === projectId);
       if (projectThreads.length > 0) {
@@ -848,6 +855,7 @@ export default function Sidebar() {
     [
       clearComposerDraftForThread,
       clearProjectDraftThreadId,
+      copyPathToClipboard,
       getDraftThreadByProjectId,
       projects,
       threads,
@@ -1204,7 +1212,7 @@ export default function Sidebar() {
     };
 
     return (
-      <Collapsible className="group/collapsible" open={shouldShowThreadPanel}>
+      <>
         <div className="group/project-header relative">
           <SidebarMenuButton
             ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
@@ -1285,46 +1293,44 @@ export default function Sidebar() {
           </Tooltip>
         </div>
 
-        <CollapsibleContent>
-          <SidebarMenuSub
-            ref={attachThreadListAutoAnimateRef}
-            className="mx-1 my-0 w-full translate-x-0 gap-0.5 px-1.5 py-0"
-          >
-            {renderedThreads.map((thread) => renderThreadRow(thread))}
+        <SidebarMenuSub
+          ref={attachThreadListAutoAnimateRef}
+          className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
+        >
+          {shouldShowThreadPanel && renderedThreads.map((thread) => renderThreadRow(thread))}
 
-            {project.expanded && hasHiddenThreads && !isThreadListExpanded && (
-              <SidebarMenuSubItem className="w-full">
-                <SidebarMenuSubButton
-                  render={<button type="button" />}
-                  data-thread-selection-safe
-                  size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                  onClick={() => {
-                    expandThreadListForProject(project.id);
-                  }}
-                >
-                  <span>Show more</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            )}
-            {project.expanded && hasHiddenThreads && isThreadListExpanded && (
-              <SidebarMenuSubItem className="w-full">
-                <SidebarMenuSubButton
-                  render={<button type="button" />}
-                  data-thread-selection-safe
-                  size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                  onClick={() => {
-                    collapseThreadListForProject(project.id);
-                  }}
-                >
-                  <span>Show less</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            )}
-          </SidebarMenuSub>
-        </CollapsibleContent>
-      </Collapsible>
+          {project.expanded && hasHiddenThreads && !isThreadListExpanded && (
+            <SidebarMenuSubItem className="w-full">
+              <SidebarMenuSubButton
+                render={<button type="button" />}
+                data-thread-selection-safe
+                size="sm"
+                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                onClick={() => {
+                  expandThreadListForProject(project.id);
+                }}
+              >
+                <span>Show more</span>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          )}
+          {project.expanded && hasHiddenThreads && isThreadListExpanded && (
+            <SidebarMenuSubItem className="w-full">
+              <SidebarMenuSubButton
+                render={<button type="button" />}
+                data-thread-selection-safe
+                size="sm"
+                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                onClick={() => {
+                  collapseThreadListForProject(project.id);
+                }}
+              >
+                <span>Show less</span>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          )}
+        </SidebarMenuSub>
+      </>
     );
   }
 

@@ -1,4 +1,8 @@
-import { readEnvironmentFromLoginShell, ShellEnvironmentReader } from "@t3tools/shared/shell";
+import {
+  readEnvironmentFromLoginShell,
+  resolveLoginShell,
+  ShellEnvironmentReader,
+} from "@t3tools/shared/shell";
 
 export function syncShellEnvironment(
   env: NodeJS.ProcessEnv = process.env,
@@ -7,10 +11,13 @@ export function syncShellEnvironment(
     readEnvironment?: ShellEnvironmentReader;
   } = {},
 ): void {
-  if ((options.platform ?? process.platform) !== "darwin") return;
+  const platform = options.platform ?? process.platform;
+  if (platform !== "darwin" && platform !== "linux") return;
 
   try {
-    const shell = env.SHELL ?? "/bin/zsh";
+    const shell = resolveLoginShell(platform, env.SHELL);
+    if (!shell) return;
+
     const shellEnvironment = (options.readEnvironment ?? readEnvironmentFromLoginShell)(shell, [
       "PATH",
       "SSH_AUTH_SOCK",
