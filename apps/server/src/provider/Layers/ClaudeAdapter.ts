@@ -2817,16 +2817,25 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         providerRefs: {},
       });
 
-      const streamFiber = runFork(runSdkStream(context));
+      let streamFiber: Fiber.Fiber<void, never>;
+      streamFiber = runFork(
+        Effect.exit(runSdkStream(context)).pipe(
+          Effect.flatMap((exit) => {
+            if (context.stopped) {
+              return Effect.void;
+            }
+            if (context.streamFiber === streamFiber) {
+              context.streamFiber = undefined;
+            }
+            return handleStreamExit(context, exit);
+          }),
+        ),
+      );
       context.streamFiber = streamFiber;
-      streamFiber.addObserver((exit) => {
-        if (context.stopped) {
-          return;
-        }
+      streamFiber.addObserver(() => {
         if (context.streamFiber === streamFiber) {
           context.streamFiber = undefined;
         }
-        runFork(handleStreamExit(context, exit));
       });
 
       return {
