@@ -4,7 +4,6 @@ import path from "node:path";
 
 import type {
   OrchestrationReadModel,
-  ProviderKind,
   ProviderRuntimeEvent,
   ProviderSession,
 } from "@t3tools/contracts";
@@ -56,7 +55,7 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
-  readonly provider: ProviderKind;
+  readonly provider: ProviderRuntimeEvent["provider"];
   readonly createdAt: string;
   readonly threadId: ThreadId;
   readonly turnId?: string | undefined;
@@ -65,6 +64,23 @@ type LegacyProviderRuntimeEvent = {
   readonly payload?: unknown | undefined;
   readonly [key: string]: unknown;
 };
+
+type LegacyTurnCompletedEvent = LegacyProviderRuntimeEvent & {
+  readonly type: "turn.completed";
+  readonly payload?: undefined;
+  readonly status: "completed" | "failed" | "interrupted" | "cancelled";
+  readonly errorMessage?: string | undefined;
+};
+
+function isLegacyTurnCompletedEvent(
+  event: LegacyProviderRuntimeEvent,
+): event is LegacyTurnCompletedEvent {
+  return (
+    event.type === "turn.completed" &&
+    event.payload === undefined &&
+    typeof event.status === "string"
+  );
+}
 
 function createProviderServiceHarness() {
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
@@ -93,8 +109,23 @@ function createProviderServiceHarness() {
     runtimeSessions.push(session);
   };
 
+  const normalizeLegacyEvent = (event: LegacyProviderRuntimeEvent): ProviderRuntimeEvent => {
+    if (isLegacyTurnCompletedEvent(event)) {
+      const normalized: Extract<ProviderRuntimeEvent, { type: "turn.completed" }> = {
+        ...(event as Omit<Extract<ProviderRuntimeEvent, { type: "turn.completed" }>, "payload">),
+        payload: {
+          state: event.status,
+          ...(typeof event.errorMessage === "string" ? { errorMessage: event.errorMessage } : {}),
+        },
+      };
+      return normalized;
+    }
+
+    return event as ProviderRuntimeEvent;
+  };
+
   const emit = (event: LegacyProviderRuntimeEvent): void => {
-    Effect.runSync(PubSub.publish(runtimeEventPubSub, event as unknown as ProviderRuntimeEvent));
+    Effect.runSync(PubSub.publish(runtimeEventPubSub, normalizeLegacyEvent(event)));
   };
 
   return {
@@ -1693,6 +1724,37 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
+  });
+
+  it("records runtime.error activities from the typed payload message", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-runtime-error-activity"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-runtime-error-activity"),
+      payload: {
+        message: "runtime activity exploded",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-runtime-error-activity"),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-runtime-error-activity",
+    );
+    const activityPayload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(activity?.kind).toBe("runtime.error");
+    expect(activityPayload?.message).toBe("runtime activity exploded");
   });
 
   it("keeps the session running when a runtime.warning arrives during an active turn", async () => {
