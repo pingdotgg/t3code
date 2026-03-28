@@ -818,14 +818,21 @@ export default function Sidebar() {
     async (projectId: ProjectId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [{ id: "delete", label: "Remove project", destructive: true }],
-        position,
-      );
-      if (clicked !== "delete") return;
-
       const project = projects.find((entry) => entry.id === projectId);
       if (!project) return;
+
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "copy-path", label: "Copy Project Path" },
+          { id: "delete", label: "Remove project", destructive: true },
+        ],
+        position,
+      );
+      if (clicked === "copy-path") {
+        copyPathToClipboard(project.cwd, { path: project.cwd });
+        return;
+      }
+      if (clicked !== "delete") return;
 
       const projectThreads = threads.filter((thread) => thread.projectId === projectId);
       if (projectThreads.length > 0) {
@@ -864,6 +871,7 @@ export default function Sidebar() {
     [
       clearComposerDraftForThread,
       clearProjectDraftThreadId,
+      copyPathToClipboard,
       getDraftThreadByProjectId,
       projects,
       threads,
