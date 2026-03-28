@@ -37,7 +37,7 @@ function normalizeSpawnError(command: string, args: readonly string[], error: un
   return new Error(`Failed to run ${commandLabel(command, args)}: ${error.message}`);
 }
 
-function isWindowsCommandNotFound(code: number | null, stderr: string): boolean {
+export function isWindowsCommandNotFound(code: number | null, stderr: string): boolean {
   if (process.platform !== "win32") return false;
   if (code === 9009) return true;
   return /is not recognized as an internal or external command/i.test(stderr);

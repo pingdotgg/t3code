@@ -21,6 +21,7 @@ import { ServerSettingsService } from "./serverSettings";
 
 const start = vi.fn(() => undefined);
 const stop = vi.fn(() => undefined);
+const fixPath = vi.fn(() => undefined);
 let resolvedConfig: ServerConfigShape | null = null;
 const serverStart = Effect.acquireRelease(
   Effect.gen(function* () {
@@ -36,7 +37,7 @@ const findAvailablePort = vi.fn((preferred: number) => Effect.succeed(preferred)
 const testLayer = Layer.mergeAll(
   Layer.succeed(CliConfig, {
     cwd: "/tmp/t3-test-workspace",
-    fixPath: Effect.void,
+    fixPath: Effect.sync(fixPath),
     resolveStaticDir: Effect.undefined,
   } satisfies CliConfigShape),
   Layer.succeed(NetService, {
@@ -81,6 +82,7 @@ beforeEach(() => {
   resolvedConfig = null;
   start.mockImplementation(() => undefined);
   stop.mockImplementation(() => undefined);
+  fixPath.mockImplementation(() => undefined);
   findAvailablePort.mockImplementation((preferred: number) => Effect.succeed(preferred));
 });
 
@@ -329,6 +331,21 @@ it.layer(testLayer)("server CLI command", (it) => {
     }),
   );
 
+  it.effect("hydrates PATH before server startup", () =>
+    Effect.gen(function* () {
+      yield* runCli([]);
+
+      assert.equal(fixPath.mock.calls.length, 1);
+      assert.equal(start.mock.calls.length, 1);
+      const fixPathOrder = fixPath.mock.invocationCallOrder[0];
+      const startOrder = start.mock.invocationCallOrder[0];
+      if (typeof fixPathOrder !== "number" || typeof startOrder !== "number") {
+        assert.fail("Expected fixPath and start to be called");
+      }
+      assert.isTrue(fixPathOrder < startOrder);
+    }),
+  );
+
   it.effect("records a startup heartbeat with thread/project counts", () =>
     Effect.gen(function* () {
       const recordTelemetry = vi.fn(
@@ -368,7 +385,7 @@ it.layer(testLayer)("server CLI command", (it) => {
 
   it.effect("does not start server for invalid --mode values", () =>
     Effect.gen(function* () {
-      yield* runCli(["--mode", "invalid"]);
+      yield* runCli(["--mode", "invalid"]).pipe(Effect.catch(() => Effect.void));
 
       assert.equal(start.mock.calls.length, 0);
       assert.equal(stop.mock.calls.length, 0);
@@ -386,7 +403,7 @@ it.layer(testLayer)("server CLI command", (it) => {
 
   it.effect("does not start server for out-of-range --port values", () =>
     Effect.gen(function* () {
-      yield* runCli(["--port", "70000"]);
+      yield* runCli(["--port", "70000"]).pipe(Effect.catch(() => Effect.void));
 
       // effect/unstable/cli renders help/errors for parse failures and returns success.
       assert.equal(start.mock.calls.length, 0);
