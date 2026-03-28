@@ -767,6 +767,33 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="Worktree branch prefix"
+          description={`Prefix used for worktree branch names (e.g., ${settings.worktreeBranchPrefix || "t3code"}/feature-name).`}
+          resetAction={
+            settings.worktreeBranchPrefix !== DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix ? (
+              <SettingResetButton
+                label="worktree branch prefix"
+                onClick={() =>
+                  updateSettings({
+                    worktreeBranchPrefix: DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Input
+              id="worktree-branch-prefix"
+              className="w-full sm:w-44"
+              value={settings.worktreeBranchPrefix}
+              onChange={(event) => updateSettings({ worktreeBranchPrefix: event.target.value })}
+              placeholder="t3code"
+              spellCheck={false}
+            />
+          }
+        />
+
+        <SettingsRow
           title="Archive confirmation"
           description="Require a second click on the inline archive action before a thread is archived."
           resetAction={

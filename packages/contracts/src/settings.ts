@@ -34,6 +34,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_THREAD_SORT_ORDER),
   ),
   timestampFormat: TimestampFormat.pipe(Schema.withDecodingDefault(() => DEFAULT_TIMESTAMP_FORMAT)),
+  worktreeBranchPrefix: Schema.String.check(Schema.isMaxLength(64)).pipe(
+    Schema.withDecodingDefault(() => "t3code"),
+  ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 

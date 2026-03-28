@@ -226,6 +226,10 @@ export function buildLegacyClientSettingsMigrationPatch(
     patch.timestampFormat = legacySettings.timestampFormat;
   }
 
+  if (typeof legacySettings.worktreeBranchPrefix === "string") {
+    patch.worktreeBranchPrefix = legacySettings.worktreeBranchPrefix;
+  }
+
   return patch;
 }
 
