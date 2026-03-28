@@ -207,6 +207,42 @@ describe("classifyCodexStderrLine", () => {
   });
 });
 
+describe("process stderr events", () => {
+  it("emits classified stderr lines as notifications", () => {
+    const manager = new CodexAppServerManager();
+    const emitEvent = vi
+      .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
+      .mockImplementation(() => {});
+
+    (
+      manager as unknown as {
+        emitNotificationEvent: (
+          context: { session: { threadId: ThreadId } },
+          method: string,
+          message: string,
+        ) => void;
+      }
+    ).emitNotificationEvent(
+      {
+        session: {
+          threadId: asThreadId("thread-1"),
+        },
+      },
+      "process/stderr",
+      "fatal: permission denied",
+    );
+
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "notification",
+        method: "process/stderr",
+        threadId: "thread-1",
+        message: "fatal: permission denied",
+      }),
+    );
+  });
+});
+
 describe("normalizeCodexModelSlug", () => {
   it("maps 5.3 aliases to gpt-5.3-codex", () => {
     expect(normalizeCodexModelSlug("5.3")).toBe("gpt-5.3-codex");
