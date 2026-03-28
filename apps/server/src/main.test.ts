@@ -368,7 +368,7 @@ it.layer(testLayer)("server CLI command", (it) => {
 
   it.effect("does not start server for invalid --mode values", () =>
     Effect.gen(function* () {
-      yield* runCli(["--mode", "invalid"]);
+      yield* runCli(["--mode", "invalid"]).pipe(Effect.catch(() => Effect.void));
 
       assert.equal(start.mock.calls.length, 0);
       assert.equal(stop.mock.calls.length, 0);
@@ -386,7 +386,7 @@ it.layer(testLayer)("server CLI command", (it) => {
 
   it.effect("does not start server for out-of-range --port values", () =>
     Effect.gen(function* () {
-      yield* runCli(["--port", "70000"]);
+      yield* runCli(["--port", "70000"]).pipe(Effect.catch(() => Effect.void));
 
       // effect/unstable/cli renders help/errors for parse failures and returns success.
       assert.equal(start.mock.calls.length, 0);
