@@ -43,6 +43,32 @@ describe("extractTerminalLinks", () => {
       },
     ]);
   });
+
+  it("finds Windows absolute paths with forward slashes", () => {
+    const line = "see C:/Users/someone/project/src/file.ts:42 for details";
+    const path = "C:/Users/someone/project/src/file.ts:42";
+    const start = line.indexOf(path);
+    expect(extractTerminalLinks(line)).toEqual([
+      {
+        kind: "path",
+        text: path,
+        start,
+        end: start + path.length,
+      },
+    ]);
+  });
+
+  it("trims trailing punctuation from Windows forward-slash paths", () => {
+    const line = "(C:/tmp/x.ts).";
+    expect(extractTerminalLinks(line)).toEqual([
+      {
+        kind: "path",
+        text: "C:/tmp/x.ts",
+        start: 1,
+        end: 12,
+      },
+    ]);
+  });
 });
 
 describe("resolvePathLinkTarget", () => {
@@ -59,6 +85,12 @@ describe("resolvePathLinkTarget", () => {
     expect(
       resolvePathLinkTarget("/Users/julius/project/src/main.ts:12", "/Users/julius/project"),
     ).toBe("/Users/julius/project/src/main.ts:12");
+  });
+
+  it("keeps Windows absolute paths with forward slashes unchanged", () => {
+    expect(
+      resolvePathLinkTarget("C:/Users/julius/project/src/main.ts:12", "C:\\Users\\julius\\project"),
+    ).toBe("C:/Users/julius/project/src/main.ts:12");
   });
 });
 

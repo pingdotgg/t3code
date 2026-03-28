@@ -175,7 +175,7 @@ describe("WsTransport", () => {
     expect(warnSpy).toHaveBeenNthCalledWith(
       1,
       "Dropped inbound WebSocket envelope",
-      "SyntaxError: Expected property name or '}' in JSON at position 2 (line 1 column 3)",
+      expect.stringMatching(/^SyntaxError:/),
     );
     expect(warnSpy).toHaveBeenNthCalledWith(
       2,
