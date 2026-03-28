@@ -251,8 +251,11 @@ function EventRouter() {
           return;
         }
         await navigate({
-          to: "/$threadId",
-          params: { threadId: payload.bootstrapThreadId },
+          to: "/projects/$projectId/threads/$threadId",
+          params: {
+            projectId: payload.bootstrapProjectId,
+            threadId: payload.bootstrapThreadId,
+          },
           replace: true,
         });
         handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;

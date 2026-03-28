@@ -334,8 +334,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
     void navigate({
-      to: "/$threadId",
-      params: { threadId: activeThread.id },
+      to: "/projects/$projectId/threads/$threadId",
+      params: { projectId: activeThread.projectId, threadId: activeThread.id },
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
         return { ...rest, diff: "1", diffTurnId: turnId };
@@ -345,8 +345,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const selectWholeConversation = () => {
     if (!activeThread) return;
     void navigate({
-      to: "/$threadId",
-      params: { threadId: activeThread.id },
+      to: "/projects/$projectId/threads/$threadId",
+      params: { projectId: activeThread.projectId, threadId: activeThread.id },
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
         return { ...rest, diff: "1" };

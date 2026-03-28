@@ -502,8 +502,8 @@ export default function Sidebar() {
       if (!latestThread) return;
 
       void navigate({
-        to: "/$threadId",
-        params: { threadId: latestThread.id },
+        to: "/projects/$projectId/threads/$threadId",
+        params: { projectId, threadId: latestThread.id },
       });
     },
     [appSettings.sidebarThreadSortOrder, navigate, threads],
@@ -733,9 +733,13 @@ export default function Sidebar() {
       clearTerminalState(threadId);
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
+          const fallbackThread = threads.find((candidate) => candidate.id === fallbackThreadId);
           void navigate({
-            to: "/$threadId",
-            params: { threadId: fallbackThreadId },
+            to: "/projects/$projectId/threads/$threadId",
+            params: {
+              projectId: fallbackThread?.projectId ?? thread.projectId,
+              threadId: fallbackThreadId,
+            },
             replace: true,
           });
         } else {
@@ -959,9 +963,13 @@ export default function Sidebar() {
         clearSelection();
       }
       setSelectionAnchor(threadId);
+      const thread = threads.find((candidate) => candidate.id === threadId);
+      if (!thread) {
+        return;
+      }
       void navigate({
-        to: "/$threadId",
-        params: { threadId },
+        to: "/projects/$projectId/threads/$threadId",
+        params: { projectId: thread.projectId, threadId },
       });
     },
     [
@@ -970,6 +978,7 @@ export default function Sidebar() {
       rangeSelectTo,
       selectedThreadIds.size,
       setSelectionAnchor,
+      threads,
       toggleThreadSelection,
     ],
   );
@@ -1171,8 +1180,8 @@ export default function Sidebar() {
               }
               setSelectionAnchor(thread.id);
               void navigate({
-                to: "/$threadId",
-                params: { threadId: thread.id },
+                to: "/projects/$projectId/threads/$threadId",
+                params: { projectId: thread.projectId, threadId: thread.id },
               });
             }}
             onContextMenu={(event) => {

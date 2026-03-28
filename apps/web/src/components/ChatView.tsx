@@ -531,8 +531,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setProjectDraftThreadId(activeProject.id, storedDraftThread.threadId, input);
         if (storedDraftThread.threadId !== threadId) {
           await navigate({
-            to: "/$threadId",
-            params: { threadId: storedDraftThread.threadId },
+            to: "/projects/$projectId/threads/$threadId",
+            params: { projectId: activeProject.id, threadId: storedDraftThread.threadId },
           });
         }
         return storedDraftThread.threadId;
@@ -554,8 +554,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ...input,
       });
       await navigate({
-        to: "/$threadId",
-        params: { threadId: nextThreadId },
+        to: "/projects/$projectId/threads/$threadId",
+        params: { projectId: activeProject.id, threadId: nextThreadId },
       });
       return nextThreadId;
     },
@@ -1183,16 +1183,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [keybindings],
   );
   const onToggleDiff = useCallback(() => {
+    if (!activeThread) {
+      return;
+    }
+
     void navigate({
-      to: "/$threadId",
-      params: { threadId },
+      to: "/projects/$projectId/threads/$threadId",
+      params: { projectId: activeThread.projectId, threadId },
       replace: true,
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
         return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
       },
     });
-  }, [diffOpen, navigate, threadId]);
+  }, [activeThread, diffOpen, navigate, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -3117,8 +3121,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         // Signal that the plan sidebar should open on the new thread.
         planSidebarOpenOnNextThreadRef.current = true;
         return navigate({
-          to: "/$threadId",
-          params: { threadId: nextThreadId },
+          to: "/projects/$projectId/threads/$threadId",
+          params: { projectId: activeThread.projectId, threadId: nextThreadId },
         });
       })
       .catch(async (err) => {
@@ -3501,9 +3505,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const expandedImageItem = expandedImage ? expandedImage.images[expandedImage.index] : null;
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
+      if (!activeThread) {
+        return;
+      }
+
       void navigate({
-        to: "/$threadId",
-        params: { threadId },
+        to: "/projects/$projectId/threads/$threadId",
+        params: { projectId: activeThread.projectId, threadId },
         search: (previous) => {
           const rest = stripDiffSearchParams(previous);
           return filePath
@@ -3512,7 +3520,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         },
       });
     },
-    [navigate, threadId],
+    [activeThread, navigate, threadId],
   );
   const onRevertUserMessage = (messageId: MessageId) => {
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);

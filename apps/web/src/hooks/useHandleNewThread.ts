@@ -63,8 +63,8 @@ export function useHandleNewThread() {
             return;
           }
           await navigate({
-            to: "/$threadId",
-            params: { threadId: storedDraftThread.threadId },
+            to: "/projects/$projectId/threads/$threadId",
+            params: { projectId, threadId: storedDraftThread.threadId },
           });
         })();
       }
@@ -100,8 +100,8 @@ export function useHandleNewThread() {
         applyStickyState(threadId);
 
         await navigate({
-          to: "/$threadId",
-          params: { threadId },
+          to: "/projects/$projectId/threads/$threadId",
+          params: { projectId, threadId },
         });
       })();
     },
