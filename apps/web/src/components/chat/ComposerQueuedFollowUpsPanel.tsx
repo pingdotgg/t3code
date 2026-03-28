@@ -70,10 +70,6 @@ export const ComposerQueuedFollowUpsPanel = memo(function ComposerQueuedFollowUp
   onReorder: (followUpId: string, targetIndex: number) => void;
   onSteer: (followUpId: string) => void;
 }) {
-  if (queuedFollowUps.length === 0) {
-    return null;
-  }
-
   const [actionsOpenFollowUpId, setActionsOpenFollowUpId] = useState<string | null>(null);
   const [draggedFollowUpId, setDraggedFollowUpId] = useState<string | null>(null);
   const [dropIndicator, setDropIndicator] = useState<{
@@ -93,6 +89,10 @@ export const ComposerQueuedFollowUpsPanel = memo(function ComposerQueuedFollowUp
       document.removeEventListener("pointerdown", handlePointerDown);
     };
   }, []);
+
+  if (queuedFollowUps.length === 0) {
+    return null;
+  }
 
   const draggedIndex =
     draggedFollowUpId === null

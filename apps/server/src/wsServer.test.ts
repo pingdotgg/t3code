@@ -495,6 +495,24 @@ describe("WebSocket Server", () => {
     return dir;
   }
 
+  async function removeTempDir(dir: string): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return;
+      } catch (error) {
+        const code =
+          typeof error === "object" && error !== null && "code" in error
+            ? String((error as { code?: unknown }).code)
+            : null;
+        if ((code !== "EPERM" && code !== "EBUSY") || attempt === 19) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  }
+
   async function createTestServer(
     options: {
       persistenceLayer?: Layer.Layer<
@@ -604,7 +622,7 @@ describe("WebSocket Server", () => {
     await closeTestServer();
     server = null;
     for (const dir of tempDirs.splice(0, tempDirs.length)) {
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+      await removeTempDir(dir);
     }
     vi.restoreAllMocks();
   });
@@ -1396,7 +1414,7 @@ describe("WebSocket Server", () => {
   });
 
   it("normalizes queued follow-up image attachments into persisted server attachments", async () => {
-    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-ws-queued-attachments-"));
+    const baseDir = makeTempDir("t3code-ws-queued-attachments-");
     const { attachmentsDir } = deriveServerPathsSync(baseDir, undefined);
     const workspaceRoot = path.join(baseDir, "workspace");
     fs.mkdirSync(workspaceRoot, { recursive: true });

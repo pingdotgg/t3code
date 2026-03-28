@@ -324,7 +324,10 @@ async function responseBlobToDataUrl(blob: Blob): Promise<string> {
 async function hydratePersistedAttachmentForDraft(
   attachment: ChatAttachment,
 ): Promise<PersistedComposerImageAttachment> {
-  const response = await fetch(attachment.previewUrl ?? "", { credentials: "same-origin" });
+  if (!attachment.previewUrl) {
+    throw new Error(`Queued attachment '${attachment.name}' is missing a preview URL.`);
+  }
+  const response = await fetch(attachment.previewUrl, { credentials: "same-origin" });
   if (!response.ok) {
     throw new Error(`Failed to load queued attachment '${attachment.name}'.`);
   }
@@ -4763,64 +4766,65 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             </Button>
                           </div>
                         ) : phase === "running" ? (
-                          composerSendState.hasSendableContent ? (
-                            <Tooltip>
-                              <TooltipTrigger
-                                render={
-                                  <Button
-                                    type="submit"
-                                    size="sm"
-                                    className="h-9 w-9 rounded-full p-0 enabled:cursor-pointer sm:h-8 sm:w-8"
-                                    disabled={isSendBusy || isConnecting}
-                                    aria-label={runningFollowUpActionLabel}
-                                  >
-                                    {followUpBehavior === "queue" ? (
-                                      <Clock3Icon className="size-4" />
-                                    ) : (
-                                      <CornerDownRightIcon className="size-4" />
-                                    )}
-                                  </Button>
-                                }
-                              />
-                              <TooltipPopup
-                                side="top"
-                                sideOffset={8}
-                                className="rounded-[22px] border-border/70 bg-card/95 p-0 text-sm shadow-xl"
-                              >
-                                <div className="min-w-44 rounded-[20px] p-3">
-                                  <div className="space-y-2">
-                                    {runningFollowUpShortcutRows.map((row) => (
-                                      <div
-                                        key={row.label}
-                                        className="flex items-center justify-between gap-3"
-                                      >
-                                        <span
-                                          className={cn(
-                                            "text-[15px] leading-none",
-                                            row.active
-                                              ? "font-semibold text-foreground"
-                                              : "text-foreground/90",
-                                          )}
+                          <>
+                            {composerSendState.hasSendableContent ? (
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Button
+                                      type="submit"
+                                      size="sm"
+                                      className="h-9 w-9 rounded-full p-0 enabled:cursor-pointer sm:h-8 sm:w-8"
+                                      disabled={isSendBusy || isConnecting}
+                                      aria-label={runningFollowUpActionLabel}
+                                    >
+                                      {followUpBehavior === "queue" ? (
+                                        <Clock3Icon className="size-4" />
+                                      ) : (
+                                        <CornerDownRightIcon className="size-4" />
+                                      )}
+                                    </Button>
+                                  }
+                                />
+                                <TooltipPopup
+                                  side="top"
+                                  sideOffset={8}
+                                  className="rounded-[22px] border-border/70 bg-card/95 p-0 text-sm shadow-xl"
+                                >
+                                  <div className="min-w-44 rounded-[20px] p-3">
+                                    <div className="space-y-2">
+                                      {runningFollowUpShortcutRows.map((row) => (
+                                        <div
+                                          key={row.label}
+                                          className="flex items-center justify-between gap-3"
                                         >
-                                          {row.label}
-                                        </span>
-                                        <span
-                                          className={cn(
-                                            "rounded-full px-3 py-1 text-xs font-medium leading-none",
-                                            row.active
-                                              ? "bg-accent text-foreground"
-                                              : "bg-muted text-muted-foreground",
-                                          )}
-                                        >
-                                          {row.shortcut}
-                                        </span>
-                                      </div>
-                                    ))}
+                                          <span
+                                            className={cn(
+                                              "text-[15px] leading-none",
+                                              row.active
+                                                ? "font-semibold text-foreground"
+                                                : "text-foreground/90",
+                                            )}
+                                          >
+                                            {row.label}
+                                          </span>
+                                          <span
+                                            className={cn(
+                                              "rounded-full px-3 py-1 text-xs font-medium leading-none",
+                                              row.active
+                                                ? "bg-accent text-foreground"
+                                                : "bg-muted text-muted-foreground",
+                                            )}
+                                          >
+                                            {row.shortcut}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
                                   </div>
-                                </div>
-                              </TooltipPopup>
-                            </Tooltip>
-                          ) : (
+                                </TooltipPopup>
+                              </Tooltip>
+                            ) : null}
                             <button
                               type="button"
                               className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
@@ -4837,7 +4841,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 <rect x="2" y="2" width="8" height="8" rx="1.5" />
                               </svg>
                             </button>
-                          )
+                          </>
                         ) : pendingUserInputs.length === 0 ? (
                           showPlanFollowUpPrompt ? (
                             prompt.trim().length > 0 ? (

@@ -2061,6 +2061,31 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps the running stop button available while drafting a follow-up", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-stop-while-followup" as MessageId,
+        targetText: "stop while follow-up target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      await setComposerPrompt("draft a follow-up");
+      await waitForComposerSubmitButton("Steer follow-up");
+
+      const stopButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Stop generation"]'),
+        "Unable to find stop generation button while drafting a follow-up.",
+      );
+
+      expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("persists the running follow-up behavior setting across remounts", async () => {
     setClientSettings({
       followUpBehavior: "queue",
