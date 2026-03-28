@@ -169,6 +169,9 @@
       },
     },
   },
+  "trustedDependencies": [
+    "node-pty",
+  ],
   "overrides": {
     "vite": "^8.0.0",
   },
