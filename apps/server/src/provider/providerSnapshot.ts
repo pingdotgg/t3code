@@ -5,7 +5,9 @@ import type {
   ServerProviderState,
 } from "@t3tools/contracts";
 import { Effect, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import { isWindowsCommandNotFound } from "../processRunner";
 
 export const DEFAULT_TIMEOUT_MS = 4_000;
 
@@ -34,6 +36,26 @@ export function isCommandMissingCause(error: unknown): boolean {
   const lower = error.message.toLowerCase();
   return lower.includes("enoent") || lower.includes("notfound");
 }
+
+export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Command) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(command);
+    const [stdout, stderr, exitCode] = yield* Effect.all(
+      [
+        collectStreamAsString(child.stdout),
+        collectStreamAsString(child.stderr),
+        child.exitCode.pipe(Effect.map(Number)),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    const result: CommandResult = { stdout, stderr, code: exitCode };
+    if (isWindowsCommandNotFound(exitCode, stderr)) {
+      return yield* Effect.fail(new Error(`spawn ${binaryPath} ENOENT`));
+    }
+    return result;
+  }).pipe(Effect.scoped);
 
 export function detailFromResult(
   result: CommandResult & { readonly timedOut?: boolean },
