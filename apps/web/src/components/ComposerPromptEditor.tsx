@@ -27,6 +27,7 @@ import {
   COMMAND_PRIORITY_HIGH,
   KEY_BACKSPACE_COMMAND,
   $getRoot,
+  HISTORY_PUSH_TAG,
   DecoratorNode,
   type ElementNode,
   type LexicalNode,
@@ -88,6 +89,7 @@ const SURROUND_SYMBOLS: [string, string][] = [
   ["_", "_"],
 ];
 const SURROUND_SYMBOLS_MAP = new Map<string, string>(SURROUND_SYMBOLS);
+const BACKTICK_SURROUND_CLOSE_SYMBOL = SURROUND_SYMBOLS_MAP.get("`") ?? null;
 
 type SerializedComposerMentionNode = Spread<
   {
@@ -950,6 +952,11 @@ function ComposerSurroundSelectionPlugin(props: {
     start: number;
     end: number;
   } | null>(null);
+  const pendingDeadKeySelectionRef = useRef<{
+    value: string;
+    start: number;
+    end: number;
+  } | null>(null);
 
   useEffect(() => {
     terminalContextsRef.current = props.terminalContexts;
@@ -1014,22 +1021,35 @@ function ComposerSurroundSelectionPlugin(props: {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey) {
         pendingSurroundSelectionRef.current = null;
+        pendingDeadKeySelectionRef.current = null;
         return;
       }
 
+      if (pendingDeadKeySelectionRef.current) {
+        if (event.key === "Dead" || event.key === " " || event.code === "Space") {
+          return;
+        }
+        pendingDeadKeySelectionRef.current = null;
+      }
+
+      const shouldTrackDeadKeyBacktick =
+        BACKTICK_SURROUND_CLOSE_SYMBOL !== null && event.key === "Dead" && event.shiftKey;
       editor.getEditorState().read(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection) || selection.isCollapsed()) {
           pendingSurroundSelectionRef.current = null;
+          pendingDeadKeySelectionRef.current = null;
           return;
         }
         if ($selectionTouchesInlineToken(selection)) {
           pendingSurroundSelectionRef.current = null;
+          pendingDeadKeySelectionRef.current = null;
           return;
         }
         const range = getSelectionRangeForComposerOffsets(selection);
         if (!range || range.start === range.end) {
           pendingSurroundSelectionRef.current = null;
+          pendingDeadKeySelectionRef.current = null;
           return;
         }
         const snapshot = {
@@ -1038,10 +1058,15 @@ function ComposerSurroundSelectionPlugin(props: {
           end: range.end,
         };
         pendingSurroundSelectionRef.current = snapshot;
+        pendingDeadKeySelectionRef.current = shouldTrackDeadKeyBacktick ? snapshot : null;
       });
     };
 
     const onBeforeInput = (event: InputEvent) => {
+      if (pendingDeadKeySelectionRef.current) {
+        return;
+      }
+
       if (typeof event.data !== "string") {
         pendingSurroundSelectionRef.current = null;
         return;
@@ -1060,12 +1085,76 @@ function ComposerSurroundSelectionPlugin(props: {
       event.stopImmediatePropagation();
     };
 
+    const tryApplyDeadKeyBacktickSurround = () => {
+      queueMicrotask(() => {
+        editor.update(
+          () => {
+            const pendingDeadKeySelection = pendingDeadKeySelectionRef.current;
+            if (!pendingDeadKeySelection) {
+              return;
+            }
+
+            const currentValue = $getRoot().getTextContent();
+            const backtickCloseSymbol = BACKTICK_SURROUND_CLOSE_SYMBOL;
+            if (backtickCloseSymbol === null) {
+              pendingDeadKeySelectionRef.current = null;
+              return;
+            }
+
+            const expectedResolvedValue = `${pendingDeadKeySelection.value.slice(0, pendingDeadKeySelection.start)}\`${pendingDeadKeySelection.value.slice(pendingDeadKeySelection.end)}`;
+            if (currentValue !== expectedResolvedValue) {
+              return;
+            }
+
+            const selectedText = pendingDeadKeySelection.value.slice(
+              pendingDeadKeySelection.start,
+              pendingDeadKeySelection.end,
+            );
+            $setSelectionRangeAtComposerOffsets(
+              pendingDeadKeySelection.start,
+              pendingDeadKeySelection.start + 1,
+            );
+            const replacementSelection = $getSelection();
+            if (!$isRangeSelection(replacementSelection)) {
+              return;
+            }
+            replacementSelection.insertText(`\`${selectedText}${backtickCloseSymbol}`);
+            $setSelectionRangeAtComposerOffsets(
+              pendingDeadKeySelection.start + 1,
+              pendingDeadKeySelection.start + 1 + selectedText.length,
+            );
+            pendingSurroundSelectionRef.current = null;
+            pendingDeadKeySelectionRef.current = null;
+          },
+          { tag: HISTORY_PUSH_TAG },
+        );
+      });
+    };
+
+    const onInput = (event: Event) => {
+      const inputEvent = event as InputEvent;
+      if (
+        inputEvent.inputType === "insertText" ||
+        inputEvent.inputType === "insertCompositionText"
+      ) {
+        tryApplyDeadKeyBacktickSurround();
+      }
+    };
+
+    const onCompositionEnd = () => {
+      tryApplyDeadKeyBacktickSurround();
+    };
+
     let activeRootElement: HTMLElement | null = null;
     const unregisterRootListener = editor.registerRootListener((rootElement, prevRootElement) => {
       prevRootElement?.removeEventListener("keydown", onKeyDown);
       prevRootElement?.removeEventListener("beforeinput", onBeforeInput, true);
+      prevRootElement?.removeEventListener("input", onInput);
+      prevRootElement?.removeEventListener("compositionend", onCompositionEnd);
       rootElement?.addEventListener("keydown", onKeyDown);
       rootElement?.addEventListener("beforeinput", onBeforeInput, true);
+      rootElement?.addEventListener("input", onInput);
+      rootElement?.addEventListener("compositionend", onCompositionEnd);
       activeRootElement = rootElement;
     });
     const unregisterBeforeInputCommand = editor.registerCommand(
@@ -1078,6 +1167,8 @@ function ComposerSurroundSelectionPlugin(props: {
       if (activeRootElement) {
         activeRootElement.removeEventListener("keydown", onKeyDown);
         activeRootElement.removeEventListener("beforeinput", onBeforeInput, true);
+        activeRootElement.removeEventListener("input", onInput);
+        activeRootElement.removeEventListener("compositionend", onCompositionEnd);
       }
       unregisterRootListener();
       unregisterBeforeInputCommand();
