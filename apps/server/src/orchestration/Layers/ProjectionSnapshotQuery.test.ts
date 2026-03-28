@@ -34,7 +34,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           project_id,
           title,
           workspace_root,
-          default_model,
+          default_model_selection_json,
           scripts_json,
           created_at,
           updated_at,
@@ -44,7 +44,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'project-1',
           'Project 1',
           '/tmp/project-1',
-          'gpt-5-codex',
+          '{"provider":"codex","model":"gpt-5-codex"}',
           '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           '2026-02-24T00:00:00.000Z',
           '2026-02-24T00:00:01.000Z',
@@ -57,7 +57,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           thread_id,
           project_id,
           title,
-          model,
+          model_selection_json,
           branch,
           worktree_path,
           latest_turn_id,
@@ -69,7 +69,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'thread-1',
           'project-1',
           'Thread 1',
-          'gpt-5-codex',
+          '{"provider":"codex","model":"gpt-5-codex"}',
           NULL,
           NULL,
           'turn-1',
@@ -234,7 +234,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
-          defaultModel: "gpt-5-codex",
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
           scripts: [
             {
               id: "script-1",
@@ -254,7 +257,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
-          model: "gpt-5-codex",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
           interactionMode: "default",
           runtimeMode: "full-access",
           branch: null,
@@ -273,6 +279,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
+          archivedAt: null,
           deletedAt: null,
           messages: [
             {

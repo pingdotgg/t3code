@@ -1,9 +1,10 @@
-import { type ModelSlug, type ProviderKind } from "@t3tools/contracts";
+import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { memo, useState } from "react";
+import type { VariantProps } from "class-variance-authority";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
 import { ChevronDownIcon } from "lucide-react";
-import { Button } from "../ui/button";
+import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
   MenuGroup,
@@ -19,6 +20,7 @@ import {
 } from "../ui/menu";
 import { ClaudeAI, CursorIcon, Gemini, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { cn } from "~/lib/utils";
+import { getProviderSnapshot } from "../../providerModels";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -50,13 +52,16 @@ function providerIconClassName(
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
-  model: ModelSlug;
+  model: string;
   lockedProvider: ProviderKind | null;
+  providers?: ReadonlyArray<ServerProvider>;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
   activeProviderIconClassName?: string;
   compact?: boolean;
   disabled?: boolean;
-  onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
+  triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
+  triggerClassName?: string;
+  onProviderModelChange: (provider: ProviderKind, model: string) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const activeProvider = props.lockedProvider ?? props.provider;
@@ -92,10 +97,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         render={
           <Button
             size="sm"
-            variant="ghost"
+            variant={props.triggerVariant ?? "ghost"}
             className={cn(
               "min-w-0 justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 [&_svg]:mx-0",
               props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56 sm:px-3",
+              props.triggerClassName,
             )}
             disabled={props.disabled}
           />
@@ -141,6 +147,31 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           <>
             {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
               const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
+              const liveProvider = props.providers
+                ? getProviderSnapshot(props.providers, option.value)
+                : undefined;
+              if (liveProvider && liveProvider.status !== "ready") {
+                const unavailableLabel = !liveProvider.enabled
+                  ? "Disabled"
+                  : !liveProvider.installed
+                    ? "Not installed"
+                    : "Unavailable";
+                return (
+                  <MenuItem key={option.value} disabled>
+                    <OptionIcon
+                      aria-hidden="true"
+                      className={cn(
+                        "size-4 shrink-0 opacity-80",
+                        providerIconClassName(option.value, "text-muted-foreground/85"),
+                      )}
+                    />
+                    <span>{option.label}</span>
+                    <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
+                      {unavailableLabel}
+                    </span>
+                  </MenuItem>
+                );
+              }
               return (
                 <MenuSub key={option.value}>
                   <MenuSubTrigger>
@@ -153,7 +184,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     />
                     {option.label}
                   </MenuSubTrigger>
-                  <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
+                  <MenuSubPopup className="[--available-height:min(24rem,70vh)]" sideOffset={4}>
                     <MenuGroup>
                       <MenuRadioGroup
                         value={props.provider === option.value ? props.model : ""}

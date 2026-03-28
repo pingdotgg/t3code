@@ -1,4 +1,4 @@
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "../appSettings";
+import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { Thread } from "../types";
 import { cn } from "../lib/utils";
 import {
@@ -291,6 +291,33 @@ export function sortThreadsForSidebar<
     if (byTimestamp !== 0) return byTimestamp;
     return right.id.localeCompare(left.id);
   });
+}
+
+export function getFallbackThreadIdAfterDelete<
+  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt" | "messages">,
+>(input: {
+  threads: readonly T[];
+  deletedThreadId: T["id"];
+  sortOrder: SidebarThreadSortOrder;
+  deletedThreadIds?: ReadonlySet<T["id"]>;
+}): T["id"] | null {
+  const { deletedThreadId, deletedThreadIds, sortOrder, threads } = input;
+  const deletedThread = threads.find((thread) => thread.id === deletedThreadId);
+  if (!deletedThread) {
+    return null;
+  }
+
+  return (
+    sortThreadsForSidebar(
+      threads.filter(
+        (thread) =>
+          thread.projectId === deletedThread.projectId &&
+          thread.id !== deletedThreadId &&
+          !deletedThreadIds?.has(thread.id),
+      ),
+      sortOrder,
+    )[0]?.id ?? null
+  );
 }
 
 export function getProjectSortTimestamp(

@@ -4,6 +4,7 @@ import { assert, it, vi } from "@effect/vitest";
 import type { OrchestrationReadModel } from "@t3tools/contracts";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Command from "effect/unstable/cli/Command";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -16,9 +17,11 @@ import { Open, type OpenShape } from "./open";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { Server, type ServerShape } from "./wsServer";
+import { ServerSettingsService } from "./serverSettings";
 
 const start = vi.fn(() => undefined);
 const stop = vi.fn(() => undefined);
+const fixPath = vi.fn(() => undefined);
 let resolvedConfig: ServerConfigShape | null = null;
 const serverStart = Effect.acquireRelease(
   Effect.gen(function* () {
@@ -34,7 +37,7 @@ const findAvailablePort = vi.fn((preferred: number) => Effect.succeed(preferred)
 const testLayer = Layer.mergeAll(
   Layer.succeed(CliConfig, {
     cwd: "/tmp/t3-test-workspace",
-    fixPath: Effect.void,
+    fixPath: Effect.sync(fixPath),
     resolveStaticDir: Effect.undefined,
   } satisfies CliConfigShape),
   Layer.succeed(NetService, {
@@ -51,6 +54,7 @@ const testLayer = Layer.mergeAll(
     openBrowser: (_target: string) => Effect.void,
     openInEditor: () => Effect.void,
   } satisfies OpenShape),
+  ServerSettingsService.layerTest(),
   AnalyticsService.layerTest,
   FetchHttpClient.layer,
   NodeServices.layer,
@@ -78,6 +82,7 @@ beforeEach(() => {
   resolvedConfig = null;
   start.mockImplementation(() => undefined);
   stop.mockImplementation(() => undefined);
+  fixPath.mockImplementation(() => undefined);
   findAvailablePort.mockImplementation((preferred: number) => Effect.succeed(preferred));
 });
 
@@ -148,6 +153,99 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, false);
       assert.equal(resolvedConfig?.logWebSocketEvents, true);
       assert.equal(findAvailablePort.mock.calls.length, 0);
+    }),
+  );
+
+  const openBootstrapFd = Effect.fn(function* (payload: Record<string, unknown>) {
+    const fs = yield* FileSystem.FileSystem;
+    const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
+    yield* fs.writeFileString(filePath, `${JSON.stringify(payload)}\n`);
+    const { fd } = yield* fs.open(filePath, { flag: "r" });
+    return fd;
+  });
+
+  it.effect("recognizes bootstrap fd from environment config", () =>
+    Effect.gen(function* () {
+      const fd = yield* openBootstrapFd({ authToken: "bootstrap-token" });
+
+      yield* runCli([], {
+        T3CODE_MODE: "web",
+        T3CODE_BOOTSTRAP_FD: String(fd),
+        T3CODE_AUTH_TOKEN: "env-token",
+        T3CODE_NO_BROWSER: "true",
+      });
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.mode, "web");
+      assert.equal(resolvedConfig?.authToken, "env-token");
+    }),
+  );
+
+  it.effect("uses bootstrap envelope values as fallbacks when CLI and env are absent", () =>
+    Effect.gen(function* () {
+      const fd = yield* openBootstrapFd({
+        mode: "desktop",
+        port: 4888,
+        host: "127.0.0.2",
+        t3Home: "/tmp/t3-bootstrap-home",
+        devUrl: "http://127.0.0.1:5173",
+        noBrowser: true,
+        authToken: "bootstrap-token",
+        autoBootstrapProjectFromCwd: false,
+        logWebSocketEvents: true,
+      });
+
+      yield* runCli([], {
+        T3CODE_BOOTSTRAP_FD: String(fd),
+      });
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.mode, "desktop");
+      assert.equal(resolvedConfig?.port, 4888);
+      assert.equal(resolvedConfig?.host, "127.0.0.2");
+      assert.equal(resolvedConfig?.baseDir, "/tmp/t3-bootstrap-home");
+      assert.equal(resolvedConfig?.stateDir, "/tmp/t3-bootstrap-home/dev");
+      assert.equal(resolvedConfig?.devUrl?.toString(), "http://127.0.0.1:5173/");
+      assert.equal(resolvedConfig?.noBrowser, true);
+      assert.equal(resolvedConfig?.authToken, "bootstrap-token");
+      assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, false);
+      assert.equal(resolvedConfig?.logWebSocketEvents, true);
+    }),
+  );
+
+  it.effect("applies CLI then env precedence over bootstrap envelope values", () =>
+    Effect.gen(function* () {
+      const fd = yield* openBootstrapFd({
+        mode: "desktop",
+        port: 4888,
+        host: "127.0.0.2",
+        t3Home: "/tmp/t3-bootstrap-home",
+        devUrl: "http://127.0.0.1:5173",
+        noBrowser: false,
+        authToken: "bootstrap-token",
+        autoBootstrapProjectFromCwd: false,
+        logWebSocketEvents: false,
+      });
+
+      yield* runCli(["--port", "4999", "--host", "0.0.0.0", "--auth-token", "cli-token"], {
+        T3CODE_MODE: "web",
+        T3CODE_BOOTSTRAP_FD: String(fd),
+        T3CODE_HOME: "/tmp/t3-env-home",
+        T3CODE_NO_BROWSER: "true",
+        T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+        T3CODE_LOG_WS_EVENTS: "true",
+      });
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.mode, "web");
+      assert.equal(resolvedConfig?.port, 4999);
+      assert.equal(resolvedConfig?.host, "0.0.0.0");
+      assert.equal(resolvedConfig?.baseDir, "/tmp/t3-env-home");
+      assert.equal(resolvedConfig?.devUrl?.toString(), "http://127.0.0.1:5173/");
+      assert.equal(resolvedConfig?.noBrowser, true);
+      assert.equal(resolvedConfig?.authToken, "cli-token");
+      assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, true);
+      assert.equal(resolvedConfig?.logWebSocketEvents, true);
     }),
   );
 
@@ -233,6 +331,21 @@ it.layer(testLayer)("server CLI command", (it) => {
     }),
   );
 
+  it.effect("hydrates PATH before server startup", () =>
+    Effect.gen(function* () {
+      yield* runCli([]);
+
+      assert.equal(fixPath.mock.calls.length, 1);
+      assert.equal(start.mock.calls.length, 1);
+      const fixPathOrder = fixPath.mock.invocationCallOrder[0];
+      const startOrder = start.mock.invocationCallOrder[0];
+      if (typeof fixPathOrder !== "number" || typeof startOrder !== "number") {
+        assert.fail("Expected fixPath and start to be called");
+      }
+      assert.isTrue(fixPathOrder < startOrder);
+    }),
+  );
+
   it.effect("records a startup heartbeat with thread/project counts", () =>
     Effect.gen(function* () {
       const recordTelemetry = vi.fn(
@@ -272,7 +385,7 @@ it.layer(testLayer)("server CLI command", (it) => {
 
   it.effect("does not start server for invalid --mode values", () =>
     Effect.gen(function* () {
-      yield* runCli(["--mode", "invalid"]);
+      yield* runCli(["--mode", "invalid"]).pipe(Effect.catch(() => Effect.void));
 
       assert.equal(start.mock.calls.length, 0);
       assert.equal(stop.mock.calls.length, 0);
@@ -290,7 +403,7 @@ it.layer(testLayer)("server CLI command", (it) => {
 
   it.effect("does not start server for out-of-range --port values", () =>
     Effect.gen(function* () {
-      yield* runCli(["--port", "70000"]);
+      yield* runCli(["--port", "70000"]).pipe(Effect.catch(() => Effect.void));
 
       // effect/unstable/cli renders help/errors for parse failures and returns success.
       assert.equal(start.mock.calls.length, 0);

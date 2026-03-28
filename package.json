@@ -8,11 +8,11 @@
       "scripts"
     ],
     "catalog": {
-      "effect": "https://pkg.pr.new/Effect-TS/effect-smol/effect@8881a9b",
-      "@effect/platform-node": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@8881a9b",
-      "@effect/sql-sqlite-bun": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/sql-sqlite-bun@8881a9b",
-      "@effect/vitest": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/vitest@8881a9b",
-      "@effect/language-service": "0.75.1",
+      "effect": "4.0.0-beta.42",
+      "@effect/platform-node": "4.0.0-beta.42",
+      "@effect/sql-sqlite-bun": "4.0.0-beta.42",
+      "@effect/vitest": "4.0.0-beta.42",
+      "@effect/language-service": "0.84.1",
       "@types/bun": "^1.3.9",
       "@types/node": "^24.10.13",
       "tsdown": "^0.20.3",
@@ -30,6 +30,7 @@
     "start": "turbo run start --filter=t3",
     "start:desktop": "turbo run start --filter=@t3tools/desktop",
     "start:marketing": "turbo run preview --filter=@t3tools/marketing",
+    "start:mock-update-server": "bun run scripts/mock-update-server.ts",
     "build": "turbo run build",
     "build:marketing": "turbo run build --filter=@t3tools/marketing",
     "build:desktop": "turbo run build --filter=@t3tools/desktop --filter=t3",
@@ -69,5 +70,8 @@
     "workerDirectory": [
       "apps/web/public"
     ]
-  }
+  },
+  "trustedDependencies": [
+    "node-pty"
+  ]
 }

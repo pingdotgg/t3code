@@ -12,26 +12,24 @@ describe("ProviderSessionStartInput", () => {
       threadId: "thread-1",
       provider: "codex",
       cwd: "/tmp/workspace",
-      model: "gpt-5.3-codex",
-      modelOptions: {
-        codex: {
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.3-codex",
+        options: {
           reasoningEffort: "high",
           fastMode: true,
         },
       },
       runtimeMode: "full-access",
-      providerOptions: {
-        codex: {
-          binaryPath: "/usr/local/bin/codex",
-          homePath: "/tmp/.codex",
-        },
-      },
     });
     expect(parsed.runtimeMode).toBe("full-access");
-    expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("high");
-    expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
-    expect(parsed.providerOptions?.codex?.binaryPath).toBe("/usr/local/bin/codex");
-    expect(parsed.providerOptions?.codex?.homePath).toBe("/tmp/.codex");
+    expect(parsed.modelSelection?.provider).toBe("codex");
+    expect(parsed.modelSelection?.model).toBe("gpt-5.3-codex");
+    if (parsed.modelSelection?.provider !== "codex") {
+      throw new Error("Expected codex modelSelection");
+    }
+    expect(parsed.modelSelection.options?.reasoningEffort).toBe("high");
+    expect(parsed.modelSelection.options?.fastMode).toBe(true);
   });
 
   it("rejects payloads without runtime mode", () => {
@@ -48,65 +46,71 @@ describe("ProviderSessionStartInput", () => {
       threadId: "thread-1",
       provider: "claudeAgent",
       cwd: "/tmp/workspace",
-      model: "claude-sonnet-4-6",
-      modelOptions: {
-        claudeAgent: {
+      modelSelection: {
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+        options: {
           thinking: true,
           effort: "max",
           fastMode: true,
         },
       },
-      providerOptions: {
-        claudeAgent: {
-          binaryPath: "/usr/local/bin/claude",
-          permissionMode: "plan",
-          maxThinkingTokens: 12_000,
-        },
-      },
       runtimeMode: "full-access",
     });
     expect(parsed.provider).toBe("claudeAgent");
-    expect(parsed.modelOptions?.claudeAgent?.thinking).toBe(true);
-    expect(parsed.modelOptions?.claudeAgent?.effort).toBe("max");
-    expect(parsed.modelOptions?.claudeAgent?.fastMode).toBe(true);
-    expect(parsed.providerOptions?.claudeAgent?.binaryPath).toBe("/usr/local/bin/claude");
-    expect(parsed.providerOptions?.claudeAgent?.permissionMode).toBe("plan");
-    expect(parsed.providerOptions?.claudeAgent?.maxThinkingTokens).toBe(12_000);
+    expect(parsed.modelSelection?.provider).toBe("claudeAgent");
+    expect(parsed.modelSelection?.model).toBe("claude-sonnet-4-6");
+    if (parsed.modelSelection?.provider !== "claudeAgent") {
+      throw new Error("Expected claude modelSelection");
+    }
+    expect(parsed.modelSelection.options?.thinking).toBe(true);
+    expect(parsed.modelSelection.options?.effort).toBe("max");
+    expect(parsed.modelSelection.options?.fastMode).toBe(true);
     expect(parsed.runtimeMode).toBe("full-access");
   });
 });
 
 describe("ProviderSendTurnInput", () => {
-  it("accepts provider-scoped model options", () => {
+  it("accepts codex modelSelection", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",
-      model: "gpt-5.3-codex",
-      modelOptions: {
-        codex: {
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.3-codex",
+        options: {
           reasoningEffort: "xhigh",
           fastMode: true,
         },
       },
     });
 
-    expect(parsed.model).toBe("gpt-5.3-codex");
-    expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("xhigh");
-    expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
+    expect(parsed.modelSelection?.provider).toBe("codex");
+    expect(parsed.modelSelection?.model).toBe("gpt-5.3-codex");
+    if (parsed.modelSelection?.provider !== "codex") {
+      throw new Error("Expected codex modelSelection");
+    }
+    expect(parsed.modelSelection.options?.reasoningEffort).toBe("xhigh");
+    expect(parsed.modelSelection.options?.fastMode).toBe(true);
   });
 
-  it("accepts claude provider effort options including ultrathink", () => {
+  it("accepts claude modelSelection including ultrathink", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",
-      model: "claude-sonnet-4-6",
-      modelOptions: {
-        claudeAgent: {
+      modelSelection: {
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+        options: {
           effort: "ultrathink",
           fastMode: true,
         },
       },
     });
 
-    expect(parsed.modelOptions?.claudeAgent?.effort).toBe("ultrathink");
-    expect(parsed.modelOptions?.claudeAgent?.fastMode).toBe(true);
+    expect(parsed.modelSelection?.provider).toBe("claudeAgent");
+    if (parsed.modelSelection?.provider !== "claudeAgent") {
+      throw new Error("Expected claude modelSelection");
+    }
+    expect(parsed.modelSelection.options?.effort).toBe("ultrathink");
+    expect(parsed.modelSelection.options?.fastMode).toBe(true);
   });
 });

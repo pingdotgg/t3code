@@ -35,7 +35,7 @@ layer("OrchestrationEventStore", (it) => {
           projectId: ProjectId.makeUnsafe("project-roundtrip"),
           title: "Roundtrip Project",
           workspaceRoot: "/tmp/project-roundtrip",
-          defaultModel: null,
+          defaultModelSelection: null,
           scripts: [],
           createdAt: now,
           updatedAt: now,

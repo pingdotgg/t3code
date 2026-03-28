@@ -12,6 +12,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   OrchestrationSessionStatus,
+  DEFAULT_SERVER_SETTINGS,
 } from "@t3tools/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
@@ -30,6 +31,7 @@ import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -54,6 +56,7 @@ interface TestFixture {
 
 let fixture: TestFixture;
 const wsRequests: WsRequestEnvelope["body"][] = [];
+let customWsRpcResolver: ((body: WsRequestEnvelope["body"]) => unknown | undefined) | null = null;
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
 interface ViewportSpec {
@@ -90,6 +93,7 @@ interface UserRowMeasurement {
 }
 
 interface MountedChatView {
+  [Symbol.asyncDispose]: () => Promise<void>;
   cleanup: () => Promise<void>;
   measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
   setViewport: (viewport: ViewportSpec) => Promise<void>;
@@ -109,13 +113,20 @@ function createBaseServerConfig(): ServerConfig {
     providers: [
       {
         provider: "codex",
+        enabled: true,
+        installed: true,
+        version: "0.116.0",
         status: "ready",
-        available: true,
         authStatus: "authenticated",
         checkedAt: NOW_ISO,
+        models: [],
       },
     ],
     availableEditors: [],
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      ...DEFAULT_CLIENT_SETTINGS,
+    },
   };
 }
 
@@ -221,7 +232,10 @@ function createSnapshotForTargetUser(options: {
         id: PROJECT_ID,
         title: "Project",
         workspaceRoot: "/repo/project",
-        defaultModel: "gpt-5",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
         scripts: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -233,7 +247,10 @@ function createSnapshotForTargetUser(options: {
         id: THREAD_ID,
         projectId: PROJECT_ID,
         title: "Browser test thread",
-        model: "gpt-5",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
         interactionMode: "default",
         runtimeMode: "full-access",
         branch: "main",
@@ -241,6 +258,7 @@ function createSnapshotForTargetUser(options: {
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
+        archivedAt: null,
         deletedAt: null,
         messages,
         activities: [],
@@ -287,7 +305,10 @@ function addThreadToSnapshot(
         id: threadId,
         projectId: PROJECT_ID,
         title: "New thread",
-        model: "gpt-5",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
         interactionMode: "default",
         runtimeMode: "full-access",
         branch: "main",
@@ -295,6 +316,7 @@ function addThreadToSnapshot(
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
+        archivedAt: null,
         deletedAt: null,
         messages: [],
         activities: [],
@@ -335,6 +357,25 @@ function withProjectScripts(
       project.id === PROJECT_ID ? { ...project, scripts: Array.from(scripts) } : project,
     ),
   };
+}
+
+function setDraftThreadWithoutWorktree(): void {
+  useComposerDraftStore.setState({
+    draftThreadsByThreadId: {
+      [THREAD_ID]: {
+        projectId: PROJECT_ID,
+        createdAt: NOW_ISO,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+      },
+    },
+    projectDraftThreadIdByProjectId: {
+      [PROJECT_ID]: THREAD_ID,
+    },
+  });
 }
 
 function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
@@ -395,6 +436,10 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
 }
 
 function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
+  const customResult = customWsRpcResolver?.(body);
+  if (customResult !== undefined) {
+    return customResult;
+  }
   const tag = body._tag;
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
@@ -729,9 +774,11 @@ async function mountChatView(options: {
   viewport: ViewportSpec;
   snapshot: OrchestrationReadModel;
   configureFixture?: (fixture: TestFixture) => void;
+  resolveRpc?: (body: WsRequestEnvelope["body"]) => unknown | undefined;
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
   options.configureFixture?.(fixture);
+  customWsRpcResolver = options.resolveRpc ?? null;
   await setViewport(options.viewport);
   await waitForProductionStyles();
 
@@ -756,11 +803,15 @@ async function mountChatView(options: {
 
   await waitForLayout();
 
+  const cleanup = async () => {
+    customWsRpcResolver = null;
+    await screen.unmount();
+    host.remove();
+  };
+
   return {
-    cleanup: async () => {
-      await screen.unmount();
-      host.remove();
-    },
+    [Symbol.asyncDispose]: cleanup,
+    cleanup,
     measureUserRow: async (targetMessageId: MessageId) => measureUserRow({ host, targetMessageId }),
     setViewport: async (viewport: ViewportSpec) => {
       await setViewport(viewport);
@@ -813,12 +864,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
     localStorage.clear();
     document.body.innerHTML = "";
     wsRequests.length = 0;
+    customWsRpcResolver = null;
     useComposerDraftStore.setState({
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
-      stickyModel: null,
-      stickyModelOptions: {},
+      stickyModelSelectionByProvider: {},
+      stickyActiveProvider: null,
     });
     useStore.setState({
       projects: [],
@@ -828,6 +880,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   afterEach(() => {
+    customWsRpcResolver = null;
     document.body.innerHTML = "";
   });
 
@@ -989,22 +1042,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   );
 
   it("opens the project cwd for draft threads without a worktree path", async () => {
-    useComposerDraftStore.setState({
-      draftThreadsByThreadId: {
-        [THREAD_ID]: {
-          projectId: PROJECT_ID,
-          createdAt: NOW_ISO,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          envMode: "local",
-        },
-      },
-      projectDraftThreadIdByProjectId: {
-        [PROJECT_ID]: THREAD_ID,
-      },
-    });
+    setDraftThreadWithoutWorktree();
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -1036,6 +1074,153 @@ describe("ChatView timeline estimator parity (full app)", () => {
             _tag: WS_METHODS.shellOpenInEditor,
             cwd: "/repo/project",
             editor: "vscode",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the project cwd with VS Code Insiders when it is the only available editor", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode-insiders"],
+        };
+      },
+    });
+
+    try {
+      const openButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button.",
+      );
+      openButton.click();
+
+      await vi.waitFor(
+        () => {
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenInEditor,
+          );
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd: "/repo/project",
+            editor: "vscode-insiders",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("filters the open picker menu and opens VSCodium from the menu", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode-insiders", "vscodium"],
+        };
+      },
+    });
+
+    try {
+      const menuButton = await waitForElement(
+        () => document.querySelector('button[aria-label="Copy options"]'),
+        "Unable to find Open picker button.",
+      );
+      (menuButton as HTMLButtonElement).click();
+
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll('[data-slot="menu-item"]')).find((item) =>
+            item.textContent?.includes("VS Code Insiders"),
+          ) ?? null,
+        "Unable to find VS Code Insiders menu item.",
+      );
+
+      expect(
+        Array.from(document.querySelectorAll('[data-slot="menu-item"]')).some((item) =>
+          item.textContent?.includes("Zed"),
+        ),
+      ).toBe(false);
+
+      const vscodiumItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll('[data-slot="menu-item"]')).find((item) =>
+            item.textContent?.includes("VSCodium"),
+          ) ?? null,
+        "Unable to find VSCodium menu item.",
+      );
+      (vscodiumItem as HTMLElement).click();
+
+      await vi.waitFor(
+        () => {
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenInEditor,
+          );
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd: "/repo/project",
+            editor: "vscodium",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("falls back to the first installed editor when the stored favorite is unavailable", async () => {
+    localStorage.setItem("t3code:last-editor", "vscodium");
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode-insiders"],
+        };
+      },
+    });
+
+    try {
+      const openButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button.",
+      );
+      openButton.click();
+
+      await vi.waitFor(
+        () => {
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenInEditor,
+          );
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd: "/repo/project",
+            editor: "vscode-insiders",
           });
         },
         { timeout: 8_000, interval: 16 },
@@ -1175,6 +1360,154 @@ describe("ChatView timeline estimator parity (full app)", () => {
               T3CODE_PROJECT_ROOT: "/repo/project",
               T3CODE_WORKTREE_PATH: "/repo/worktrees/feature-draft",
             },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("runs setup scripts after preparing a pull request worktree thread", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withProjectScripts(createDraftOnlySnapshot(), [
+        {
+          id: "setup",
+          name: "Setup",
+          command: "bun install",
+          icon: "configure",
+          runOnWorktreeCreate: true,
+        },
+      ]),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitResolvePullRequest) {
+          return {
+            pullRequest: {
+              number: 1359,
+              title: "Add thread archiving and settings navigation",
+              url: "https://github.com/pingdotgg/t3code/pull/1359",
+              baseBranch: "main",
+              headBranch: "archive-settings-overhaul",
+              state: "open",
+            },
+          };
+        }
+        if (body._tag === WS_METHODS.gitPreparePullRequestThread) {
+          return {
+            pullRequest: {
+              number: 1359,
+              title: "Add thread archiving and settings navigation",
+              url: "https://github.com/pingdotgg/t3code/pull/1359",
+              baseBranch: "main",
+              headBranch: "archive-settings-overhaul",
+              state: "open",
+            },
+            branch: "archive-settings-overhaul",
+            worktreePath: "/repo/worktrees/pr-1359",
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const branchButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "main",
+          ) as HTMLButtonElement | null,
+        "Unable to find branch selector button.",
+      );
+      branchButton.click();
+
+      const branchInput = await waitForElement(
+        () => document.querySelector<HTMLInputElement>('input[placeholder="Search branches..."]'),
+        "Unable to find branch search input.",
+      );
+      branchInput.focus();
+      await page.getByPlaceholder("Search branches...").fill("1359");
+
+      const checkoutItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("span")).find(
+            (element) => element.textContent?.trim() === "Checkout Pull Request",
+          ) as HTMLSpanElement | null,
+        "Unable to find checkout pull request option.",
+      );
+      checkoutItem.click();
+
+      const worktreeButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Worktree",
+          ) as HTMLButtonElement | null,
+        "Unable to find Worktree button.",
+      );
+      worktreeButton.click();
+
+      await vi.waitFor(
+        () => {
+          const prepareRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.gitPreparePullRequestThread,
+          );
+          expect(prepareRequest).toMatchObject({
+            _tag: WS_METHODS.gitPreparePullRequestThread,
+            cwd: "/repo/project",
+            reference: "1359",
+            mode: "worktree",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await vi.waitFor(
+        () => {
+          const openRequest = wsRequests.find(
+            (request) =>
+              request._tag === WS_METHODS.terminalOpen && request.cwd === "/repo/worktrees/pr-1359",
+          );
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.terminalOpen,
+            threadId: expect.any(String),
+            cwd: "/repo/worktrees/pr-1359",
+            env: {
+              T3CODE_PROJECT_ROOT: "/repo/project",
+              T3CODE_WORKTREE_PATH: "/repo/worktrees/pr-1359",
+            },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await vi.waitFor(
+        () => {
+          const writeRequest = wsRequests.find(
+            (request) =>
+              request._tag === WS_METHODS.terminalWrite && request.data === "bun install\r",
+          );
+          expect(writeRequest).toMatchObject({
+            _tag: WS_METHODS.terminalWrite,
+            threadId: expect.any(String),
+            data: "bun install\r",
           });
         },
         { timeout: 8_000, interval: 16 },
@@ -1483,13 +1816,17 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   it("snapshots sticky codex settings into a new draft thread", async () => {
     useComposerDraftStore.setState({
-      stickyModel: "gpt-5.3-codex",
-      stickyModelOptions: {
+      stickyModelSelectionByProvider: {
         codex: {
-          reasoningEffort: "medium",
-          fastMode: true,
+          provider: "codex",
+          model: "gpt-5.3-codex",
+          options: {
+            reasoningEffort: "medium",
+            fastMode: true,
+          },
         },
       },
+      stickyActiveProvider: "codex",
     });
 
     const mounted = await mountChatView({
@@ -1514,13 +1851,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const newThreadId = newThreadPath.slice(1) as ThreadId;
 
       expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]).toMatchObject({
-        model: "gpt-5.3-codex",
-        provider: "codex",
-        modelOptions: {
+        modelSelectionByProvider: {
           codex: {
-            fastMode: true,
+            provider: "codex",
+            model: "gpt-5.3-codex",
+            options: {
+              fastMode: true,
+            },
           },
         },
+        activeProvider: "codex",
       });
     } finally {
       await mounted.cleanup();
@@ -1529,13 +1869,17 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   it("hydrates the provider alongside a sticky claude model", async () => {
     useComposerDraftStore.setState({
-      stickyModel: "claude-opus-4-6",
-      stickyModelOptions: {
+      stickyModelSelectionByProvider: {
         claudeAgent: {
-          effort: "max",
-          fastMode: true,
+          provider: "claudeAgent",
+          model: "claude-opus-4-6",
+          options: {
+            effort: "max",
+            fastMode: true,
+          },
         },
       },
+      stickyActiveProvider: "claudeAgent",
     });
 
     const mounted = await mountChatView({
@@ -1560,16 +1904,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const newThreadId = newThreadPath.slice(1) as ThreadId;
 
       expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]).toMatchObject({
-        provider: "claudeAgent",
-        model: "claude-opus-4-6",
-        modelOptions: {
+        modelSelectionByProvider: {
           claudeAgent: {
-            effort: "max",
-            fastMode: true,
+            provider: "claudeAgent",
+            model: "claude-opus-4-6",
+            options: {
+              effort: "max",
+              fastMode: true,
+            },
           },
         },
+        activeProvider: "claudeAgent",
       });
-      await expect.element(page.getByText("Claude Opus 4.6")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }
@@ -1605,13 +1951,17 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   it("prefers draft state over sticky composer settings and defaults", async () => {
     useComposerDraftStore.setState({
-      stickyModel: "gpt-5.3-codex",
-      stickyModelOptions: {
+      stickyModelSelectionByProvider: {
         codex: {
-          reasoningEffort: "medium",
-          fastMode: true,
+          provider: "codex",
+          model: "gpt-5.3-codex",
+          options: {
+            reasoningEffort: "medium",
+            fastMode: true,
+          },
         },
       },
+      stickyActiveProvider: "codex",
     });
 
     const mounted = await mountChatView({
@@ -1636,17 +1986,22 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const threadId = threadPath.slice(1) as ThreadId;
 
       expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
-        model: "gpt-5.3-codex",
-        modelOptions: {
+        modelSelectionByProvider: {
           codex: {
-            fastMode: true,
+            provider: "codex",
+            model: "gpt-5.3-codex",
+            options: {
+              fastMode: true,
+            },
           },
         },
+        activeProvider: "codex",
       });
 
-      useComposerDraftStore.getState().setModel(threadId, "gpt-5.4");
-      useComposerDraftStore.getState().setModelOptions(threadId, {
-        codex: {
+      useComposerDraftStore.getState().setModelSelection(threadId, {
+        provider: "codex",
+        model: "gpt-5.4",
+        options: {
           reasoningEffort: "low",
           fastMode: true,
         },
@@ -1660,13 +2015,17 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "New-thread should reuse the existing project draft thread.",
       );
       expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
-        model: "gpt-5.4",
-        modelOptions: {
+        modelSelectionByProvider: {
           codex: {
-            reasoningEffort: "low",
-            fastMode: true,
+            provider: "codex",
+            model: "gpt-5.4",
+            options: {
+              reasoningEffort: "low",
+              fastMode: true,
+            },
           },
         },
+        activeProvider: "codex",
       });
     } finally {
       await mounted.cleanup();

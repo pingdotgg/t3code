@@ -65,6 +65,10 @@ describe("GitRunStackedActionInput", () => {
       actionId: "action-1",
       cwd: "/repo",
       action: "commit",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4-mini",
+      },
     });
 
     expect(parsed.actionId).toBe("action-1");

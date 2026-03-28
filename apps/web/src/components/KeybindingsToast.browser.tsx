@@ -46,13 +46,25 @@ function createBaseServerConfig(): ServerConfig {
     providers: [
       {
         provider: "codex",
+        enabled: true,
+        installed: true,
+        version: "0.116.0",
         status: "ready",
-        available: true,
         authStatus: "authenticated",
         checkedAt: NOW_ISO,
+        models: [],
       },
     ],
     availableEditors: [],
+    settings: {
+      enableAssistantStreaming: false,
+      defaultThreadEnvMode: "local" as const,
+      textGenerationModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
+      providers: {
+        codex: { enabled: true, binaryPath: "", homePath: "", customModels: [] },
+        claudeAgent: { enabled: true, binaryPath: "", customModels: [] },
+      },
+    },
   };
 }
 
@@ -64,7 +76,10 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         id: PROJECT_ID,
         title: "Project",
         workspaceRoot: "/repo/project",
-        defaultModel: "gpt-5",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
         scripts: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -76,7 +91,10 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         id: THREAD_ID,
         projectId: PROJECT_ID,
         title: "Test thread",
-        model: "gpt-5",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
         interactionMode: "default",
         runtimeMode: "full-access",
         branch: "main",
@@ -84,6 +102,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
+        archivedAt: null,
         deletedAt: null,
         messages: [
           {

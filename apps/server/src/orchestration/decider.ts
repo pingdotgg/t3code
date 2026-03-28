@@ -10,11 +10,12 @@ import {
   requireProject,
   requireProjectAbsent,
   requireThread,
+  requireThreadArchived,
   requireThreadAbsent,
+  requireThreadNotArchived,
 } from "./commandInvariants.ts";
 
 const nowIso = () => new Date().toISOString();
-const DEFAULT_ASSISTANT_DELIVERY_MODE = "buffered" as const;
 
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
   eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
@@ -77,7 +78,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
-          defaultModel: command.defaultModel ?? null,
+          defaultModelSelection: command.defaultModelSelection ?? null,
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -104,7 +105,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
-          ...(command.defaultModel !== undefined ? { defaultModel: command.defaultModel } : {}),
+          ...(command.defaultModelSelection !== undefined
+            ? { defaultModelSelection: command.defaultModelSelection }
+            : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
         },
@@ -156,7 +159,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           projectId: command.projectId,
           title: command.title,
-          model: command.model,
+          modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
           branch: command.branch,
@@ -189,6 +192,51 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.archive": {
+      yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.archived",
+        payload: {
+          threadId: command.threadId,
+          archivedAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.unarchive": {
+      yield* requireThreadArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.unarchived",
+        payload: {
+          threadId: command.threadId,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.meta.update": {
       yield* requireThread({
         readModel,
@@ -207,7 +255,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           ...(command.title !== undefined ? { title: command.title } : {}),
-          ...(command.model !== undefined ? { model: command.model } : {}),
+          ...(command.modelSelection !== undefined
+            ? { modelSelection: command.modelSelection }
+            : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
           updatedAt: occurredAt,
@@ -323,13 +373,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
-          ...(command.provider !== undefined ? { provider: command.provider } : {}),
-          ...(command.model !== undefined ? { model: command.model } : {}),
-          ...(command.modelOptions !== undefined ? { modelOptions: command.modelOptions } : {}),
-          ...(command.providerOptions !== undefined
-            ? { providerOptions: command.providerOptions }
+          ...(command.modelSelection !== undefined
+            ? { modelSelection: command.modelSelection }
             : {}),
-          assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
           runtimeMode: targetThread.runtimeMode,
           interactionMode: targetThread.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),

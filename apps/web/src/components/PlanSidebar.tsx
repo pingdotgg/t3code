@@ -1,5 +1,5 @@
 import { memo, useState, useCallback } from "react";
-import { type TimestampFormat } from "../appSettings";
+import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";

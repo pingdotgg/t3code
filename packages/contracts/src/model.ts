@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { TrimmedNonEmptyString } from "./baseSchemas";
 import type { ProviderKind } from "./orchestration";
 
 export const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
@@ -17,6 +18,7 @@ export const ClaudeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
   effort: Schema.optional(Schema.Literals(CLAUDE_CODE_EFFORT_OPTIONS)),
   fastMode: Schema.optional(Schema.Boolean),
+  contextWindow: Schema.optional(Schema.String),
 });
 export type ClaudeModelOptions = typeof ClaudeModelOptions.Type;
 
@@ -26,42 +28,43 @@ export const ProviderModelOptions = Schema.Struct({
 });
 export type ProviderModelOptions = typeof ProviderModelOptions.Type;
 
-type ModelOption = {
-  readonly slug: string;
-  readonly name: string;
-};
+export const EffortOption = Schema.Struct({
+  value: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  isDefault: Schema.optional(Schema.Boolean),
+});
+export type EffortOption = typeof EffortOption.Type;
 
-export const MODEL_OPTIONS_BY_PROVIDER = {
-  codex: [
-    { slug: "gpt-5.4", name: "GPT-5.4" },
-    { slug: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
-    { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
-    { slug: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark" },
-    { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
-    { slug: "gpt-5.2", name: "GPT-5.2" },
-  ],
-  claudeAgent: [
-    { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
-    { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-    { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
-  ],
-} as const satisfies Record<ProviderKind, readonly ModelOption[]>;
-export type ModelOptionsByProvider = typeof MODEL_OPTIONS_BY_PROVIDER;
+export const ContextWindowOption = Schema.Struct({
+  value: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  isDefault: Schema.optional(Schema.Boolean),
+});
+export type ContextWindowOption = typeof ContextWindowOption.Type;
 
-type BuiltInModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)[ProviderKind][number]["slug"];
-export type ModelSlug = BuiltInModelSlug | (string & {});
+export const ModelCapabilities = Schema.Struct({
+  reasoningEffortLevels: Schema.Array(EffortOption),
+  supportsFastMode: Schema.Boolean,
+  supportsThinkingToggle: Schema.Boolean,
+  contextWindowOptions: Schema.Array(ContextWindowOption),
+  promptInjectedEffortLevels: Schema.Array(TrimmedNonEmptyString),
+});
+export type ModelCapabilities = typeof ModelCapabilities.Type;
 
-export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, ModelSlug> = {
+export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   codex: "gpt-5.4",
   claudeAgent: "claude-sonnet-4-6",
 };
 
-// Backward compatibility for existing Codex-only call sites.
-export const MODEL_OPTIONS = MODEL_OPTIONS_BY_PROVIDER.codex;
 export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
-export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini" as const;
 
-export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, ModelSlug>> = {
+/** Per-provider text generation model defaults. */
+export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
+  codex: "gpt-5.4-mini",
+  claudeAgent: "claude-haiku-4-5",
+};
+
+export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, string>> = {
   codex: {
     "5.4": "gpt-5.4",
     "5.3": "gpt-5.3-codex",
@@ -85,12 +88,9 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
   },
 };
 
-export const REASONING_EFFORT_OPTIONS_BY_PROVIDER = {
-  codex: CODEX_REASONING_EFFORT_OPTIONS,
-  claudeAgent: CLAUDE_CODE_EFFORT_OPTIONS,
-} as const satisfies Record<ProviderKind, readonly ProviderReasoningEffort[]>;
+// ── Provider display names ────────────────────────────────────────────
 
-export const DEFAULT_REASONING_EFFORT_BY_PROVIDER = {
-  codex: "high",
-  claudeAgent: "high",
-} as const satisfies Record<ProviderKind, ProviderReasoningEffort>;
+export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
+  codex: "Codex",
+  claudeAgent: "Claude",
+};

@@ -13,25 +13,25 @@ import {
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import { Cache, Cause, Duration, Effect, Layer, Option, Ref, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, Layer, Option, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
-import { isGitRepository } from "../../git/isRepo.ts";
+import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   ProviderRuntimeIngestionService,
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
   CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
 
-const DEFAULT_ASSISTANT_DELIVERY_MODE: AssistantDeliveryMode = "buffered";
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
@@ -98,10 +98,6 @@ function proposedPlanIdFromEvent(event: ProviderRuntimeEvent, threadId: ThreadId
   return `plan:${threadId}:event:${event.eventId}`;
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
 ): ThreadTokenUsageSnapshot | undefined {
@@ -109,14 +105,6 @@ function buildContextWindowActivityPayload(
     return undefined;
   }
   return event.payload.usage;
-}
-
-function runtimePayloadRecord(event: ProviderRuntimeEvent): Record<string, unknown> | undefined {
-  const payload = (event as { payload?: unknown }).payload;
-  if (!payload || typeof payload !== "object") {
-    return undefined;
-  }
-  return payload as Record<string, unknown>;
 }
 
 function normalizeRuntimeTurnState(
@@ -131,23 +119,6 @@ function normalizeRuntimeTurnState(
     default:
       return "completed";
   }
-}
-
-function runtimeTurnState(
-  event: ProviderRuntimeEvent,
-): "completed" | "failed" | "interrupted" | "cancelled" {
-  const payloadState = asString(runtimePayloadRecord(event)?.state);
-  return normalizeRuntimeTurnState(payloadState);
-}
-
-function runtimeTurnErrorMessage(event: ProviderRuntimeEvent): string | undefined {
-  const payloadErrorMessage = asString(runtimePayloadRecord(event)?.errorMessage);
-  return payloadErrorMessage;
-}
-
-function runtimeErrorMessageFromEvent(event: ProviderRuntimeEvent): string | undefined {
-  const payloadMessage = asString(runtimePayloadRecord(event)?.message);
-  return payloadMessage;
 }
 
 function orchestrationSessionStatusFromRuntimeState(
@@ -253,10 +224,6 @@ function runtimeEventToActivities(
     }
 
     case "runtime.error": {
-      const message = runtimeErrorMessageFromEvent(event);
-      if (!message) {
-        return [];
-      }
       return [
         {
           id: event.eventId,
@@ -265,7 +232,7 @@ function runtimeEventToActivities(
           kind: "runtime.error",
           summary: "Runtime error",
           payload: {
-            message: truncateDetail(message),
+            message: truncateDetail(event.payload.message),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -537,10 +504,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
-
-  const assistantDeliveryModeRef = yield* Ref.make<AssistantDeliveryMode>(
-    DEFAULT_ASSISTANT_DELIVERY_MODE,
-  );
+  const serverSettingsService = yield* ServerSettingsService;
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -976,7 +940,9 @@ const make = Effect.gen(function* () {
             case "session.exited":
               return "stopped";
             case "turn.completed":
-              return runtimeTurnState(event) === "failed" ? "error" : "ready";
+              return normalizeRuntimeTurnState(event.payload.state) === "failed"
+                ? "error"
+                : "ready";
             case "session.started":
             case "thread.started":
               // Provider thread/session start notifications can arrive during an
@@ -987,8 +953,9 @@ const make = Effect.gen(function* () {
         const lastError =
           event.type === "session.state.changed" && event.payload.state === "error"
             ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
-            : event.type === "turn.completed" && runtimeTurnState(event) === "failed"
-              ? (runtimeTurnErrorMessage(event) ?? thread.session?.lastError ?? "Turn failed")
+            : event.type === "turn.completed" &&
+                normalizeRuntimeTurnState(event.payload.state) === "failed"
+              ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
               : status === "ready"
                 ? null
                 : (thread.session?.lastError ?? null);
@@ -1048,7 +1015,10 @@ const make = Effect.gen(function* () {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
 
-        const assistantDeliveryMode = yield* Ref.get(assistantDeliveryModeRef);
+        const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
+          serverSettingsService.getSettings,
+          (settings) => (settings.enableAssistantStreaming ? "streaming" : "buffered"),
+        );
         if (assistantDeliveryMode === "buffered") {
           const spillChunk = yield* appendBufferedAssistantText(assistantMessageId, assistantDelta);
           if (spillChunk.length > 0) {
@@ -1176,7 +1146,7 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "runtime.error") {
-        const runtimeErrorMessage = runtimeErrorMessageFromEvent(event) ?? "Provider runtime error";
+        const runtimeErrorMessage = event.payload.message;
 
         const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
           ? true
@@ -1256,11 +1226,7 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.asVoid);
     });
 
-  const processDomainEvent = (event: TurnStartRequestedDomainEvent) =>
-    Ref.set(
-      assistantDeliveryModeRef,
-      event.payload.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
-    );
+  const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
 
   const processInput = (input: RuntimeIngestionInput) =>
     input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);

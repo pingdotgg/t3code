@@ -23,25 +23,42 @@ export function createMemoryStorage(): StateStorage {
   };
 }
 
+export function isStateStorage(
+  storage: Partial<StateStorage> | null | undefined,
+): storage is StateStorage {
+  return (
+    storage !== null &&
+    storage !== undefined &&
+    typeof storage.getItem === "function" &&
+    typeof storage.setItem === "function" &&
+    typeof storage.removeItem === "function"
+  );
+}
+
+export function resolveStorage(storage: Partial<StateStorage> | null | undefined): StateStorage {
+  return isStateStorage(storage) ? storage : createMemoryStorage();
+}
+
 export function createDebouncedStorage(
-  baseStorage: StateStorage,
+  baseStorage: Partial<StateStorage> | null | undefined,
   debounceMs: number = 300,
 ): DebouncedStorage {
+  const resolvedStorage = resolveStorage(baseStorage);
   const debouncedSetItem = new Debouncer(
     (name: string, value: string) => {
-      baseStorage.setItem(name, value);
+      resolvedStorage.setItem(name, value);
     },
     { wait: debounceMs },
   );
 
   return {
-    getItem: (name) => baseStorage.getItem(name),
+    getItem: (name) => resolvedStorage.getItem(name),
     setItem: (name, value) => {
       debouncedSetItem.maybeExecute(name, value);
     },
     removeItem: (name) => {
       debouncedSetItem.cancel();
-      baseStorage.removeItem(name);
+      resolvedStorage.removeItem(name);
     },
     flush: () => {
       debouncedSetItem.flush();

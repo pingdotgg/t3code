@@ -1,11 +1,82 @@
 import { describe, expect, it } from "vitest";
+import type { ServerProviderModel } from "@t3tools/contracts";
 import { getComposerProviderState } from "./composerProviderRegistry";
+
+const CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "gpt-5.4",
+    name: "GPT-5.4",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "xhigh", label: "Extra High" },
+        { value: "high", label: "High", isDefault: true },
+        { value: "medium", label: "Medium" },
+        { value: "low", label: "Low" },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
+];
+
+const CLAUDE_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "claude-opus-4-6",
+    name: "Claude Opus 4.6",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High", isDefault: true },
+        { value: "max", label: "Max" },
+        { value: "ultrathink", label: "Ultrathink" },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: ["ultrathink"],
+    },
+  },
+  {
+    slug: "claude-sonnet-4-6",
+    name: "Claude Sonnet 4.6",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High", isDefault: true },
+        { value: "ultrathink", label: "Ultrathink" },
+      ],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: ["ultrathink"],
+    },
+  },
+  {
+    slug: "claude-haiku-4-5",
+    name: "Claude Haiku 4.5",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [],
+      supportsFastMode: false,
+      supportsThinkingToggle: true,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
+];
 
 describe("getComposerProviderState", () => {
   it("returns codex defaults when no codex draft options exist", () => {
     const state = getComposerProviderState({
       provider: "codex",
       model: "gpt-5.4",
+      models: CODEX_MODELS,
       prompt: "",
       modelOptions: undefined,
     });
@@ -13,7 +84,9 @@ describe("getComposerProviderState", () => {
     expect(state).toEqual({
       provider: "codex",
       promptEffort: "high",
-      modelOptionsForDispatch: undefined,
+      modelOptionsForDispatch: {
+        reasoningEffort: "high",
+      },
     });
   });
 
@@ -21,6 +94,7 @@ describe("getComposerProviderState", () => {
     const state = getComposerProviderState({
       provider: "codex",
       model: "gpt-5.4",
+      models: CODEX_MODELS,
       prompt: "",
       modelOptions: {
         codex: {
@@ -34,10 +108,54 @@ describe("getComposerProviderState", () => {
       provider: "codex",
       promptEffort: "low",
       modelOptionsForDispatch: {
+        reasoningEffort: "low",
+        fastMode: true,
+      },
+    });
+  });
+
+  it("preserves codex fast mode when it is the only active option", () => {
+    const state = getComposerProviderState({
+      provider: "codex",
+      model: "gpt-5.4",
+      models: CODEX_MODELS,
+      prompt: "",
+      modelOptions: {
         codex: {
-          reasoningEffort: "low",
           fastMode: true,
         },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "codex",
+      promptEffort: "high",
+      modelOptionsForDispatch: {
+        reasoningEffort: "high",
+        fastMode: true,
+      },
+    });
+  });
+
+  it("preserves codex default effort explicitly in dispatch options", () => {
+    const state = getComposerProviderState({
+      provider: "codex",
+      model: "gpt-5.4",
+      models: CODEX_MODELS,
+      prompt: "",
+      modelOptions: {
+        codex: {
+          reasoningEffort: "high",
+          fastMode: false,
+        },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "codex",
+      promptEffort: "high",
+      modelOptionsForDispatch: {
+        reasoningEffort: "high",
       },
     });
   });
@@ -46,6 +164,7 @@ describe("getComposerProviderState", () => {
     const state = getComposerProviderState({
       provider: "claudeAgent",
       model: "claude-sonnet-4-6",
+      models: CLAUDE_MODELS,
       prompt: "",
       modelOptions: undefined,
     });
@@ -53,7 +172,9 @@ describe("getComposerProviderState", () => {
     expect(state).toEqual({
       provider: "claudeAgent",
       promptEffort: "high",
-      modelOptionsForDispatch: undefined,
+      modelOptionsForDispatch: {
+        effort: "high",
+      },
     });
   });
 
@@ -61,6 +182,7 @@ describe("getComposerProviderState", () => {
     const state = getComposerProviderState({
       provider: "claudeAgent",
       model: "claude-sonnet-4-6",
+      models: CLAUDE_MODELS,
       prompt: "Ultrathink:\nInvestigate this failure",
       modelOptions: {
         claudeAgent: {
@@ -73,9 +195,7 @@ describe("getComposerProviderState", () => {
       provider: "claudeAgent",
       promptEffort: "medium",
       modelOptionsForDispatch: {
-        claudeAgent: {
-          effort: "medium",
-        },
+        effort: "medium",
       },
       composerFrameClassName: "ultrathink-frame",
       composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]",
@@ -87,6 +207,7 @@ describe("getComposerProviderState", () => {
     const state = getComposerProviderState({
       provider: "claudeAgent",
       model: "claude-haiku-4-5",
+      models: CLAUDE_MODELS,
       prompt: "",
       modelOptions: {
         claudeAgent: {
@@ -100,21 +221,19 @@ describe("getComposerProviderState", () => {
       provider: "claudeAgent",
       promptEffort: null,
       modelOptionsForDispatch: {
-        claudeAgent: {
-          thinking: false,
-        },
+        thinking: false,
       },
     });
   });
 
-  it("ignores codex options while resolving Claude state", () => {
+  it("preserves Claude fast mode when it is the only active option", () => {
     const state = getComposerProviderState({
       provider: "claudeAgent",
       model: "claude-opus-4-6",
+      models: CLAUDE_MODELS,
       prompt: "",
       modelOptions: {
-        codex: {
-          reasoningEffort: "low",
+        claudeAgent: {
           fastMode: true,
         },
       },
@@ -123,27 +242,33 @@ describe("getComposerProviderState", () => {
     expect(state).toEqual({
       provider: "claudeAgent",
       promptEffort: "high",
-      modelOptionsForDispatch: undefined,
+      modelOptionsForDispatch: {
+        effort: "high",
+        fastMode: true,
+      },
     });
   });
 
-  it("ignores Claude options while resolving codex state", () => {
+  it("preserves Claude default effort explicitly in dispatch options", () => {
     const state = getComposerProviderState({
-      provider: "codex",
-      model: "gpt-5.4",
-      prompt: "Ultrathink:\nThis should not matter",
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      models: CLAUDE_MODELS,
+      prompt: "",
       modelOptions: {
         claudeAgent: {
-          effort: "max",
-          fastMode: true,
+          effort: "high",
+          fastMode: false,
         },
       },
     });
 
     expect(state).toEqual({
-      provider: "codex",
+      provider: "claudeAgent",
       promptEffort: "high",
-      modelOptionsForDispatch: undefined,
+      modelOptionsForDispatch: {
+        effort: "high",
+      },
     });
   });
 });

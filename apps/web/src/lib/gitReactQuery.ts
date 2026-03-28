@@ -1,4 +1,4 @@
-import type { GitStackedAction } from "@t3tools/contracts";
+import { type GitStackedAction } from "@t3tools/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 
@@ -112,7 +112,6 @@ export function gitCheckoutMutationOptions(input: {
 export function gitRunStackedActionMutationOptions(input: {
   cwd: string | null;
   queryClient: QueryClient;
-  model?: string | null;
 }) {
   return mutationOptions({
     mutationKey: gitMutationKeys.runStackedAction(input.cwd),
@@ -138,7 +137,6 @@ export function gitRunStackedActionMutationOptions(input: {
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
-        ...(input.model ? { model: input.model } : {}),
       });
     },
     onSettled: async () => {

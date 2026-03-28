@@ -145,19 +145,26 @@ describe("getDesktopUpdateActionError", () => {
 });
 
 describe("desktop update UI helpers", () => {
-  it("toasts only for accepted incomplete actions", () => {
+  it("toasts only for actionable updater errors", () => {
     expect(
       shouldToastDesktopUpdateActionResult({
         accepted: true,
         completed: false,
-        state: baseState,
+        state: { ...baseState, message: "checksum mismatch" },
       }),
     ).toBe(true);
     expect(
       shouldToastDesktopUpdateActionResult({
         accepted: true,
+        completed: false,
+        state: { ...baseState, message: null },
+      }),
+    ).toBe(false);
+    expect(
+      shouldToastDesktopUpdateActionResult({
+        accepted: true,
         completed: true,
-        state: baseState,
+        state: { ...baseState, message: "checksum mismatch" },
       }),
     ).toBe(false);
   });

@@ -10,6 +10,11 @@
   "module": "./dist/index.mjs",
   "types": "./src/index.ts",
   "exports": {
+    "./settings": {
+      "types": "./src/settings.ts",
+      "import": "./src/settings.ts",
+      "require": "./src/settings.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts",

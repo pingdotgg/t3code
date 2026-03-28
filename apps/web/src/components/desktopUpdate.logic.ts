@@ -87,7 +87,7 @@ export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): 
 }
 
 export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateActionResult): boolean {
-  return result.accepted && !result.completed;
+  return getDesktopUpdateActionError(result) !== null;
 }
 
 export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | null): boolean {

@@ -48,7 +48,7 @@ import {
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
-import { type TimestampFormat } from "../../appSettings";
+import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
 import {
   buildInlineTerminalContextText,

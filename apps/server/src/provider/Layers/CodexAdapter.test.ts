@@ -22,6 +22,7 @@ import {
   type CodexAppServerSendTurnInput,
 } from "../../codexAppServerManager.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -151,6 +152,7 @@ const validationManager = new FakeCodexManager();
 const validationLayer = it.layer(
   makeCodexAdapterLive({ manager: validationManager }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -188,9 +190,10 @@ validationLayer("CodexAdapterLive validation", (it) => {
       yield* adapter.startSession({
         provider: "codex",
         threadId: asThreadId("thread-1"),
-        model: "gpt-5.3-codex",
-        modelOptions: {
-          codex: {
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.3-codex",
+          options: {
             fastMode: true,
           },
         },
@@ -200,6 +203,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
       assert.deepStrictEqual(validationManager.startSessionImpl.mock.calls[0]?.[0], {
         provider: "codex",
         threadId: asThreadId("thread-1"),
+        binaryPath: "codex",
         model: "gpt-5.3-codex",
         serviceTier: "fast",
         runtimeMode: "full-access",
@@ -215,6 +219,7 @@ sessionErrorManager.sendTurnImpl.mockImplementation(async () => {
 const sessionErrorLayer = it.layer(
   makeCodexAdapterLive({ manager: sessionErrorManager }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -256,9 +261,10 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         adapter.sendTurn({
           threadId: asThreadId("sess-missing"),
           input: "hello",
-          model: "gpt-5.3-codex",
-          modelOptions: {
-            codex: {
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.3-codex",
+            options: {
               reasoningEffort: "high",
               fastMode: true,
             },
@@ -282,6 +288,7 @@ const lifecycleManager = new FakeCodexManager();
 const lifecycleLayer = it.layer(
   makeCodexAdapterLive({ manager: lifecycleManager }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -464,6 +471,40 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       assert.equal(firstEvent.value.turnId, "turn-1");
       assert.equal(firstEvent.value.payload.message, "Reconnecting... 2/5");
+    }),
+  );
+
+  it.effect("maps process stderr notifications to runtime.warning", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-process-stderr"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "process/stderr",
+        turnId: asTurnId("turn-1"),
+        message: "The filename or extension is too long. (os error 206)",
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "runtime.warning");
+      if (firstEvent.value.type !== "runtime.warning") {
+        return;
+      }
+      assert.equal(firstEvent.value.turnId, "turn-1");
+      assert.equal(
+        firstEvent.value.payload.message,
+        "The filename or extension is too long. (os error 206)",
+      );
     }),
   );
 

@@ -68,7 +68,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           projectId: ProjectId.makeUnsafe("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
-          defaultModel: null,
+          defaultModelSelection: null,
           scripts: [],
           createdAt: now,
           updatedAt: now,
@@ -89,7 +89,10 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           projectId: ProjectId.makeUnsafe("project-1"),
           title: "Thread 1",
-          model: "gpt-5-codex",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -337,7 +340,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             projectId: ProjectId.makeUnsafe("project-clear-attachments"),
             title: "Project Clear Attachments",
             workspaceRoot: "/tmp/project-clear-attachments",
-            defaultModel: null,
+            defaultModelSelection: null,
             scripts: [],
             createdAt: now,
             updatedAt: now,
@@ -358,7 +361,10 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             threadId: ThreadId.makeUnsafe("thread-clear-attachments"),
             projectId: ProjectId.makeUnsafe("project-clear-attachments"),
             title: "Thread Clear Attachments",
-            model: "gpt-5-codex",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
             runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
@@ -462,7 +468,7 @@ it.layer(
           projectId: ProjectId.makeUnsafe("project-overwrite"),
           title: "Project Overwrite",
           workspaceRoot: "/tmp/project-overwrite",
-          defaultModel: null,
+          defaultModelSelection: null,
           scripts: [],
           createdAt: now,
           updatedAt: now,
@@ -483,7 +489,10 @@ it.layer(
           threadId: ThreadId.makeUnsafe("thread-overwrite"),
           projectId: ProjectId.makeUnsafe("project-overwrite"),
           title: "Thread Overwrite",
-          model: "gpt-5-codex",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -607,7 +616,7 @@ it.layer(
           projectId: ProjectId.makeUnsafe("project-rollback"),
           title: "Project Rollback",
           workspaceRoot: "/tmp/project-rollback",
-          defaultModel: null,
+          defaultModelSelection: null,
           scripts: [],
           createdAt: now,
           updatedAt: now,
@@ -628,7 +637,10 @@ it.layer(
           threadId: ThreadId.makeUnsafe("thread-rollback"),
           projectId: ProjectId.makeUnsafe("project-rollback"),
           title: "Thread Rollback",
-          model: "gpt-5-codex",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -733,7 +745,7 @@ it.layer(
           projectId: ProjectId.makeUnsafe("project-revert-files"),
           title: "Project Revert Files",
           workspaceRoot: "/tmp/project-revert-files",
-          defaultModel: null,
+          defaultModelSelection: null,
           scripts: [],
           createdAt: now,
           updatedAt: now,
@@ -754,7 +766,10 @@ it.layer(
           threadId,
           projectId: ProjectId.makeUnsafe("project-revert-files"),
           title: "Thread Revert Files",
-          model: "gpt-5-codex",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -938,7 +953,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
             projectId: ProjectId.makeUnsafe("project-delete-files"),
             title: "Project Delete Files",
             workspaceRoot: "/tmp/project-delete-files",
-            defaultModel: null,
+            defaultModelSelection: null,
             scripts: [],
             createdAt: now,
             updatedAt: now,
@@ -959,7 +974,10 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
             threadId,
             projectId: ProjectId.makeUnsafe("project-delete-files"),
             title: "Thread Delete Files",
-            model: "gpt-5-codex",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
             runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
@@ -1098,7 +1116,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           projectId: ProjectId.makeUnsafe("project-a"),
           title: "Project A",
           workspaceRoot: "/tmp/project-a",
-          defaultModel: null,
+          defaultModelSelection: null,
           scripts: [],
           createdAt: now,
           updatedAt: now,
@@ -1119,7 +1137,10 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           threadId: ThreadId.makeUnsafe("thread-a"),
           projectId: ProjectId.makeUnsafe("project-a"),
           title: "Thread A",
-          model: "gpt-5-codex",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -1222,7 +1243,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           projectId: ProjectId.makeUnsafe("project-empty"),
           title: "Project Empty",
           workspaceRoot: "/tmp/project-empty",
-          defaultModel: null,
+          defaultModelSelection: null,
           scripts: [],
           createdAt: now,
           updatedAt: now,
@@ -1243,7 +1264,10 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           threadId: ThreadId.makeUnsafe("thread-empty"),
           projectId: ProjectId.makeUnsafe("project-empty"),
           title: "Thread Empty",
-          model: "gpt-5-codex",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -1359,7 +1383,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             projectId: ProjectId.makeUnsafe("project-conflict"),
             title: "Project Conflict",
             workspaceRoot: "/tmp/project-conflict",
-            defaultModel: null,
+            defaultModelSelection: null,
             scripts: [],
             createdAt: "2026-02-26T13:00:00.000Z",
             updatedAt: "2026-02-26T13:00:00.000Z",
@@ -1380,7 +1404,10 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             threadId: ThreadId.makeUnsafe("thread-conflict"),
             projectId: ProjectId.makeUnsafe("project-conflict"),
             title: "Thread Conflict",
-            model: "gpt-5-codex",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
             runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
@@ -1500,7 +1527,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           projectId: ProjectId.makeUnsafe("project-revert"),
           title: "Project Revert",
           workspaceRoot: "/tmp/project-revert",
-          defaultModel: null,
+          defaultModelSelection: null,
           scripts: [],
           createdAt: "2026-02-26T12:00:00.000Z",
           updatedAt: "2026-02-26T12:00:00.000Z",
@@ -1521,7 +1548,10 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           threadId: ThreadId.makeUnsafe("thread-revert"),
           projectId: ProjectId.makeUnsafe("project-revert"),
           title: "Thread Revert",
-          model: "gpt-5-codex",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -1837,7 +1867,10 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         projectId: ProjectId.makeUnsafe("project-live"),
         title: "Live Project",
         workspaceRoot: "/tmp/project-live",
-        defaultModel: "gpt-5-codex",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
         createdAt,
       });
 
@@ -1872,7 +1905,10 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         projectId: ProjectId.makeUnsafe("project-scripts"),
         title: "Scripts Project",
         workspaceRoot: "/tmp/project-scripts",
-        defaultModel: "gpt-5-codex",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
         createdAt,
       });
 
@@ -1889,16 +1925,19 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
             runOnWorktreeCreate: false,
           },
         ],
-        defaultModel: "gpt-5",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
       });
 
       const projectRows = yield* sql<{
         readonly scriptsJson: string;
-        readonly defaultModel: string;
+        readonly defaultModelSelection: string;
       }>`
         SELECT
           scripts_json AS "scriptsJson",
-          default_model AS "defaultModel"
+          default_model_selection_json AS "defaultModelSelection"
         FROM projection_projects
         WHERE project_id = 'project-scripts'
       `;
@@ -1906,7 +1945,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         {
           scriptsJson:
             '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
-          defaultModel: "gpt-5",
+          defaultModelSelection: '{"provider":"codex","model":"gpt-5"}',
         },
       ]);
     }),

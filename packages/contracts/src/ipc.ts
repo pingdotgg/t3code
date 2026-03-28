@@ -25,7 +25,11 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type {
+  ServerConfig,
+  ServerProviderUpdatedPayload,
+  ServerUpsertKeybindingResult,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -36,7 +40,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
-import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
+import type { ServerUpsertKeybindingInput } from "./server";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -47,11 +51,13 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
+import { ServerSettings, ServerSettingsPatch } from "./settings";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
   label: string;
   destructive?: boolean;
+  disabled?: boolean;
 }
 
 export type DesktopUpdateStatus =
@@ -160,7 +166,10 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    refreshProviders: () => Promise<ServerProviderUpdatedPayload>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    getSettings: () => Promise<ServerSettings>;
+    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

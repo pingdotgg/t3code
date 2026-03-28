@@ -13,18 +13,20 @@ import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serve
 
 import {
   DEFAULT_TERMINAL_ID,
+  DEFAULT_SERVER_SETTINGS,
   EDITORS,
   EventId,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   ProviderItemId,
+  type ServerSettings,
   ThreadId,
   TurnId,
   WS_CHANNELS,
   WS_METHODS,
   type WebSocketResponse,
   type ProviderRuntimeEvent,
-  type ServerProviderStatus,
+  type ServerProvider,
   type KeybindingsConfig,
   type ResolvedKeybindingsConfig,
   type WsPushChannel,
@@ -45,7 +47,7 @@ import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/
 import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient, SqlError } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
-import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
+import { ProviderRegistry, type ProviderRegistryShape } from "./provider/Services/ProviderRegistry";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
@@ -53,6 +55,7 @@ import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -64,19 +67,26 @@ const defaultOpenService: OpenShape = {
   openInEditor: () => Effect.void,
 };
 
-const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
+const defaultProviderStatuses: ReadonlyArray<ServerProvider> = [
   {
     provider: "codex",
+    enabled: true,
+    installed: true,
+    version: "0.116.0",
     status: "ready",
-    available: true,
     authStatus: "authenticated",
     checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [],
   },
 ];
 
-const defaultProviderHealthService: ProviderHealthShape = {
-  getStatuses: Effect.succeed(defaultProviderStatuses),
+const defaultProviderRegistryService: ProviderRegistryShape = {
+  getProviders: Effect.succeed(defaultProviderStatuses),
+  refresh: () => Effect.succeed(defaultProviderStatuses),
+  streamChanges: Stream.empty,
 };
+
+const defaultServerSettings = DEFAULT_SERVER_SETTINGS;
 
 class MockTerminalManager implements TerminalManagerShape {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
@@ -487,11 +497,12 @@ describe("WebSocket Server", () => {
       baseDir?: string;
       staticDir?: string;
       providerLayer?: Layer.Layer<ProviderService, never>;
-      providerHealth?: ProviderHealthShape;
+      providerRegistry?: ProviderRegistryShape;
       open?: OpenShape;
       gitManager?: GitManagerShape;
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
+      serverSettings?: Partial<ServerSettings>;
     } = {},
   ): Promise<Http.Server> {
     if (serverScope) {
@@ -504,9 +515,9 @@ describe("WebSocket Server", () => {
     const scope = await Effect.runPromise(Scope.make("sequential"));
     const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
     const providerLayer = options.providerLayer ?? makeServerProviderLayer();
-    const providerHealthLayer = Layer.succeed(
-      ProviderHealth,
-      options.providerHealth ?? defaultProviderHealthService,
+    const providerRegistryLayer = Layer.succeed(
+      ProviderRegistry,
+      options.providerRegistry ?? defaultProviderRegistryService,
     );
     const openLayer = Layer.succeed(Open, options.open ?? defaultOpenService);
     const serverConfigLayer = Layer.succeed(ServerConfig, {
@@ -543,8 +554,9 @@ describe("WebSocket Server", () => {
     );
     const dependenciesLayer = Layer.empty.pipe(
       Layer.provideMerge(runtimeLayer),
-      Layer.provideMerge(providerHealthLayer),
+      Layer.provideMerge(providerRegistryLayer),
       Layer.provideMerge(openLayer),
+      Layer.provideMerge(ServerSettingsService.layerTest(options.serverSettings)),
       Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(AnalyticsService.layerTest),
       Layer.provideMerge(NodeServices.layer),
@@ -703,13 +715,19 @@ describe("WebSocket Server", () => {
         id: string;
         workspaceRoot: string;
         title: string;
-        defaultModel: string | null;
+        defaultModelSelection: {
+          provider: string;
+          model: string;
+        } | null;
       }>;
       threads: Array<{
         id: string;
         projectId: string;
         title: string;
-        model: string;
+        modelSelection: {
+          provider: string;
+          model: string;
+        };
         branch: string | null;
         worktreePath: string | null;
       }>;
@@ -725,7 +743,10 @@ describe("WebSocket Server", () => {
           id: bootstrapProjectId,
           workspaceRoot: "/test/bootstrap-workspace",
           title: "bootstrap-workspace",
-          defaultModel: "gpt-5-codex",
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
         }),
       ]),
     );
@@ -735,7 +756,10 @@ describe("WebSocket Server", () => {
           id: bootstrapThreadId,
           projectId: bootstrapProjectId,
           title: "New thread",
-          model: "gpt-5-codex",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
           branch: null,
           worktreePath: null,
         }),
@@ -846,6 +870,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      settings: defaultServerSettings,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -871,6 +896,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      settings: defaultServerSettings,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
 
@@ -907,6 +933,7 @@ describe("WebSocket Server", () => {
       ],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      settings: defaultServerSettings,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
     expect(fs.readFileSync(keybindingsPath, "utf8")).toBe("{ not-json");
@@ -940,7 +967,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: string;
       keybindings: ResolvedKeybindingsConfig;
       issues: Array<{ kind: string; index?: number; message: string }>;
-      providers: ReadonlyArray<ServerProviderStatus>;
+      providers: ReadonlyArray<ServerProvider>;
       availableEditors: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
@@ -988,7 +1015,6 @@ describe("WebSocket Server", () => {
     );
     expect(malformedPush.data).toEqual({
       issues: [{ kind: "keybindings.malformed-config", message: expect.any(String) }],
-      providers: defaultProviderStatuses,
     });
 
     const successPush = await rewriteKeybindingsAndWaitForPush(
@@ -997,7 +1023,7 @@ describe("WebSocket Server", () => {
       "[]",
       (push) => Array.isArray(push.data.issues) && push.data.issues.length === 0,
     );
-    expect(successPush.data).toEqual({ issues: [], providers: defaultProviderStatuses });
+    expect(successPush.data).toEqual({ issues: [] });
   });
 
   it("routes shell.openInEditor through the injected open service", async () => {
@@ -1057,6 +1083,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      settings: defaultServerSettings,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -1105,6 +1132,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      settings: defaultServerSettings,
     });
     expectAvailableEditors(
       (configResponse.result as { availableEditors: unknown }).availableEditors,
@@ -1192,7 +1220,10 @@ describe("WebSocket Server", () => {
       projectId: "project-diff",
       title: "Diff Project",
       workspaceRoot,
-      defaultModel: "gpt-5-codex",
+      defaultModelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
       createdAt,
     });
     expect(createProjectResponse.error).toBeUndefined();
@@ -1202,7 +1233,10 @@ describe("WebSocket Server", () => {
       threadId: "thread-diff",
       projectId: "project-diff",
       title: "Diff Thread",
-      model: "gpt-5-codex",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
@@ -1255,6 +1289,7 @@ describe("WebSocket Server", () => {
     server = await createTestServer({
       cwd: "/test",
       providerLayer,
+      serverSettings: { enableAssistantStreaming: true },
     });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
@@ -1270,7 +1305,10 @@ describe("WebSocket Server", () => {
       projectId: "project-1",
       title: "WS Project",
       workspaceRoot,
-      defaultModel: "gpt-5-codex",
+      defaultModelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
       createdAt,
     });
     expect(createProjectResponse.error).toBeUndefined();
@@ -1280,7 +1318,10 @@ describe("WebSocket Server", () => {
       threadId: "thread-1",
       projectId: "project-1",
       title: "Thread 1",
-      model: "gpt-5-codex",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
@@ -1299,7 +1340,6 @@ describe("WebSocket Server", () => {
         text: "hello",
         attachments: [],
       },
-      assistantDeliveryMode: "streaming",
       runtimeMode: "approval-required",
       interactionMode: "default",
       createdAt,
@@ -1814,6 +1854,10 @@ describe("WebSocket Server", () => {
       actionId: "client-action-1",
       cwd: "/test",
       action: "commit_push",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4-mini",
+      },
     });
     expect(response.result).toBeUndefined();
     expect(response.error?.message).toContain("detached HEAD");
@@ -1877,6 +1921,10 @@ describe("WebSocket Server", () => {
       actionId: "client-action-2",
       cwd: "/test",
       action: "commit",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4-mini",
+      },
     });
     const progressPush = await waitForPush(initiatingWs, WS_CHANNELS.gitActionProgress);
 

@@ -31,7 +31,7 @@ const setup = Layer.effectDiscard(
     const sql = yield* SqlClient.SqlClient;
     yield* sql`PRAGMA journal_mode = WAL;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
-    yield* runMigrations;
+    yield* runMigrations();
   }),
 );
 

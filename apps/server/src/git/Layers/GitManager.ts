@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 
 import { Effect, FileSystem, Layer, Path } from "effect";
-import type { GitActionProgressEvent, GitActionProgressPhase } from "@t3tools/contracts";
+import { GitActionProgressEvent, GitActionProgressPhase, ModelSelection } from "@t3tools/contracts";
 import {
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
@@ -19,6 +19,7 @@ import {
 import { GitCore } from "../Services/GitCore.ts";
 import { GitHubCli } from "../Services/GitHubCli.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;
@@ -358,6 +359,7 @@ export const makeGitManager = Effect.gen(function* () {
   const gitCore = yield* GitCore;
   const gitHubCli = yield* GitHubCli;
   const textGeneration = yield* TextGeneration;
+  const serverSettingsService = yield* ServerSettingsService;
 
   const createProgressEmitter = (
     input: { cwd: string; action: "commit" | "commit_push" | "commit_push_pr" },
@@ -684,7 +686,7 @@ export const makeGitManager = Effect.gen(function* () {
     /** When true, also produce a semantic feature branch name. */
     includeBranch?: boolean;
     filePaths?: readonly string[];
-    model?: string;
+    modelSelection: ModelSelection;
   }) =>
     Effect.gen(function* () {
       const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths);
@@ -711,7 +713,7 @@ export const makeGitManager = Effect.gen(function* () {
           stagedSummary: limitContext(context.stagedSummary, 8_000),
           stagedPatch: limitContext(context.stagedPatch, 50_000),
           ...(input.includeBranch ? { includeBranch: true } : {}),
-          ...(input.model ? { model: input.model } : {}),
+          modelSelection: input.modelSelection,
         })
         .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
 
@@ -724,13 +726,13 @@ export const makeGitManager = Effect.gen(function* () {
     });
 
   const runCommitStep = (
+    modelSelection: ModelSelection,
     cwd: string,
     action: "commit" | "commit_push" | "commit_push_pr",
     branch: string | null,
     commitMessage?: string,
     preResolvedSuggestion?: CommitAndBranchSuggestion,
     filePaths?: readonly string[],
-    model?: string,
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
   ) =>
@@ -760,7 +762,7 @@ export const makeGitManager = Effect.gen(function* () {
           branch,
           ...(commitMessage ? { commitMessage } : {}),
           ...(filePaths ? { filePaths } : {}),
-          ...(model ? { model } : {}),
+          modelSelection,
         });
       }
       if (!suggestion) {
@@ -837,7 +839,7 @@ export const makeGitManager = Effect.gen(function* () {
       };
     });
 
-  const runPrStep = (cwd: string, fallbackBranch: string | null, model?: string) =>
+  const runPrStep = (modelSelection: ModelSelection, cwd: string, fallbackBranch: string | null) =>
     Effect.gen(function* () {
       const details = yield* gitCore.statusDetails(cwd);
       const branch = details.branch ?? fallbackBranch;
@@ -881,7 +883,7 @@ export const makeGitManager = Effect.gen(function* () {
         commitSummary: limitContext(rangeContext.commitSummary, 20_000),
         diffSummary: limitContext(rangeContext.diffSummary, 20_000),
         diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-        ...(model ? { model } : {}),
+        modelSelection,
       });
 
       const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
@@ -1102,11 +1104,11 @@ export const makeGitManager = Effect.gen(function* () {
   );
 
   const runFeatureBranchStep = (
+    modelSelection: ModelSelection,
     cwd: string,
     branch: string | null,
     commitMessage?: string,
     filePaths?: readonly string[],
-    model?: string,
   ) =>
     Effect.gen(function* () {
       const suggestion = yield* resolveCommitAndBranchSuggestion({
@@ -1115,7 +1117,7 @@ export const makeGitManager = Effect.gen(function* () {
         ...(commitMessage ? { commitMessage } : {}),
         ...(filePaths ? { filePaths } : {}),
         includeBranch: true,
-        ...(model ? { model } : {}),
+        modelSelection,
       });
       if (!suggestion) {
         return yield* gitManagerError(
@@ -1173,6 +1175,13 @@ export const makeGitManager = Effect.gen(function* () {
         let commitMessageForStep = input.commitMessage;
         let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
 
+        const modelSelection = yield* serverSettingsService.getSettings.pipe(
+          Effect.map((settings) => settings.textGenerationModelSelection),
+          Effect.mapError((cause) =>
+            gitManagerError("runStackedAction", "Failed to get server settings.", cause),
+          ),
+        );
+
         if (input.featureBranch) {
           currentPhase = "branch";
           yield* progress.emit({
@@ -1181,11 +1190,11 @@ export const makeGitManager = Effect.gen(function* () {
             label: "Preparing feature branch...",
           });
           const result = yield* runFeatureBranchStep(
+            modelSelection,
             input.cwd,
             initialStatus.branch,
             input.commitMessage,
             input.filePaths,
-            input.textGenerationModel,
           );
           branchStep = result.branchStep;
           commitMessageForStep = result.resolvedCommitMessage;
@@ -1198,13 +1207,13 @@ export const makeGitManager = Effect.gen(function* () {
 
         currentPhase = "commit";
         const commit = yield* runCommitStep(
+          modelSelection,
           input.cwd,
           input.action,
           currentBranch,
           commitMessageForStep,
           preResolvedCommitSuggestion,
           input.filePaths,
-          input.textGenerationModel,
           options?.progressReporter,
           progress.actionId,
         );
@@ -1237,7 +1246,7 @@ export const makeGitManager = Effect.gen(function* () {
                 Effect.flatMap(() =>
                   Effect.gen(function* () {
                     currentPhase = "pr";
-                    return yield* runPrStep(input.cwd, currentBranch, input.textGenerationModel);
+                    return yield* runPrStep(modelSelection, input.cwd, currentBranch);
                   }),
                 ),
               )

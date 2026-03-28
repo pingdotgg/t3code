@@ -6,21 +6,24 @@ Use this when you want to open T3 Code from another device (phone, tablet, anoth
 
 The T3 Code CLI accepts the following configuration options, available either as CLI flags or environment variables:
 
-| CLI flag                | Env var               | Notes                              |
-| ----------------------- | --------------------- | ---------------------------------- |
-| `--mode <web\|desktop>` | `T3CODE_MODE`         | Runtime mode.                      |
-| `--port <number>`       | `T3CODE_PORT`         | HTTP/WebSocket port.               |
-| `--host <address>`      | `T3CODE_HOST`         | Bind interface/address.            |
-| `--base-dir <path>`     | `T3CODE_HOME`         | Base directory.                    |
-| `--dev-url <url>`       | `VITE_DEV_SERVER_URL` | Dev web URL redirect/proxy target. |
-| `--no-browser`          | `T3CODE_NO_BROWSER`   | Disable auto-open browser.         |
-| `--auth-token <token>`  | `T3CODE_AUTH_TOKEN`   | WebSocket auth token.              |
+| CLI flag                | Env var               | Notes                                                                                |
+| ----------------------- | --------------------- | ------------------------------------------------------------------------------------ |
+| `--mode <web\|desktop>` | `T3CODE_MODE`         | Runtime mode.                                                                        |
+| `--port <number>`       | `T3CODE_PORT`         | HTTP/WebSocket port.                                                                 |
+| `--host <address>`      | `T3CODE_HOST`         | Bind interface/address.                                                              |
+| `--base-dir <path>`     | `T3CODE_HOME`         | Base directory.                                                                      |
+| `--dev-url <url>`       | `VITE_DEV_SERVER_URL` | Dev web URL redirect/proxy target.                                                   |
+| `--no-browser`          | `T3CODE_NO_BROWSER`   | Disable auto-open browser.                                                           |
+| `--auth-token <token>`  | `T3CODE_AUTH_TOKEN`   | WebSocket auth token. Use this for standard CLI and remote-server flows.             |
+| `--bootstrap-fd <fd>`   | `T3CODE_BOOTSTRAP_FD` | Read a one-shot bootstrap envelope from an inherited file descriptor during startup. |
 
 > TIP: Use the `--help` flag to see all available options and their descriptions.
 
 ## Security First
 
 - Always set `--auth-token` before exposing the server outside localhost.
+  - When you control the process launcher, prefer sending the auth token in a JSON envelope via `--bootstrap-fd <fd>`.
+    With `--bootstrap-fd <fd>`, the launcher starts the server first, then sends a one-shot JSON envelope over the inherited file descriptor. This allows the auth token to be delivered without putting it in process environment or command line arguments.
 - Treat the token like a password.
 - Prefer binding to trusted interfaces (LAN IP or Tailnet IP) instead of opening all interfaces unless needed.
 

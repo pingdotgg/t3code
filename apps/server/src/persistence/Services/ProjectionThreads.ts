@@ -8,6 +8,7 @@
  */
 import {
   IsoDateTime,
+  ModelSelection,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -23,7 +24,7 @@ export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
-  model: Schema.String,
+  modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
@@ -31,6 +32,7 @@ export const ProjectionThread = Schema.Struct({
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  archivedAt: Schema.NullOr(IsoDateTime),
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

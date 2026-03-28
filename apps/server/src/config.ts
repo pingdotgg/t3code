@@ -19,6 +19,7 @@ export interface ServerDerivedPaths {
   readonly stateDir: string;
   readonly dbPath: string;
   readonly keybindingsConfigPath: string;
+  readonly settingsPath: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
   readonly logsDir: string;
@@ -60,6 +61,7 @@ export const deriveServerPaths = Effect.fn(function* (
     stateDir,
     dbPath,
     keybindingsConfigPath: join(stateDir, "keybindings.json"),
+    settingsPath: join(stateDir, "settings.json"),
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,
     logsDir,
