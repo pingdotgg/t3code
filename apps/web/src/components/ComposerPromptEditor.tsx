@@ -1023,17 +1023,17 @@ function ComposerSurroundSelectionPlugin(props: {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey) {
-        pendingSurroundSelectionRef.current = null;
-        pendingDeadKeySelectionRef.current = null;
-        return;
-      }
-
       if (pendingDeadKeySelectionRef.current) {
         if (event.key === "Dead" || event.key === " " || event.code === "Space") {
           return;
         }
         pendingDeadKeySelectionRef.current = null;
+      }
+
+      if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey) {
+        pendingSurroundSelectionRef.current = null;
+        pendingDeadKeySelectionRef.current = null;
+        return;
       }
 
       const shouldTrackDeadKeyBacktick =
