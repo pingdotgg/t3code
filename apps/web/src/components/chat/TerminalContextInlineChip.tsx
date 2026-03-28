@@ -7,11 +7,14 @@ import {
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
 } from "../composerInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { renderHighlightedText } from "./threadSearchHighlight";
 
 interface TerminalContextInlineChipProps {
   label: string;
   tooltipText: string;
   expired?: boolean;
+  searchQuery?: string;
+  searchActive?: boolean;
 }
 
 export function TerminalContextInlineChip(props: TerminalContextInlineChipProps) {
@@ -35,7 +38,11 @@ export function TerminalContextInlineChip(props: TerminalContextInlineChipProps)
                 expired && "opacity-100",
               )}
             />
-            <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{label}</span>
+            <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>
+              {renderHighlightedText(label, props.searchQuery ?? "", `terminal-chip:${label}`, {
+                active: props.searchActive,
+              })}
+            </span>
           </span>
         }
       />

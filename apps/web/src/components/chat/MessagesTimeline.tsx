@@ -67,6 +67,7 @@ import {
 } from "./userMessageTerminalContexts";
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { renderHighlightedText } from "./threadSearchHighlight";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -126,6 +127,9 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  activeSearchRowId?: string | null;
+  matchedSearchRowIds?: ReadonlySet<string>;
+  searchQuery?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +159,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   onIsAtEndChange,
+  activeSearchRowId = null,
+  matchedSearchRowIds = new Set<string>(),
+  searchQuery = "",
 }: MessagesTimelineProps) {
   const rawRows = useMemo(
     () =>
@@ -208,6 +215,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     };
   }, [listRef, onIsAtEndChange, rows.length]);
 
+  const rowIndexById = useMemo(() => new Map(rows.map((row, index) => [row.id, index])), [rows]);
+
+  useEffect(() => {
+    if (!activeSearchRowId) {
+      return;
+    }
+
+    const rowIndex = rowIndexById.get(activeSearchRowId);
+    if (rowIndex === undefined) {
+      return;
+    }
+
+    void listRef.current?.scrollToIndex?.({ index: rowIndex, animated: false });
+  }, [activeSearchRowId, listRef, rowIndexById]);
+
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
       timestampFormat,
@@ -245,12 +267,25 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // Stable renderItem — no closure deps. Row components read shared state
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
-    ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
-        <TimelineRowContent row={item} />
-      </div>
-    ),
-    [],
+    ({ item }: { item: MessagesTimelineRow }) => {
+      const searchState =
+        activeSearchRowId === item.id
+          ? "active"
+          : matchedSearchRowIds.has(item.id)
+            ? "matched"
+            : null;
+
+      return (
+        <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+          <TimelineRowContent
+            row={item}
+            searchState={searchState}
+            searchQuery={searchState ? searchQuery : ""}
+          />
+        </div>
+      );
+    },
+    [activeSearchRowId, matchedSearchRowIds, searchQuery],
   );
 
   if (rows.length === 0 && !isWorking) {
@@ -299,7 +334,17 @@ type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
-const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+const TimelineRowContent = memo(function TimelineRowContent({
+  row,
+  searchState,
+  searchQuery,
+}: {
+  row: TimelineRow;
+  searchState: "active" | "matched" | null;
+  searchQuery: string;
+}) {
+  const searchActive = searchState === "active";
+
   return (
     <div
       className={cn(
@@ -310,19 +355,38 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-timeline-row-kind={row.kind}
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
+      data-search-match-state={searchState ?? undefined}
     >
-      {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "assistant" ? (
-        <AssistantTimelineRow row={row} />
+      {row.kind === "work" ? (
+        <WorkGroupSection
+          groupedEntries={row.groupedEntries}
+          searchQuery={searchQuery}
+          searchActive={searchActive}
+        />
       ) : null}
-      {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
+      {row.kind === "message" && row.message.role === "user" ? (
+        <UserTimelineRow row={row} searchQuery={searchQuery} searchActive={searchActive} />
+      ) : null}
+      {row.kind === "message" && row.message.role === "assistant" ? (
+        <AssistantTimelineRow row={row} searchQuery={searchQuery} searchActive={searchActive} />
+      ) : null}
+      {row.kind === "proposed-plan" ? (
+        <ProposedPlanTimelineRow row={row} searchQuery={searchQuery} searchActive={searchActive} />
+      ) : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
     </div>
   );
 });
 
-function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function UserTimelineRow({
+  row,
+  searchQuery,
+  searchActive,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+  searchQuery: string;
+  searchActive: boolean;
+}) {
   const ctx = use(TimelineRowCtx);
   const userImages = row.message.attachments ?? [];
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
@@ -369,6 +433,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           text={displayedUserMessage.visibleText}
           terminalContexts={terminalContexts}
           skills={ctx.skills}
+          searchQuery={searchQuery}
+          searchActive={searchActive}
           footer={
             <>
               <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
@@ -406,7 +472,15 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
   );
 }
 
-function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function AssistantTimelineRow({
+  row,
+  searchQuery,
+  searchActive,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+  searchQuery: string;
+  searchActive: boolean;
+}) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
 
@@ -421,6 +495,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           cwd={ctx.markdownCwd}
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
+          searchQuery={searchQuery}
+          searchActive={searchActive}
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
@@ -488,8 +564,12 @@ function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "messa
 
 function ProposedPlanTimelineRow({
   row,
+  searchQuery,
+  searchActive,
 }: {
   row: Extract<TimelineRow, { kind: "proposed-plan" }>;
+  searchQuery: string;
+  searchActive: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
 
@@ -500,6 +580,8 @@ function ProposedPlanTimelineRow({
         environmentId={ctx.activeThreadEnvironmentId}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+        searchQuery={searchQuery}
+        searchActive={searchActive}
       />
     </div>
   );
@@ -595,14 +677,19 @@ function LiveMessageMeta({
  *  State resets on unmount which is fine — work groups start collapsed. */
 const WorkGroupSection = memo(function WorkGroupSection({
   groupedEntries,
+  searchQuery,
+  searchActive,
 }: {
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
+  searchQuery: string;
+  searchActive: boolean;
 }) {
   const { workspaceRoot } = use(TimelineRowCtx);
   const [isExpanded, setIsExpanded] = useState(false);
   const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+  const searchExpanded = searchQuery.trim().length > 0 && hasOverflow;
   const visibleEntries =
-    hasOverflow && !isExpanded
+    hasOverflow && !isExpanded && !searchExpanded
       ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
       : groupedEntries;
   const hiddenCount = groupedEntries.length - visibleEntries.length;
@@ -617,7 +704,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
           <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
             {groupLabel} ({groupedEntries.length})
           </p>
-          {hasOverflow && (
+          {hasOverflow && !searchExpanded && (
             <button
               type="button"
               className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
@@ -634,6 +721,8 @@ const WorkGroupSection = memo(function WorkGroupSection({
             key={`work-row:${workEntry.id}`}
             workEntry={workEntry}
             workspaceRoot={workspaceRoot}
+            searchQuery={searchQuery}
+            searchActive={searchActive}
           />
         ))}
       </div>
@@ -740,13 +829,24 @@ function AssistantChangedFilesSectionInner({
 // ---------------------------------------------------------------------------
 
 const UserMessageTerminalContextInlineLabel = memo(
-  function UserMessageTerminalContextInlineLabel(props: { context: ParsedTerminalContextEntry }) {
+  function UserMessageTerminalContextInlineLabel(props: {
+    context: ParsedTerminalContextEntry;
+    searchQuery: string;
+    searchActive: boolean;
+  }) {
     const tooltipText =
       props.context.body.length > 0
         ? `${props.context.header}\n${props.context.body}`
         : props.context.header;
 
-    return <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />;
+    return (
+      <TerminalContextInlineChip
+        label={props.context.header}
+        tooltipText={tooltipText}
+        searchQuery={props.searchQuery}
+        searchActive={props.searchActive}
+      />
+    );
   },
 );
 
@@ -770,12 +870,15 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  searchQuery: string;
+  searchActive: boolean;
   footer?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasVisibleBody = props.text.trim().length > 0 || props.terminalContexts.length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
-  const isCollapsed = canCollapse && !expanded;
+  const searchIsActive = props.searchQuery.trim().length > 0;
+  const isCollapsed = canCollapse && !expanded && !searchIsActive;
 
   return (
     <div>
@@ -799,6 +902,8 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
             text={props.text}
             terminalContexts={props.terminalContexts}
             skills={props.skills}
+            searchQuery={props.searchQuery}
+            searchActive={props.searchActive}
           />
         </div>
       ) : null}
@@ -810,7 +915,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           )}
           data-user-message-footer="true"
         >
-          {canCollapse ? (
+          {canCollapse && !searchIsActive ? (
             <Button
               type="button"
               size="xs"
@@ -836,6 +941,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  searchQuery: string;
+  searchActive: boolean;
 }) {
   if (props.terminalContexts.length > 0) {
     const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
@@ -858,7 +965,13 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         if (matchIndex > cursor) {
           inlineNodes.push(
             <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
-              <SkillInlineText text={props.text.slice(cursor, matchIndex)} skills={props.skills} />
+              {renderSearchableUserText(
+                props.text.slice(cursor, matchIndex),
+                props.skills,
+                props.searchQuery,
+                props.searchActive,
+                `user-terminal-context-inline-before:${context.header}:${cursor}`,
+              )}
             </span>,
           );
         }
@@ -866,6 +979,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           <UserMessageTerminalContextInlineLabel
             key={`user-terminal-context-inline:${context.header}`}
             context={context}
+            searchQuery={props.searchQuery}
+            searchActive={props.searchActive}
           />,
         );
         cursor = matchIndex + label.length;
@@ -875,7 +990,13 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         if (cursor < props.text.length) {
           inlineNodes.push(
             <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
-              <SkillInlineText text={props.text.slice(cursor)} skills={props.skills} />
+              {renderSearchableUserText(
+                props.text.slice(cursor),
+                props.skills,
+                props.searchQuery,
+                props.searchActive,
+                `user-message-terminal-context-inline-rest:${cursor}`,
+              )}
             </span>,
           );
         }
@@ -893,6 +1014,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         <UserMessageTerminalContextInlineLabel
           key={`user-terminal-context-inline:${context.header}`}
           context={context}
+          searchQuery={props.searchQuery}
+          searchActive={props.searchActive}
         />,
       );
       inlineNodes.push(
@@ -905,7 +1028,13 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     if (props.text.length > 0) {
       inlineNodes.push(
         <span key="user-message-terminal-context-inline-text">
-          <SkillInlineText text={props.text} skills={props.skills} />
+          {renderSearchableUserText(
+            props.text,
+            props.skills,
+            props.searchQuery,
+            props.searchActive,
+            "user-message-terminal-context-inline-text",
+          )}
         </span>,
       );
     } else if (inlinePrefix.length === 0) {
@@ -925,10 +1054,29 @@ const UserMessageBody = memo(function UserMessageBody(props: {
 
   return (
     <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground">
-      <SkillInlineText text={props.text} skills={props.skills} />
+      {renderSearchableUserText(
+        props.text,
+        props.skills,
+        props.searchQuery,
+        props.searchActive,
+        "user-message-body",
+      )}
     </div>
   );
 });
+
+function renderSearchableUserText(
+  text: string,
+  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>,
+  searchQuery: string,
+  searchActive: boolean,
+  keyPrefix: string,
+): ReactNode {
+  if (searchQuery.trim().length === 0) {
+    return <SkillInlineText text={text} skills={skills} />;
+  }
+  return renderHighlightedText(text, searchQuery, keyPrefix, { active: searchActive });
+}
 
 // ---------------------------------------------------------------------------
 // Structural sharing — reuse old row references when data hasn't changed
@@ -1102,8 +1250,10 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
+  searchQuery: string;
+  searchActive: boolean;
 }) {
-  const { workEntry, workspaceRoot } = props;
+  const { workEntry, workspaceRoot, searchQuery, searchActive } = props;
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
@@ -1139,7 +1289,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 title={displayText}
               >
                 <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                  {heading}
+                  {renderHighlightedText(heading, searchQuery, `work-heading:${workEntry.id}`, {
+                    active: searchActive,
+                  })}
                 </span>
                 {preview && (
                   <Tooltip>
@@ -1148,8 +1300,15 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                       delay={75}
                       render={
                         <span className="max-w-full cursor-default text-muted-foreground/55 transition-colors hover:text-muted-foreground/75 focus-visible:text-muted-foreground/75">
-                          {" "}
-                          - {preview}
+                          {" - "}
+                          {renderHighlightedText(
+                            preview,
+                            searchQuery,
+                            `work-preview:${workEntry.id}`,
+                            {
+                              active: searchActive,
+                            },
+                          )}
                         </span>
                       }
                     />
@@ -1181,9 +1340,23 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                   )}
                 >
                   <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                    {heading}
+                    {renderHighlightedText(heading, searchQuery, `work-heading:${workEntry.id}`, {
+                      active: searchActive,
+                    })}
                   </span>
-                  {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
+                  {preview && (
+                    <span className="text-muted-foreground/55">
+                      {" - "}
+                      {renderHighlightedText(
+                        preview,
+                        searchQuery,
+                        `work-preview:${workEntry.id}`,
+                        {
+                          active: searchActive,
+                        },
+                      )}
+                    </span>
+                  )}
                 </p>
               </TooltipTrigger>
               <TooltipPopup className="max-w-[min(720px,calc(100vw-2rem))]">
@@ -1205,7 +1378,14 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
                 title={displayPath}
               >
-                {displayPath}
+                {renderHighlightedText(
+                  displayPath,
+                  searchQuery,
+                  `work-file:${workEntry.id}:${displayPath}`,
+                  {
+                    active: searchActive,
+                  },
+                )}
               </span>
             );
           })}

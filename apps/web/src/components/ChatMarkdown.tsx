@@ -28,6 +28,7 @@ import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
+import { createThreadSearchHighlightRehypePlugin } from "./chat/threadSearchHighlight";
 import {
   normalizeMarkdownLinkDestination,
   resolveMarkdownFileLinkMeta,
@@ -62,6 +63,8 @@ interface ChatMarkdownProps {
   cwd: string | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  searchQuery?: string;
+  searchActive?: boolean;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -517,9 +520,15 @@ function ChatMarkdown({
   cwd,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
+  searchQuery = "",
+  searchActive = false,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const searchHighlightPlugin = useMemo(
+    () => createThreadSearchHighlightRehypePlugin(searchQuery, { active: searchActive }),
+    [searchActive, searchQuery],
+  );
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
       string,
@@ -585,6 +594,13 @@ function ChatMarkdown({
         if (!codeBlock) {
           return <pre {...props}>{children}</pre>;
         }
+        if (searchQuery.trim().length > 0) {
+          return (
+            <MarkdownCodeBlock code={codeBlock.code}>
+              <pre {...props}>{children}</pre>
+            </MarkdownCodeBlock>
+          );
+        }
 
         return (
           <MarkdownCodeBlock code={codeBlock.code}>
@@ -608,6 +624,7 @@ function ChatMarkdown({
       isStreaming,
       markdownFileLinkMetaByHref,
       resolvedTheme,
+      searchQuery,
       skills,
     ],
   );
@@ -616,6 +633,7 @@ function ChatMarkdown({
     <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={searchHighlightPlugin ? [searchHighlightPlugin] : []}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >

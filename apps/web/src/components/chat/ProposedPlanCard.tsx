@@ -27,17 +27,22 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { readEnvironmentApi } from "~/environmentApi";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { renderHighlightedText } from "./threadSearchHighlight";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
   environmentId,
   cwd,
   workspaceRoot,
+  searchQuery = "",
+  searchActive = false,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  searchQuery?: string;
+  searchActive?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -62,6 +67,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const collapsedPreview = canCollapse
     ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
     : null;
+  const searchIsActive = searchQuery.trim().length > 0;
   const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
   const saveContents = normalizePlanMarkdownForExport(planMarkdown);
 
@@ -141,7 +147,11 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Badge variant="secondary">Plan</Badge>
-          <p className="truncate text-sm font-medium text-foreground">{title}</p>
+          <p className="truncate text-sm font-medium text-foreground">
+            {renderHighlightedText(title, searchQuery, `proposed-plan-title:${title}`, {
+              active: searchActive,
+            })}
+          </p>
         </div>
         <Menu>
           <MenuTrigger
@@ -161,17 +171,34 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         </Menu>
       </div>
       <div className="mt-4">
-        <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
-          {canCollapse && !expanded ? (
-            <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
-          ) : (
-            <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
+        <div
+          className={cn(
+            "relative",
+            canCollapse && !expanded && !searchIsActive && "max-h-104 overflow-hidden",
           )}
-          {canCollapse && !expanded ? (
+        >
+          {canCollapse && !expanded && !searchIsActive ? (
+            <ChatMarkdown
+              text={collapsedPreview ?? ""}
+              cwd={cwd}
+              isStreaming={false}
+              searchQuery={searchQuery}
+              searchActive={searchActive}
+            />
+          ) : (
+            <ChatMarkdown
+              text={displayedPlanMarkdown}
+              cwd={cwd}
+              isStreaming={false}
+              searchQuery={searchQuery}
+              searchActive={searchActive}
+            />
+          )}
+          {canCollapse && !expanded && !searchIsActive ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
         </div>
-        {canCollapse ? (
+        {canCollapse && !searchIsActive ? (
           <div className="mt-4 flex justify-center">
             <Button
               size="sm"

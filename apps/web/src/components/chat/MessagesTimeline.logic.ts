@@ -40,6 +40,8 @@ export type MessagesTimelineRow =
     }
   | { kind: "working"; id: string; createdAt: string | null };
 
+export type TimelineRow = MessagesTimelineRow;
+
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
   result: MessagesTimelineRow[];
@@ -66,6 +68,34 @@ export function computeMessageDurationStart(
 
 export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+}
+
+function capitalizePhrase(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return value;
+  }
+  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+}
+
+export function renderableWorkEntryHeading(workEntry: WorkLogEntry): string {
+  const label = workEntry.toolTitle ?? workEntry.label;
+  return capitalizePhrase(normalizeCompactToolLabel(label));
+}
+
+export function renderableWorkEntryPreview(
+  workEntry: Pick<WorkLogEntry, "detail" | "command" | "changedFiles">,
+): string | null {
+  if (workEntry.command) return workEntry.command;
+  if (workEntry.detail) return workEntry.detail;
+  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
+  return workEntry.changedFiles?.join("\n") ?? null;
+}
+
+export function renderableWorkEntryChangedFiles(
+  workEntry: Pick<WorkLogEntry, "changedFiles">,
+): string[] {
+  return workEntry.changedFiles ?? [];
 }
 
 export function resolveAssistantMessageCopyState({
