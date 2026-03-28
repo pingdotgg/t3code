@@ -1267,6 +1267,19 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "process/stderr") {
+    return [
+      {
+        type: "runtime.warning",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          message: event.message ?? "Codex process stderr",
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
   if (event.method === "windows/worldWritableWarning") {
     return [
       {
