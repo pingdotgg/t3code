@@ -243,7 +243,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
       a({ node: _node, href, ...props }) {
         const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
         if (!targetPath) {
-          return <a {...props} href={href} target="_blank" rel="noreferrer" />;
+          return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
         }
 
         return (
