@@ -129,6 +129,20 @@ layer("016_CanonicalizeModelSelections", (it) => {
           '{}'
         ),
         (
+          'event-project-created-null-model',
+          'project',
+          'project-3',
+          1,
+          'project.created',
+          '2026-01-01T00:00:00.000Z',
+          'command-project-created-null-model',
+          NULL,
+          'correlation-project-created-null-model',
+          'user',
+          '{"projectId":"project-3","title":"Null Model Project","workspaceRoot":"/tmp/project-3","defaultModel":null,"scripts":[],"createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"}',
+          '{}'
+        ),
+        (
           'event-thread-created',
           'thread',
           'thread-1',
@@ -284,6 +298,16 @@ layer("016_CanonicalizeModelSelections", (it) => {
           });
 
           assert.deepStrictEqual(JSON.parse(eventRows[2]!.payloadJson), {
+            projectId: "project-3",
+            title: "Null Model Project",
+            workspaceRoot: "/tmp/project-3",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          });
+
+          assert.deepStrictEqual(JSON.parse(eventRows[3]!.payloadJson), {
             threadId: "thread-1",
             projectId: "project-1",
             title: "Thread",
@@ -303,7 +327,7 @@ layer("016_CanonicalizeModelSelections", (it) => {
             updatedAt: "2026-01-01T00:00:00.000Z",
           });
 
-          assert.deepStrictEqual(JSON.parse(eventRows[3]!.payloadJson), {
+          assert.deepStrictEqual(JSON.parse(eventRows[4]!.payloadJson), {
             threadId: "thread-2",
             projectId: "project-1",
             title: "Fallback Thread",
@@ -322,7 +346,7 @@ layer("016_CanonicalizeModelSelections", (it) => {
             updatedAt: "2026-01-01T00:00:00.000Z",
           });
 
-          assert.deepStrictEqual(JSON.parse(eventRows[4]!.payloadJson), {
+          assert.deepStrictEqual(JSON.parse(eventRows[5]!.payloadJson), {
             threadId: "thread-1",
             turnId: "turn-1",
             input: "hi",
@@ -336,7 +360,7 @@ layer("016_CanonicalizeModelSelections", (it) => {
             deliveryMode: "buffered",
           });
 
-          assert.deepStrictEqual(JSON.parse(eventRows[5]!.payloadJson), {
+          assert.deepStrictEqual(JSON.parse(eventRows[6]!.payloadJson), {
             threadId: "thread-3",
             projectId: "project-1",
             title: "Ancient Thread",

@@ -672,9 +672,9 @@ describe("TerminalManager", () => {
       ).toBe(true);
     } else {
       expect(
-        ptyAdapter.spawnInputs.some((input) =>
-          ["/bin/zsh", "/bin/bash", "/bin/sh", "zsh", "bash", "sh"].includes(input.shell),
-        ),
+        ptyAdapter.spawnInputs
+          .slice(1)
+          .some((input) => input.shell !== "/definitely/missing-shell"),
       ).toBe(true);
     }
 

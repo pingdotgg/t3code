@@ -120,6 +120,73 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("archives and unarchives threads through orchestration commands", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-archive-create"),
+        projectId: asProjectId("project-archive"),
+        title: "Project Archive",
+        workspaceRoot: "/tmp/project-archive",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-archive-create"),
+        threadId: ThreadId.makeUnsafe("thread-archive"),
+        projectId: asProjectId("project-archive"),
+        title: "Archive me",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.makeUnsafe("cmd-thread-archive"),
+        threadId: ThreadId.makeUnsafe("thread-archive"),
+      }),
+    );
+    expect(
+      (await system.run(engine.getReadModel())).threads.find(
+        (thread) => thread.id === "thread-archive",
+      )?.archivedAt,
+    ).not.toBeNull();
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.makeUnsafe("cmd-thread-unarchive"),
+        threadId: ThreadId.makeUnsafe("thread-archive"),
+      }),
+    );
+    expect(
+      (await system.run(engine.getReadModel())).threads.find(
+        (thread) => thread.id === "thread-archive",
+      )?.archivedAt,
+    ).toBeNull();
+
+    await system.dispose();
+  });
+
   it("replays append-only events from sequence", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
