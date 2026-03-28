@@ -1306,42 +1306,36 @@ export default function Sidebar() {
         >
           {shouldShowThreadPanel && renderedThreads.map((thread) => renderThreadRow(thread))}
 
-          {shouldShowThreadPanel &&
-            project.expanded &&
-            hasHiddenThreads &&
-            !isThreadListExpanded && (
-              <SidebarMenuSubItem className="w-full">
-                <SidebarMenuSubButton
-                  render={<button type="button" />}
-                  data-thread-selection-safe
-                  size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                  onClick={() => {
-                    expandThreadListForProject(project.id);
-                  }}
-                >
-                  <span>Show more</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            )}
-          {shouldShowThreadPanel &&
-            project.expanded &&
-            hasHiddenThreads &&
-            isThreadListExpanded && (
-              <SidebarMenuSubItem className="w-full">
-                <SidebarMenuSubButton
-                  render={<button type="button" />}
-                  data-thread-selection-safe
-                  size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                  onClick={() => {
-                    collapseThreadListForProject(project.id);
-                  }}
-                >
-                  <span>Show less</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            )}
+          {project.expanded && hasHiddenThreads && !isThreadListExpanded && (
+            <SidebarMenuSubItem className="w-full">
+              <SidebarMenuSubButton
+                render={<button type="button" />}
+                data-thread-selection-safe
+                size="sm"
+                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                onClick={() => {
+                  expandThreadListForProject(project.id);
+                }}
+              >
+                <span>Show more</span>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          )}
+          {project.expanded && hasHiddenThreads && isThreadListExpanded && (
+            <SidebarMenuSubItem className="w-full">
+              <SidebarMenuSubButton
+                render={<button type="button" />}
+                data-thread-selection-safe
+                size="sm"
+                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                onClick={() => {
+                  collapseThreadListForProject(project.id);
+                }}
+              >
+                <span>Show less</span>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          )}
         </SidebarMenuSub>
       </>
     );
