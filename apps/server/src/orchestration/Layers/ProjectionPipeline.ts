@@ -244,6 +244,37 @@ function collectThreadAttachmentRelativePaths(
   return relativePaths;
 }
 
+function collectQueuedFollowUpAttachmentRelativePaths(
+  threadId: string,
+  followUps: ReadonlyArray<ProjectionThreadQueuedFollowUp>,
+): Set<string> {
+  const threadSegment = toSafeThreadAttachmentSegment(threadId);
+  if (!threadSegment) {
+    return new Set();
+  }
+  const relativePaths = new Set<string>();
+  for (const followUp of followUps) {
+    for (const attachment of followUp.attachments ?? []) {
+      if (attachment.type !== "image") {
+        continue;
+      }
+      const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachment.id);
+      if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
+        continue;
+      }
+      relativePaths.add(attachmentRelativePath(attachment));
+    }
+  }
+  return relativePaths;
+}
+
+function mergeThreadAttachmentRelativePaths(
+  messagePaths: ReadonlySet<string>,
+  queuedFollowUpPaths: ReadonlySet<string>,
+): Set<string> {
+  return new Set([...messagePaths, ...queuedFollowUpPaths]);
+}
+
 const runAttachmentSideEffects = Effect.fn(function* (sideEffects: AttachmentSideEffects) {
   const serverConfig = yield* Effect.service(ServerConfig);
   const fileSystem = yield* Effect.service(FileSystem.FileSystem);
@@ -1067,7 +1098,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
 
   const applyQueuedFollowUpsProjection: ProjectorDefinition["apply"] = (
     event,
-    _attachmentSideEffects,
+    attachmentSideEffects,
   ) =>
     Effect.gen(function* () {
       const replaceThreadQueue = (
@@ -1081,6 +1112,21 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             queuePosition: index,
           })),
         });
+      const syncQueuedFollowUpAttachmentPaths = Effect.fn(function* (
+        threadId: ProjectionThreadQueuedFollowUp["threadId"],
+        followUps: ReadonlyArray<ProjectionThreadQueuedFollowUp>,
+      ) {
+        const messageRows = yield* projectionThreadMessageRepository.listByThreadId({
+          threadId,
+        });
+        attachmentSideEffects.prunedThreadRelativePaths.set(
+          threadId,
+          mergeThreadAttachmentRelativePaths(
+            collectThreadAttachmentRelativePaths(threadId, messageRows),
+            collectQueuedFollowUpAttachmentRelativePaths(threadId, followUps),
+          ),
+        );
+      });
 
       switch (event.type) {
         case "thread.queued-follow-up-enqueued": {
@@ -1120,23 +1166,22 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           const current = yield* projectionThreadQueuedFollowUpRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
-          yield* replaceThreadQueue(
-            event.payload.threadId,
-            current.map((followUp) =>
-              followUp.followUpId === event.payload.followUp.id
-                ? Object.assign({}, followUp, {
-                    updatedAt: event.payload.createdAt,
-                    prompt: event.payload.followUp.prompt,
-                    attachments: event.payload.followUp.attachments,
-                    terminalContexts: event.payload.followUp.terminalContexts,
-                    modelSelection: event.payload.followUp.modelSelection,
-                    runtimeMode: event.payload.followUp.runtimeMode,
-                    interactionMode: event.payload.followUp.interactionMode,
-                    lastSendError: event.payload.followUp.lastSendError,
-                  })
-                : followUp,
-            ),
+          const nextFollowUps = current.map((followUp) =>
+            followUp.followUpId === event.payload.followUp.id
+              ? Object.assign({}, followUp, {
+                  updatedAt: event.payload.createdAt,
+                  prompt: event.payload.followUp.prompt,
+                  attachments: event.payload.followUp.attachments,
+                  terminalContexts: event.payload.followUp.terminalContexts,
+                  modelSelection: event.payload.followUp.modelSelection,
+                  runtimeMode: event.payload.followUp.runtimeMode,
+                  interactionMode: event.payload.followUp.interactionMode,
+                  lastSendError: event.payload.followUp.lastSendError,
+                })
+              : followUp,
           );
+          yield* replaceThreadQueue(event.payload.threadId, nextFollowUps);
+          yield* syncQueuedFollowUpAttachmentPaths(event.payload.threadId, nextFollowUps);
           return;
         }
 
@@ -1144,10 +1189,11 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           const current = yield* projectionThreadQueuedFollowUpRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
-          yield* replaceThreadQueue(
-            event.payload.threadId,
-            current.filter((followUp) => followUp.followUpId !== event.payload.followUpId),
+          const nextFollowUps = current.filter(
+            (followUp) => followUp.followUpId !== event.payload.followUpId,
           );
+          yield* replaceThreadQueue(event.payload.threadId, nextFollowUps);
+          yield* syncQueuedFollowUpAttachmentPaths(event.payload.threadId, nextFollowUps);
           return;
         }
 
@@ -1216,10 +1262,17 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
 
         case "thread.deleted":
         case "thread.reverted": {
-          if (event.type === "thread.deleted") {
-            yield* projectionThreadQueuedFollowUpRepository.deleteByThreadId({
+          yield* projectionThreadQueuedFollowUpRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          if (event.type === "thread.reverted") {
+            const messageRows = yield* projectionThreadMessageRepository.listByThreadId({
               threadId: event.payload.threadId,
             });
+            attachmentSideEffects.prunedThreadRelativePaths.set(
+              event.payload.threadId,
+              collectThreadAttachmentRelativePaths(event.payload.threadId, messageRows),
+            );
           }
           return;
         }

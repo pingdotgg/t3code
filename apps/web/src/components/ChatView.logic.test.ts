@@ -152,6 +152,7 @@ describe("follow-up behavior helpers", () => {
       canAutoDispatchQueuedFollowUp({
         phase: "ready",
         queuedFollowUpCount: 2,
+        queuedHeadHasError: false,
         isConnecting: false,
         isSendBusy: false,
         isRevertingCheckpoint: false,
@@ -164,6 +165,20 @@ describe("follow-up behavior helpers", () => {
       canAutoDispatchQueuedFollowUp({
         phase: "running",
         queuedFollowUpCount: 2,
+        queuedHeadHasError: false,
+        isConnecting: false,
+        isSendBusy: false,
+        isRevertingCheckpoint: false,
+        hasThreadError: false,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe(false);
+    expect(
+      canAutoDispatchQueuedFollowUp({
+        phase: "ready",
+        queuedFollowUpCount: 1,
+        queuedHeadHasError: true,
         isConnecting: false,
         isSendBusy: false,
         isRevertingCheckpoint: false,

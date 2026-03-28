@@ -237,6 +237,7 @@ export function buildQueuedFollowUpDraft(input: {
 export function canAutoDispatchQueuedFollowUp(input: {
   phase: "disconnected" | "connecting" | "ready" | "running";
   queuedFollowUpCount: number;
+  queuedHeadHasError: boolean;
   isConnecting: boolean;
   isSendBusy: boolean;
   isRevertingCheckpoint: boolean;
@@ -247,6 +248,7 @@ export function canAutoDispatchQueuedFollowUp(input: {
   return (
     input.phase === "ready" &&
     input.queuedFollowUpCount > 0 &&
+    !input.queuedHeadHasError &&
     !input.isConnecting &&
     !input.isSendBusy &&
     !input.isRevertingCheckpoint &&

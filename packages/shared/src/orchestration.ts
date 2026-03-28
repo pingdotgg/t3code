@@ -1,5 +1,7 @@
 import {
   ApprovalRequestId,
+  type OrchestrationQueuedFollowUp,
+  type OrchestrationQueuedTerminalContext,
   type OrchestrationSession,
   type OrchestrationThreadActivity,
   type UserInputQuestion,
@@ -17,6 +19,9 @@ export interface DerivedPendingUserInput {
   createdAt: string;
   questions: ReadonlyArray<UserInputQuestion>;
 }
+
+export const IMAGE_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 
 export function requestKindFromRequestType(
   requestType: unknown,
@@ -246,4 +251,73 @@ export function canDispatchQueuedFollowUp(input: {
     return false;
   }
   return true;
+}
+
+function normalizeQueuedTerminalContextText(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
+}
+
+function formatQueuedTerminalContextRange(
+  context: Pick<OrchestrationQueuedTerminalContext, "lineStart" | "lineEnd">,
+): string {
+  return context.lineStart === context.lineEnd
+    ? `line ${context.lineStart}`
+    : `lines ${context.lineStart}-${context.lineEnd}`;
+}
+
+function formatQueuedTerminalContextLabel(
+  context: Pick<OrchestrationQueuedTerminalContext, "terminalLabel" | "lineStart" | "lineEnd">,
+): string {
+  return `${context.terminalLabel} ${formatQueuedTerminalContextRange(context)}`;
+}
+
+function buildQueuedTerminalContextBlock(
+  contexts: ReadonlyArray<OrchestrationQueuedFollowUp["terminalContexts"][number]>,
+): string {
+  if (contexts.length === 0) {
+    return "";
+  }
+
+  const lines: string[] = [];
+  for (let index = 0; index < contexts.length; index += 1) {
+    const context = contexts[index];
+    if (!context) {
+      continue;
+    }
+    const normalizedText = normalizeQueuedTerminalContextText(context.text);
+    if (normalizedText.length === 0) {
+      continue;
+    }
+    lines.push(`- ${formatQueuedTerminalContextLabel(context)}:`);
+    const bodyLines = normalizedText
+      .split("\n")
+      .map((line, lineIndex) => `  ${context.lineStart + lineIndex} | ${line}`);
+    lines.push(...bodyLines);
+    if (index < contexts.length - 1) {
+      lines.push("");
+    }
+  }
+
+  return lines.length > 0 ? ["<terminal_context>", ...lines, "</terminal_context>"].join("\n") : "";
+}
+
+export function buildQueuedFollowUpMessageText(input: {
+  prompt: string;
+  terminalContexts: ReadonlyArray<OrchestrationQueuedFollowUp["terminalContexts"][number]>;
+  attachmentCount: number;
+}): string {
+  const trimmedPrompt = input.prompt.trim();
+  const contextBlock = buildQueuedTerminalContextBlock(input.terminalContexts);
+  const materializedPrompt =
+    contextBlock.length > 0
+      ? trimmedPrompt.length > 0
+        ? `${trimmedPrompt}\n\n${contextBlock}`
+        : contextBlock
+      : trimmedPrompt;
+
+  if (materializedPrompt.length > 0) {
+    return materializedPrompt;
+  }
+
+  return input.attachmentCount > 0 ? IMAGE_ONLY_BOOTSTRAP_PROMPT : "";
 }

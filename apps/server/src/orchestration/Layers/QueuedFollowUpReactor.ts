@@ -1,6 +1,9 @@
 import { CommandId, MessageId, type OrchestrationEvent, type ThreadId } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
-import { canDispatchQueuedFollowUp } from "@t3tools/shared/orchestration";
+import {
+  buildQueuedFollowUpMessageText,
+  canDispatchQueuedFollowUp,
+} from "@t3tools/shared/orchestration";
 import { Cause, Effect, Exit, Layer, Stream } from "effect";
 
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -86,7 +89,11 @@ const make = Effect.gen(function* () {
           message: {
             messageId: MessageId.makeUnsafe(crypto.randomUUID()),
             role: "user",
-            text: queuedHead.prompt,
+            text: buildQueuedFollowUpMessageText({
+              prompt: queuedHead.prompt,
+              terminalContexts: queuedHead.terminalContexts,
+              attachmentCount: queuedHead.attachments.length,
+            }),
             attachments: queuedHead.attachments,
           },
           modelSelection: queuedHead.modelSelection,

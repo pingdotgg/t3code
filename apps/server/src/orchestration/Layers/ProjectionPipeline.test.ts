@@ -921,6 +921,320 @@ it.layer(
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-attachments-revert-")))(
   "OrchestrationProjectionPipeline",
   (it) => {
+    it.effect(
+      "clears queued follow-ups and prunes queued attachment files when a thread is reverted",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const { attachmentsDir } = yield* ServerConfig;
+          const now = new Date().toISOString();
+          const threadId = ThreadId.makeUnsafe("thread-queued-revert");
+          const queuedAttachmentId = "thread-queued-revert-00000000-0000-4000-8000-000000000001";
+          const otherThreadAttachmentId =
+            "thread-queued-revert-extra-00000000-0000-4000-8000-000000000002";
+
+          const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+            eventStore
+              .append(event)
+              .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+          yield* appendAndProject({
+            type: "project.created",
+            eventId: EventId.makeUnsafe("evt-queued-revert-1"),
+            aggregateKind: "project",
+            aggregateId: ProjectId.makeUnsafe("project-queued-revert"),
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-queued-revert-1"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-queued-revert-1"),
+            metadata: {},
+            payload: {
+              projectId: ProjectId.makeUnsafe("project-queued-revert"),
+              title: "Project Queued Revert",
+              workspaceRoot: "/tmp/project-queued-revert",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.created",
+            eventId: EventId.makeUnsafe("evt-queued-revert-2"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-queued-revert-2"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-queued-revert-2"),
+            metadata: {},
+            payload: {
+              threadId,
+              projectId: ProjectId.makeUnsafe("project-queued-revert"),
+              title: "Thread Queued Revert",
+              modelSelection: {
+                provider: "codex",
+                model: "gpt-5.3-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.queued-follow-up-enqueued",
+            eventId: EventId.makeUnsafe("evt-queued-revert-3"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-queued-revert-3"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-queued-revert-3"),
+            metadata: {},
+            payload: {
+              threadId,
+              createdAt: now,
+              followUp: {
+                id: "queued-follow-up-1",
+                createdAt: now,
+                prompt: "queued prompt",
+                attachments: [
+                  {
+                    type: "image",
+                    id: queuedAttachmentId,
+                    name: "queued.png",
+                    mimeType: "image/png",
+                    sizeBytes: 5,
+                  },
+                ],
+                terminalContexts: [],
+                modelSelection: {
+                  provider: "codex",
+                  model: "gpt-5.3-codex",
+                },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                lastSendError: null,
+              },
+            },
+          });
+
+          const queuedAttachmentPath = path.join(attachmentsDir, `${queuedAttachmentId}.png`);
+          const otherThreadAttachmentPath = path.join(
+            attachmentsDir,
+            `${otherThreadAttachmentId}.png`,
+          );
+          yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+          yield* fileSystem.writeFileString(queuedAttachmentPath, "queued");
+          yield* fileSystem.writeFileString(otherThreadAttachmentPath, "other-thread");
+          assert.isTrue(yield* exists(queuedAttachmentPath));
+          assert.isTrue(yield* exists(otherThreadAttachmentPath));
+
+          yield* appendAndProject({
+            type: "thread.reverted",
+            eventId: EventId.makeUnsafe("evt-queued-revert-4"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-queued-revert-4"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-queued-revert-4"),
+            metadata: {},
+            payload: {
+              threadId,
+              turnCount: 0,
+            },
+          });
+
+          const queuedRows = yield* sql<{ readonly followUpId: string }>`
+          SELECT follow_up_id AS "followUpId"
+          FROM projection_thread_queued_follow_ups
+          WHERE thread_id = ${threadId}
+        `;
+          assert.deepEqual(queuedRows, []);
+          assert.isFalse(yield* exists(queuedAttachmentPath));
+          assert.isTrue(yield* exists(otherThreadAttachmentPath));
+        }),
+    );
+
+    it.effect("prunes removed queued follow-up attachment files on queue mutation", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const { attachmentsDir } = yield* ServerConfig;
+        const now = new Date().toISOString();
+        const threadId = ThreadId.makeUnsafe("thread-queued-remove");
+        const removedAttachmentId = "thread-queued-remove-00000000-0000-4000-8000-000000000001";
+        const keptAttachmentId = "thread-queued-remove-00000000-0000-4000-8000-000000000002";
+
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* appendAndProject({
+          type: "project.created",
+          eventId: EventId.makeUnsafe("evt-queued-remove-1"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.makeUnsafe("project-queued-remove"),
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-queued-remove-1"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-queued-remove-1"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.makeUnsafe("project-queued-remove"),
+            title: "Project Queued Remove",
+            workspaceRoot: "/tmp/project-queued-remove",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.created",
+          eventId: EventId.makeUnsafe("evt-queued-remove-2"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-queued-remove-2"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-queued-remove-2"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId: ProjectId.makeUnsafe("project-queued-remove"),
+            title: "Thread Queued Remove",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.3-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.queued-follow-up-enqueued",
+          eventId: EventId.makeUnsafe("evt-queued-remove-3"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-queued-remove-3"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-queued-remove-3"),
+          metadata: {},
+          payload: {
+            threadId,
+            createdAt: now,
+            followUp: {
+              id: "queued-follow-up-remove",
+              createdAt: now,
+              prompt: "remove me",
+              attachments: [
+                {
+                  type: "image",
+                  id: removedAttachmentId,
+                  name: "remove.png",
+                  mimeType: "image/png",
+                  sizeBytes: 5,
+                },
+              ],
+              terminalContexts: [],
+              modelSelection: {
+                provider: "codex",
+                model: "gpt-5.3-codex",
+              },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              lastSendError: null,
+            },
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.queued-follow-up-enqueued",
+          eventId: EventId.makeUnsafe("evt-queued-remove-4"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-queued-remove-4"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-queued-remove-4"),
+          metadata: {},
+          payload: {
+            threadId,
+            createdAt: now,
+            followUp: {
+              id: "queued-follow-up-keep",
+              createdAt: now,
+              prompt: "keep me",
+              attachments: [
+                {
+                  type: "image",
+                  id: keptAttachmentId,
+                  name: "keep.png",
+                  mimeType: "image/png",
+                  sizeBytes: 5,
+                },
+              ],
+              terminalContexts: [],
+              modelSelection: {
+                provider: "codex",
+                model: "gpt-5.3-codex",
+              },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              lastSendError: null,
+            },
+          },
+        });
+
+        const removedAttachmentPath = path.join(attachmentsDir, `${removedAttachmentId}.png`);
+        const keptAttachmentPath = path.join(attachmentsDir, `${keptAttachmentId}.png`);
+        yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+        yield* fileSystem.writeFileString(removedAttachmentPath, "remove");
+        yield* fileSystem.writeFileString(keptAttachmentPath, "keep");
+        assert.isTrue(yield* exists(removedAttachmentPath));
+        assert.isTrue(yield* exists(keptAttachmentPath));
+
+        yield* appendAndProject({
+          type: "thread.queued-follow-up-removed",
+          eventId: EventId.makeUnsafe("evt-queued-remove-5"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-queued-remove-5"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-queued-remove-5"),
+          metadata: {},
+          payload: {
+            threadId,
+            followUpId: "queued-follow-up-remove",
+            createdAt: now,
+          },
+        });
+
+        assert.isFalse(yield* exists(removedAttachmentPath));
+        assert.isTrue(yield* exists(keptAttachmentPath));
+      }),
+    );
+
     it.effect("removes thread attachment directory when thread is deleted", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;

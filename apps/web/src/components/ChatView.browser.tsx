@@ -2448,9 +2448,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
               "thread.turn.start",
             ]),
           );
-          expect(commandTypes.indexOf("thread.turn.interrupt")).toBeLessThan(
-            commandTypes.indexOf("thread.turn.start"),
-          );
+          const interruptIndex = commandTypes.indexOf("thread.turn.interrupt");
+          const turnStartIndex = commandTypes.indexOf("thread.turn.start");
+          const removeIndex = commandTypes.indexOf("thread.queued-follow-up.remove");
+          expect(interruptIndex).toBeGreaterThanOrEqual(0);
+          expect(turnStartIndex).toBeGreaterThan(interruptIndex);
+          expect(removeIndex).toBeGreaterThan(turnStartIndex);
         },
         { timeout: 8_000, interval: 16 },
       );

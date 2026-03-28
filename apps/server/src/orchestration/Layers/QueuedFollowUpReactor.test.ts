@@ -27,6 +27,12 @@ function makeReadModel(input?: {
   sessionStatus?: OrchestrationSessionStatus | null;
   lastSendError?: string | null;
   queuedPrompts?: ReadonlyArray<string>;
+  queuedAttachments?: ReadonlyArray<
+    OrchestrationReadModel["threads"][number]["queuedFollowUps"][number]["attachments"]
+  >;
+  queuedTerminalContexts?: ReadonlyArray<
+    OrchestrationReadModel["threads"][number]["queuedFollowUps"][number]["terminalContexts"]
+  >;
   latestTurnState?: OrchestrationReadModel["threads"][number]["latestTurn"];
   activities?: ReadonlyArray<OrchestrationThreadActivity>;
 }): OrchestrationReadModel {
@@ -71,8 +77,8 @@ function makeReadModel(input?: {
           id: `follow-up-${index + 1}`,
           createdAt: NOW_ISO,
           prompt,
-          attachments: [],
-          terminalContexts: [],
+          attachments: input?.queuedAttachments?.[index] ?? [],
+          terminalContexts: input?.queuedTerminalContexts?.[index] ?? [],
           modelSelection: {
             provider: "codex",
             model: "gpt-5.3-codex",
@@ -147,6 +153,117 @@ describe("QueuedFollowUpReactor", () => {
       throw new Error("Expected first command to be thread.turn.start");
     }
     expect(turnStart.message.text).toBe("send this next");
+
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+  });
+
+  it("injects queued terminal contexts into the dispatched prompt", async () => {
+    const dispatched: OrchestrationCommand[] = [];
+    const engine: OrchestrationEngineShape = {
+      getReadModel: () =>
+        Effect.succeed(
+          makeReadModel({
+            queuedPrompts: ["Investigate this"],
+            queuedTerminalContexts: [
+              [
+                {
+                  id: "ctx-1",
+                  threadId: ThreadId.makeUnsafe("thread-1"),
+                  createdAt: NOW_ISO,
+                  terminalId: "default",
+                  terminalLabel: "Terminal 1",
+                  lineStart: 3,
+                  lineEnd: 4,
+                  text: "alpha\nbeta",
+                },
+              ],
+            ],
+          }),
+        ),
+      readEvents: () => Stream.empty,
+      dispatch: (command) =>
+        Effect.sync(() => {
+          dispatched.push(command);
+          return { sequence: dispatched.length };
+        }),
+      streamDomainEvents: Stream.empty,
+    };
+
+    runtime = ManagedRuntime.make(
+      QueuedFollowUpReactorLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
+    const scope = await Effect.runPromise(Scope.make("sequential"));
+
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await runtime.runPromise(reactor.drain);
+
+    const turnStart = dispatched[0];
+    expect(turnStart?.type).toBe("thread.turn.start");
+    if (turnStart?.type !== "thread.turn.start") {
+      throw new Error("Expected first command to be thread.turn.start");
+    }
+    expect(turnStart.message.text).toContain("Investigate this");
+    expect(turnStart.message.text).toContain("<terminal_context>");
+    expect(turnStart.message.text).toContain("- Terminal 1 lines 3-4:");
+    expect(turnStart.message.text).toContain("3 | alpha");
+    expect(turnStart.message.text).toContain("4 | beta");
+
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+  });
+
+  it("uses the image-only fallback prompt for queued image-only sends", async () => {
+    const dispatched: OrchestrationCommand[] = [];
+    const engine: OrchestrationEngineShape = {
+      getReadModel: () =>
+        Effect.succeed(
+          makeReadModel({
+            queuedPrompts: [""],
+            queuedAttachments: [
+              [
+                {
+                  type: "image",
+                  id: "thread-1-att-1",
+                  name: "queued.png",
+                  mimeType: "image/png",
+                  sizeBytes: 128,
+                },
+              ],
+            ],
+          }),
+        ),
+      readEvents: () => Stream.empty,
+      dispatch: (command) =>
+        Effect.sync(() => {
+          dispatched.push(command);
+          return { sequence: dispatched.length };
+        }),
+      streamDomainEvents: Stream.empty,
+    };
+
+    runtime = ManagedRuntime.make(
+      QueuedFollowUpReactorLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
+    const scope = await Effect.runPromise(Scope.make("sequential"));
+
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await runtime.runPromise(reactor.drain);
+
+    const turnStart = dispatched[0];
+    expect(turnStart?.type).toBe("thread.turn.start");
+    if (turnStart?.type !== "thread.turn.start") {
+      throw new Error("Expected first command to be thread.turn.start");
+    }
+    expect(turnStart.message.text).toBe(
+      "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]",
+    );
 
     await Effect.runPromise(Scope.close(scope, Exit.void));
   });
