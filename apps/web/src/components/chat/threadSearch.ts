@@ -1,4 +1,9 @@
-import type { TimelineRow } from "./MessagesTimeline.logic";
+import {
+  renderableWorkEntryChangedFiles,
+  renderableWorkEntryHeading,
+  renderableWorkEntryPreview,
+  type TimelineRow,
+} from "./MessagesTimeline.logic";
 import { deriveDisplayedUserMessageState } from "~/lib/terminalContext";
 
 export interface ThreadSearchResult {
@@ -45,38 +50,32 @@ function countMatches(haystack: string, needle: string): number {
 function collectRowSearchText(row: TimelineRow): string[] {
   switch (row.kind) {
     case "message": {
-      const visibleMessageText =
-        row.message.role === "user"
-          ? deriveDisplayedUserMessageState(row.message.text).visibleText
-          : row.message.text;
+      const visibleMessageState =
+        row.message.role === "user" ? deriveDisplayedUserMessageState(row.message.text) : null;
       const visibleAttachmentNames =
         row.message.role === "user"
           ? (row.message.attachments
               ?.filter((attachment) => attachment.previewUrl == null)
               .map((attachment) => attachment.name) ?? [])
           : [];
-      return [visibleMessageText, ...visibleAttachmentNames];
+      const visibleTerminalChipLabels =
+        row.message.role === "user"
+          ? (visibleMessageState?.contexts.map((context) => context.header) ?? [])
+          : [];
+      return [
+        row.message.role === "user" ? (visibleMessageState?.visibleText ?? "") : row.message.text,
+        ...visibleTerminalChipLabels,
+        ...visibleAttachmentNames,
+      ];
     }
     case "proposed-plan":
       return [row.proposedPlan.planMarkdown];
     case "work":
-      return row.groupedEntries.flatMap((entry) => {
-        const values = [
-          entry.label,
-          entry.detail ?? "",
-          entry.command ?? "",
-          ...(entry.changedFiles ?? []),
-        ];
-        const normalizedLabel = normalizeThreadSearchText(entry.label.trim());
-        const normalizedToolTitle =
-          typeof entry.toolTitle === "string"
-            ? normalizeThreadSearchText(entry.toolTitle.trim())
-            : "";
-        if (normalizedToolTitle.length > 0 && normalizedToolTitle !== normalizedLabel) {
-          values.unshift(entry.toolTitle!);
-        }
-        return values;
-      });
+      return row.groupedEntries.flatMap((entry) => [
+        renderableWorkEntryHeading(entry),
+        renderableWorkEntryPreview(entry) ?? "",
+        ...renderableWorkEntryChangedFiles(entry),
+      ]);
     case "working":
       return [];
   }

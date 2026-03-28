@@ -111,6 +111,64 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("yoo what&#x27;s ");
   });
 
+  it("highlights rendered terminal chip labels during search", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const rows = buildTimelineRows({
+      timelineEntries: [
+        {
+          id: "entry-1",
+          kind: "message",
+          createdAt: "2026-03-17T19:12:28.000Z",
+          message: {
+            id: MessageId.makeUnsafe("message-chip-search"),
+            role: "user",
+            text: [
+              "check this @terminal-1:1-5",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 lines 1-5:",
+              "  1 | echoed output",
+              "</terminal_context>",
+            ].join("\n"),
+            createdAt: "2026-03-17T19:12:28.000Z",
+            streaming: false,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        rows={rows}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+        activeSearchRowId="entry-1"
+        matchedSearchRowIds={new Set(["entry-1"])}
+        searchQuery="Terminal 1 lines 1-5"
+      />,
+    );
+
+    expect(markup).toContain("Terminal 1 lines 1-5");
+    expect(markup).toContain('data-thread-search-highlight="active"');
+  });
+
   it("renders context compaction entries in the normal work log", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const rows = buildTimelineRows({

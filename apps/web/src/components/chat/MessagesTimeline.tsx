@@ -41,7 +41,13 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { normalizeCompactToolLabel, type TimelineRow } from "./MessagesTimeline.logic";
+import {
+  renderableWorkEntryChangedFiles,
+  renderableWorkEntryHeading,
+  renderableWorkEntryPreview,
+  type TimelineRow,
+  type TimelineWorkEntry,
+} from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import {
   deriveDisplayedUserMessageState,
@@ -613,7 +619,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
 type TimelineMessage = Extract<TimelineRow, { kind: "message" }>["message"];
 type TimelineProposedPlan = Extract<TimelineRow, { kind: "proposed-plan" }>["proposedPlan"];
-type TimelineWorkEntry = Extract<TimelineRow, { kind: "work" }>["groupedEntries"][number];
 
 function estimateTimelineProposedPlanHeight(proposedPlan: TimelineProposedPlan): number {
   const estimatedLines = Math.max(1, Math.ceil(proposedPlan.planMarkdown.length / 72));
@@ -653,13 +658,24 @@ function formatMessageMeta(
 }
 
 const UserMessageTerminalContextInlineLabel = memo(
-  function UserMessageTerminalContextInlineLabel(props: { context: ParsedTerminalContextEntry }) {
+  function UserMessageTerminalContextInlineLabel(props: {
+    context: ParsedTerminalContextEntry;
+    searchQuery: string;
+    searchActive: boolean;
+  }) {
     const tooltipText =
       props.context.body.length > 0
         ? `${props.context.header}\n${props.context.body}`
         : props.context.header;
 
-    return <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />;
+    return (
+      <TerminalContextInlineChip
+        label={props.context.header}
+        tooltipText={tooltipText}
+        searchQuery={props.searchQuery}
+        searchActive={props.searchActive}
+      />
+    );
   },
 );
 
@@ -703,6 +719,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           <UserMessageTerminalContextInlineLabel
             key={`user-terminal-context-inline:${context.header}`}
             context={context}
+            searchQuery={props.searchQuery}
+            searchActive={props.searchActive}
           />,
         );
         cursor = matchIndex + label.length;
@@ -735,6 +753,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         <UserMessageTerminalContextInlineLabel
           key={`user-terminal-context-inline:${context.header}`}
           context={context}
+          searchQuery={props.searchQuery}
+          searchActive={props.searchActive}
         />,
       );
       inlineNodes.push(
@@ -811,19 +831,6 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   return "text-muted-foreground/40";
 }
 
-function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
-) {
-  if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
-  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
-  const [firstPath] = workEntry.changedFiles ?? [];
-  if (!firstPath) return null;
-  return workEntry.changedFiles!.length === 1
-    ? firstPath
-    : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
-}
-
 function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
   if (workEntry.requestKind === "command") return TerminalIcon;
   if (workEntry.requestKind === "file-read") return EyeIcon;
@@ -849,21 +856,6 @@ function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
   return workToneIcon(workEntry.tone).icon;
 }
 
-function capitalizePhrase(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return value;
-  }
-  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
-}
-
-function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
-  if (!workEntry.toolTitle) {
-    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
-  }
-  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
-}
-
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   searchQuery: string;
@@ -872,11 +864,12 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const { workEntry, searchActive, searchQuery } = props;
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
-  const heading = toolWorkEntryHeading(workEntry);
-  const preview = workEntryPreview(workEntry);
+  const heading = renderableWorkEntryHeading(workEntry);
+  const preview = renderableWorkEntryPreview(workEntry);
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+  const visibleChangedFiles = renderableWorkEntryChangedFiles(workEntry);
 
   return (
     <div className="rounded-lg px-1 py-1">
@@ -913,7 +906,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       </div>
       {hasChangedFiles && !previewIsChangedFiles && (
         <div className="mt-1 flex flex-wrap gap-1 pl-6">
-          {workEntry.changedFiles?.slice(0, 4).map((filePath) => (
+          {visibleChangedFiles.map((filePath) => (
             <span
               key={`${workEntry.id}:${filePath}`}
               className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"

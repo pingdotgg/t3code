@@ -32,7 +32,48 @@ export function normalizeCompactToolLabel(value: string): string {
 
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineProposedPlan = Extract<TimelineEntry, { kind: "proposed-plan" }>["proposedPlan"];
-type TimelineWorkEntry = Extract<TimelineEntry, { kind: "work" }>["entry"];
+export type TimelineWorkEntry = Extract<TimelineEntry, { kind: "work" }>["entry"];
+
+function capitalizePhrase(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return value;
+  }
+  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+}
+
+export function renderableWorkEntryHeading(workEntry: TimelineWorkEntry): string {
+  if (!workEntry.toolTitle) {
+    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
+  }
+  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
+}
+
+export function renderableWorkEntryPreview(
+  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+): string | null {
+  if (workEntry.command) return workEntry.command;
+  if (workEntry.detail) return workEntry.detail;
+  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
+  const [firstPath] = workEntry.changedFiles ?? [];
+  if (!firstPath) return null;
+  return workEntry.changedFiles!.length === 1
+    ? firstPath
+    : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
+}
+
+export function renderableWorkEntryChangedFiles(
+  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+): string[] {
+  const changedFiles = workEntry.changedFiles ?? [];
+  if (changedFiles.length === 0) {
+    return [];
+  }
+  if (!workEntry.command && !workEntry.detail) {
+    return [];
+  }
+  return changedFiles.slice(0, 4);
+}
 
 export type TimelineRow =
   | {

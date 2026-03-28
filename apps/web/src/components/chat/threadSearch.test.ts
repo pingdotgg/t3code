@@ -43,7 +43,7 @@ const rows: TimelineRow[] = [
       id: MessageId.makeUnsafe("message-1b"),
       role: "user",
       text: [
-        "Visible composer text",
+        "Visible composer text @terminal-1:1-5",
         "",
         "<terminal_context>",
         "- Terminal 1 lines 1-5:",
@@ -79,11 +79,26 @@ const rows: TimelineRow[] = [
       {
         id: "work-1",
         createdAt: "2026-03-28T12:00:10.000Z",
-        label: "Updated README",
-        toolTitle: "Edit README",
+        label: "Updated README completed",
+        toolTitle: "Edit README completed",
         detail: "Added the migration note",
         command: "bun run lint",
         changedFiles: ["README.md"],
+        tone: "info",
+      },
+    ],
+  },
+  {
+    kind: "work",
+    id: "work-row-visible-files",
+    createdAt: "2026-03-28T12:00:15.000Z",
+    groupedEntries: [
+      {
+        id: "work-2",
+        createdAt: "2026-03-28T12:00:15.000Z",
+        label: "Apply patch completed",
+        command: "git status",
+        changedFiles: ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"],
         tone: "info",
       },
     ],
@@ -120,27 +135,37 @@ describe("findThreadSearchResults", () => {
       {
         rowId: "user-message-row",
         rowIndex: 1,
-        normalizedTexts: ["visible composer text", "visible-upload-name.png"],
+        normalizedTexts: [
+          "visible composer text @terminal-1:1-5",
+          "terminal 1 lines 1-5",
+          "visible-upload-name.png",
+        ],
       },
       {
         rowId: "work-row",
         rowIndex: 2,
+        normalizedTexts: ["edit readme", "bun run lint", "readme.md"],
+      },
+      {
+        rowId: "work-row-visible-files",
+        rowIndex: 3,
         normalizedTexts: [
-          "edit readme",
-          "updated readme",
-          "added the migration note",
-          "bun run lint",
-          "readme.md",
+          "apply patch",
+          "git status",
+          "src/a.ts",
+          "src/b.ts",
+          "src/c.ts",
+          "src/d.ts",
         ],
       },
       {
         rowId: "plan-row",
-        rowIndex: 3,
+        rowIndex: 4,
         normalizedTexts: ["1. add thread search\n2. jump to the matching row"],
       },
       {
         rowId: "working-row",
-        rowIndex: 4,
+        rowIndex: 5,
         normalizedTexts: [],
       },
     ]);
@@ -161,7 +186,7 @@ describe("findThreadSearchResults", () => {
       {
         rowId: "work-row",
         rowIndex: 2,
-        matchCount: 3,
+        matchCount: 2,
       },
     ]);
   });
@@ -180,7 +205,7 @@ describe("findThreadSearchResults", () => {
     expect(findThreadSearchResults(rows, "thread search")).toEqual([
       {
         rowId: "plan-row",
-        rowIndex: 3,
+        rowIndex: 4,
         matchCount: 1,
       },
     ]);
@@ -197,6 +222,13 @@ describe("findThreadSearchResults", () => {
         matchCount: 1,
       },
     ]);
+    expect(findThreadSearchResults(rows, "terminal 1 lines 1-5")).toEqual([
+      {
+        rowId: "user-message-row",
+        rowIndex: 1,
+        matchCount: 1,
+      },
+    ]);
     expect(findThreadSearchResults(rows, "visible-upload-name")).toEqual([
       {
         rowId: "user-message-row",
@@ -204,6 +236,25 @@ describe("findThreadSearchResults", () => {
         matchCount: 1,
       },
     ]);
+  });
+
+  it("matches only the rendered work heading and visible changed-file paths", () => {
+    expect(findThreadSearchResults(rows, "apply patch")).toEqual([
+      {
+        rowId: "work-row-visible-files",
+        rowIndex: 3,
+        matchCount: 1,
+      },
+    ]);
+    expect(findThreadSearchResults(rows, "completed")).toEqual([]);
+    expect(findThreadSearchResults(rows, "src/d.ts")).toEqual([
+      {
+        rowId: "work-row-visible-files",
+        rowIndex: 3,
+        matchCount: 1,
+      },
+    ]);
+    expect(findThreadSearchResults(rows, "src/e.ts")).toEqual([]);
   });
 
   it("returns no results for empty queries", () => {
@@ -214,7 +265,7 @@ describe("findThreadSearchResults", () => {
     expect(findThreadSearchResults(rows, "row")).toEqual([
       {
         rowId: "plan-row",
-        rowIndex: 3,
+        rowIndex: 4,
         matchCount: 1,
       },
     ]);

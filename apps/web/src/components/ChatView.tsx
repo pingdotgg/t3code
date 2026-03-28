@@ -177,6 +177,7 @@ import {
   createEmptyThreadSearchLookupState,
   findThreadSearchLookupState,
   type ThreadSearchLookupState,
+  type ThreadSearchResult,
 } from "./chat/threadSearch";
 import {
   buildExpiredTerminalContextToastCopy,
@@ -205,6 +206,8 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_THREAD_SEARCH_RESULTS: readonly ThreadSearchResult[] = [];
+const EMPTY_MATCHED_THREAD_SEARCH_ROW_IDS = new Set<string>();
 
 function formatOutgoingPrompt(params: {
   provider: ProviderKind;
@@ -1066,10 +1069,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () =>
       findThreadSearchLookupState(
         threadSearchIndex,
-        deferredThreadSearchQuery,
+        threadSearchOpen ? deferredThreadSearchQuery : "",
         threadSearchLookupStateRef.current,
       ),
-    [deferredThreadSearchQuery, threadSearchIndex],
+    [deferredThreadSearchQuery, threadSearchIndex, threadSearchOpen],
   );
   useEffect(() => {
     threadSearchLookupStateRef.current = threadSearchLookupState;
@@ -1079,11 +1082,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [threadSearchLookupState],
   );
   const visibleThreadSearchResults = useMemo(
-    () => (threadSearchOpen ? threadSearchResults : []),
+    () => (threadSearchOpen ? threadSearchResults : EMPTY_THREAD_SEARCH_RESULTS),
     [threadSearchOpen, threadSearchResults],
   );
   const matchedThreadSearchRowIds = useMemo(
-    () => new Set(visibleThreadSearchResults.map((result) => result.rowId)),
+    () =>
+      visibleThreadSearchResults.length > 0
+        ? new Set(visibleThreadSearchResults.map((result) => result.rowId))
+        : EMPTY_MATCHED_THREAD_SEARCH_ROW_IDS,
     [visibleThreadSearchResults],
   );
   const activeThreadSearchRowId =
