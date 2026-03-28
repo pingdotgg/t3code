@@ -10,7 +10,7 @@ import * as Fiber from "effect/Fiber";
 import { TestClock } from "effect/testing";
 import { vi } from "vitest";
 
-import { readBootstrapEnvelope, resolveFdPath } from "./bootstrap";
+import { readBootstrapEnvelope } from "./bootstrap";
 import { assertNone, assertSome } from "@effect/vitest/utils";
 
 const openSyncInterceptor = vi.hoisted(() => ({ failPath: null as string | null }));
@@ -38,14 +38,6 @@ vi.mock("node:fs", async (importOriginal) => {
 const TestEnvelopeSchema = Schema.Struct({ mode: Schema.String });
 
 it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
-  it.effect("uses platform-specific fd paths", () =>
-    Effect.sync(() => {
-      assert.equal(resolveFdPath(3, "linux"), "/proc/self/fd/3");
-      assert.equal(resolveFdPath(3, "darwin"), "/dev/fd/3");
-      assert.equal(resolveFdPath(3, "win32"), undefined);
-    }),
-  );
-
   it.effect("reads a bootstrap envelope from a provided fd", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

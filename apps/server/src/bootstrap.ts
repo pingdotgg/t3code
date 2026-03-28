@@ -87,6 +87,11 @@ const isUnavailableBootstrapFdError = Predicate.compose(
   (_) => _.code === "EBADF" || _.code === "ENOENT",
 );
 
+const isUnavailableBootstrapFdPathError = Predicate.compose(
+  Predicate.hasProperty("code"),
+  (_) => _.code === "EBADF" || _.code === "ENOENT" || _.code === "ENXIO",
+);
+
 const isFdReady = (fd: number) =>
   Effect.try({
     try: () => NFS.fstatSync(fd),
@@ -106,6 +111,16 @@ const isFdReady = (fd: number) =>
 const makeBootstrapInputStream = (fd: number) =>
   Effect.try<Readable, BootstrapError>({
     try: () => {
+      if (process.platform === "win32") {
+        const stream = new Net.Socket({
+          fd,
+          readable: true,
+          writable: false,
+        });
+        stream.setEncoding("utf8");
+        return stream;
+      }
+
       const fdPath = resolveFdPath(fd);
       if (fdPath === undefined) {
         return makeDirectBootstrapStream(fd);
@@ -126,12 +141,16 @@ const makeBootstrapInputStream = (fd: number) =>
           }
           return makeDirectBootstrapStream(fd);
         }
-        throw error;
+        if (!isUnavailableBootstrapFdPathError(error)) {
+          throw error;
+        }
+
+        return makeDirectBootstrapStream(fd);
       }
     },
     catch: (error) =>
       new BootstrapError({
-        message: "Failed to duplicate bootstrap fd.",
+        message: "Failed to open bootstrap fd.",
         cause: error,
       }),
   });
@@ -163,11 +182,8 @@ export function resolveFdPath(
   fd: number,
   platform: NodeJS.Platform = process.platform,
 ): string | undefined {
-  if (platform === "linux") {
-    return `/proc/self/fd/${fd}`;
-  }
   if (platform === "win32") {
     return undefined;
   }
-  return `/dev/fd/${fd}`;
+  return platform === "linux" ? `/proc/self/fd/${fd}` : `/dev/fd/${fd}`;
 }

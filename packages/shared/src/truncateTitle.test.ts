@@ -7,11 +7,11 @@ describe("truncateTitle", () => {
     expect(truncateTitle("   hello world   ")).toBe("hello world");
   });
 
-  it("returns trimmed text when within max length", () => {
+  it("returns shorter strings unchanged", () => {
     expect(truncateTitle("alpha", 10)).toBe("alpha");
   });
 
-  it("appends ellipsis when text exceeds max length", () => {
+  it("truncates long strings and appends an ellipsis", () => {
     expect(truncateTitle("abcdefghij", 5)).toBe("abcde...");
   });
 });
