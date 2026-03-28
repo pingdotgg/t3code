@@ -186,58 +186,60 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ),
       );
 
-      it.effect("inherits PATH when launching the codex probe with a CODEX_HOME override", () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const binDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-test-codex-bin-",
-          });
-          const codexPath = path.join(binDir, "codex");
-          yield* fileSystem.writeFileString(
-            codexPath,
-            [
-              "#!/bin/sh",
-              'if [ "$1" = "--version" ]; then',
-              '  echo "codex-cli 1.0.0"',
-              "  exit 0",
-              "fi",
-              'if [ "$1" = "login" ] && [ "$2" = "status" ]; then',
-              '  echo "Logged in using ChatGPT"',
-              "  exit 0",
-              "fi",
-              'echo "unexpected args: $*" >&2',
-              "exit 1",
-              "",
-            ].join("\n"),
-          );
-          yield* fileSystem.chmod(codexPath, 0o755);
-          const customCodexHome = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-test-codex-home-",
-          });
-          const previousPath = process.env.PATH;
-          process.env.PATH = binDir;
-
-          try {
-            const serverSettingsLayer = ServerSettingsService.layerTest({
-              providers: {
-                codex: {
-                  homePath: customCodexHome,
-                },
-              },
+      it.effect.skipIf(process.platform === "win32")(
+        "inherits PATH when launching the codex probe with a CODEX_HOME override",
+        () =>
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const binDir = yield* fileSystem.makeTempDirectoryScoped({
+              prefix: "t3-test-codex-bin-",
             });
-
-            const status = yield* checkCodexProviderStatus().pipe(
-              Effect.provide(serverSettingsLayer),
+            const codexPath = path.join(binDir, "codex");
+            yield* fileSystem.writeFileString(
+              codexPath,
+              [
+                "#!/bin/sh",
+                'if [ "$1" = "--version" ]; then',
+                '  echo "codex-cli 1.0.0"',
+                "  exit 0",
+                "fi",
+                'if [ "$1" = "login" ] && [ "$2" = "status" ]; then',
+                '  echo "Logged in using ChatGPT"',
+                "  exit 0",
+                "fi",
+                'echo "unexpected args: $*" >&2',
+                "exit 1",
+                "",
+              ].join("\n"),
             );
-            assert.strictEqual(status.provider, "codex");
-            assert.strictEqual(status.installed, true);
-            assert.strictEqual(status.status, "ready");
-            assert.strictEqual(status.authStatus, "authenticated");
-          } finally {
-            process.env.PATH = previousPath;
-          }
-        }),
+            yield* fileSystem.chmod(codexPath, 0o755);
+            const customCodexHome = yield* fileSystem.makeTempDirectoryScoped({
+              prefix: "t3-test-codex-home-",
+            });
+            const previousPath = process.env.PATH;
+            process.env.PATH = binDir;
+
+            try {
+              const serverSettingsLayer = ServerSettingsService.layerTest({
+                providers: {
+                  codex: {
+                    homePath: customCodexHome,
+                  },
+                },
+              });
+
+              const status = yield* checkCodexProviderStatus().pipe(
+                Effect.provide(serverSettingsLayer),
+              );
+              assert.strictEqual(status.provider, "codex");
+              assert.strictEqual(status.installed, true);
+              assert.strictEqual(status.status, "ready");
+              assert.strictEqual(status.authStatus, "authenticated");
+            } finally {
+              process.env.PATH = previousPath;
+            }
+          }),
       );
 
       it.effect("returns unavailable when codex is missing", () =>
