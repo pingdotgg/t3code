@@ -1,0 +1,2 @@
+# git autocrlf=true converts LF to CRLF on Windows, causing issues with oxfmt
+* text=auto eol=lf
