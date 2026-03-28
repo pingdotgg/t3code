@@ -124,25 +124,49 @@ jobs:
       group: pr-size-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
+      - name: Checkout base repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Sync PR size label
         uses: actions/github-script@v8
         env:
           PR_SIZE_LABELS_JSON: ${{ needs.prepare-config.outputs.labels_json }}
         with:
           script: |
+            const { execFileSync } = require("node:child_process");
+
             const issueNumber = context.payload.pull_request.number;
+            const baseSha = context.payload.pull_request.base.sha;
+            const headSha = context.payload.pull_request.head.sha;
+            const headTrackingRef = `refs/remotes/pr-size/${issueNumber}`;
             const managedLabels = JSON.parse(process.env.PR_SIZE_LABELS_JSON ?? "[]");
             const managedLabelNames = new Set(managedLabels.map((label) => label.name));
             // Keep this aligned with the repo's test entrypoints and test-only support files.
-            const testFilePatterns = [
-              /(^|\/)__tests__(\/|$)/,
-              /(^|\/)tests?(\/|$)/,
-              /^apps\/server\/integration\//,
-              /\.(test|spec|browser|integration)\.[^.\/]+$/,
+            const testExcludePathspecs = [
+              ":(glob,exclude)**/__tests__/**",
+              ":(glob,exclude)**/test/**",
+              ":(glob,exclude)**/tests/**",
+              ":(glob,exclude)apps/server/integration/**",
+              ":(glob,exclude)**/*.test.*",
+              ":(glob,exclude)**/*.spec.*",
+              ":(glob,exclude)**/*.browser.*",
+              ":(glob,exclude)**/*.integration.*",
             ];
 
-            const isTestFile = (filename) =>
-              testFilePatterns.some((pattern) => pattern.test(filename));
+            const sumNumstat = (text) =>
+              text
+                .split("\n")
+                .filter(Boolean)
+                .reduce((total, line) => {
+                  const [insertionsRaw = "0", deletionsRaw = "0"] = line.split("\t");
+                  const additions =
+                    insertionsRaw === "-" ? 0 : Number.parseInt(insertionsRaw, 10) || 0;
+                  const deletions =
+                    deletionsRaw === "-" ? 0 : Number.parseInt(deletionsRaw, 10) || 0;
+
+                  return total + additions + deletions;
+                }, 0);
 
             const resolveSizeLabel = (totalChangedLines) => {
               if (totalChangedLines < 10) {
@@ -168,40 +192,53 @@ jobs:
               return "size:XXL";
             };
 
-            const files = await github.paginate(
-              github.rest.pulls.listFiles,
+            execFileSync("git", ["fetch", "--no-tags", "origin", baseSha], {
+              stdio: "inherit",
+            });
+
+            execFileSync(
+              "git",
+              ["fetch", "--no-tags", "origin", `+refs/pull/${issueNumber}/head:${headTrackingRef}`],
               {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: issueNumber,
-                per_page: 100,
+                stdio: "inherit",
               },
-              (response) => response.data,
             );
 
-            if (files.length >= 3000) {
+            const resolvedHeadSha = execFileSync("git", ["rev-parse", headTrackingRef], {
+              encoding: "utf8",
+            }).trim();
+
+            if (resolvedHeadSha !== headSha) {
               core.warning(
-                "The GitHub pull request files API may truncate results at 3,000 files; PR size may be undercounted.",
+                `Fetched head SHA ${resolvedHeadSha} does not match pull request head SHA ${headSha}; using fetched ref for sizing.`,
               );
             }
 
-            let testChangedLines = 0;
-            let nonTestChangedLines = 0;
+            execFileSync("git", ["cat-file", "-e", `${baseSha}^{commit}`], {
+              stdio: "inherit",
+            });
 
-            for (const file of files) {
-              const changedLinesForFile = (file.additions ?? 0) + (file.deletions ?? 0);
+            const diffArgs = [
+              "diff",
+              "--numstat",
+              "--ignore-all-space",
+              "--ignore-blank-lines",
+              `${baseSha}...${resolvedHeadSha}`,
+            ];
 
-              if (changedLinesForFile === 0) {
-                continue;
-              }
-
-              if (isTestFile(file.filename)) {
-                testChangedLines += changedLinesForFile;
-                continue;
-              }
-
-              nonTestChangedLines += changedLinesForFile;
-            }
+            const totalChangedLines = sumNumstat(
+              execFileSync(
+                "git",
+                diffArgs,
+                { encoding: "utf8" },
+              ),
+            );
+            const nonTestChangedLines = sumNumstat(
+              execFileSync("git", [...diffArgs, "--", ".", ...testExcludePathspecs], {
+                encoding: "utf8",
+              }),
+            );
+            const testChangedLines = Math.max(0, totalChangedLines - nonTestChangedLines);
 
             const changedLines = nonTestChangedLines === 0 ? testChangedLines : nonTestChangedLines;
             const nextLabelName = resolveSizeLabel(changedLines);
