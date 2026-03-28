@@ -221,10 +221,10 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
       Layer.provideMerge(
-        Layer.succeed(TextGeneration, {
+        Layer.mock(TextGeneration, {
           generateBranchName,
           generateThreadTitle,
-        } as unknown as TextGenerationShape),
+        }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
