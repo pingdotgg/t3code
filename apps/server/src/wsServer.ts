@@ -14,6 +14,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
+  type OrchestrationReadModel,
   type OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
@@ -230,6 +231,53 @@ export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycl
 class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("RouteRequestError", {
   message: Schema.String,
 }) {}
+
+function sortThreadsByUpdatedAtDesc<
+  T extends {
+    readonly updatedAt: string;
+  },
+>(threads: ReadonlyArray<T>): Array<T> {
+  return [...threads].toSorted(
+    (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+  );
+}
+
+function resolveWelcomeSelection(params: {
+  readonly snapshot: OrchestrationReadModel;
+  readonly cwd: string;
+  readonly autoBootstrapProjectFromCwd: boolean;
+}): {
+  readonly startupProjectId?: ProjectId;
+  readonly startupThreadId?: ThreadId;
+} {
+  const liveProjects = params.snapshot.projects.filter((project) => project.deletedAt === null);
+  const liveThreads = sortThreadsByUpdatedAtDesc(
+    params.snapshot.threads.filter((thread) => thread.deletedAt === null),
+  );
+
+  if (params.autoBootstrapProjectFromCwd) {
+    const cwdProject = liveProjects.find((project) => project.workspaceRoot === params.cwd);
+    if (cwdProject) {
+      const cwdThread = liveThreads.find((thread) => thread.projectId === cwdProject.id);
+      if (cwdThread) {
+        return {
+          startupProjectId: cwdProject.id,
+          startupThreadId: cwdThread.id,
+        };
+      }
+    }
+  }
+
+  const latestThread = liveThreads[0];
+  if (!latestThread) {
+    return {};
+  }
+
+  return {
+    startupProjectId: latestThread.projectId,
+    startupThreadId: latestThread.id,
+  };
+}
 
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
   http.Server,
@@ -621,14 +669,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
   yield* readiness.markOrchestrationSubscriptionsReady;
 
-  let welcomeBootstrapProjectId: ProjectId | undefined;
-  let welcomeBootstrapThreadId: ThreadId | undefined;
-  let welcomeBootstrapSource:
-    | "disabled"
-    | "created-project-and-thread"
-    | "created-thread"
-    | "existing-thread" = "disabled";
-
   if (autoBootstrapProjectFromCwd) {
     yield* Effect.gen(function* () {
       const snapshot = yield* projectionReadModelQuery.getSnapshot();
@@ -655,7 +695,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           defaultModelSelection: bootstrapProjectDefaultModelSelection,
           createdAt,
         });
-        welcomeBootstrapSource = "created-project-and-thread";
       } else {
         bootstrapProjectId = existingProject.id;
         bootstrapProjectDefaultModelSelection = existingProject.defaultModelSelection ?? {
@@ -683,15 +722,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           worktreePath: null,
           createdAt,
         });
-        welcomeBootstrapProjectId = bootstrapProjectId;
-        welcomeBootstrapThreadId = threadId;
-        if (welcomeBootstrapSource !== "created-project-and-thread") {
-          welcomeBootstrapSource = "created-thread";
-        }
-      } else {
-        welcomeBootstrapProjectId = bootstrapProjectId;
-        welcomeBootstrapThreadId = existingThread.id;
-        welcomeBootstrapSource = "existing-thread";
       }
     }).pipe(
       Effect.mapError(
@@ -978,18 +1008,31 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   wss.on("connection", (ws) => {
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
-
-    const welcomeData = {
-      cwd,
-      projectName,
-      ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
-      ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
-    };
     // Send welcome before adding to broadcast set so publishAll calls
     // cannot reach this client before the welcome arrives.
     void runPromise(
       readiness.awaitServerReady.pipe(
-        Effect.flatMap(() => pushBus.publishClient(ws, WS_CHANNELS.serverWelcome, welcomeData)),
+        Effect.flatMap(() => projectionReadModelQuery.getSnapshot()),
+        Effect.map((snapshot) => {
+          const welcomeSelection = resolveWelcomeSelection({
+            snapshot,
+            cwd,
+            autoBootstrapProjectFromCwd,
+          });
+          return {
+            cwd,
+            projectName,
+            ...(welcomeSelection.startupProjectId
+              ? { startupProjectId: welcomeSelection.startupProjectId }
+              : {}),
+            ...(welcomeSelection.startupThreadId
+              ? { startupThreadId: welcomeSelection.startupThreadId }
+              : {}),
+          };
+        }),
+        Effect.flatMap((welcomeData) =>
+          pushBus.publishClient(ws, WS_CHANNELS.serverWelcome, welcomeData),
+        ),
         Effect.flatMap((delivered) =>
           delivered ? Ref.update(clients, (clients) => clients.add(ws)) : Effect.void,
         ),

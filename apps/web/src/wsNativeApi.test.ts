@@ -138,7 +138,7 @@ describe("wsNativeApi", () => {
     expect(lateListener).toHaveBeenCalledWith(expect.objectContaining(payload));
   });
 
-  it("preserves bootstrap ids from server.welcome payloads", async () => {
+  it("preserves startup ids from server.welcome payloads", async () => {
     const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
 
     createWsNativeApi();
@@ -148,8 +148,8 @@ describe("wsNativeApi", () => {
     emitPush(WS_CHANNELS.serverWelcome, {
       cwd: "/tmp/workspace",
       projectName: "t3-code",
-      bootstrapProjectId: ProjectId.makeUnsafe("project-1"),
-      bootstrapThreadId: ThreadId.makeUnsafe("thread-1"),
+      startupProjectId: ProjectId.makeUnsafe("project-1"),
+      startupThreadId: ThreadId.makeUnsafe("thread-1"),
     });
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -157,8 +157,8 @@ describe("wsNativeApi", () => {
       expect.objectContaining({
         cwd: "/tmp/workspace",
         projectName: "t3-code",
-        bootstrapProjectId: "project-1",
-        bootstrapThreadId: "thread-1",
+        startupProjectId: "project-1",
+        startupThreadId: "thread-1",
       }),
     );
   });

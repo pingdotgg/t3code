@@ -166,8 +166,8 @@ export type WsPushSequence = typeof WsPushSequence.Type;
 export const WsWelcomePayload = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   projectName: TrimmedNonEmptyString,
-  bootstrapProjectId: Schema.optional(ProjectId),
-  bootstrapThreadId: Schema.optional(ThreadId),
+  startupProjectId: Schema.optional(ProjectId),
+  startupThreadId: Schema.optional(ThreadId),
 });
 export type WsWelcomePayload = typeof WsWelcomePayload.Type;
 

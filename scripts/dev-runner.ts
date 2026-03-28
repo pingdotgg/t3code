@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
-import { homedir } from "node:os";
-
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NetService } from "@tero/shared/Net";
+import {
+  getDefaultTeroHomePath,
+  normalizeEnvAliases,
+  TERO_DEV_RUNNER_ENV_ALIASES,
+} from "@tero/shared/runtime";
 import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
@@ -14,28 +17,7 @@ const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
 
-const ENV_ALIASES = [
-  ["TERO_PORT_OFFSET", "T3CODE_PORT_OFFSET"],
-  ["TERO_DEV_INSTANCE", "T3CODE_DEV_INSTANCE"],
-  ["TERO_HOME", "T3CODE_HOME"],
-  ["TERO_AUTH_TOKEN", "T3CODE_AUTH_TOKEN"],
-  ["TERO_NO_BROWSER", "T3CODE_NO_BROWSER"],
-  ["TERO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD", "T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD"],
-  ["TERO_LOG_WS_EVENTS", "T3CODE_LOG_WS_EVENTS"],
-  ["TERO_HOST", "T3CODE_HOST"],
-  ["TERO_PORT", "T3CODE_PORT"],
-  ["TERO_DESKTOP_WS_URL", "T3CODE_DESKTOP_WS_URL"],
-] as const;
-
-for (const [preferred, legacy] of ENV_ALIASES) {
-  if (process.env[preferred] === undefined && process.env[legacy] !== undefined) {
-    process.env[preferred] = process.env[legacy];
-  }
-}
-
-export const DEFAULT_TERO_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(homedir(), ".tero-dev"),
-);
+normalizeEnvAliases(TERO_DEV_RUNNER_ENV_ALIASES);
 
 const MODE_ARGS = {
   dev: [
@@ -129,7 +111,7 @@ function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, neve
       return path.resolve(configured);
     }
 
-    return yield* DEFAULT_TERO_HOME;
+    return path.resolve(getDefaultTeroHomePath("development"));
   });
 }
 

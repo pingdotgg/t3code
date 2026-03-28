@@ -24,7 +24,6 @@ import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
-import type { OrchestrationReadModel } from "@tero/contracts";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -131,15 +130,8 @@ function errorDetails(error: unknown): string {
   }
 }
 
-function canBootstrapIntoThread(pathname: string): boolean {
+function canNavigateToStartupThread(pathname: string): boolean {
   return pathname === "/" || pathname === "/_chat" || pathname === "/_chat/";
-}
-
-function resolveFallbackBootstrapThread(snapshot: OrchestrationReadModel): ThreadId | null {
-  const candidate = snapshot.threads
-    .filter((thread) => thread.deletedAt === null)
-    .toSorted((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
-  return candidate ? ThreadId.makeUnsafe(candidate.id) : null;
 }
 
 function EventRouter() {
@@ -152,7 +144,7 @@ function EventRouter() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const pathnameRef = useRef(pathname);
-  const handledBootstrapThreadIdRef = useRef<string | null>(null);
+  const handledStartupThreadIdRef = useRef<string | null>(null);
 
   pathnameRef.current = pathname;
 
@@ -165,9 +157,9 @@ function EventRouter() {
     let pending = false;
     let needsProviderInvalidation = false;
 
-    const flushSnapshotSync = async (): Promise<OrchestrationReadModel | null> => {
+    const flushSnapshotSync = async (): Promise<void> => {
       const snapshot = await api.orchestration.getSnapshot();
-      if (disposed) return null;
+      if (disposed) return;
       latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
       syncServerReadModel(snapshot);
       clearPromotedDraftThreads(new Set(snapshot.threads.map((t) => t.id)));
@@ -183,21 +175,19 @@ function EventRouter() {
         pending = false;
         await flushSnapshotSync();
       }
-      return snapshot;
     };
 
     const syncSnapshot = async () => {
       if (syncing) {
         pending = true;
-        return null;
+        return;
       }
       syncing = true;
       pending = false;
       try {
-        return await flushSnapshotSync();
+        await flushSnapshotSync();
       } catch {
         // Keep prior state and wait for next domain event to trigger a resync.
-        return null;
       } finally {
         syncing = false;
       }
@@ -246,43 +236,28 @@ function EventRouter() {
     });
     const unsubWelcome = onServerWelcome((payload) => {
       void (async () => {
-        const snapshot = await syncSnapshot();
+        await syncSnapshot();
         if (disposed) {
           return;
         }
 
-        if (!canBootstrapIntoThread(pathnameRef.current)) {
+        if (!canNavigateToStartupThread(pathnameRef.current)) {
           return;
         }
 
-        if (payload.bootstrapProjectId && payload.bootstrapThreadId) {
-          setProjectExpanded(payload.bootstrapProjectId, true);
-          if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
-            return;
-          }
-          await navigate({
-            to: "/$threadId",
-            params: { threadId: payload.bootstrapThreadId },
-            replace: true,
-          });
-          handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
+        if (!payload.startupProjectId || !payload.startupThreadId) {
           return;
         }
-
-        if (!snapshot) {
-          return;
-        }
-
-        const fallbackThreadId = resolveFallbackBootstrapThread(snapshot);
-        if (!fallbackThreadId || handledBootstrapThreadIdRef.current === fallbackThreadId) {
+        setProjectExpanded(payload.startupProjectId, true);
+        if (handledStartupThreadIdRef.current === payload.startupThreadId) {
           return;
         }
         await navigate({
           to: "/$threadId",
-          params: { threadId: fallbackThreadId },
+          params: { threadId: payload.startupThreadId },
           replace: true,
         });
-        handledBootstrapThreadIdRef.current = fallbackThreadId;
+        handledStartupThreadIdRef.current = payload.startupThreadId;
       })().catch(() => undefined);
     });
     // onServerConfigUpdated replays the latest cached value synchronously

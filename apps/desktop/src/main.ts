@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import type { DesktopTheme, DesktopUpdateActionResult, DesktopUpdateState } from "@tero/contracts";
 import { NetService } from "@tero/shared/Net";
 import { RotatingFileSink } from "@tero/shared/logging";
+import { getDefaultTeroHomePath, normalizeEnvAliases } from "@tero/shared/runtime";
 import { autoUpdater } from "electron-updater";
 
 import { showDesktopConfirmDialog } from "./confirmDialog";
@@ -52,15 +53,19 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
+normalizeEnvAliases([
+  ["TERO_HOME", "T3CODE_HOME"],
+  ["TERO_COMMIT_HASH", "T3CODE_COMMIT_HASH"],
+  ["TERO_DISABLE_AUTO_UPDATE", "T3CODE_DISABLE_AUTO_UPDATE"],
+  ["TERO_DESKTOP_UPDATE_GITHUB_TOKEN", "T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN"],
+]);
 const isLocalDesktopRuntime =
   process.env.TERO_DESKTOP_LOCAL_DEV === "1" || process.argv.includes("--tero-local-dev");
 const isPackaged = app.isPackaged && !isLocalDesktopRuntime;
 const isRendererDevServer = Boolean(process.env.VITE_DEV_SERVER_URL);
-const DEFAULT_BASE_DIR_NAME = isPackaged ? ".tero" : ".tero-dev";
 const BASE_DIR =
   process.env.TERO_HOME?.trim() ??
-  process.env.T3CODE_HOME?.trim() ??
-  Path.join(OS.homedir(), DEFAULT_BASE_DIR_NAME);
+  getDefaultTeroHomePath(isPackaged ? "production" : "development", OS.homedir());
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "tero";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
@@ -366,9 +371,7 @@ function resolveAboutCommitHash(): string | null {
     return aboutCommitHashCache;
   }
 
-  const envCommitHash = normalizeCommitHash(
-    process.env.TERO_COMMIT_HASH ?? process.env.T3CODE_COMMIT_HASH,
-  );
+  const envCommitHash = normalizeCommitHash(process.env.TERO_COMMIT_HASH);
   if (envCommitHash) {
     aboutCommitHashCache = envCommitHash;
     return aboutCommitHashCache;
@@ -530,8 +533,7 @@ function handleCheckForUpdatesMenuClick(): void {
     isPackaged: app.isPackaged,
     platform: process.platform,
     appImage: process.env.APPIMAGE,
-    disabledByEnv:
-      (process.env.TERO_DISABLE_AUTO_UPDATE ?? process.env.T3CODE_DISABLE_AUTO_UPDATE) === "1",
+    disabledByEnv: process.env.TERO_DISABLE_AUTO_UPDATE === "1",
   });
   if (disabledReason) {
     console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
@@ -764,8 +766,7 @@ function shouldEnableAutoUpdates(): boolean {
       isPackaged: app.isPackaged,
       platform: process.platform,
       appImage: process.env.APPIMAGE,
-      disabledByEnv:
-        (process.env.TERO_DISABLE_AUTO_UPDATE ?? process.env.T3CODE_DISABLE_AUTO_UPDATE) === "1",
+      disabledByEnv: process.env.TERO_DISABLE_AUTO_UPDATE === "1",
     }) === null
   );
 }
@@ -850,10 +851,7 @@ function configureAutoUpdater(): void {
   updaterConfigured = true;
 
   const githubToken =
-    process.env.TERO_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() ||
-    process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() ||
-    process.env.GH_TOKEN?.trim() ||
-    "";
+    process.env.TERO_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim() || "";
   if (githubToken) {
     // When a token is provided, re-configure the feed with `private: true` so
     // electron-updater uses the GitHub API (api.github.com) instead of the
@@ -960,35 +958,25 @@ function backendEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function resolveLocalDevBackendExecutable(): string {
+function resolveBackendExecutable(): { executable: string; useElectronRunAsNode: boolean } {
   const explicitExecutable = process.env.TERO_DESKTOP_SERVER_EXECUTABLE?.trim();
   if (explicitExecutable) {
-    return explicitExecutable;
+    return {
+      executable: explicitExecutable,
+      useElectronRunAsNode: explicitExecutable === process.execPath,
+    };
   }
 
-  const shellCandidates = [process.env.BUN, process.env.npm_node_execpath]
-    .filter((value): value is string => typeof value === "string")
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
-
-  for (const candidate of shellCandidates) {
-    if (FS.existsSync(candidate)) {
-      return candidate;
-    }
+  if (isLocalDesktopRuntime) {
+    throw new Error(
+      "Local desktop runtime requires TERO_DESKTOP_SERVER_EXECUTABLE to be set. Launch through the provided desktop scripts so the backend process uses Node instead of Electron.",
+    );
   }
 
-  for (const binaryName of ["bun", "node"]) {
-    const resolved = ChildProcess.spawnSync("which", [binaryName], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const executable = resolved.stdout.trim();
-    if (resolved.status === 0 && executable.length > 0 && FS.existsSync(executable)) {
-      return executable;
-    }
-  }
-
-  return process.execPath;
+  return {
+    executable: process.execPath,
+    useElectronRunAsNode: true,
+  };
 }
 
 function scheduleBackendRestart(reason: string): void {
@@ -1014,9 +1002,14 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
-  const backendExecutable = isLocalDesktopRuntime
-    ? resolveLocalDevBackendExecutable()
-    : process.env.TERO_DESKTOP_SERVER_EXECUTABLE?.trim() || process.execPath;
+  let backendExecutable: string;
+  let useElectronRunAsNode: boolean;
+  try {
+    ({ executable: backendExecutable, useElectronRunAsNode } = resolveBackendExecutable());
+  } catch (error) {
+    handleFatalStartupError("resolve backend executable", error);
+    return;
+  }
   const backendArgs = [
     backendEntry,
     "--mode",
@@ -1033,7 +1026,7 @@ function startBackend(): void {
     cwd: resolveBackendCwd(),
     env: {
       ...backendEnv(),
-      ...(backendExecutable === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+      ...(useElectronRunAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
     },
     stdio: captureBackendLogs ? ["ignore", "pipe", "pipe"] : "inherit",
   });

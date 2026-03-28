@@ -691,8 +691,8 @@ describe("WebSocket Server", () => {
       expect.objectContaining({
         cwd: "/test/bootstrap-workspace",
         projectName: "bootstrap-workspace",
-        bootstrapProjectId: expect.any(String),
-        bootstrapThreadId: expect.any(String),
+        startupProjectId: expect.any(String),
+        startupThreadId: expect.any(String),
       }),
     );
 
@@ -720,15 +720,15 @@ describe("WebSocket Server", () => {
         worktreePath: string | null;
       }>;
     };
-    const bootstrapProjectId = (welcome.data as { bootstrapProjectId?: string }).bootstrapProjectId;
-    const bootstrapThreadId = (welcome.data as { bootstrapThreadId?: string }).bootstrapThreadId;
-    expect(bootstrapProjectId).toBeDefined();
-    expect(bootstrapThreadId).toBeDefined();
+    const startupProjectId = (welcome.data as { startupProjectId?: string }).startupProjectId;
+    const startupThreadId = (welcome.data as { startupThreadId?: string }).startupThreadId;
+    expect(startupProjectId).toBeDefined();
+    expect(startupThreadId).toBeDefined();
 
     expect(snapshot.projects).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: bootstrapProjectId,
+          id: startupProjectId,
           workspaceRoot: "/test/bootstrap-workspace",
           title: "bootstrap-workspace",
           defaultModelSelection: {
@@ -741,8 +741,8 @@ describe("WebSocket Server", () => {
     expect(snapshot.threads).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: bootstrapThreadId,
-          projectId: bootstrapProjectId,
+          id: startupThreadId,
+          projectId: startupProjectId,
           title: "New thread",
           modelSelection: {
             provider: "codex",
@@ -775,12 +775,12 @@ describe("WebSocket Server", () => {
 
     const [firstWs, firstWelcome] = await connectAndAwaitWelcome(port);
     connections.push(firstWs);
-    const firstBootstrapProjectId = (firstWelcome.data as { bootstrapProjectId?: string })
-      .bootstrapProjectId;
-    const firstBootstrapThreadId = (firstWelcome.data as { bootstrapThreadId?: string })
-      .bootstrapThreadId;
-    expect(firstBootstrapProjectId).toBeDefined();
-    expect(firstBootstrapThreadId).toBeDefined();
+    const firstStartupProjectId = (firstWelcome.data as { startupProjectId?: string })
+      .startupProjectId;
+    const firstStartupThreadId = (firstWelcome.data as { startupThreadId?: string })
+      .startupThreadId;
+    expect(firstStartupProjectId).toBeDefined();
+    expect(firstStartupThreadId).toBeDefined();
 
     firstWs.close();
     await closeTestServer();
@@ -802,8 +802,61 @@ describe("WebSocket Server", () => {
       expect.objectContaining({
         cwd,
         projectName: "bootstrap-existing",
-        bootstrapProjectId: firstBootstrapProjectId,
-        bootstrapThreadId: firstBootstrapThreadId,
+        startupProjectId: firstStartupProjectId,
+        startupThreadId: firstStartupThreadId,
+      }),
+    );
+  });
+
+  it("includes startup ids for the latest existing thread even without cwd auto-bootstrap", async () => {
+    const baseDir = makeTempDir("t3code-state-startup-existing-");
+    const { dbPath } = deriveServerPathsSync(baseDir, undefined);
+    const persistenceLayer = makeSqlitePersistenceLive(dbPath).pipe(
+      Layer.provide(NodeServices.layer),
+    );
+    const cwd = "/test/startup-existing";
+
+    server = await createTestServer({
+      cwd,
+      baseDir,
+      persistenceLayer,
+      autoBootstrapProjectFromCwd: true,
+    });
+    let addr = server.address();
+    let port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const [firstWs, firstWelcome] = await connectAndAwaitWelcome(port);
+    connections.push(firstWs);
+    const firstStartupProjectId = (firstWelcome.data as { startupProjectId?: string })
+      .startupProjectId;
+    const firstStartupThreadId = (firstWelcome.data as { startupThreadId?: string })
+      .startupThreadId;
+    expect(firstStartupProjectId).toBeDefined();
+    expect(firstStartupThreadId).toBeDefined();
+
+    firstWs.close();
+    await closeTestServer();
+    server = null;
+
+    server = await createTestServer({
+      cwd: "/test/no-bootstrap-here",
+      baseDir,
+      persistenceLayer,
+      autoBootstrapProjectFromCwd: false,
+    });
+    addr = server.address();
+    port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const [secondWs, secondWelcome] = await connectAndAwaitWelcome(port);
+    connections.push(secondWs);
+    expect(secondWelcome.data).toEqual(
+      expect.objectContaining({
+        cwd: "/test/no-bootstrap-here",
+        projectName: "no-bootstrap-here",
+        startupProjectId: firstStartupProjectId,
+        startupThreadId: firstStartupThreadId,
       }),
     );
   });

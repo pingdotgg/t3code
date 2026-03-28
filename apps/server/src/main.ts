@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 /**
  * CliConfig - CLI/runtime bootstrap service definitions.
  *
@@ -10,6 +9,11 @@ import { homedir } from "node:os";
 import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { NetService } from "@tero/shared/Net";
+import {
+  getDefaultTeroHomePath,
+  normalizeEnvAliases,
+  TERO_RUNTIME_ENV_ALIASES,
+} from "@tero/shared/runtime";
 import {
   DEFAULT_PORT,
   deriveServerPaths,
@@ -89,27 +93,8 @@ export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
   );
 }
 
-const ENV_ALIASES = [
-  ["TERO_MODE", "T3CODE_MODE"],
-  ["TERO_PORT", "T3CODE_PORT"],
-  ["TERO_HOST", "T3CODE_HOST"],
-  ["TERO_HOME", "T3CODE_HOME"],
-  ["TERO_NO_BROWSER", "T3CODE_NO_BROWSER"],
-  ["TERO_AUTH_TOKEN", "T3CODE_AUTH_TOKEN"],
-  ["TERO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD", "T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD"],
-  ["TERO_LOG_WS_EVENTS", "T3CODE_LOG_WS_EVENTS"],
-] as const;
-
-for (const [preferred, legacy] of ENV_ALIASES) {
-  const preferredValue = process.env[preferred]?.trim();
-  const legacyValue = process.env[legacy]?.trim();
-  if (
-    preferredValue !== undefined &&
-    legacyValue !== undefined &&
-    preferredValue.length > 0 &&
-    legacyValue.length > 0 &&
-    preferredValue !== legacyValue
-  ) {
+normalizeEnvAliases(TERO_RUNTIME_ENV_ALIASES, {
+  onConflict: ({ preferred, legacy }) => {
     console.warn(
       `[tero] conflicting environment values detected; preferring ${preferred} over ${legacy}`,
       {
@@ -117,14 +102,8 @@ for (const [preferred, legacy] of ENV_ALIASES) {
         legacy,
       },
     );
-  }
-}
-
-for (const [preferred, legacy] of ENV_ALIASES) {
-  if (process.env[preferred] === undefined && process.env[legacy] !== undefined) {
-    process.env[preferred] = process.env[legacy];
-  }
-}
+  },
+});
 
 const CliEnvConfig = Config.all({
   mode: Config.string("TERO_MODE").pipe(
@@ -172,7 +151,7 @@ const resolveRuntimeBaseDirInput = (
   }
 
   if (devUrl !== undefined) {
-    return `${homedir()}/.tero-dev`;
+    return getDefaultTeroHomePath("development");
   }
 
   return undefined;
