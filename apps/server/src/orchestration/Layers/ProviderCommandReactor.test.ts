@@ -328,9 +328,12 @@ describe("ProviderCommandReactor", () => {
         title:
           typeof input === "object" &&
           input !== null &&
-          "model" in input &&
-          typeof input.model === "string"
-            ? `Title via ${input.model}`
+          "modelSelection" in input &&
+          typeof input.modelSelection === "object" &&
+          input.modelSelection !== null &&
+          "model" in input.modelSelection &&
+          typeof input.modelSelection.model === "string"
+            ? `Title via ${input.modelSelection.model}`
             : "Generated title",
       }),
     );
@@ -355,8 +358,11 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
     expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
-      model: "gpt-5.4-mini",
       message: "Please investigate reconnect failures after restarting the session.",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4-mini",
+      },
     });
 
     await waitFor(async () => {

@@ -5,6 +5,7 @@ import { expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
+import { sanitizeThreadTitle } from "../Utils.ts";
 import { ClaudeTextGenerationLive } from "./ClaudeTextGeneration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
@@ -244,6 +245,64 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGenerationLive", (it) => {
         });
 
         expect(generated.title).toBe("Improve orchestration flow");
+      }),
+    ),
+  );
+
+  it.effect("generates thread titles through the Claude provider", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title:
+              '  "Reconnect failures after restart because the session state does not recover"  ',
+          },
+        }),
+        stdinMustContain: "You write concise thread titles for coding conversations.",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Please investigate reconnect failures after restarting the session.",
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-sonnet-4-6",
+          },
+        });
+
+        expect(generated.title).toBe(
+          sanitizeThreadTitle(
+            '"Reconnect failures after restart because the session state does not recover"',
+          ),
+        );
+      }),
+    ),
+  );
+
+  it.effect("falls back when Claude thread title normalization becomes whitespace-only", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: '  """   """  ',
+          },
+        }),
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Name this thread.",
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-sonnet-4-6",
+          },
+        });
+
+        expect(generated.title).toBe("New thread");
       }),
     ),
   );

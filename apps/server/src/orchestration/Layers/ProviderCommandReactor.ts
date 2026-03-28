@@ -466,7 +466,10 @@ const make = Effect.gen(function* () {
         cwd: input.cwd,
         message: input.messageText,
         ...(attachments.length > 0 ? { attachments } : {}),
-        model: input.textGenerationModel ?? textGenerationModelSelection.model,
+        modelSelection: {
+          ...textGenerationModelSelection,
+          model: input.textGenerationModel ?? textGenerationModelSelection.model,
+        },
       });
       if (!generated) return;
 
