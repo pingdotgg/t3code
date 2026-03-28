@@ -88,7 +88,7 @@ function buildLargeText(lineCount = 20_000): string {
 
 it.layer(TestLayer)("CheckpointStoreLive", (it) => {
   describe("diffCheckpoints", () => {
-    it.effect("truncates oversized checkpoint diffs instead of failing", () =>
+    it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -114,7 +114,8 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
         });
 
         expect(diff).toContain("diff --git");
-        expect(diff).toContain("[truncated]");
+        expect(diff).not.toContain("[truncated]");
+        expect(diff).toContain("+line 19999");
       }),
     );
   });
