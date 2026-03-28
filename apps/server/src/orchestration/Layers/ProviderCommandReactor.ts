@@ -443,7 +443,6 @@ const make = Effect.gen(function* () {
     readonly worktreePath: string | null;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
-    readonly textGenerationModel?: string;
   }) {
     if (!input.branch || !input.worktreePath) {
       return;
@@ -456,16 +455,14 @@ const make = Effect.gen(function* () {
     const cwd = input.worktreePath;
     const attachments = input.attachments ?? [];
     yield* Effect.gen(function* () {
-      const { textGenerationModelSelection } = yield* serverSettingsService.getSettings;
+      const { textGenerationModelSelection: modelSelection } =
+        yield* serverSettingsService.getSettings;
 
       const generated = yield* textGeneration.generateBranchName({
         cwd,
         message: input.messageText,
         ...(attachments.length > 0 ? { attachments } : {}),
-        modelSelection: {
-          ...textGenerationModelSelection,
-          model: input.textGenerationModel ?? textGenerationModelSelection.model,
-        },
+        modelSelection,
       });
       if (!generated) return;
 
@@ -498,20 +495,17 @@ const make = Effect.gen(function* () {
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly titleSeed?: string;
-    readonly textGenerationModel?: string;
   }) {
     const attachments = input.attachments ?? [];
     yield* Effect.gen(function* () {
-      const { textGenerationModelSelection } = yield* serverSettingsService.getSettings;
+      const { textGenerationModelSelection: modelSelection } =
+        yield* serverSettingsService.getSettings;
 
       const generated = yield* textGeneration.generateThreadTitle({
         cwd: input.cwd,
         message: input.messageText,
         ...(attachments.length > 0 ? { attachments } : {}),
-        modelSelection: {
-          ...textGenerationModelSelection,
-          model: input.textGenerationModel ?? textGenerationModelSelection.model,
-        },
+        modelSelection,
       });
       if (!generated) return;
 
@@ -576,9 +570,6 @@ const make = Effect.gen(function* () {
         messageText: message.text,
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
-        ...(event.payload.textGenerationModel !== undefined
-          ? { textGenerationModel: event.payload.textGenerationModel }
-          : {}),
       };
 
       yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({

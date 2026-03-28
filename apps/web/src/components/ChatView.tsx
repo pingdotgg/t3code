@@ -662,7 +662,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
     [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
   );
-  const selectedTextGenerationModel = settings.textGenerationModelSelection.model;
   const selectedModelForPicker = selectedModel;
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
@@ -2712,8 +2711,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         },
         modelSelection: selectedModelSelection,
         titleSeed: title,
-        textGenerationModel: selectedTextGenerationModel,
-        assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
         interactionMode,
         createdAt: messageCreatedAt,
@@ -2996,8 +2993,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           },
           modelSelection: selectedModelSelection,
           titleSeed: activeThread.title,
-          textGenerationModel: selectedTextGenerationModel,
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: nextInteractionMode,
           ...(nextInteractionMode === "default" && activeProposedPlan
@@ -3047,9 +3042,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       selectedProviderModels,
       setComposerDraftInteractionMode,
       setThreadError,
-      settings.enableAssistantStreaming,
       selectedModel,
-      selectedTextGenerationModel,
     ],
   );
 
@@ -3116,8 +3109,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           },
           modelSelection: selectedModelSelection,
           titleSeed: nextThreadTitle,
-          textGenerationModel: selectedTextGenerationModel,
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: "default",
           createdAt,
@@ -3170,8 +3161,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedModelSelection,
     selectedProvider,
     selectedProviderModels,
-    settings.enableAssistantStreaming,
-    selectedTextGenerationModel,
     syncServerReadModel,
     selectedModel,
   ]);

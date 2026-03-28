@@ -320,23 +320,10 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
-  it("generates a thread title on the first turn using the text generation model", async () => {
+  it("generates a thread title on the first turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
-    harness.generateThreadTitle.mockImplementation((input: unknown) =>
-      Effect.succeed({
-        title:
-          typeof input === "object" &&
-          input !== null &&
-          "modelSelection" in input &&
-          typeof input.modelSelection === "object" &&
-          input.modelSelection !== null &&
-          "model" in input.modelSelection &&
-          typeof input.modelSelection.model === "string"
-            ? `Title via ${input.modelSelection.model}`
-            : "Generated title",
-      }),
-    );
+    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -358,7 +345,6 @@ describe("ProviderCommandReactor", () => {
           text: "Please investigate reconnect failures after restarting the session.",
           attachments: [],
         },
-        textGenerationModel: "gpt-5.4-mini",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -368,22 +354,18 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
     expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
       message: "Please investigate reconnect failures after restarting the session.",
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.4-mini",
-      },
     });
 
     await waitFor(async () => {
       const readModel = await Effect.runPromise(harness.engine.getReadModel());
       return (
         readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"))?.title ===
-        "Title via gpt-5.4-mini"
+        "Generated title"
       );
     });
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
-    expect(thread?.title).toBe("Title via gpt-5.4-mini");
+    expect(thread?.title).toBe("Generated title");
   });
 
   it("does not overwrite an existing custom thread title on the first turn", async () => {
@@ -410,7 +392,6 @@ describe("ProviderCommandReactor", () => {
           text: "Please investigate reconnect failures after restarting the session.",
           attachments: [],
         },
-        textGenerationModel: "gpt-5.4-mini",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -456,7 +437,6 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         titleSeed: seededTitle,
-        textGenerationModel: "gpt-5.4-mini",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -477,7 +457,7 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Reconnect spinner resume bug");
   });
 
-  it("reuses the text generation model for automatic worktree branch naming", async () => {
+  it("generates a worktree branch name for the first turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
@@ -517,7 +497,6 @@ describe("ProviderCommandReactor", () => {
           text: "Add a safer reconnect backoff.",
           attachments: [],
         },
-        textGenerationModel: "gpt-5.4-mini",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -526,9 +505,6 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
     expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
-      modelSelection: {
-        model: "gpt-5.4-mini",
-      },
       message: "Add a safer reconnect backoff.",
     });
   });

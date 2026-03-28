@@ -319,25 +319,6 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   }),
 );
 
-it.effect("accepts a text generation model in thread.turn.start", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartCommand({
-      type: "thread.turn.start",
-      commandId: "cmd-turn-text-model",
-      threadId: "thread-1",
-      message: {
-        messageId: "msg-text-model",
-        role: "user",
-        text: "hello",
-        attachments: [],
-      },
-      textGenerationModel: "gpt-5.4-mini",
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.textGenerationModel, "gpt-5.4-mini");
-  }),
-);
-
 it.effect("accepts a title seed in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({
@@ -413,18 +394,6 @@ it.effect("decodes thread.turn-start-requested source proposed plan metadata whe
       threadId: "thread-1",
       planId: "plan-1",
     });
-  }),
-);
-
-it.effect("decodes thread.turn-start-requested text generation model when present", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartRequestedPayload({
-      threadId: "thread-2",
-      messageId: "msg-2",
-      textGenerationModel: "gpt-5.4-mini",
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.textGenerationModel, "gpt-5.4-mini");
   }),
 );
 
