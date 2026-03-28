@@ -415,6 +415,9 @@ it.layer(TestLayer)("git integration", (it) => {
 
     it.effect("refreshes upstream behind count after checkout when remote branch advanced", () =>
       Effect.gen(function* () {
+        const services = yield* Effect.services();
+        const runPromise = Effect.runPromiseWith(services);
+
         const remote = yield* makeTmpDir();
         const source = yield* makeTmpDir();
         const clone = yield* makeTmpDir();
@@ -449,7 +452,7 @@ it.layer(TestLayer)("git integration", (it) => {
         const core = yield* GitCore;
         yield* Effect.promise(() =>
           vi.waitFor(async () => {
-            const details = await Effect.runPromise(core.statusDetails(source));
+            const details = await runPromise(core.statusDetails(source));
             expect(details.branch).toBe(featureBranch);
             expect(details.aheadCount).toBe(0);
             expect(details.behindCount).toBe(1);
