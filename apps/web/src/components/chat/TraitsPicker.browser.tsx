@@ -296,7 +296,7 @@ describe("TraitsPicker (Claude)", () => {
     });
   });
 
-  it("shows prompt-controlled Ultrathink state with disabled effort controls", async () => {
+  it("shows prompt-controlled Ultrathink state with selectable effort controls", async () => {
     await using _ = await mountClaudePicker({
       model: "claude-opus-4-6",
       options: { effort: "high" },
@@ -312,8 +312,24 @@ describe("TraitsPicker (Claude)", () => {
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
       expect(text).toContain("Effort");
-      expect(text).toContain("Remove Ultrathink from the prompt to change effort.");
-      expect(text).not.toContain("Fallback Effort");
+      expect(text).not.toContain("ultrathink");
+    });
+  });
+
+  it("warns when ultrathink appears in prompt body text", async () => {
+    await using _ = await mountClaudePicker({
+      model: "claude-opus-4-6",
+      options: { effort: "high" },
+      prompt: "Ultrathink:\nplease ultrathink about this problem",
+    });
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain(
+        'Your prompt contains "ultrathink" in the text. Remove it to change effort.',
+      );
     });
   });
 
