@@ -51,7 +51,7 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
-import { ServerSettings, ServerSettingsPatch } from "./settings";
+import { type DesktopTitleBarMode, ServerSettings, ServerSettingsPatch } from "./settings";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -71,11 +71,21 @@ export type DesktopUpdateStatus =
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
+export type DesktopWindowPlatform = "darwin" | "linux" | "win32" | "other";
+export type DesktopWindowAction = "minimize" | "toggle-maximize" | "exit-full-screen" | "close";
 
 export interface DesktopRuntimeInfo {
   hostArch: DesktopRuntimeArch;
   appArch: DesktopRuntimeArch;
   runningUnderArm64Translation: boolean;
+}
+
+export interface DesktopWindowState {
+  isFullScreen: boolean;
+  isMaximized: boolean;
+  platform: DesktopWindowPlatform;
+  titleBarMode: DesktopTitleBarMode;
+  zoomFactor: number;
 }
 
 export interface DesktopUpdateState {
@@ -105,12 +115,16 @@ export interface DesktopBridge {
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  setTitleBarMode: (mode: DesktopTitleBarMode) => Promise<DesktopWindowState>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  getWindowState: () => Promise<DesktopWindowState>;
+  performWindowAction: (action: DesktopWindowAction) => Promise<DesktopWindowState>;
+  onWindowState: (listener: (state: DesktopWindowState) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;

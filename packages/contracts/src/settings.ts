@@ -42,6 +42,9 @@ export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientS
 
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
+export const DesktopTitleBarMode = Schema.Literals(["t3code", "system"]);
+export type DesktopTitleBarMode = typeof DesktopTitleBarMode.Type;
+export const DEFAULT_DESKTOP_TITLE_BAR_MODE: DesktopTitleBarMode = "t3code";
 
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
@@ -71,6 +74,9 @@ export const ClaudeSettings = Schema.Struct({
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
 export const ServerSettings = Schema.Struct({
+  desktopTitleBarMode: DesktopTitleBarMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_DESKTOP_TITLE_BAR_MODE),
+  ),
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(() => "local" as const satisfies ThreadEnvMode),
@@ -140,6 +146,7 @@ const ClaudeSettingsPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  desktopTitleBarMode: Schema.optionalKey(DesktopTitleBarMode),
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),

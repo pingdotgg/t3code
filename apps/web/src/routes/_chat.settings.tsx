@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
+  type DesktopTitleBarMode,
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
   type ServerProvider,
@@ -50,6 +51,8 @@ import { formatRelativeTime } from "../timestampFormat";
 import { ensureNativeApi, readNativeApi } from "../nativeApi";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { Equal } from "effect";
+import { useDesktopWindowState } from "~/hooks/useDesktopWindowState";
+import { resolveShouldUseDesktopHeaderDragRegion } from "~/hooks/useWindowDecorationMode";
 
 const THEME_OPTIONS = [
   {
@@ -74,6 +77,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const DESKTOP_TITLE_BAR_MODE_LABELS: Record<DesktopTitleBarMode, string> = {
+  t3code: "T3 Code",
+  system: "System",
+};
 
 const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 
@@ -286,10 +294,17 @@ function SettingResetButton({ label, onClick }: { label: string; onClick: () => 
 function SettingsRouteView() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
+  const desktopWindowState = useDesktopWindowState();
+  const shouldUseDesktopHeaderDragRegion = resolveShouldUseDesktopHeaderDragRegion({
+    windowState: desktopWindowState,
+    desktopTitleBarMode: settings.desktopTitleBarMode,
+  });
   const { updateSettings, resetSettings } = useUpdateSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [desktopTitleBarModeSelection, setDesktopTitleBarModeSelection] =
+    useState<DesktopTitleBarMode>(settings.desktopTitleBarMode);
   const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
     codex: Boolean(
       settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
@@ -315,6 +330,17 @@ function SettingsRouteView() {
   const refreshingRef = useRef(false);
   const queryClient = useQueryClient();
   useRelativeTimeTick();
+  const effectiveDesktopTitleBarMode =
+    desktopWindowState?.titleBarMode ?? desktopTitleBarModeSelection;
+
+  const setDesktopTitleBarMode = useCallback(async (mode: DesktopTitleBarMode) => {
+    const bridge = window.desktopBridge;
+    if (!bridge) {
+      throw new Error("Desktop bridge unavailable");
+    }
+
+    return bridge.setTitleBarMode(mode);
+  }, []);
 
   const refreshProviders = useCallback(() => {
     if (refreshingRef.current) return;
@@ -332,6 +358,36 @@ function SettingsRouteView() {
         setIsRefreshingProviders(false);
       });
   }, [queryClient]);
+
+  useEffect(() => {
+    if (desktopWindowState !== null) {
+      setDesktopTitleBarModeSelection(desktopWindowState.titleBarMode);
+      return;
+    }
+
+    setDesktopTitleBarModeSelection(settings.desktopTitleBarMode);
+  }, [desktopWindowState, settings.desktopTitleBarMode]);
+
+  const updateDesktopTitleBarMode = useCallback(
+    async (mode: DesktopTitleBarMode) => {
+      setDesktopTitleBarModeSelection(mode);
+
+      try {
+        const nextWindowState = await setDesktopTitleBarMode(mode);
+        setDesktopTitleBarModeSelection(nextWindowState.titleBarMode);
+        updateSettings({
+          desktopTitleBarMode: nextWindowState.titleBarMode,
+        });
+      } catch (error) {
+        setDesktopTitleBarModeSelection(effectiveDesktopTitleBarMode);
+        queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() }).catch((reason) => {
+          console.error("Failed to refresh settings after window decoration update", reason);
+        });
+        console.error("Failed to update window decoration", error);
+      }
+    },
+    [effectiveDesktopTitleBarMode, queryClient, setDesktopTitleBarMode, updateSettings],
+  );
 
   const modelListRefs = useRef<Partial<Record<ProviderKind, HTMLDivElement | null>>>({});
 
@@ -359,8 +415,13 @@ function SettingsRouteView() {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
+  const shouldShowDesktopTitleBarModeSetting =
+    isElectron && desktopWindowState !== null && desktopWindowState.platform !== "other";
   const changedSettingLabels = [
     ...(theme !== "system" ? ["Theme"] : []),
+    ...(effectiveDesktopTitleBarMode !== DEFAULT_UNIFIED_SETTINGS.desktopTitleBarMode
+      ? ["Window decoration"]
+      : []),
     ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
       ? ["Time format"]
       : []),
@@ -550,6 +611,9 @@ function SettingsRouteView() {
 
     setTheme("system");
     resetSettings();
+    if (effectiveDesktopTitleBarMode !== DEFAULT_UNIFIED_SETTINGS.desktopTitleBarMode) {
+      await updateDesktopTitleBarMode(DEFAULT_UNIFIED_SETTINGS.desktopTitleBarMode);
+    }
     setOpenProviderDetails({
       codex: false,
       claudeAgent: false,
@@ -562,9 +626,9 @@ function SettingsRouteView() {
   }
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+    <SidebarInset className="h-full min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        {!isElectron && (
+        {!shouldUseDesktopHeaderDragRegion && (
           <header className="border-b border-border px-3 py-2 sm:px-5">
             <div className="flex items-center gap-2">
               <SidebarTrigger className="size-7 shrink-0 md:hidden" />
@@ -584,7 +648,7 @@ function SettingsRouteView() {
           </header>
         )}
 
-        {isElectron && (
+        {shouldUseDesktopHeaderDragRegion && (
           <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
@@ -637,6 +701,52 @@ function SettingsRouteView() {
                   </Select>
                 }
               />
+
+              {shouldShowDesktopTitleBarModeSetting ? (
+                <SettingsRow
+                  title="Window decoration"
+                  description="Choose whether T3 Code or your system draws the window decoration. Active chats keep running while the window is rebuilt."
+                  resetAction={
+                    effectiveDesktopTitleBarMode !==
+                    DEFAULT_UNIFIED_SETTINGS.desktopTitleBarMode ? (
+                      <SettingResetButton
+                        label="window decoration"
+                        onClick={() => {
+                          void updateDesktopTitleBarMode(
+                            DEFAULT_UNIFIED_SETTINGS.desktopTitleBarMode,
+                          );
+                        }}
+                      />
+                    ) : null
+                  }
+                  control={
+                    <Select
+                      value={desktopTitleBarModeSelection}
+                      onValueChange={(value) => {
+                        if (value !== "t3code" && value !== "system") {
+                          return;
+                        }
+
+                        void updateDesktopTitleBarMode(value);
+                      }}
+                    >
+                      <SelectTrigger className="w-full sm:w-56" aria-label="Window decoration">
+                        <SelectValue>
+                          {DESKTOP_TITLE_BAR_MODE_LABELS[desktopTitleBarModeSelection]}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end" alignItemWithTrigger={false}>
+                        <SelectItem hideIndicator value="t3code">
+                          {DESKTOP_TITLE_BAR_MODE_LABELS.t3code}
+                        </SelectItem>
+                        <SelectItem hideIndicator value="system">
+                          {DESKTOP_TITLE_BAR_MODE_LABELS.system}
+                        </SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  }
+                />
+              ) : null}
 
               <SettingsRow
                 title="Time format"

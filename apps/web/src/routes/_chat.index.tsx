@@ -2,8 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
 import { SidebarTrigger } from "../components/ui/sidebar";
+import { useShouldUseDesktopHeaderDragRegion } from "~/hooks/useWindowDecorationMode";
 
 function ChatIndexRouteView() {
+  const shouldUseDesktopHeaderDragRegion = useShouldUseDesktopHeaderDragRegion();
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
       {!isElectron && (
@@ -15,7 +18,7 @@ function ChatIndexRouteView() {
         </header>
       )}
 
-      {isElectron && (
+      {shouldUseDesktopHeaderDragRegion && (
         <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
           <span className="text-xs text-muted-foreground/50">No active thread</span>
         </div>

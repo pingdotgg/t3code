@@ -57,6 +57,7 @@ function createBaseServerConfig(): ServerConfig {
     ],
     availableEditors: [],
     settings: {
+      desktopTitleBarMode: "t3code",
       enableAssistantStreaming: false,
       defaultThreadEnvMode: "local" as const,
       textGenerationModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },

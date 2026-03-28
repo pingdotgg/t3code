@@ -4,6 +4,7 @@ import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ThreadSidebar from "../components/Sidebar";
+import { DesktopWindowTopBar } from "~/components/DesktopWindowTopBar";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -113,24 +114,27 @@ function ChatRouteLayout() {
   }, [navigate]);
 
   return (
-    <SidebarProvider defaultOpen>
-      <ChatRouteGlobalShortcuts />
-      <Sidebar
-        side="left"
-        collapsible="offcanvas"
-        className="border-r border-border bg-card text-foreground"
-        resizable={{
-          minWidth: THREAD_SIDEBAR_MIN_WIDTH,
-          shouldAcceptWidth: ({ nextWidth, wrapper }) =>
-            wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-          storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-        }}
-      >
-        <ThreadSidebar />
-        <SidebarRail />
-      </Sidebar>
-      <Outlet />
-    </SidebarProvider>
+    <div className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
+      <DesktopWindowTopBar />
+      <SidebarProvider defaultOpen className="min-h-0 flex-1">
+        <ChatRouteGlobalShortcuts />
+        <Sidebar
+          side="left"
+          collapsible="offcanvas"
+          className="border-r border-border bg-card text-foreground"
+          resizable={{
+            minWidth: THREAD_SIDEBAR_MIN_WIDTH,
+            shouldAcceptWidth: ({ nextWidth, wrapper }) =>
+              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+          }}
+        >
+          <ThreadSidebar />
+          <SidebarRail />
+        </Sidebar>
+        <Outlet />
+      </SidebarProvider>
+    </div>
   );
 }
 
