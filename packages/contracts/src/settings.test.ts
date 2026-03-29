@@ -5,4 +5,8 @@ describe("DEFAULT_CLIENT_SETTINGS", () => {
   it("includes archive confirmation with a false default", () => {
     expect(DEFAULT_CLIENT_SETTINGS.confirmThreadArchive).toBe(false);
   });
+
+  it("includes colorblind mode with a false default", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.colorblindMode).toBe(false);
+  });
 });
