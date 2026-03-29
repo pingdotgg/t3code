@@ -13,10 +13,10 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const providerCommandReactor = yield* ProviderCommandReactor;
   const checkpointReactor = yield* CheckpointReactor;
 
-  const start: OrchestrationReactorShape["start"] = Effect.gen(function* () {
-    yield* providerRuntimeIngestion.start;
-    yield* providerCommandReactor.start;
-    yield* checkpointReactor.start;
+  const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
+    yield* providerRuntimeIngestion.start();
+    yield* providerCommandReactor.start();
+    yield* checkpointReactor.start();
   });
 
   return {

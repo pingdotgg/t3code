@@ -46,7 +46,7 @@ Effect.fn("name")(
 - [x] `apps/server/src/provider/Layers/CodexAdapter.ts`
 - [x] `apps/server/src/git/Layers/GitCore.ts`
 - [x] `apps/server/src/git/Layers/GitManager.ts`
-- [ ] `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts`
+- [x] `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts`
 - [x] `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
 - [ ] `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`
 - [ ] `apps/server/src/provider/Layers/EventNdjsonLogger.ts`
@@ -115,12 +115,12 @@ Effect.fn("name")(
 
 ### `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts` (`14`)
 
-- [ ] [finalizeAssistantMessage](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts#L680)
-- [ ] [upsertProposedPlan](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts#L722)
-- [ ] [finalizeBufferedProposedPlan](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts#L761)
-- [ ] [clearTurnStateForSession](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts#L800)
-- [ ] [processRuntimeEvent](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts#L908)
-- [ ] Nested callback wrappers in this file
+- [x] [finalizeAssistantMessage](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts#L680)
+- [x] [upsertProposedPlan](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts#L722)
+- [x] [finalizeBufferedProposedPlan](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts#L761)
+- [x] [clearTurnStateForSession](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts#L800)
+- [x] [processRuntimeEvent](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts#L908)
+- [x] Nested callback wrappers in this file
 
 ### `apps/server/src/provider/Layers/CodexAdapter.ts` (`12`)
 
