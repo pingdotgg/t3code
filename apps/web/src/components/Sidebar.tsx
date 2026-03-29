@@ -45,9 +45,17 @@ import {
 } from "@t3tools/contracts/settings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
+import { isTerminalFocused } from "../lib/terminalFocus";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
-import { shortcutLabelForCommand } from "../keybindings";
+import {
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+  shouldShowThreadJumpHints,
+  threadJumpCommandForIndex,
+  threadJumpIndexFromCommand,
+  threadTraversalDirectionFromCommand,
+} from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -93,11 +101,9 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
-  formatThreadJumpHintLabel,
-  getThreadJumpKey,
+  getVisibleSidebarThreadIds,
   getVisibleThreadsForProject,
-  isThreadJumpModifierPressed,
-  resolveThreadJumpIndex,
+  resolveAdjacentThreadId,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -105,7 +111,6 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
-  type ThreadJumpKey,
 } from "./Sidebar.logic";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
@@ -370,6 +375,9 @@ export default function Sidebar() {
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
   );
+  const routeTerminalOpen = routeThreadId
+    ? selectThreadTerminalState(terminalStateByThreadId, routeThreadId).terminalOpen
+    : false;
   const threadGitTargets = useMemo(
     () =>
       threads.map((thread) => ({
@@ -1030,36 +1038,82 @@ export default function Sidebar() {
       visibleThreads,
     ],
   );
-  const threadJumpKeyById = useMemo(() => {
-    const mapping = new Map<ThreadId, ThreadJumpKey>();
+  const threadJumpCommandById = useMemo(() => {
+    const mapping = new Map<ThreadId, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
     let visibleThreadIndex = 0;
 
     for (const renderedProject of renderedProjects) {
       for (const thread of renderedProject.renderedThreads) {
-        const jumpKey = getThreadJumpKey(visibleThreadIndex);
-        if (!jumpKey) {
+        const jumpCommand = threadJumpCommandForIndex(visibleThreadIndex);
+        if (!jumpCommand) {
           return mapping;
         }
-        mapping.set(thread.id, jumpKey);
+        mapping.set(thread.id, jumpCommand);
         visibleThreadIndex += 1;
       }
     }
 
     return mapping;
   }, [renderedProjects]);
-  const threadJumpThreadIds = useMemo(() => [...threadJumpKeyById.keys()], [threadJumpKeyById]);
+  const threadJumpThreadIds = useMemo(
+    () => [...threadJumpCommandById.keys()],
+    [threadJumpCommandById],
+  );
+  const threadJumpLabelById = useMemo(() => {
+    const mapping = new Map<ThreadId, string>();
+    for (const [threadId, command] of threadJumpCommandById) {
+      const label = shortcutLabelForCommand(keybindings, command, platform);
+      if (label) {
+        mapping.set(threadId, label);
+      }
+    }
+    return mapping;
+  }, [keybindings, platform, threadJumpCommandById]);
+  const orderedSidebarThreadIds = useMemo(
+    () => getVisibleSidebarThreadIds(renderedProjects),
+    [renderedProjects],
+  );
 
   useEffect(() => {
+    const getShortcutContext = () => ({
+      terminalFocus: isTerminalFocused(),
+      terminalOpen: routeTerminalOpen,
+    });
+
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (isThreadJumpModifierPressed(event, platform)) {
-        setShowThreadJumpHints(true);
-      }
+      setShowThreadJumpHints(
+        shouldShowThreadJumpHints(event, keybindings, {
+          platform,
+          context: getShortcutContext(),
+        }),
+      );
 
       if (event.defaultPrevented || event.repeat) {
         return;
       }
 
-      const jumpIndex = resolveThreadJumpIndex(event, platform);
+      const command = resolveShortcutCommand(event, keybindings, {
+        platform,
+        context: getShortcutContext(),
+      });
+      const traversalDirection = threadTraversalDirectionFromCommand(command);
+      if (traversalDirection !== null) {
+        const targetThreadId = resolveAdjacentThreadId({
+          threadIds: orderedSidebarThreadIds,
+          currentThreadId: routeThreadId,
+          direction: traversalDirection,
+        });
+        if (!targetThreadId) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        navigateToThread(targetThreadId);
+        return;
+      }
+
+      const jumpIndex = threadJumpIndexFromCommand(command ?? "");
       if (jumpIndex === null) {
         return;
       }
@@ -1075,7 +1129,12 @@ export default function Sidebar() {
     };
 
     const onWindowKeyUp = (event: KeyboardEvent) => {
-      setShowThreadJumpHints(isThreadJumpModifierPressed(event, platform));
+      setShowThreadJumpHints(
+        shouldShowThreadJumpHints(event, keybindings, {
+          platform,
+          context: getShortcutContext(),
+        }),
+      );
     };
 
     const onWindowBlur = () => {
@@ -1091,7 +1150,15 @@ export default function Sidebar() {
       window.removeEventListener("keyup", onWindowKeyUp);
       window.removeEventListener("blur", onWindowBlur);
     };
-  }, [navigateToThread, platform, threadJumpThreadIds]);
+  }, [
+    keybindings,
+    navigateToThread,
+    orderedSidebarThreadIds,
+    platform,
+    routeTerminalOpen,
+    routeThreadId,
+    threadJumpThreadIds,
+  ]);
 
   function renderProjectItem(
     renderedProject: (typeof renderedProjects)[number],
@@ -1111,7 +1178,7 @@ export default function Sidebar() {
       const isActive = routeThreadId === thread.id;
       const isSelected = selectedThreadIds.has(thread.id);
       const isHighlighted = isActive || isSelected;
-      const jumpKey = threadJumpKeyById.get(thread.id) ?? null;
+      const jumpLabel = threadJumpLabelById.get(thread.id) ?? null;
       const isThreadRunning =
         thread.session?.status === "running" && thread.session.activeTurnId != null;
       const threadStatus = resolveThreadStatusPill({
@@ -1252,30 +1319,6 @@ export default function Sidebar() {
                   />
                 </span>
               )}
-              <span
-                className={`text-[10px] ${
-                  isHighlighted
-                    ? "text-foreground/72 dark:text-foreground/82"
-                    : "text-muted-foreground/40"
-                }`}
-              >
-                {formatRelativeTimeLabel(thread.updatedAt ?? thread.createdAt)}
-              </span>
-              {jumpKey ? (
-                <span
-                  aria-hidden={!showThreadJumpHints}
-                  className={`inline-flex h-5 items-center rounded-full border px-1.5 font-mono text-[10px] font-medium tracking-tight transition-all duration-150 ${
-                    showThreadJumpHints
-                      ? "border-border/80 bg-background/90 text-foreground shadow-sm opacity-100"
-                      : "border-transparent bg-transparent text-transparent opacity-0"
-                  }`}
-                  title={
-                    showThreadJumpHints ? formatThreadJumpHintLabel(jumpKey, platform) : undefined
-                  }
-                >
-                  {formatThreadJumpHintLabel(jumpKey, platform)}
-                </span>
-              ) : null}
               <div className="flex min-w-12 justify-end">
                 {confirmingArchiveThreadId === thread.id && !isThreadRunning ? (
                   <button
@@ -1345,15 +1388,26 @@ export default function Sidebar() {
                     </Tooltip>
                   )
                 ) : (
-                  <span
-                    className={`text-[10px] ${
-                      isHighlighted
-                        ? "text-foreground/72 dark:text-foreground/82"
-                        : "text-muted-foreground/40"
-                    }`}
-                  >
-                    {formatRelativeTimeLabel(thread.updatedAt ?? thread.createdAt)}
-                  </span>
+                  <>
+                    {showThreadJumpHints && jumpLabel ? (
+                      <span
+                        className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[10px] font-medium tracking-tight text-foreground shadow-sm"
+                        title={jumpLabel}
+                      >
+                        {jumpLabel}
+                      </span>
+                    ) : (
+                      <span
+                        className={`text-[10px] ${
+                          isHighlighted
+                            ? "text-foreground/72 dark:text-foreground/82"
+                            : "text-muted-foreground/40"
+                        }`}
+                      >
+                        {formatRelativeTimeLabel(thread.updatedAt ?? thread.createdAt)}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
             </div>

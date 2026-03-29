@@ -1,6 +1,6 @@
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { Thread } from "../types";
-import { cn, isMacPlatform } from "../lib/utils";
+import { cn } from "../lib/utils";
 import {
   findLatestProposedPlan,
   hasActionableProposedPlan,
@@ -8,7 +8,6 @@ import {
 } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
-const THREAD_JUMP_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
@@ -17,16 +16,8 @@ type SidebarProject = {
   updatedAt?: string | undefined;
 };
 type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt" | "messages">;
-type ThreadJumpKey = (typeof THREAD_JUMP_KEYS)[number];
-export type { ThreadJumpKey };
 
-export interface ThreadJumpEvent {
-  key: string;
-  metaKey: boolean;
-  ctrlKey: boolean;
-  shiftKey: boolean;
-  altKey: boolean;
-}
+export type ThreadTraversalDirection = "previous" | "next";
 
 export interface ThreadStatusPill {
   label:
@@ -78,36 +69,43 @@ export function resolveSidebarNewThreadEnvMode(input: {
   return input.requestedEnvMode ?? input.defaultEnvMode;
 }
 
-export function getThreadJumpKey(index: number): ThreadJumpKey | null {
-  return THREAD_JUMP_KEYS[index] ?? null;
-}
-
-export function isThreadJumpModifierPressed(
-  event: ThreadJumpEvent,
-  platform = navigator.platform,
-): boolean {
-  return (
-    (isMacPlatform(platform) ? event.metaKey : event.ctrlKey) && !event.altKey && !event.shiftKey
+export function getVisibleSidebarThreadIds<TThreadId>(
+  renderedProjects: readonly {
+    renderedThreads: readonly {
+      id: TThreadId;
+    }[];
+  }[],
+): TThreadId[] {
+  return renderedProjects.flatMap((renderedProject) =>
+    renderedProject.renderedThreads.map((thread) => thread.id),
   );
 }
 
-export function resolveThreadJumpIndex(
-  event: ThreadJumpEvent,
-  platform = navigator.platform,
-): number | null {
-  if (!isThreadJumpModifierPressed(event, platform)) {
+export function resolveAdjacentThreadId<T>(input: {
+  threadIds: readonly T[];
+  currentThreadId: T | null;
+  direction: ThreadTraversalDirection;
+}): T | null {
+  const { currentThreadId, direction, threadIds } = input;
+
+  if (threadIds.length === 0) {
     return null;
   }
 
-  const index = THREAD_JUMP_KEYS.indexOf(event.key as ThreadJumpKey);
-  return index === -1 ? null : index;
-}
+  if (currentThreadId === null) {
+    return direction === "previous" ? (threadIds.at(-1) ?? null) : (threadIds[0] ?? null);
+  }
 
-export function formatThreadJumpHintLabel(
-  key: ThreadJumpKey,
-  platform = navigator.platform,
-): string {
-  return isMacPlatform(platform) ? `⌘${key}` : `Ctrl+${key}`;
+  const currentIndex = threadIds.indexOf(currentThreadId);
+  if (currentIndex === -1) {
+    return null;
+  }
+
+  if (direction === "previous") {
+    return currentIndex > 0 ? (threadIds[currentIndex - 1] ?? null) : null;
+  }
+
+  return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
 }
 
 export function resolveThreadRowClassName(input: {

@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  formatThreadJumpHintLabel,
+  getVisibleSidebarThreadIds,
+  resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
-  getThreadJumpKey,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
-  isThreadJumpModifierPressed,
-  resolveThreadJumpIndex,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -100,94 +98,77 @@ describe("resolveSidebarNewThreadEnvMode", () => {
   });
 });
 
-describe("thread jump helpers", () => {
-  it("assigns jump keys for the first nine visible threads", () => {
-    expect(getThreadJumpKey(0)).toBe("1");
-    expect(getThreadJumpKey(8)).toBe("9");
-    expect(getThreadJumpKey(9)).toBeNull();
-  });
+describe("resolveAdjacentThreadId", () => {
+  it("resolves adjacent thread ids in ordered sidebar traversal", () => {
+    const threads = [
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-3"),
+    ];
 
-  it("detects the active jump modifier by platform", () => {
     expect(
-      isThreadJumpModifierPressed(
-        {
-          key: "Meta",
-          metaKey: true,
-          ctrlKey: false,
-          shiftKey: false,
-          altKey: false,
-        },
-        "MacIntel",
-      ),
-    ).toBe(true);
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: threads[1] ?? null,
+        direction: "previous",
+      }),
+    ).toBe(threads[0]);
     expect(
-      isThreadJumpModifierPressed(
-        {
-          key: "Control",
-          metaKey: false,
-          ctrlKey: true,
-          shiftKey: false,
-          altKey: false,
-        },
-        "Win32",
-      ),
-    ).toBe(true);
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: threads[1] ?? null,
+        direction: "next",
+      }),
+    ).toBe(threads[2]);
     expect(
-      isThreadJumpModifierPressed(
-        {
-          key: "Control",
-          metaKey: false,
-          ctrlKey: true,
-          shiftKey: true,
-          altKey: false,
-        },
-        "Win32",
-      ),
-    ).toBe(false);
-  });
-
-  it("resolves mod+digit events to zero-based visible thread indices", () => {
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: null,
+        direction: "next",
+      }),
+    ).toBe(threads[0]);
     expect(
-      resolveThreadJumpIndex(
-        {
-          key: "1",
-          metaKey: true,
-          ctrlKey: false,
-          shiftKey: false,
-          altKey: false,
-        },
-        "MacIntel",
-      ),
-    ).toBe(0);
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: null,
+        direction: "previous",
+      }),
+    ).toBe(threads[2]);
     expect(
-      resolveThreadJumpIndex(
-        {
-          key: "9",
-          metaKey: false,
-          ctrlKey: true,
-          shiftKey: false,
-          altKey: false,
-        },
-        "Linux",
-      ),
-    ).toBe(8);
-    expect(
-      resolveThreadJumpIndex(
-        {
-          key: "0",
-          metaKey: false,
-          ctrlKey: true,
-          shiftKey: false,
-          altKey: false,
-        },
-        "Linux",
-      ),
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: threads[0] ?? null,
+        direction: "previous",
+      }),
     ).toBeNull();
   });
+});
 
-  it("formats thread jump hint labels for macOS and non-macOS", () => {
-    expect(formatThreadJumpHintLabel("3", "MacIntel")).toBe("⌘3");
-    expect(formatThreadJumpHintLabel("3", "Linux")).toBe("Ctrl+3");
+describe("getVisibleSidebarThreadIds", () => {
+  it("returns only the rendered visible thread order across projects", () => {
+    expect(
+      getVisibleSidebarThreadIds([
+        {
+          renderedThreads: [
+            { id: ThreadId.makeUnsafe("thread-12") },
+            { id: ThreadId.makeUnsafe("thread-11") },
+            { id: ThreadId.makeUnsafe("thread-10") },
+          ],
+        },
+        {
+          renderedThreads: [
+            { id: ThreadId.makeUnsafe("thread-8") },
+            { id: ThreadId.makeUnsafe("thread-6") },
+          ],
+        },
+      ]),
+    ).toEqual([
+      ThreadId.makeUnsafe("thread-12"),
+      ThreadId.makeUnsafe("thread-11"),
+      ThreadId.makeUnsafe("thread-10"),
+      ThreadId.makeUnsafe("thread-8"),
+      ThreadId.makeUnsafe("thread-6"),
+    ]);
   });
 });
 
