@@ -132,6 +132,12 @@ function commitWithDate(
   });
 }
 
+function buildLargeText(lineCount = 20_000): string {
+  return Array.from({ length: lineCount }, (_, index) => `line ${String(index).padStart(5, "0")}`)
+    .join("\n")
+    .concat("\n");
+}
+
 // ── Tests ──
 
 it.layer(TestLayer)("git integration", (it) => {
@@ -1667,6 +1673,40 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(context).not.toBeNull();
         expect(context!.stagedSummary).toContain("a.txt");
         expect(context!.stagedSummary).toContain("b.txt");
+      }),
+    );
+
+    it.effect("prepareCommitContext truncates oversized staged patches instead of failing", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* writeTextFile(path.join(tmp, "README.md"), buildLargeText());
+
+        const context = yield* core.prepareCommitContext(tmp);
+        expect(context).not.toBeNull();
+        expect(context!.stagedSummary).toContain("README.md");
+        expect(context!.stagedPatch).toContain("[truncated]");
+      }),
+    );
+
+    it.effect("readRangeContext truncates oversized diff patches instead of failing", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* core.createBranch({ cwd: tmp, branch: "feature/large-range-context" });
+        yield* core.checkoutBranch({ cwd: tmp, branch: "feature/large-range-context" });
+        yield* writeTextFile(path.join(tmp, "large.txt"), buildLargeText());
+        yield* git(tmp, ["add", "large.txt"]);
+        yield* git(tmp, ["commit", "-m", "Add large range context"]);
+
+        const rangeContext = yield* core.readRangeContext(tmp, initialBranch);
+        expect(rangeContext.commitSummary).toContain("Add large range context");
+        expect(rangeContext.diffSummary).toContain("large.txt");
+        expect(rangeContext.diffPatch).toContain("[truncated]");
       }),
     );
 
