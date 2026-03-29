@@ -301,10 +301,9 @@ export function adjustModelsForSubscription(
       ...model,
       capabilities: {
         ...caps,
-        contextWindowOptions: caps.contextWindowOptions.map((opt) => ({
-          ...opt,
-          isDefault: opt.value === "1m" ? true : undefined,
-        })),
+        contextWindowOptions: caps.contextWindowOptions.map((opt) =>
+          Object.assign({}, opt, { isDefault: opt.value === "1m" ? true : undefined }),
+        ),
       },
     };
   });
