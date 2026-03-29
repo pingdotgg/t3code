@@ -327,19 +327,24 @@ const CAPABILITIES_PROBE_TIMEOUT_MS = 8_000;
 const probeClaudeCapabilities = (binaryPath: string) => {
   const abort = new AbortController();
   return Effect.tryPromise(async () => {
-    const q = claudeQuery({
-      prompt: ".",
-      options: {
-        pathToClaudeCodeExecutable: binaryPath,
-        abortController: abort,
-        maxTurns: 0,
-        settingSources: [],
-        allowedTools: [],
-        stderr: () => {},
-      },
-    });
-    const init = await q.initializationResult();
-    return { subscriptionType: init.account?.subscriptionType };
+    try {
+      const q = claudeQuery({
+        prompt: ".",
+        options: {
+          persistSession: false,
+          pathToClaudeCodeExecutable: binaryPath,
+          abortController: abort,
+          maxTurns: 0,
+          settingSources: [],
+          allowedTools: [],
+          stderr: () => {},
+        },
+      });
+      const init = await q.initializationResult();
+      return { subscriptionType: init.account?.subscriptionType };
+    } finally {
+      if (!abort.signal.aborted) abort.abort();
+    }
   }).pipe(
     Effect.ensuring(
       Effect.sync(() => {
