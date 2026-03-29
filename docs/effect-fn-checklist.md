@@ -47,7 +47,7 @@ Effect.fn("name")(
 - [x] `apps/server/src/git/Layers/GitCore.ts`
 - [x] `apps/server/src/git/Layers/GitManager.ts`
 - [ ] `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts`
-- [ ] `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
+- [x] `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`
 - [ ] `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`
 - [ ] `apps/server/src/provider/Layers/EventNdjsonLogger.ts`
 - [ ] `Everything else`
@@ -90,13 +90,13 @@ Effect.fn("name")(
 
 ### `apps/server/src/orchestration/Layers/ProjectionPipeline.ts` (`25`)
 
-- [ ] [runProjectorForEvent](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProjectionPipeline.ts#L1161)
-- [ ] [applyProjectsProjection](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProjectionPipeline.ts#L357)
-- [ ] [applyThreadsProjection](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProjectionPipeline.ts#L415)
-- [ ] `Effect.forEach(..., threadId => Effect.gen(...))` callbacks around `L250`
-- [ ] `Effect.forEach(..., entry => Effect.gen(...))` callbacks around `L264`
-- [ ] `Effect.forEach(..., entry => Effect.gen(...))` callbacks around `L305`
-- [ ] Remaining apply helpers in this file
+- [x] [runProjectorForEvent](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProjectionPipeline.ts#L1161)
+- [x] [applyProjectsProjection](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProjectionPipeline.ts#L357)
+- [x] [applyThreadsProjection](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProjectionPipeline.ts#L415)
+- [x] `Effect.forEach(..., threadId => Effect.gen(...))` callbacks around `L250`
+- [x] `Effect.forEach(..., entry => Effect.gen(...))` callbacks around `L264`
+- [x] `Effect.forEach(..., entry => Effect.gen(...))` callbacks around `L305`
+- [x] Remaining apply helpers in this file
 
 ### `apps/server/src/provider/Layers/ProviderService.ts` (`24`)
 
