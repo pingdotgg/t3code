@@ -13,13 +13,13 @@ import { resolveContextWindow, resolveEffort } from "@t3tools/shared/model";
 
 import {
   buildServerProvider,
-  collectStreamAsString,
   DEFAULT_TIMEOUT_MS,
   detailFromResult,
   extractAuthBoolean,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
+  spawnAndCollect,
   type CommandResult,
 } from "../providerSnapshot";
 import { makeManagedServerProvider } from "../makeManagedServerProvider";
@@ -198,7 +198,6 @@ export function parseClaudeAuthStatusFromOutput(result: CommandResult): {
 
 const runClaudeCommand = (args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const claudeSettings = yield* Effect.service(ServerSettingsService).pipe(
       Effect.flatMap((service) => service.getSettings),
       Effect.map((settings) => settings.providers.claudeAgent),
@@ -206,19 +205,8 @@ const runClaudeCommand = (args: ReadonlyArray<string>) =>
     const command = ChildProcess.make(claudeSettings.binaryPath, [...args], {
       shell: process.platform === "win32",
     });
-
-    const child = yield* spawner.spawn(command);
-    const [stdout, stderr, exitCode] = yield* Effect.all(
-      [
-        collectStreamAsString(child.stdout),
-        collectStreamAsString(child.stderr),
-        child.exitCode.pipe(Effect.map(Number)),
-      ],
-      { concurrency: "unbounded" },
-    );
-
-    return { stdout, stderr, code: exitCode } satisfies CommandResult;
-  }).pipe(Effect.scoped);
+    return yield* spawnAndCollect(claudeSettings.binaryPath, command);
+  });
 
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   function* (): Effect.fn.Return<

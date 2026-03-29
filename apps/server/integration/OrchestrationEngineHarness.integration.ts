@@ -306,7 +306,8 @@ export const makeOrchestrationIntegrationHarness = (
         Effect.succeed({ branch: input.newBranch }),
     } as unknown as GitCoreShape);
     const textGenerationLayer = Layer.succeed(TextGeneration, {
-      generateBranchName: () => Effect.succeed({ branch: null }),
+      generateBranchName: () => Effect.succeed({ branch: "update" }),
+      generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
     } as unknown as TextGenerationShape);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),

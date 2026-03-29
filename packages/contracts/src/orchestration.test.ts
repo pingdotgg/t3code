@@ -5,6 +5,8 @@ import { Effect, Schema } from "effect";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  OrchestrationCommand,
+  OrchestrationEvent,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
   ProjectCreatedPayload,
@@ -32,6 +34,8 @@ const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLa
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
+const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
+const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
@@ -227,6 +231,66 @@ it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
   }),
 );
 
+it.effect("decodes thread archive and unarchive commands", () =>
+  Effect.gen(function* () {
+    const archive = yield* decodeOrchestrationCommand({
+      type: "thread.archive",
+      commandId: "cmd-archive-1",
+      threadId: "thread-1",
+    });
+    const unarchive = yield* decodeOrchestrationCommand({
+      type: "thread.unarchive",
+      commandId: "cmd-unarchive-1",
+      threadId: "thread-1",
+    });
+
+    assert.strictEqual(archive.type, "thread.archive");
+    assert.strictEqual(unarchive.type, "thread.unarchive");
+  }),
+);
+
+it.effect("decodes thread archived and unarchived events", () =>
+  Effect.gen(function* () {
+    const archived = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-archive-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.archived",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-archive-1",
+      causationEventId: null,
+      correlationId: "cmd-archive-1",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        archivedAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    const unarchived = yield* decodeOrchestrationEvent({
+      sequence: 2,
+      eventId: "event-unarchive-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.unarchived",
+      occurredAt: "2026-01-02T00:00:00.000Z",
+      commandId: "cmd-unarchive-1",
+      causationEventId: null,
+      correlationId: "cmd-unarchive-1",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      },
+    });
+
+    assert.strictEqual(archived.type, "thread.archived");
+    assert.strictEqual(archived.payload.archivedAt, "2026-01-01T00:00:00.000Z");
+    assert.strictEqual(unarchived.type, "thread.unarchived");
+  }),
+);
+
 it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({
@@ -252,6 +316,25 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
     assert.strictEqual(parsed.modelSelection?.provider, "codex");
     assert.strictEqual(parsed.modelSelection?.options?.reasoningEffort, "high");
     assert.strictEqual(parsed.modelSelection?.options?.fastMode, true);
+  }),
+);
+
+it.effect("accepts a title seed in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-title-seed",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-title-seed",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      titleSeed: "Investigate reconnect failures",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.titleSeed, "Investigate reconnect failures");
   }),
 );
 
@@ -311,6 +394,18 @@ it.effect("decodes thread.turn-start-requested source proposed plan metadata whe
       threadId: "thread-1",
       planId: "plan-1",
     });
+  }),
+);
+
+it.effect("decodes thread.turn-start-requested title seed when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-2",
+      messageId: "msg-2",
+      titleSeed: "Investigate reconnect failures",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.titleSeed, "Investigate reconnect failures");
   }),
 );
 

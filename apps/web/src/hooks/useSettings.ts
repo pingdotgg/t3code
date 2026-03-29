@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import {
+  AssistantResponseCopyFormat,
   type ClientSettings,
   ClientSettingsSchema,
   DEFAULT_CLIENT_SETTINGS,
@@ -201,6 +202,14 @@ export function buildLegacyClientSettingsMigrationPatch(
   legacySettings: Record<string, unknown>,
 ): Partial<DeepMutable<ClientSettings>> {
   const patch: Partial<DeepMutable<ClientSettings>> = {};
+
+  if (Schema.is(AssistantResponseCopyFormat)(legacySettings.assistantResponseCopyFormat)) {
+    patch.assistantResponseCopyFormat = legacySettings.assistantResponseCopyFormat;
+  }
+
+  if (Predicate.isBoolean(legacySettings.confirmThreadArchive)) {
+    patch.confirmThreadArchive = legacySettings.confirmThreadArchive;
+  }
 
   if (Predicate.isBoolean(legacySettings.confirmThreadDelete)) {
     patch.confirmThreadDelete = legacySettings.confirmThreadDelete;

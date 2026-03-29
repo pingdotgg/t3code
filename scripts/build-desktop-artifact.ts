@@ -74,6 +74,8 @@ interface BuildCliInput {
   readonly keepStage: Option.Option<boolean>;
   readonly signed: Option.Option<boolean>;
   readonly verbose: Option.Option<boolean>;
+  readonly mockUpdates: Option.Option<boolean>;
+  readonly mockUpdateServerPort: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -162,6 +164,8 @@ interface ResolvedBuildOptions {
   readonly keepStage: boolean;
   readonly signed: boolean;
   readonly verbose: boolean;
+  readonly mockUpdates: boolean;
+  readonly mockUpdateServerPort: string | undefined;
 }
 
 interface StagePackageJson {
@@ -204,6 +208,8 @@ const BuildEnvConfig = Config.all({
   keepStage: Config.boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
   signed: Config.boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
   verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
+  mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
+  mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
 });
 
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
@@ -231,12 +237,25 @@ const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (input: B
   const target = mergeOptions(input.target, env.target, PLATFORM_CONFIG[platform].defaultTarget);
   const arch = mergeOptions(input.arch, env.arch, getDefaultArch(platform));
   const version = mergeOptions(input.buildVersion, env.version, undefined);
-  const outputDir = path.resolve(repoRoot, mergeOptions(input.outputDir, env.outputDir, "release"));
+  const releaseDir = resolveBooleanFlag(input.mockUpdates, env.mockUpdates)
+    ? "release-mock"
+    : "release";
+  const outputDir = path.resolve(
+    repoRoot,
+    mergeOptions(input.outputDir, env.outputDir, releaseDir),
+  );
 
   const skipBuild = resolveBooleanFlag(input.skipBuild, env.skipBuild);
   const keepStage = resolveBooleanFlag(input.keepStage, env.keepStage);
   const signed = resolveBooleanFlag(input.signed, env.signed);
   const verbose = resolveBooleanFlag(input.verbose, env.verbose);
+
+  const mockUpdates = resolveBooleanFlag(input.mockUpdates, env.mockUpdates);
+  const mockUpdateServerPort = mergeOptions(
+    input.mockUpdateServerPort,
+    env.mockUpdateServerPort,
+    undefined,
+  );
 
   return {
     platform,
@@ -248,6 +267,8 @@ const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (input: B
     keepStage,
     signed,
     verbose,
+    mockUpdates,
+    mockUpdateServerPort,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -447,6 +468,8 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   target: string,
   productName: string,
   signed: boolean,
+  mockUpdates: boolean,
+  mockUpdateServerPort: string | undefined,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: "com.t3tools.t3code",
@@ -459,6 +482,13 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const publishConfig = resolveGitHubPublishConfig();
   if (publishConfig) {
     buildConfig.publish = [publishConfig];
+  } else if (mockUpdates) {
+    buildConfig.publish = [
+      {
+        provider: "generic",
+        url: `http://localhost:${mockUpdateServerPort ?? 3000}`,
+      },
+    ];
   }
 
   if (platform === "mac") {
@@ -631,6 +661,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.target,
       desktopPackageJson.productName ?? "T3 Code",
       options.signed,
+      options.mockUpdates,
+      options.mockUpdateServerPort,
     ),
     dependencies: {
       ...resolvedServerDependencies,
@@ -767,6 +799,14 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   verbose: Flag.boolean("verbose").pipe(
     Flag.withDescription("Stream subprocess stdout (env: T3CODE_DESKTOP_VERBOSE)."),
+    Flag.optional,
+  ),
+  mockUpdates: Flag.boolean("mock-updates").pipe(
+    Flag.withDescription("Enable mock updates (env: T3CODE_DESKTOP_MOCK_UPDATES)."),
+    Flag.optional,
+  ),
+  mockUpdateServerPort: Flag.string("mock-update-server-port").pipe(
+    Flag.withDescription("Mock update server port (env: T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
     Flag.optional,
   ),
 }).pipe(

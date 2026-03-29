@@ -31,6 +31,7 @@ export const ClientSettingsSchema = Schema.Struct({
   assistantResponseCopyFormat: AssistantResponseCopyFormat.pipe(
     Schema.withDecodingDefault(() => DEFAULT_ASSISTANT_RESPONSE_COPY_FORMAT),
   ),
+  confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
