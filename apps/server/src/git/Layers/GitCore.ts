@@ -1374,7 +1374,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
           runGitStdoutWithOptions(
             "GitCore.readRangeContext.log",
             cwd,
-            ["log", "--oneline", range],
+            ["log", "--oneline", "--cherry-pick", "--right-only", range],
             {
               maxOutputBytes: RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES,
               truncateOutputAtMaxBytes: true,
