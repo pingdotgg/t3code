@@ -1046,7 +1046,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           continue;
         }
 
-        this.emitErrorEvent(context, "process/stderr", classified.message);
+        this.emitNotificationEvent(context, "process/stderr", classified.message);
       }
     });
 
