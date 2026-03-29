@@ -407,6 +407,123 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.queued-follow-up.enqueue": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-follow-up-enqueued",
+        payload: {
+          threadId: command.threadId,
+          followUp: command.followUp,
+          ...(command.targetIndex !== undefined ? { targetIndex: command.targetIndex } : {}),
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.queued-follow-up.update": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const existingFollowUp = thread.queuedFollowUps.find(
+        (followUp) => followUp.id === command.followUp.id,
+      );
+      if (!existingFollowUp) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued follow-up '${command.followUp.id}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-follow-up-updated",
+        payload: {
+          threadId: command.threadId,
+          followUp: command.followUp,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.queued-follow-up.remove": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const existingFollowUp = thread.queuedFollowUps.find(
+        (followUp) => followUp.id === command.followUpId,
+      );
+      if (!existingFollowUp) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued follow-up '${command.followUpId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-follow-up-removed",
+        payload: {
+          threadId: command.threadId,
+          followUpId: command.followUpId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.queued-follow-up.reorder": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const existingIndex = thread.queuedFollowUps.findIndex(
+        (followUp) => followUp.id === command.followUpId,
+      );
+      if (existingIndex < 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued follow-up '${command.followUpId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-follow-up-reordered",
+        payload: {
+          threadId: command.threadId,
+          followUpId: command.followUpId,
+          targetIndex: command.targetIndex,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.approval.respond": {
       yield* requireThread({
         readModel,
@@ -673,6 +790,69 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           activity: command.activity,
+        },
+      };
+    }
+
+    case "thread.queued-follow-up.send-failed": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const existingFollowUp = thread.queuedFollowUps.find(
+        (followUp) => followUp.id === command.followUpId,
+      );
+      if (!existingFollowUp) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued follow-up '${command.followUpId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-follow-up-send-failed",
+        payload: {
+          threadId: command.threadId,
+          followUpId: command.followUpId,
+          lastSendError: command.lastSendError,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.queued-follow-up.send-error-cleared": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const existingFollowUp = thread.queuedFollowUps.find(
+        (followUp) => followUp.id === command.followUpId,
+      );
+      if (!existingFollowUp) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued follow-up '${command.followUpId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-follow-up-send-error-cleared",
+        payload: {
+          threadId: command.threadId,
+          followUpId: command.followUpId,
+          createdAt: command.createdAt,
         },
       };
     }

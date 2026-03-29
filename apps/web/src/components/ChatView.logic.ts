@@ -1,13 +1,25 @@
-import { ProjectId, type ModelSelection, type ThreadId } from "@t3tools/contracts";
-import { type ChatMessage, type Thread } from "../types";
+import {
+  ProjectId,
+  ProviderInteractionMode,
+  RuntimeMode,
+  type ModelSelection,
+  type ThreadId,
+} from "@t3tools/contracts";
+import { type FollowUpBehavior } from "@t3tools/contracts/settings";
+import { type ChatMessage, type QueuedFollowUp, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerImageAttachment,
+  type DraftThreadState,
+  type PersistedComposerImageAttachment,
+} from "../composerDraftStore";
 import { Schema } from "effect";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
+import { isMacPlatform } from "../lib/utils";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const WORKTREE_BRANCH_PREFIX = "t3code";
@@ -30,6 +42,7 @@ export function buildLocalDraftThread(
     interactionMode: draftThread.interactionMode,
     session: null,
     messages: [],
+    queuedFollowUps: [],
     error,
     createdAt: draftThread.createdAt,
     archivedAt: null,
@@ -160,4 +173,107 @@ export function buildExpiredTerminalContextToastCopy(
     title: `${noun} omitted from message`,
     description: "Re-add it if you want that terminal output included.",
   };
+}
+
+export function resolveFollowUpBehavior(
+  followUpBehavior: FollowUpBehavior,
+  invert: boolean,
+): FollowUpBehavior {
+  if (!invert) {
+    return followUpBehavior;
+  }
+  return followUpBehavior === "queue" ? "steer" : "queue";
+}
+
+export function shouldInvertFollowUpBehaviorFromKeyEvent(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "metaKey" | "shiftKey">,
+  platform = navigator.platform,
+): boolean {
+  if (!event.shiftKey || event.altKey) {
+    return false;
+  }
+  if (isMacPlatform(platform)) {
+    return event.metaKey && !event.ctrlKey;
+  }
+  return event.ctrlKey && !event.metaKey;
+}
+
+export function followUpBehaviorShortcutLabel(platform = navigator.platform): string {
+  return isMacPlatform(platform) ? "Cmd+Shift+Enter" : "Ctrl+Shift+Enter";
+}
+
+export interface QueuedFollowUpDraftSnapshot {
+  id: string;
+  createdAt: string;
+  prompt: string;
+  attachments: PersistedComposerImageAttachment[];
+  terminalContexts: TerminalContextDraft[];
+  modelSelection: ModelSelection;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+}
+
+export function buildQueuedFollowUpDraft(input: {
+  prompt: string;
+  attachments: ReadonlyArray<PersistedComposerImageAttachment>;
+  terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  modelSelection: ModelSelection;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+  createdAt: string;
+}): QueuedFollowUpDraftSnapshot {
+  return {
+    id: randomUUID(),
+    createdAt: input.createdAt,
+    prompt: input.prompt,
+    attachments: [...input.attachments],
+    terminalContexts: input.terminalContexts.map((context) => ({ ...context })),
+    modelSelection: input.modelSelection,
+    runtimeMode: input.runtimeMode,
+    interactionMode: input.interactionMode,
+  };
+}
+
+export function canAutoDispatchQueuedFollowUp(input: {
+  phase: "disconnected" | "connecting" | "ready" | "running";
+  queuedFollowUpCount: number;
+  queuedHeadHasError: boolean;
+  isConnecting: boolean;
+  isSendBusy: boolean;
+  isRevertingCheckpoint: boolean;
+  hasThreadError: boolean;
+  hasPendingApproval: boolean;
+  hasPendingUserInput: boolean;
+}): boolean {
+  return (
+    input.phase === "ready" &&
+    input.queuedFollowUpCount > 0 &&
+    !input.queuedHeadHasError &&
+    !input.isConnecting &&
+    !input.isSendBusy &&
+    !input.isRevertingCheckpoint &&
+    !input.hasThreadError &&
+    !input.hasPendingApproval &&
+    !input.hasPendingUserInput
+  );
+}
+
+export function describeQueuedFollowUp(
+  followUp: Pick<QueuedFollowUp, "attachments" | "prompt" | "terminalContexts">,
+): string {
+  const trimmedPrompt = stripInlineTerminalContextPlaceholders(followUp.prompt).trim();
+  if (trimmedPrompt.length > 0) {
+    return trimmedPrompt;
+  }
+  if (followUp.attachments.length > 0) {
+    return followUp.attachments.length === 1
+      ? "1 image attached"
+      : `${followUp.attachments.length} images attached`;
+  }
+  if (followUp.terminalContexts.length > 0) {
+    return followUp.terminalContexts.length === 1
+      ? (followUp.terminalContexts[0]?.terminalLabel ?? "1 terminal context")
+      : `${followUp.terminalContexts.length} terminal contexts`;
+  }
+  return "Follow-up";
 }

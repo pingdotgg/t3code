@@ -12,8 +12,10 @@ import type { Duplex } from "node:stream";
 import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
+  type ClientChatAttachment,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
+  type OrchestrationQueuedFollowUp,
   type OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
@@ -70,8 +72,10 @@ import {
 
 import {
   createAttachmentId,
+  parseThreadSegmentFromAttachmentId,
   resolveAttachmentPath,
   resolveAttachmentPathById,
+  toSafeThreadAttachmentSegment,
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
@@ -312,6 +316,101 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
     readonly command: ClientOrchestrationCommand;
   }) {
+    const normalizeClientAttachments = Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      attachments: ReadonlyArray<ClientChatAttachment>,
+    ) {
+      const threadAttachmentSegment = toSafeThreadAttachmentSegment(threadId);
+      if (!threadAttachmentSegment) {
+        return yield* new RouteRequestError({
+          message: "Failed to resolve a safe attachment segment for this thread.",
+        });
+      }
+      return yield* Effect.forEach(
+        attachments,
+        (attachment) =>
+          Effect.gen(function* () {
+            if ("id" in attachment) {
+              const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachment.id);
+              if (!attachmentThreadSegment || attachmentThreadSegment !== threadAttachmentSegment) {
+                return yield* new RouteRequestError({
+                  message: `Persisted attachment '${attachment.name}' does not belong to this thread.`,
+                });
+              }
+              const persistedPath = resolveAttachmentPathById({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachmentId: attachment.id,
+              });
+              if (!persistedPath) {
+                return yield* new RouteRequestError({
+                  message: `Persisted attachment '${attachment.name}' could not be found.`,
+                });
+              }
+              return attachment;
+            }
+
+            const parsed = parseBase64DataUrl(attachment.dataUrl);
+            if (!parsed || !parsed.mimeType.startsWith("image/")) {
+              return yield* new RouteRequestError({
+                message: `Invalid image attachment payload for '${attachment.name}'.`,
+              });
+            }
+
+            const bytes = Buffer.from(parsed.base64, "base64");
+            if (bytes.byteLength === 0 || bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+              return yield* new RouteRequestError({
+                message: `Image attachment '${attachment.name}' is empty or too large.`,
+              });
+            }
+
+            const attachmentId = createAttachmentId(threadId);
+            if (!attachmentId) {
+              return yield* new RouteRequestError({
+                message: "Failed to create a safe attachment id.",
+              });
+            }
+
+            const persistedAttachment = {
+              type: "image" as const,
+              id: attachmentId,
+              name: attachment.name,
+              mimeType: parsed.mimeType.toLowerCase(),
+              sizeBytes: bytes.byteLength,
+            };
+
+            const attachmentPath = resolveAttachmentPath({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachment: persistedAttachment,
+            });
+            if (!attachmentPath) {
+              return yield* new RouteRequestError({
+                message: `Failed to resolve persisted path for '${attachment.name}'.`,
+              });
+            }
+
+            yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true }).pipe(
+              Effect.mapError(
+                () =>
+                  new RouteRequestError({
+                    message: `Failed to create attachment directory for '${attachment.name}'.`,
+                  }),
+              ),
+            );
+            yield* fileSystem.writeFile(attachmentPath, bytes).pipe(
+              Effect.mapError(
+                () =>
+                  new RouteRequestError({
+                    message: `Failed to persist attachment '${attachment.name}'.`,
+                  }),
+              ),
+            );
+
+            return persistedAttachment;
+          }),
+        { concurrency: 1 },
+      );
+    });
+
     const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
       const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
       const workspaceStat = yield* fileSystem
@@ -345,73 +444,36 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }
 
     if (input.command.type !== "thread.turn.start") {
+      if (input.command.type === "thread.queued-follow-up.enqueue") {
+        return {
+          ...input.command,
+          followUp: {
+            ...input.command.followUp,
+            attachments: (yield* normalizeClientAttachments(
+              input.command.threadId,
+              input.command.followUp.attachments,
+            )) as OrchestrationQueuedFollowUp["attachments"],
+          },
+        } satisfies OrchestrationCommand;
+      }
+      if (input.command.type === "thread.queued-follow-up.update") {
+        return {
+          ...input.command,
+          followUp: {
+            ...input.command.followUp,
+            attachments: (yield* normalizeClientAttachments(
+              input.command.threadId,
+              input.command.followUp.attachments,
+            )) as OrchestrationQueuedFollowUp["attachments"],
+          },
+        } satisfies OrchestrationCommand;
+      }
       return input.command as OrchestrationCommand;
     }
     const turnStartCommand = input.command;
-
-    const normalizedAttachments = yield* Effect.forEach(
+    const normalizedAttachments = yield* normalizeClientAttachments(
+      turnStartCommand.threadId,
       turnStartCommand.message.attachments,
-      (attachment) =>
-        Effect.gen(function* () {
-          const parsed = parseBase64DataUrl(attachment.dataUrl);
-          if (!parsed || !parsed.mimeType.startsWith("image/")) {
-            return yield* new RouteRequestError({
-              message: `Invalid image attachment payload for '${attachment.name}'.`,
-            });
-          }
-
-          const bytes = Buffer.from(parsed.base64, "base64");
-          if (bytes.byteLength === 0 || bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-            return yield* new RouteRequestError({
-              message: `Image attachment '${attachment.name}' is empty or too large.`,
-            });
-          }
-
-          const attachmentId = createAttachmentId(turnStartCommand.threadId);
-          if (!attachmentId) {
-            return yield* new RouteRequestError({
-              message: "Failed to create a safe attachment id.",
-            });
-          }
-
-          const persistedAttachment = {
-            type: "image" as const,
-            id: attachmentId,
-            name: attachment.name,
-            mimeType: parsed.mimeType.toLowerCase(),
-            sizeBytes: bytes.byteLength,
-          };
-
-          const attachmentPath = resolveAttachmentPath({
-            attachmentsDir: serverConfig.attachmentsDir,
-            attachment: persistedAttachment,
-          });
-          if (!attachmentPath) {
-            return yield* new RouteRequestError({
-              message: `Failed to resolve persisted path for '${attachment.name}'.`,
-            });
-          }
-
-          yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true }).pipe(
-            Effect.mapError(
-              () =>
-                new RouteRequestError({
-                  message: `Failed to create attachment directory for '${attachment.name}'.`,
-                }),
-            ),
-          );
-          yield* fileSystem.writeFile(attachmentPath, bytes).pipe(
-            Effect.mapError(
-              () =>
-                new RouteRequestError({
-                  message: `Failed to persist attachment '${attachment.name}'.`,
-                }),
-            ),
-          );
-
-          return persistedAttachment;
-        }),
-      { concurrency: 1 },
     );
 
     return {

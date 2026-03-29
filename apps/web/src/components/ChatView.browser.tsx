@@ -261,6 +261,7 @@ function createSnapshotForTargetUser(options: {
         archivedAt: null,
         deletedAt: null,
         messages,
+        queuedFollowUps: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -319,6 +320,7 @@ function addThreadToSnapshot(
         archivedAt: null,
         deletedAt: null,
         messages: [],
+        queuedFollowUps: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -435,6 +437,45 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
   };
 }
 
+function updateFixtureThread(
+  updater: (
+    thread: OrchestrationReadModel["threads"][number],
+  ) => OrchestrationReadModel["threads"][number],
+): void {
+  fixture.snapshot = {
+    ...fixture.snapshot,
+    threads: fixture.snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID ? updater(thread) : thread,
+    ),
+  };
+  useStore.getState().syncServerReadModel(fixture.snapshot);
+}
+
+function getQueuedFollowUpPrompts(): string[] {
+  return (
+    useStore
+      .getState()
+      .threads.find((thread) => thread.id === THREAD_ID)
+      ?.queuedFollowUps?.map((followUp) => followUp.prompt) ?? []
+  );
+}
+
+function getQueuedFollowUpEnqueueRequests(): Array<
+  WsRequestEnvelope["body"] & { command: { type: string } }
+> {
+  return wsRequests.flatMap((request) => {
+    const command = (request as { command?: { type?: string } }).command;
+    if (
+      request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand ||
+      !command ||
+      command.type !== "thread.queued-follow-up.enqueue"
+    ) {
+      return [];
+    }
+    return [request as WsRequestEnvelope["body"] & { command: { type: string } }];
+  });
+}
+
 function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   const customResult = customWsRpcResolver?.(body);
   if (customResult !== undefined) {
@@ -443,6 +484,123 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   const tag = body._tag;
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
+  }
+  if (tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+    const command = (body as { command?: Record<string, unknown> }).command;
+    switch (command?.type) {
+      case "thread.queued-follow-up.enqueue": {
+        const followUp =
+          command.followUp as OrchestrationReadModel["threads"][number]["queuedFollowUps"][number];
+        const rawTargetIndex =
+          typeof command.targetIndex === "number" ? command.targetIndex : undefined;
+        updateFixtureThread((thread) => {
+          const withoutExisting = thread.queuedFollowUps.filter(
+            (entry) => entry.id !== followUp.id,
+          );
+          const targetIndex =
+            rawTargetIndex === undefined
+              ? withoutExisting.length
+              : Math.max(0, Math.min(rawTargetIndex, withoutExisting.length));
+          return {
+            ...thread,
+            queuedFollowUps: [
+              ...withoutExisting.slice(0, targetIndex),
+              { ...followUp, lastSendError: followUp.lastSendError ?? null },
+              ...withoutExisting.slice(targetIndex),
+            ],
+          };
+        });
+        return { sequence: 1 };
+      }
+      case "thread.queued-follow-up.remove": {
+        const followUpId = typeof command.followUpId === "string" ? command.followUpId : null;
+        if (followUpId) {
+          updateFixtureThread((thread) => ({
+            ...thread,
+            queuedFollowUps: thread.queuedFollowUps.filter((entry) => entry.id !== followUpId),
+          }));
+        }
+        return { sequence: 1 };
+      }
+      case "thread.queued-follow-up.reorder": {
+        const followUpId = typeof command.followUpId === "string" ? command.followUpId : null;
+        const rawTargetIndex =
+          typeof command.targetIndex === "number" ? Math.floor(command.targetIndex) : null;
+        if (followUpId !== null && rawTargetIndex !== null) {
+          updateFixtureThread((thread) => {
+            const currentIndex = thread.queuedFollowUps.findIndex(
+              (entry) => entry.id === followUpId,
+            );
+            if (currentIndex < 0) {
+              return thread;
+            }
+            const boundedTargetIndex = Math.max(
+              0,
+              Math.min(rawTargetIndex, thread.queuedFollowUps.length - 1),
+            );
+            if (boundedTargetIndex === currentIndex) {
+              return thread;
+            }
+            const nextQueuedFollowUps = [...thread.queuedFollowUps];
+            const [movedFollowUp] = nextQueuedFollowUps.splice(currentIndex, 1);
+            if (!movedFollowUp) {
+              return thread;
+            }
+            nextQueuedFollowUps.splice(boundedTargetIndex, 0, movedFollowUp);
+            return {
+              ...thread,
+              queuedFollowUps: nextQueuedFollowUps,
+            };
+          });
+        }
+        return { sequence: 1 };
+      }
+      case "thread.queued-follow-up.update": {
+        const followUp =
+          command.followUp as OrchestrationReadModel["threads"][number]["queuedFollowUps"][number];
+        if (followUp?.id) {
+          updateFixtureThread((thread) => ({
+            ...thread,
+            queuedFollowUps: thread.queuedFollowUps.map((entry) =>
+              entry.id === followUp.id
+                ? { ...entry, ...followUp, lastSendError: followUp.lastSendError ?? null }
+                : entry,
+            ),
+          }));
+        }
+        return { sequence: 1 };
+      }
+      case "thread.turn.start":
+      case "thread.meta.update":
+      case "thread.create":
+      case "thread.delete":
+      case "thread.interaction-mode.set":
+      case "thread.runtime-mode.set":
+      case "thread.approval.respond":
+      case "thread.user-input.respond":
+      case "thread.checkpoint.revert":
+      case "thread.session.stop":
+      case "project.create":
+      case "project.meta.update":
+      case "project.delete":
+        return { sequence: 1 };
+      case "thread.turn.interrupt": {
+        updateFixtureThread((thread) => ({
+          ...thread,
+          session: thread.session
+            ? {
+                ...thread.session,
+                status: "ready",
+                activeTurnId: null,
+                updatedAt: isoAt(9_999),
+              }
+            : null,
+        }));
+        return { sequence: 1 };
+      }
+      default:
+        break;
+    }
   }
   if (tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
@@ -520,12 +678,23 @@ const worker = setupWorker(
       const method = request.body?._tag;
       if (typeof method !== "string") return;
       wsRequests.push(request.body);
-      client.send(
-        JSON.stringify({
-          id: request.id,
-          result: resolveWsRpc(request.body),
-        }),
-      );
+      try {
+        client.send(
+          JSON.stringify({
+            id: request.id,
+            result: resolveWsRpc(request.body),
+          }),
+        );
+      } catch (error) {
+        client.send(
+          JSON.stringify({
+            id: request.id,
+            error: {
+              message: error instanceof Error ? error.message : String(error),
+            },
+          }),
+        );
+      }
     });
   }),
   http.get("*/attachments/:attachmentId", () =>
@@ -619,6 +788,179 @@ async function waitForSendButton(): Promise<HTMLButtonElement> {
     () => document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]'),
     "Unable to find send button.",
   );
+}
+
+async function waitForComposerSubmitButton(label: string): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () =>
+      document.querySelector<HTMLButtonElement>(`button[type="submit"][aria-label="${label}"]`) ??
+      Array.from(document.querySelectorAll<HTMLButtonElement>('button[type="submit"]')).find(
+        (button) => button.textContent?.trim() === label,
+      ) ??
+      null,
+    `Unable to find ${label} composer submit button.`,
+  );
+}
+
+async function waitForQueuedFollowUpsPanel(): Promise<HTMLElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLElement>('[data-testid="queued-follow-ups-panel"]'),
+    "Unable to find queued follow-ups panel.",
+  );
+}
+
+async function openQueuedFollowUpActionsMenu(index: number): Promise<HTMLButtonElement> {
+  const button = await waitForElement(
+    () =>
+      document.querySelectorAll<HTMLButtonElement>(
+        'button[aria-label^="More queued follow-up actions"]',
+      )[index] ?? null,
+    `Unable to find queued follow-up actions button at index ${index}.`,
+  );
+  button.click();
+  return button;
+}
+
+async function dragQueuedFollowUp(options: {
+  fromPrompt: string;
+  toPrompt: string;
+  position: "before" | "after";
+}): Promise<void> {
+  const fromItem = await waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="queued-follow-up-"]')).find(
+        (element) => element.textContent?.includes(options.fromPrompt),
+      ) ?? null,
+    `Unable to find queued follow-up row for ${options.fromPrompt}.`,
+  );
+  const toItem = await waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="queued-follow-up-"]')).find(
+        (element) => element.textContent?.includes(options.toPrompt),
+      ) ?? null,
+    `Unable to find queued follow-up row for ${options.toPrompt}.`,
+  );
+  const dragHandle = fromItem.querySelector<HTMLButtonElement>('[draggable="true"]');
+  if (!dragHandle) {
+    throw new Error(`Unable to find drag handle for queued follow-up ${options.fromPrompt}.`);
+  }
+
+  const dataTransfer = new DataTransfer();
+  const targetBounds = toItem.getBoundingClientRect();
+  const clientY = options.position === "before" ? targetBounds.top + 2 : targetBounds.bottom - 2;
+
+  dragHandle.dispatchEvent(
+    new DragEvent("dragstart", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    }),
+  );
+  await waitForLayout();
+  toItem.dispatchEvent(
+    new DragEvent("dragover", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+      clientY,
+    }),
+  );
+  await waitForLayout();
+  toItem.dispatchEvent(
+    new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+      clientY,
+    }),
+  );
+  await waitForLayout();
+  dragHandle.dispatchEvent(
+    new DragEvent("dragend", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    }),
+  );
+}
+
+async function waitForDraftPrompt(prompt: string): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+        prompt,
+      );
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+}
+
+async function setComposerPrompt(prompt: string): Promise<void> {
+  useComposerDraftStore.getState().setPrompt(THREAD_ID, prompt);
+  await waitForDraftPrompt(prompt);
+  await vi.waitFor(
+    () => {
+      expect(document.body.textContent ?? "").toContain(prompt);
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  await waitForLayout();
+}
+
+async function queueFollowUpFromComposer(prompt: string): Promise<void> {
+  await setComposerPrompt(prompt);
+  const submitButton = await waitForComposerSubmitButton("Queue follow-up");
+  await vi.waitFor(
+    () => {
+      expect(submitButton.disabled).toBe(false);
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  submitButton.click();
+  await waitForDraftPrompt("");
+  await waitForLayout();
+}
+
+function setClientSettings(settings: Partial<typeof DEFAULT_CLIENT_SETTINGS>): void {
+  localStorage.setItem("t3code:client-settings:v1", JSON.stringify(settings));
+}
+
+function getTurnStartRequests(): Array<WsRequestEnvelope["body"] & { command: { type: string } }> {
+  return wsRequests.flatMap((request) => {
+    const command = (request as { command?: { type?: string } }).command;
+    if (
+      request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand ||
+      !command ||
+      command.type !== "thread.turn.start"
+    ) {
+      return [];
+    }
+    return [request as WsRequestEnvelope["body"] & { command: { type: string } }];
+  });
+}
+
+function getInterruptRequests(): Array<WsRequestEnvelope["body"] & { command: { type: string } }> {
+  return wsRequests.flatMap((request) => {
+    const command = (request as { command?: { type?: string } }).command;
+    if (
+      request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand ||
+      !command ||
+      command.type !== "thread.turn.interrupt"
+    ) {
+      return [];
+    }
+    return [request as WsRequestEnvelope["body"] & { command: { type: string } }];
+  });
+}
+
+function getDispatchCommandTypes(): string[] {
+  return wsRequests.flatMap((request) => {
+    if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+      return [];
+    }
+    const command = (request as { command?: { type?: unknown } }).command;
+    return typeof command?.type === "string" ? [command.type] : [];
+  });
 }
 
 async function waitForInteractionModeButton(
@@ -1755,6 +2097,740 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the running stop button available while drafting a follow-up", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-stop-while-followup" as MessageId,
+        targetText: "stop while follow-up target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      await setComposerPrompt("draft a follow-up");
+      await waitForComposerSubmitButton("Steer follow-up");
+
+      const stopButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Stop generation"]'),
+        "Unable to find stop generation button while drafting a follow-up.",
+      );
+
+      expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("persists the running follow-up behavior setting across remounts", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-follow-up-setting-persist" as MessageId,
+      targetText: "follow-up setting persist target",
+      sessionStatus: "running",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toHaveLength(0);
+          expect(
+            JSON.parse(localStorage.getItem("t3code:client-settings:v1") ?? "{}").followUpBehavior,
+          ).toBe("queue");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      await setComposerPrompt("queued setting persists");
+      await waitForComposerSubmitButton("Queue follow-up");
+    } finally {
+      await mounted.cleanup();
+    }
+
+    const remounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await setComposerPrompt("queued setting persists");
+      await waitForComposerSubmitButton("Queue follow-up");
+    } finally {
+      await remounted.cleanup();
+    }
+  });
+
+  it("steers follow-ups by default while a turn is running", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-steer-default" as MessageId,
+        targetText: "follow-up steer default target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      await setComposerPrompt("steer this run");
+      const submitButton = await waitForComposerSubmitButton("Steer follow-up");
+      submitButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getTurnStartRequests()).toHaveLength(1);
+          expect(document.body.textContent ?? "").toContain("steer this run");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(getQueuedFollowUpPrompts()).toEqual([]);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("interrupts the active run before sending a steered follow-up", async () => {
+    let sawInterrupt = false;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-steer-interrupt" as MessageId,
+        targetText: "follow-up steer interrupt target",
+        sessionStatus: "running",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return undefined;
+        }
+        const command = (body as { command?: { type?: string } }).command;
+        if (!command) {
+          return undefined;
+        }
+        if (command.type === "thread.turn.interrupt") {
+          sawInterrupt = true;
+          updateFixtureThread((thread) => ({
+            ...thread,
+            session: thread.session
+              ? {
+                  ...thread.session,
+                  status: "ready",
+                  activeTurnId: null,
+                  updatedAt: isoAt(9_999),
+                }
+              : null,
+          }));
+          return { sequence: 1 };
+        }
+        if (command.type === "thread.turn.start") {
+          expect(sawInterrupt).toBe(true);
+          return { sequence: 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await setComposerPrompt("please steer now");
+      const submitButton = await waitForComposerSubmitButton("Steer follow-up");
+      submitButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getInterruptRequests()).toHaveLength(1);
+          expect(getTurnStartRequests()).toHaveLength(1);
+          const commandTypes = getDispatchCommandTypes();
+          expect(commandTypes).toEqual(
+            expect.arrayContaining(["thread.turn.interrupt", "thread.turn.start"]),
+          );
+          expect(commandTypes.indexOf("thread.turn.interrupt")).toBeLessThan(
+            commandTypes.indexOf("thread.turn.start"),
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders queued follow-ups from the server-backed thread snapshot", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const runningSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-follow-up-auto-send" as MessageId,
+      targetText: "follow-up auto-send target",
+      sessionStatus: "running",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: runningSnapshot,
+    });
+
+    try {
+      await setComposerPrompt("queued head");
+      await waitForComposerSubmitButton("Queue follow-up");
+
+      await queueFollowUpFromComposer("queued head");
+      await queueFollowUpFromComposer("queued tail");
+
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toEqual(["queued head", "queued tail"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(getTurnStartRequests()).toHaveLength(0);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not enqueue duplicate follow-ups on rapid repeated submit", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-no-duplicate-queue" as MessageId,
+        targetText: "follow-up duplicate queue target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      await setComposerPrompt("rapid queue");
+      const submitButton = await waitForComposerSubmitButton("Queue follow-up");
+
+      submitButton.click();
+      submitButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toEqual(["rapid queue"]);
+          expect(getQueuedFollowUpEnqueueRequests()).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("supports steering and deleting queued follow-ups from the panel", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-panel-actions" as MessageId,
+        targetText: "follow-up panel actions target",
+        sessionStatus: "ready",
+      }),
+    });
+
+    try {
+      updateFixtureThread((thread) => ({
+        ...thread,
+        queuedFollowUps: [
+          {
+            id: "panel-first",
+            createdAt: isoAt(8_700),
+            prompt: "panel first",
+            attachments: [],
+            terminalContexts: [],
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            lastSendError: null,
+          },
+          {
+            id: "panel-second",
+            createdAt: isoAt(8_800),
+            prompt: "panel second",
+            attachments: [],
+            terminalContexts: [],
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            lastSendError: null,
+          },
+        ],
+      }));
+
+      const panel = await waitForQueuedFollowUpsPanel();
+      const steerButton = Array.from(panel.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === "Steer",
+      );
+      expect(steerButton).toBeTruthy();
+      steerButton?.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getTurnStartRequests()).toHaveLength(1);
+          expect(getQueuedFollowUpPrompts()).toEqual(["panel second"]);
+          expect(document.body.textContent ?? "").toContain("panel first");
+          const commandTypes = getDispatchCommandTypes();
+          expect(commandTypes).toEqual(
+            expect.arrayContaining(["thread.queued-follow-up.remove", "thread.turn.start"]),
+          );
+          expect(commandTypes.indexOf("thread.queued-follow-up.remove")).toBeLessThan(
+            commandTypes.indexOf("thread.turn.start"),
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const deleteButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            'button[aria-label^="Delete queued follow-up"]',
+          ),
+        "Unable to find delete queued follow-up button.",
+      );
+      deleteButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toEqual([]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("lets the server claim a queued head after steering interrupts the active run", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-panel-steer-interrupt" as MessageId,
+        targetText: "follow-up panel steer interrupt target",
+        sessionStatus: "running",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return undefined;
+        }
+        const command = (body as { command?: { type?: string; followUpId?: string } }).command;
+        if (!command) {
+          return undefined;
+        }
+        if (command.type === "thread.turn.interrupt") {
+          updateFixtureThread((thread) => ({
+            ...thread,
+            session: thread.session
+              ? {
+                  ...thread.session,
+                  status: "ready",
+                  activeTurnId: null,
+                  updatedAt: isoAt(9_998),
+                }
+              : null,
+          }));
+          return { sequence: 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await queueFollowUpFromComposer("interrupt queued steer");
+
+      const panel = await waitForQueuedFollowUpsPanel();
+      const steerButton = Array.from(panel.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === "Steer",
+      );
+      expect(steerButton).toBeTruthy();
+      steerButton?.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getInterruptRequests()).toHaveLength(1);
+          expect(getTurnStartRequests()).toHaveLength(0);
+          const commandTypes = getDispatchCommandTypes();
+          expect(commandTypes).toEqual(expect.arrayContaining(["thread.turn.interrupt"]));
+          expect(commandTypes).not.toContain("thread.turn.start");
+          expect(commandTypes).not.toContain("thread.queued-follow-up.remove");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not issue duplicate steer interrupts while the first interrupt request is in flight", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-steer-in-flight-guard" as MessageId,
+        targetText: "follow-up steer in-flight guard target",
+        sessionStatus: "running",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return undefined;
+        }
+        const command = (body as { command?: { type?: string } }).command;
+        if (!command || command.type !== "thread.turn.interrupt") {
+          return undefined;
+        }
+        return new Promise((resolve) => {
+          window.setTimeout(() => resolve({ sequence: 1 }), 100);
+        });
+      },
+    });
+
+    try {
+      await setComposerPrompt("steer only once");
+      const submitButton = await waitForComposerSubmitButton("Steer follow-up");
+      submitButton.click();
+      submitButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getInterruptRequests()).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores a ready-state steered queued follow-up with an error when send fails after claim", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-panel-steer-remove-failure" as MessageId,
+        targetText: "follow-up panel steer remove failure target",
+        sessionStatus: "ready",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return undefined;
+        }
+        const command = (body as { command?: { type?: string } }).command;
+        if (!command) {
+          return undefined;
+        }
+        if (command.type === "thread.turn.start") {
+          throw new Error("steered send failed");
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      updateFixtureThread((thread) => ({
+        ...thread,
+        queuedFollowUps: [
+          {
+            id: "queued-ready-steer-failure",
+            createdAt: isoAt(8_500),
+            prompt: "ready steer failure",
+            attachments: [],
+            terminalContexts: [],
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            lastSendError: null,
+          },
+        ],
+      }));
+
+      const panel = await waitForQueuedFollowUpsPanel();
+      const steerButton = Array.from(panel.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === "Steer",
+      );
+      expect(steerButton).toBeTruthy();
+      steerButton?.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getTurnStartRequests()).toHaveLength(1);
+          expect(getDispatchCommandTypes()).toEqual(
+            expect.arrayContaining([
+              "thread.queued-follow-up.remove",
+              "thread.turn.start",
+              "thread.queued-follow-up.enqueue",
+            ]),
+          );
+          expect(getQueuedFollowUpPrompts()).toEqual(["ready steer failure"]);
+          const restoredFollowUp = fixture.snapshot.threads
+            .find((thread) => thread.id === THREAD_ID)
+            ?.queuedFollowUps.find((followUp) => followUp.id === "queued-ready-steer-failure");
+          expect(restoredFollowUp?.lastSendError).toBe("Failed to steer queued follow-up.");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores a queued follow-up into the composer from the panel", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-panel-edit" as MessageId,
+        targetText: "follow-up panel edit target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      await setComposerPrompt("queued edit item");
+      await waitForComposerSubmitButton("Queue follow-up");
+      await queueFollowUpFromComposer("queued edit item");
+
+      await openQueuedFollowUpActionsMenu(0);
+      const editButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label^="Edit queued follow-up"]'),
+        "Unable to find edit queued follow-up button.",
+      );
+      editButton.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toEqual([]);
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt).toBe(
+            "queued edit item",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("requeues an edited follow-up back near its original queued position", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-panel-edit-position" as MessageId,
+        targetText: "follow-up panel edit order target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      await queueFollowUpFromComposer("queue first");
+      await queueFollowUpFromComposer("queue second");
+      await queueFollowUpFromComposer("queue third");
+
+      await openQueuedFollowUpActionsMenu(1);
+      const editButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label^="Edit queued follow-up"]'),
+        "Unable to find the queued follow-up edit button.",
+      );
+      editButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toEqual(["queue first", "queue third"]);
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt).toBe(
+            "queue second",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await queueFollowUpFromComposer("queue second edited");
+
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toEqual([
+            "queue first",
+            "queue second edited",
+            "queue third",
+          ]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("appends a new queued follow-up after requeueing an edited item", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-panel-edit-append" as MessageId,
+        targetText: "follow-up panel edit append target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      await queueFollowUpFromComposer("queue first");
+      await queueFollowUpFromComposer("queue second");
+      await queueFollowUpFromComposer("queue third");
+
+      await openQueuedFollowUpActionsMenu(1);
+      const editButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label^="Edit queued follow-up"]'),
+        "Unable to find the queued follow-up edit button.",
+      );
+      editButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toEqual(["queue first", "queue third"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await queueFollowUpFromComposer("queue second edited");
+      await queueFollowUpFromComposer("queue fourth");
+
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toEqual([
+            "queue first",
+            "queue second edited",
+            "queue third",
+            "queue fourth",
+          ]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("lets queued follow-ups reorder by dragging from the panel handle", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-panel-move" as MessageId,
+        targetText: "follow-up panel move target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      await queueFollowUpFromComposer("move first");
+      await queueFollowUpFromComposer("move second");
+      await queueFollowUpFromComposer("move third");
+
+      await dragQueuedFollowUp({
+        fromPrompt: "move second",
+        toPrompt: "move first",
+        position: "before",
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toEqual(["move second", "move first", "move third"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await dragQueuedFollowUp({
+        fromPrompt: "move first",
+        toPrompt: "move third",
+        position: "after",
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(getQueuedFollowUpPrompts()).toEqual(["move second", "move third", "move first"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses Ctrl+Shift+Enter to submit the opposite follow-up behavior once", async () => {
+    setClientSettings({
+      followUpBehavior: "queue",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-shortcut-opposite" as MessageId,
+        targetText: "follow-up shortcut target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      await setComposerPrompt("shortcut steer once");
+      await waitForComposerSubmitButton("Queue follow-up");
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          ctrlKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(getTurnStartRequests()).toHaveLength(1);
+          expect(getQueuedFollowUpPrompts()).toEqual([]);
+          expect(document.body.textContent ?? "").toContain("shortcut steer once");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

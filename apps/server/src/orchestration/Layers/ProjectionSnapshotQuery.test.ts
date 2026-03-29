@@ -27,6 +27,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`DELETE FROM projection_state`;
       yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_queued_follow_ups`;
       yield* sql`DELETE FROM projection_turns`;
 
       yield* sql`
@@ -145,6 +146,37 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'provider started',
           '{"stage":"start"}',
           '2026-02-24T00:00:06.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_queued_follow_ups (
+          follow_up_id,
+          thread_id,
+          queue_position,
+          created_at,
+          updated_at,
+          prompt,
+          attachments_json,
+          terminal_contexts_json,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          last_send_error
+        )
+        VALUES (
+          'queued-follow-up-1',
+          'thread-1',
+          0,
+          '2026-02-24T00:00:06.250Z',
+          '2026-02-24T00:00:06.250Z',
+          'follow up after this turn',
+          '[]',
+          '[]',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL
         )
       `;
 
@@ -301,6 +333,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               implementationThreadId: ThreadId.makeUnsafe("thread-2"),
               createdAt: "2026-02-24T00:00:05.000Z",
               updatedAt: "2026-02-24T00:00:05.500Z",
+            },
+          ],
+          queuedFollowUps: [
+            {
+              id: "queued-follow-up-1",
+              createdAt: "2026-02-24T00:00:06.250Z",
+              prompt: "follow up after this turn",
+              attachments: [],
+              terminalContexts: [],
+              modelSelection: {
+                provider: "codex",
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              lastSendError: null,
             },
           ],
           activities: [

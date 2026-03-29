@@ -32,7 +32,7 @@ import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 3;
+const COMPOSER_DRAFT_STORAGE_VERSION = 4;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -75,6 +75,14 @@ const PersistedTerminalContextDraft = Schema.Struct({
 });
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
+const PersistedQueuedFollowUpEditState = Schema.Struct({
+  followUpId: Schema.String,
+  queueIndex: Schema.Number,
+  previousFollowUpId: Schema.NullOr(Schema.String),
+  nextFollowUpId: Schema.NullOr(Schema.String),
+});
+type PersistedQueuedFollowUpEditState = typeof PersistedQueuedFollowUpEditState.Type;
+
 const PersistedComposerThreadDraftState = Schema.Struct({
   prompt: Schema.String,
   attachments: Schema.Array(PersistedComposerImageAttachment),
@@ -85,6 +93,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderKind)),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  queuedFollowUpEdit: Schema.optionalKey(PersistedQueuedFollowUpEditState),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -165,6 +174,14 @@ export interface ComposerThreadDraftState {
   activeProvider: ProviderKind | null;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  queuedFollowUpEdit: QueuedFollowUpEditState | null;
+}
+
+export interface QueuedFollowUpEditState {
+  followUpId: string;
+  queueIndex: number;
+  previousFollowUpId: string | null;
+  nextFollowUpId: string | null;
 }
 
 export interface DraftThreadState {
@@ -259,7 +276,10 @@ interface ComposerDraftStoreState {
     threadId: ThreadId,
     attachments: PersistedComposerImageAttachment[],
   ) => void;
-  clearComposerContent: (threadId: ThreadId) => void;
+  clearComposerContent: (
+    threadId: ThreadId,
+    options?: { revokeImagePreviewUrls?: boolean },
+  ) => void;
 }
 
 export interface EffectiveComposerModelState {
@@ -320,6 +340,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   activeProvider: null,
   runtimeMode: null,
   interactionMode: null,
+  queuedFollowUpEdit: null,
 });
 
 function createEmptyThreadDraft(): ComposerThreadDraftState {
@@ -333,6 +354,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     activeProvider: null,
     runtimeMode: null,
     interactionMode: null,
+    queuedFollowUpEdit: null,
   };
 }
 
@@ -402,8 +424,35 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.queuedFollowUpEdit === null
   );
+}
+
+function normalizeQueuedFollowUpLink(linkedFollowUpId: unknown): string | null {
+  return typeof linkedFollowUpId === "string" && linkedFollowUpId.trim().length > 0
+    ? linkedFollowUpId.trim()
+    : null;
+}
+
+function normalizeQueuedFollowUpEditState(value: unknown): QueuedFollowUpEditState | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Partial<QueuedFollowUpEditState>;
+  const followUpId = typeof candidate.followUpId === "string" ? candidate.followUpId.trim() : "";
+  if (followUpId.length === 0) {
+    return null;
+  }
+  const queueIndex = Number.isFinite(candidate.queueIndex)
+    ? Math.max(0, Math.floor(candidate.queueIndex as number))
+    : 0;
+  return {
+    followUpId,
+    queueIndex,
+    previousFollowUpId: normalizeQueuedFollowUpLink(candidate.previousFollowUpId),
+    nextFollowUpId: normalizeQueuedFollowUpLink(candidate.nextFollowUpId),
+  };
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
@@ -933,10 +982,12 @@ function normalizePersistedDraftsByThreadId(
       terminalContexts.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      normalizeQueuedFollowUpEditState(draftCandidate.queuedFollowUpEdit) === null
     ) {
       continue;
     }
+    const queuedFollowUpEdit = normalizeQueuedFollowUpEditState(draftCandidate.queuedFollowUpEdit);
     nextDraftsByThreadId[threadId as ThreadId] = {
       prompt,
       attachments,
@@ -944,6 +995,7 @@ function normalizePersistedDraftsByThreadId(
       ...(hasModelData ? { modelSelectionByProvider, activeProvider } : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(queuedFollowUpEdit ? { queuedFollowUpEdit } : {}),
     };
   }
 
@@ -1012,7 +1064,8 @@ function partializeComposerDraftStoreState(
       draft.terminalContexts.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.queuedFollowUpEdit === null
     ) {
       continue;
     }
@@ -1040,6 +1093,11 @@ function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.queuedFollowUpEdit
+        ? {
+            queuedFollowUpEdit: draft.queuedFollowUpEdit,
+          }
+        : {}),
     };
     persistedDraftsByThreadId[threadId as ThreadId] = persistedDraft;
   }
@@ -1212,7 +1270,7 @@ function hydreatePersistedComposerImageAttachment(
   }
 }
 
-function hydrateImagesFromPersisted(
+export function hydrateComposerImagesFromPersistedAttachments(
   attachments: ReadonlyArray<PersistedComposerImageAttachment>,
 ): ComposerImageAttachment[] {
   return attachments.flatMap((attachment) => {
@@ -1243,7 +1301,7 @@ function toHydratedThreadDraft(
 
   return {
     prompt: persistedDraft.prompt,
-    images: hydrateImagesFromPersisted(persistedDraft.attachments),
+    images: hydrateComposerImagesFromPersistedAttachments(persistedDraft.attachments),
     nonPersistedImageIds: [],
     persistedAttachments: [...persistedDraft.attachments],
     terminalContexts:
@@ -1255,6 +1313,7 @@ function toHydratedThreadDraft(
     activeProvider,
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    queuedFollowUpEdit: normalizeQueuedFollowUpEditState(persistedDraft.queuedFollowUpEdit),
   };
 }
 
@@ -2104,7 +2163,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           verifyPersistedAttachments(threadId, attachments, set);
         });
       },
-      clearComposerContent: (threadId) => {
+      clearComposerContent: (threadId, options) => {
         if (threadId.length === 0) {
           return;
         }
@@ -2113,6 +2172,11 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           if (!current) {
             return state;
           }
+          if (options?.revokeImagePreviewUrls) {
+            for (const image of current.images) {
+              revokeObjectPreviewUrl(image.previewUrl);
+            }
+          }
           const nextDraft: ComposerThreadDraftState = {
             ...current,
             prompt: "",
@@ -2120,6 +2184,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             nonPersistedImageIds: [],
             persistedAttachments: [],
             terminalContexts: [],
+            queuedFollowUpEdit: null,
           };
           const nextDraftsByThreadId = { ...state.draftsByThreadId };
           if (shouldRemoveDraft(nextDraft)) {
