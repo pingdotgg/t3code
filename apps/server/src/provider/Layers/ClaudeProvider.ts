@@ -324,27 +324,28 @@ const CAPABILITIES_PROBE_TIMEOUT_MS = 8_000;
  * This is used as a fallback when `claude auth status` does not include
  * subscription type information.
  */
-const probeClaudeCapabilities = (binaryPath: string) =>
-  Effect.tryPromise(async () => {
-    const abort = new AbortController();
-    try {
-      const q = claudeQuery({
-        prompt: ".",
-        options: {
-          pathToClaudeCodeExecutable: binaryPath,
-          abortController: abort,
-          maxTurns: 0,
-          settingSources: [],
-          allowedTools: [],
-          stderr: () => {},
-        },
-      });
-      const init = await q.initializationResult();
-      return { subscriptionType: init.account?.subscriptionType };
-    } finally {
-      if (!abort.signal.aborted) abort.abort();
-    }
+const probeClaudeCapabilities = (binaryPath: string) => {
+  const abort = new AbortController();
+  return Effect.tryPromise(async () => {
+    const q = claudeQuery({
+      prompt: ".",
+      options: {
+        pathToClaudeCodeExecutable: binaryPath,
+        abortController: abort,
+        maxTurns: 0,
+        settingSources: [],
+        allowedTools: [],
+        stderr: () => {},
+      },
+    });
+    const init = await q.initializationResult();
+    return { subscriptionType: init.account?.subscriptionType };
   }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (!abort.signal.aborted) abort.abort();
+      }),
+    ),
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
     Effect.result,
     Effect.map((result) => {
@@ -352,6 +353,7 @@ const probeClaudeCapabilities = (binaryPath: string) =>
       return Option.isSome(result.success) ? result.success.value : undefined;
     }),
   );
+};
 
 const runClaudeCommand = (args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
