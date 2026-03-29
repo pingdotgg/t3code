@@ -117,6 +117,10 @@ export function isContextMenuPointerDown(input: {
   return input.isMac && input.button === 0 && input.ctrlKey;
 }
 
+export function isKeyboardContextMenuKey(input: { key: string; shiftKey: boolean }): boolean {
+  return input.key === "ContextMenu" || (input.key === "F10" && input.shiftKey);
+}
+
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;

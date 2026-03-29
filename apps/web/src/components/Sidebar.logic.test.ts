@@ -8,6 +8,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isKeyboardContextMenuKey,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -200,6 +201,41 @@ describe("isContextMenuPointerDown", () => {
         button: 0,
         ctrlKey: true,
         isMac: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("isKeyboardContextMenuKey", () => {
+  it("treats the dedicated context-menu key as a context menu trigger", () => {
+    expect(
+      isKeyboardContextMenuKey({
+        key: "ContextMenu",
+        shiftKey: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("treats Shift+F10 as a context menu trigger", () => {
+    expect(
+      isKeyboardContextMenuKey({
+        key: "F10",
+        shiftKey: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores unrelated keyboard events", () => {
+    expect(
+      isKeyboardContextMenuKey({
+        key: "F10",
+        shiftKey: false,
+      }),
+    ).toBe(false);
+    expect(
+      isKeyboardContextMenuKey({
+        key: "Enter",
+        shiftKey: false,
       }),
     ).toBe(false);
   });

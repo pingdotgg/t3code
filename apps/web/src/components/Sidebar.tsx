@@ -2,6 +2,7 @@ import {
   ArchiveIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
+  EllipsisIcon,
   FolderIcon,
   GitPullRequestIcon,
   PlusIcon,
@@ -85,7 +86,15 @@ import {
 } from "./desktopUpdate.logic";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
-import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import {
+  Menu,
+  MenuGroup,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+} from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -109,6 +118,7 @@ import {
   getVisibleThreadsForProject,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
+  isKeyboardContextMenuKey,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -405,6 +415,8 @@ export default function Sidebar() {
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressProjectClickForContextMenuRef = useRef(false);
+  const threadActionMenuTriggerRefs = useRef(new Map<ThreadId, HTMLButtonElement>());
+  const projectActionMenuTriggerRefs = useRef(new Map<ProjectId, HTMLButtonElement>());
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -723,14 +735,163 @@ export default function Sidebar() {
       });
     },
   });
+  const setThreadActionMenuTriggerRef = useCallback(
+    (threadId: ThreadId, node: HTMLButtonElement | null) => {
+      if (node) {
+        threadActionMenuTriggerRefs.current.set(threadId, node);
+        return;
+      }
+      threadActionMenuTriggerRefs.current.delete(threadId);
+    },
+    [],
+  );
+  const setProjectActionMenuTriggerRef = useCallback(
+    (projectId: ProjectId, node: HTMLButtonElement | null) => {
+      if (node) {
+        projectActionMenuTriggerRefs.current.set(projectId, node);
+        return;
+      }
+      projectActionMenuTriggerRefs.current.delete(projectId);
+    },
+    [],
+  );
+  const startThreadRename = useCallback((threadId: ThreadId, title: string) => {
+    setRenamingThreadId(threadId);
+    setRenamingTitle(title);
+    renamingCommittedRef.current = false;
+  }, []);
+  const copyThreadPath = useCallback(
+    (threadId: ThreadId) => {
+      const thread = threads.find((entry) => entry.id === threadId);
+      if (!thread) return;
+      const threadWorkspacePath =
+        thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null;
+      if (!threadWorkspacePath) {
+        toastManager.add({
+          type: "error",
+          title: "Path unavailable",
+          description: "This thread does not have a workspace path to copy.",
+        });
+        return;
+      }
+      copyPathToClipboard(threadWorkspacePath, { path: threadWorkspacePath });
+    },
+    [copyPathToClipboard, projectCwdById, threads],
+  );
+  const deleteSingleThread = useCallback(
+    async (threadId: ThreadId) => {
+      const thread = threads.find((entry) => entry.id === threadId);
+      if (!thread) return;
+      const api = readNativeApi();
+      if (!api) return;
+
+      if (appSettings.confirmThreadDelete) {
+        const confirmed = await api.dialogs.confirm(
+          [
+            `Delete thread "${thread.title}"?`,
+            "This permanently clears conversation history for this thread.",
+          ].join("\n"),
+        );
+        if (!confirmed) return;
+      }
+
+      await deleteThread(threadId);
+    },
+    [appSettings.confirmThreadDelete, deleteThread, threads],
+  );
+  const markSelectedThreadsUnread = useCallback(() => {
+    if (selectedThreadIds.size === 0) return;
+    for (const id of selectedThreadIds) {
+      markThreadUnread(id);
+    }
+    clearSelection();
+  }, [clearSelection, markThreadUnread, selectedThreadIds]);
+  const deleteSelectedThreads = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api) return;
+    const ids = [...selectedThreadIds];
+    if (ids.length === 0) return;
+    const count = ids.length;
+
+    if (appSettings.confirmThreadDelete) {
+      const confirmed = await api.dialogs.confirm(
+        [
+          `Delete ${count} thread${count === 1 ? "" : "s"}?`,
+          "This permanently clears conversation history for these threads.",
+        ].join("\n"),
+      );
+      if (!confirmed) return;
+    }
+
+    const deletedIds = new Set<ThreadId>(ids);
+    for (const id of ids) {
+      await deleteThread(id, { deletedThreadIds: deletedIds });
+    }
+    removeFromSelection(ids);
+  }, [appSettings.confirmThreadDelete, deleteThread, removeFromSelection, selectedThreadIds]);
+  const copyProjectPath = useCallback(
+    (projectId: ProjectId) => {
+      const project = projects.find((entry) => entry.id === projectId);
+      if (!project) return;
+      copyPathToClipboard(project.cwd, { path: project.cwd });
+    },
+    [copyPathToClipboard, projects],
+  );
+  const removeProject = useCallback(
+    async (projectId: ProjectId) => {
+      const api = readNativeApi();
+      if (!api) return;
+      const project = projects.find((entry) => entry.id === projectId);
+      if (!project) return;
+
+      const projectThreads = threads.filter((thread) => thread.projectId === projectId);
+      if (projectThreads.length > 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Project is not empty",
+          description: "Delete all threads in this project before removing it.",
+        });
+        return;
+      }
+
+      const confirmed = await api.dialogs.confirm(`Remove project "${project.name}"?`);
+      if (!confirmed) return;
+
+      try {
+        const projectDraftThread = getDraftThreadByProjectId(projectId);
+        if (projectDraftThread) {
+          clearComposerDraftForThread(projectDraftThread.threadId);
+        }
+        clearProjectDraftThreadId(projectId);
+        await api.orchestration.dispatchCommand({
+          type: "project.delete",
+          commandId: newCommandId(),
+          projectId,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error removing project.";
+        console.error("Failed to remove project", { projectId, error });
+        toastManager.add({
+          type: "error",
+          title: `Failed to remove "${project.name}"`,
+          description: message,
+        });
+      }
+    },
+    [
+      clearComposerDraftForThread,
+      clearProjectDraftThreadId,
+      getDraftThreadByProjectId,
+      projects,
+      threads,
+    ],
+  );
   const handleThreadContextMenu = useCallback(
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
       const thread = threads.find((t) => t.id === threadId);
       if (!thread) return;
-      const threadWorkspacePath =
-        thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null;
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
@@ -743,9 +904,7 @@ export default function Sidebar() {
       );
 
       if (clicked === "rename") {
-        setRenamingThreadId(threadId);
-        setRenamingTitle(thread.title);
-        renamingCommittedRef.current = false;
+        startThreadRename(threadId, thread.title);
         return;
       }
 
@@ -754,15 +913,7 @@ export default function Sidebar() {
         return;
       }
       if (clicked === "copy-path") {
-        if (!threadWorkspacePath) {
-          toastManager.add({
-            type: "error",
-            title: "Path unavailable",
-            description: "This thread does not have a workspace path to copy.",
-          });
-          return;
-        }
-        copyPathToClipboard(threadWorkspacePath, { path: threadWorkspacePath });
+        copyThreadPath(threadId);
         return;
       }
       if (clicked === "copy-thread-id") {
@@ -770,26 +921,14 @@ export default function Sidebar() {
         return;
       }
       if (clicked !== "delete") return;
-      if (appSettings.confirmThreadDelete) {
-        const confirmed = await api.dialogs.confirm(
-          [
-            `Delete thread "${thread.title}"?`,
-            "This permanently clears conversation history for this thread.",
-          ].join("\n"),
-        );
-        if (!confirmed) {
-          return;
-        }
-      }
-      await deleteThread(threadId);
+      await deleteSingleThread(threadId);
     },
     [
-      appSettings.confirmThreadDelete,
-      copyPathToClipboard,
+      copyThreadPath,
       copyThreadIdToClipboard,
-      deleteThread,
+      deleteSingleThread,
       markThreadUnread,
-      projectCwdById,
+      startThreadRename,
       threads,
     ],
   );
@@ -811,39 +950,14 @@ export default function Sidebar() {
       );
 
       if (clicked === "mark-unread") {
-        for (const id of ids) {
-          markThreadUnread(id);
-        }
-        clearSelection();
+        markSelectedThreadsUnread();
         return;
       }
 
       if (clicked !== "delete") return;
-
-      if (appSettings.confirmThreadDelete) {
-        const confirmed = await api.dialogs.confirm(
-          [
-            `Delete ${count} thread${count === 1 ? "" : "s"}?`,
-            "This permanently clears conversation history for these threads.",
-          ].join("\n"),
-        );
-        if (!confirmed) return;
-      }
-
-      const deletedIds = new Set<ThreadId>(ids);
-      for (const id of ids) {
-        await deleteThread(id, { deletedThreadIds: deletedIds });
-      }
-      removeFromSelection(ids);
+      await deleteSelectedThreads();
     },
-    [
-      appSettings.confirmThreadDelete,
-      clearSelection,
-      deleteThread,
-      markThreadUnread,
-      removeFromSelection,
-      selectedThreadIds,
-    ],
+    [deleteSelectedThreads, markSelectedThreadsUnread, selectedThreadIds],
   );
 
   const handleThreadClick = useCallback(
@@ -913,53 +1027,13 @@ export default function Sidebar() {
         position,
       );
       if (clicked === "copy-path") {
-        copyPathToClipboard(project.cwd, { path: project.cwd });
+        copyProjectPath(projectId);
         return;
       }
       if (clicked !== "delete") return;
-
-      const projectThreads = threads.filter((thread) => thread.projectId === projectId);
-      if (projectThreads.length > 0) {
-        toastManager.add({
-          type: "warning",
-          title: "Project is not empty",
-          description: "Delete all threads in this project before removing it.",
-        });
-        return;
-      }
-
-      const confirmed = await api.dialogs.confirm(`Remove project "${project.name}"?`);
-      if (!confirmed) return;
-
-      try {
-        const projectDraftThread = getDraftThreadByProjectId(projectId);
-        if (projectDraftThread) {
-          clearComposerDraftForThread(projectDraftThread.threadId);
-        }
-        clearProjectDraftThreadId(projectId);
-        await api.orchestration.dispatchCommand({
-          type: "project.delete",
-          commandId: newCommandId(),
-          projectId,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error removing project.";
-        console.error("Failed to remove project", { projectId, error });
-        toastManager.add({
-          type: "error",
-          title: `Failed to remove "${project.name}"`,
-          description: message,
-        });
-      }
+      await removeProject(projectId);
     },
-    [
-      clearComposerDraftForThread,
-      clearProjectDraftThreadId,
-      copyPathToClipboard,
-      getDraftThreadByProjectId,
-      projects,
-      threads,
-    ],
+    [copyProjectPath, projects, removeProject],
   );
 
   const projectDnDSensors = useSensors(
@@ -1264,6 +1338,7 @@ export default function Sidebar() {
     const renderThreadRow = (thread: (typeof projectThreads)[number]) => {
       const isActive = routeThreadId === thread.id;
       const isSelected = selectedThreadIds.has(thread.id);
+      const isSelectionContext = selectedThreadIds.size > 0 && isSelected;
       const isHighlighted = isActive || isSelected;
       const jumpLabel = threadJumpLabelById.get(thread.id) ?? null;
       const isThreadRunning =
@@ -1273,6 +1348,11 @@ export default function Sidebar() {
       const terminalStatus = terminalStatusFromRunningIds(
         selectThreadTerminalState(terminalStateByThreadId, thread.id).runningTerminalIds,
       );
+      const threadActionLabel = isSelectionContext
+        ? `Actions for ${selectedThreadIds.size} selected thread${
+            selectedThreadIds.size === 1 ? "" : "s"
+          }`
+        : `Thread actions for ${thread.title}`;
 
       return (
         <SidebarMenuSubItem
@@ -1299,6 +1379,12 @@ export default function Sidebar() {
               handleThreadClick(event, thread.id, orderedProjectThreadIds);
             }}
             onKeyDown={(event) => {
+              if (isKeyboardContextMenuKey(event)) {
+                event.preventDefault();
+                threadActionMenuTriggerRefs.current.get(thread.id)?.click();
+                return;
+              }
+
               if (event.key !== "Enter" && event.key !== " ") return;
               event.preventDefault();
               navigateToThread(thread.id);
@@ -1484,6 +1570,59 @@ export default function Sidebar() {
               </div>
             </div>
           </SidebarMenuSubButton>
+          <Menu>
+            <MenuTrigger
+              render={
+                <button
+                  ref={(node) => {
+                    setThreadActionMenuTriggerRef(thread.id, node);
+                  }}
+                  type="button"
+                  data-thread-selection-safe
+                  aria-label={threadActionLabel}
+                  className="absolute top-1/2 right-6 z-10 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:opacity-100 data-[popup-open]:opacity-100"
+                  onClick={() => {
+                    if (!isSelectionContext && selectedThreadIds.size > 0) {
+                      clearSelection();
+                    }
+                  }}
+                />
+              }
+            >
+              <EllipsisIcon className="size-3.5" />
+            </MenuTrigger>
+            <MenuPopup align="end" data-thread-selection-safe>
+              {isSelectionContext ? (
+                <>
+                  <MenuItem onClick={markSelectedThreadsUnread}>
+                    Mark unread ({selectedThreadIds.size})
+                  </MenuItem>
+                  <MenuItem onClick={() => void deleteSelectedThreads()} variant="destructive">
+                    Delete ({selectedThreadIds.size})
+                  </MenuItem>
+                </>
+              ) : (
+                <>
+                  <MenuItem onClick={() => startThreadRename(thread.id, thread.title)}>
+                    Rename thread
+                  </MenuItem>
+                  <MenuItem onClick={() => markThreadUnread(thread.id)}>Mark unread</MenuItem>
+                  <MenuItem onClick={() => copyThreadPath(thread.id)}>Copy Path</MenuItem>
+                  <MenuItem
+                    onClick={() => copyThreadIdToClipboard(thread.id, { threadId: thread.id })}
+                  >
+                    Copy Thread ID
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => void deleteSingleThread(thread.id)}
+                    variant="destructive"
+                  >
+                    Delete
+                  </MenuItem>
+                </>
+              )}
+            </MenuPopup>
+          </Menu>
         </SidebarMenuSubItem>
       );
     };
@@ -1538,6 +1677,34 @@ export default function Sidebar() {
               {project.name}
             </span>
           </SidebarMenuButton>
+          <Menu>
+            <MenuTrigger
+              render={
+                <SidebarMenuAction
+                  render={
+                    <button
+                      ref={(node) => {
+                        setProjectActionMenuTriggerRef(project.id, node);
+                      }}
+                      type="button"
+                      aria-label={`Project actions for ${project.name}`}
+                      data-thread-selection-safe
+                    />
+                  }
+                  showOnHover
+                  className="top-1 right-7 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                />
+              }
+            >
+              <EllipsisIcon className="size-3.5" />
+            </MenuTrigger>
+            <MenuPopup align="end" data-thread-selection-safe>
+              <MenuItem onClick={() => copyProjectPath(project.id)}>Copy Project Path</MenuItem>
+              <MenuItem onClick={() => void removeProject(project.id)} variant="destructive">
+                Remove project
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1655,6 +1822,12 @@ export default function Sidebar() {
 
   const handleProjectTitleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>, projectId: ProjectId) => {
+      if (isKeyboardContextMenuKey(event)) {
+        event.preventDefault();
+        projectActionMenuTriggerRefs.current.get(projectId)?.click();
+        return;
+      }
+
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       if (dragInProgressRef.current) {
