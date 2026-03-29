@@ -459,6 +459,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.colorblindDiffColors !== DEFAULT_UNIFIED_SETTINGS.colorblindDiffColors
+        ? ["Colorblind diff colors"]
+        : []),
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
@@ -480,6 +483,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       areProviderSettingsDirty,
       isGitWritingModelDirty,
+      settings.colorblindDiffColors,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.defaultThreadEnvMode,
@@ -833,6 +837,32 @@ export function GeneralSettingsPanel() {
               checked={settings.diffWordWrap}
               onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
               aria-label="Wrap diff lines by default"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Colorblind diff colors"
+          description="Use blue/orange instead of red/green for diff additions and deletions."
+          resetAction={
+            settings.colorblindDiffColors !== DEFAULT_UNIFIED_SETTINGS.colorblindDiffColors ? (
+              <SettingResetButton
+                label="colorblind diff colors"
+                onClick={() =>
+                  updateSettings({
+                    colorblindDiffColors: DEFAULT_UNIFIED_SETTINGS.colorblindDiffColors,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.colorblindDiffColors}
+              onCheckedChange={(checked) =>
+                updateSettings({ colorblindDiffColors: Boolean(checked) })
+              }
+              aria-label="Use colorblind-friendly diff colors"
             />
           }
         />

@@ -38,7 +38,15 @@ import { ToggleGroup, Toggle } from "./ui/toggle-group";
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
 
-const DIFF_PANEL_UNSAFE_CSS = `
+// Blue/orange palette for colorblind users (distinguishable under deuteranopia/protanopia).
+const CB_ADDITION = "oklch(0.75 0.15 70)";
+const CB_DELETION = "oklch(0.55 0.18 250)";
+
+function buildDiffPanelCss(colorblind: boolean): string {
+  const addition = colorblind ? CB_ADDITION : "var(--success)";
+  const deletion = colorblind ? CB_DELETION : "var(--destructive)";
+
+  return `
 [data-diffs-header],
 [data-diff],
 [data-file],
@@ -55,23 +63,21 @@ const DIFF_PANEL_UNSAFE_CSS = `
   --diffs-bg-separator-override: color-mix(in srgb, var(--background) 95%, var(--foreground));
   --diffs-bg-buffer-override: color-mix(in srgb, var(--background) 90%, var(--foreground));
 
-  --diffs-bg-addition-override: color-mix(in srgb, var(--background) 92%, var(--success));
-  --diffs-bg-addition-number-override: color-mix(in srgb, var(--background) 88%, var(--success));
-  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--background) 85%, var(--success));
-  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--background) 80%, var(--success));
+  --diffs-bg-addition-override: color-mix(in srgb, var(--background) 92%, ${addition});
+  --diffs-bg-addition-number-override: color-mix(in srgb, var(--background) 88%, ${addition});
+  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--background) 85%, ${addition});
+  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--background) 80%, ${addition});
 
-  --diffs-bg-deletion-override: color-mix(in srgb, var(--background) 92%, var(--destructive));
-  --diffs-bg-deletion-number-override: color-mix(in srgb, var(--background) 88%, var(--destructive));
-  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--background) 85%, var(--destructive));
-  --diffs-bg-deletion-emphasis-override: color-mix(
-    in srgb,
-    var(--background) 80%,
-    var(--destructive)
-  );
+  --diffs-bg-deletion-override: color-mix(in srgb, var(--background) 92%, ${deletion});
+  --diffs-bg-deletion-number-override: color-mix(in srgb, var(--background) 88%, ${deletion});
+  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--background) 85%, ${deletion});
+  --diffs-bg-deletion-emphasis-override: color-mix(in srgb, var(--background) 80%, ${deletion});
 
   background-color: var(--diffs-bg) !important;
+}`;
 }
 
+const DIFF_PANEL_STATIC_CSS = `
 [data-file-info] {
   background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
   border-block-color: var(--border) !important;
@@ -169,6 +175,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const settings = useSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
+  const diffUnsafeCss = useMemo(
+    () => buildDiffPanelCss(settings.colorblindDiffColors) + DIFF_PANEL_STATIC_CSS,
+    [settings.colorblindDiffColors],
+  );
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const previousDiffOpenRef = useRef(false);
@@ -615,7 +625,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           overflow: diffWordWrap ? "wrap" : "scroll",
                           theme: resolveDiffThemeName(resolvedTheme),
                           themeType: resolvedTheme as DiffThemeType,
-                          unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
+                          unsafeCSS: diffUnsafeCss,
                         }}
                       />
                     </div>

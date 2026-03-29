@@ -202,6 +202,10 @@ export function buildLegacyClientSettingsMigrationPatch(
 ): Partial<DeepMutable<ClientSettings>> {
   const patch: Partial<DeepMutable<ClientSettings>> = {};
 
+  if (Predicate.isBoolean(legacySettings.colorblindDiffColors)) {
+    patch.colorblindDiffColors = legacySettings.colorblindDiffColors;
+  }
+
   if (Predicate.isBoolean(legacySettings.confirmThreadArchive)) {
     patch.confirmThreadArchive = legacySettings.confirmThreadArchive;
   }
