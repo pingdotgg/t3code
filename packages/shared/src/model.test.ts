@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MODEL_BY_PROVIDER, type ModelCapabilities } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  type ModelCapabilities,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 
 import {
   applyClaudePromptEffortPrefix,
+  formatOutgoingPrompt,
   getDefaultContextWindow,
   getDefaultEffort,
+  getModelCapabilities,
   hasContextWindowOption,
   hasEffortLevel,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
+  promptEffortFromModelSelection,
   resolveApiModelId,
   resolveContextWindow,
   resolveEffort,
@@ -43,6 +50,15 @@ const claudeCaps: ModelCapabilities = {
   ],
   promptInjectedEffortLevels: ["ultrathink"],
 };
+
+const serverModels: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "claude-sonnet-4-6",
+    name: "Claude Sonnet 4.6",
+    isCustom: false,
+    capabilities: claudeCaps,
+  },
+];
 
 describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
@@ -150,6 +166,55 @@ describe("misc helpers", () => {
   it("trims strings to null", () => {
     expect(trimOrNull("  hi  ")).toBe("hi");
     expect(trimOrNull("   ")).toBeNull();
+  });
+
+  it("reads server model capabilities by normalized slug", () => {
+    expect(getModelCapabilities(serverModels, "sonnet", "claudeAgent")).toEqual(claudeCaps);
+    expect(getModelCapabilities([], "missing", "codex")).toEqual({
+      reasoningEffortLevels: [],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    });
+  });
+
+  it("extracts prompt effort from model selections", () => {
+    expect(
+      promptEffortFromModelSelection({
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+        options: { effort: "ultrathink" },
+      }),
+    ).toBe("ultrathink");
+    expect(
+      promptEffortFromModelSelection({
+        provider: "codex",
+        model: "gpt-5.4",
+        options: { reasoningEffort: "high" },
+      }),
+    ).toBe("high");
+  });
+
+  it("formats outgoing prompts with prompt-injected effort prefixes when supported", () => {
+    expect(
+      formatOutgoingPrompt({
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+        models: serverModels,
+        effort: "ultrathink",
+        text: "Investigate",
+      }),
+    ).toBe("Ultrathink:\nInvestigate");
+    expect(
+      formatOutgoingPrompt({
+        provider: "codex",
+        model: "gpt-5.4",
+        models: [],
+        effort: "high",
+        text: "Investigate",
+      }),
+    ).toBe("Investigate");
   });
 });
 

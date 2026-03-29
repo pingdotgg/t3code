@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
@@ -89,6 +90,17 @@ function withHarness<A, E>(
 ) {
   return Effect.acquireUseRelease(
     makeOrchestrationIntegrationHarness({ provider }),
+    use,
+    (harness) => harness.dispose,
+  ).pipe(Effect.provide(NodeServices.layer));
+}
+
+function withHarnessOptions<A, E>(
+  options: Parameters<typeof makeOrchestrationIntegrationHarness>[0],
+  use: (harness: OrchestrationIntegrationHarness) => Effect.Effect<A, E>,
+) {
+  return Effect.acquireUseRelease(
+    makeOrchestrationIntegrationHarness(options),
     use,
     (harness) => harness.dispose,
   ).pipe(Effect.provide(NodeServices.layer));
@@ -250,6 +262,94 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
       assert.equal(gitShowFileAtRef(harness.workspaceDir, ref1, "README.md"), "v1\n");
     }),
   ),
+);
+
+it.live("replays queued follow-ups after orchestration restarts", () =>
+  Effect.gen(function* () {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-orchestration-queue-restart-"));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        fs.rmSync(rootDir, { recursive: true, force: true });
+      }),
+    );
+
+    yield* withHarnessOptions({ rootDir }, (harness) =>
+      Effect.gen(function* () {
+        yield* seedProjectAndThread(harness);
+
+        yield* harness.engine.dispatch({
+          type: "thread.queued-follow-up.enqueue",
+          commandId: CommandId.makeUnsafe("cmd-queued-follow-up-restart-enqueue"),
+          threadId: THREAD_ID,
+          followUp: {
+            id: "follow-up-restart-1",
+            createdAt: nowIso(),
+            prompt: "Resume this after restart",
+            attachments: [],
+            terminalContexts: [],
+            modelSelection: {
+              provider: "codex",
+              model: DEFAULT_MODEL_BY_PROVIDER.codex,
+            },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            lastSendError: null,
+          },
+          createdAt: nowIso(),
+        });
+
+        const queuedThread = yield* harness.waitForThread(
+          THREAD_ID,
+          (thread) => thread.queuedFollowUps.length === 1,
+        );
+        assert.equal(queuedThread.queuedFollowUps[0]?.prompt, "Resume this after restart");
+      }),
+    );
+
+    yield* withHarnessOptions({ rootDir, autoStartReactor: false }, (harness) =>
+      Effect.gen(function* () {
+        yield* harness.adapterHarness!.queueTurnResponseForNextSession({
+          events: [
+            {
+              type: "turn.started",
+              ...runtimeBase("evt-queued-restart-1", "2026-03-28T12:05:00.000Z"),
+              threadId: THREAD_ID,
+              turnId: FIXTURE_TURN_ID,
+            },
+            {
+              type: "message.delta",
+              ...runtimeBase("evt-queued-restart-2", "2026-03-28T12:05:00.050Z"),
+              threadId: THREAD_ID,
+              turnId: FIXTURE_TURN_ID,
+              delta: "Recovered queued follow-up output.\n",
+            },
+            {
+              type: "turn.completed",
+              ...runtimeBase("evt-queued-restart-3", "2026-03-28T12:05:00.100Z"),
+              threadId: THREAD_ID,
+              turnId: FIXTURE_TURN_ID,
+              status: "completed",
+            },
+          ],
+        });
+
+        yield* harness.startReactor;
+
+        const recoveredThread = yield* harness.waitForThread(
+          THREAD_ID,
+          (thread) =>
+            thread.queuedFollowUps.length === 0 &&
+            thread.messages.some(
+              (message) =>
+                message.role === "assistant" &&
+                message.text.includes("Recovered queued follow-up output."),
+            ),
+        );
+
+        assert.equal(recoveredThread.queuedFollowUps.length, 0);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.live.skipIf(!process.env.CODEX_BINARY_PATH)(

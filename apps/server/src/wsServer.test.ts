@@ -10,6 +10,7 @@ import { createServer } from "./wsServer";
 import WebSocket from "ws";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
+import { resolveAttachmentPathById, toSafeThreadAttachmentSegment } from "./attachmentStore";
 
 import {
   DEFAULT_TERMINAL_ID,
@@ -62,6 +63,15 @@ const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeU
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
+interface FetchResponseLike {
+  status: number;
+  headers: {
+    get(name: string): string | null;
+  };
+  text(): Promise<string>;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
 const defaultOpenService: OpenShape = {
   openBrowser: () => Effect.void,
   openInEditor: () => Effect.void,
@@ -87,6 +97,8 @@ const defaultProviderRegistryService: ProviderRegistryShape = {
 };
 
 const defaultServerSettings = DEFAULT_SERVER_SETTINGS;
+const TINY_PNG_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO9W6R8AAAAASUVORK5CYII=";
 
 class MockTerminalManager implements TerminalManagerShape {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
@@ -483,6 +495,24 @@ describe("WebSocket Server", () => {
     return dir;
   }
 
+  async function removeTempDir(dir: string): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return;
+      } catch (error) {
+        const code =
+          typeof error === "object" && error !== null && "code" in error
+            ? String((error as { code?: unknown }).code)
+            : null;
+        if ((code !== "EPERM" && code !== "EBUSY") || attempt === 19) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  }
+
   async function createTestServer(
     options: {
       persistenceLayer?: Layer.Layer<
@@ -592,7 +622,7 @@ describe("WebSocket Server", () => {
     await closeTestServer();
     server = null;
     for (const dir of tempDirs.splice(0, tempDirs.length)) {
-      fs.rmSync(dir, { recursive: true, force: true });
+      await removeTempDir(dir);
     }
     vi.restoreAllMocks();
   });
@@ -625,7 +655,9 @@ describe("WebSocket Server", () => {
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
     expect(port).toBeGreaterThan(0);
 
-    const response = await fetch(`http://127.0.0.1:${port}/attachments/thread-a/message-a/0.png`);
+    const response = (await fetch(
+      `http://127.0.0.1:${port}/attachments/thread-a/message-a/0.png`,
+    )) as unknown as FetchResponseLike;
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("image/png");
     const bytes = Buffer.from(await response.arrayBuffer());
@@ -649,9 +681,9 @@ describe("WebSocket Server", () => {
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
     expect(port).toBeGreaterThan(0);
 
-    const response = await fetch(
+    const response = (await fetch(
       `http://127.0.0.1:${port}/attachments/thread%20folder/message%20folder/file%20name.png`,
-    );
+    )) as unknown as FetchResponseLike;
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("image/png");
     const bytes = Buffer.from(await response.arrayBuffer());
@@ -668,7 +700,7 @@ describe("WebSocket Server", () => {
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
     expect(port).toBeGreaterThan(0);
 
-    const response = await fetch(`http://127.0.0.1:${port}/`);
+    const response = (await fetch(`http://127.0.0.1:${port}/`)) as unknown as FetchResponseLike;
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("static-root");
   });
@@ -1379,6 +1411,385 @@ describe("WebSocket Server", () => {
     expect(domainEvent.type).toBe("thread.message-sent");
     expect(domainEvent.payload.messageId).toBe("assistant:item-1");
     expect(domainEvent.payload.text).toBe("hello from runtime");
+  });
+
+  it("normalizes queued follow-up image attachments into persisted server attachments", async () => {
+    const baseDir = makeTempDir("t3code-ws-queued-attachments-");
+    const { attachmentsDir } = deriveServerPathsSync(baseDir, undefined);
+    const workspaceRoot = path.join(baseDir, "workspace");
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+
+    server = await createTestServer({
+      cwd: "/test",
+      baseDir,
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const createdAt = new Date().toISOString();
+    const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "project.create",
+      commandId: "cmd-queued-attachment-project-create",
+      projectId: "project-queued-attachment",
+      title: "Queued Attachment Project",
+      workspaceRoot,
+      defaultModelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
+      createdAt,
+    });
+    expect(createProjectResponse.error).toBeUndefined();
+
+    const createThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.create",
+      commandId: "cmd-queued-attachment-thread-create",
+      threadId: "thread-queued-attachment",
+      projectId: "project-queued-attachment",
+      title: "Queued Attachment Thread",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt,
+    });
+    expect(createThreadResponse.error).toBeUndefined();
+
+    const enqueueResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.queued-follow-up.enqueue",
+      commandId: "cmd-queued-attachment-enqueue",
+      threadId: "thread-queued-attachment",
+      followUp: {
+        id: "follow-up-queued-attachment-1",
+        createdAt,
+        prompt: "Queue with image",
+        attachments: [
+          {
+            type: "image",
+            name: "queued.png",
+            mimeType: "image/png",
+            sizeBytes: 68,
+            dataUrl: TINY_PNG_DATA_URL,
+          },
+        ],
+        terminalContexts: [],
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        lastSendError: null,
+      },
+      createdAt,
+    });
+    expect(enqueueResponse.error).toBeUndefined();
+
+    const snapshotResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getSnapshot);
+    expect(snapshotResponse.error).toBeUndefined();
+    const snapshot = snapshotResponse.result as {
+      threads: Array<{
+        id: string;
+        queuedFollowUps: Array<{
+          attachments: Array<{
+            id: string;
+            name: string;
+            mimeType: string;
+            sizeBytes: number;
+          }>;
+        }>;
+      }>;
+    };
+    const queuedAttachment = snapshot.threads.find(
+      (thread) => thread.id === "thread-queued-attachment",
+    )?.queuedFollowUps[0]?.attachments[0];
+
+    expect(queuedAttachment).toEqual({
+      type: "image",
+      id: expect.any(String),
+      name: "queued.png",
+      mimeType: "image/png",
+      sizeBytes: expect.any(Number),
+    });
+
+    const persistedPath = resolveAttachmentPathById({
+      attachmentsDir,
+      attachmentId: queuedAttachment!.id,
+    });
+    expect(persistedPath).toBeTruthy();
+    expect(fs.existsSync(persistedPath!)).toBe(true);
+
+    const attachmentResponse = (await fetch(
+      `http://127.0.0.1:${port}/attachments/${queuedAttachment!.id}`,
+    )) as unknown as FetchResponseLike;
+    expect(attachmentResponse.status).toBe(200);
+    expect(attachmentResponse.headers.get("content-type")).toBe("image/png");
+  });
+
+  it("rejects persisted attachment ids from a different thread", async () => {
+    const baseDir = makeTempDir("t3code-ws-queued-attachments-thread-scope-");
+    const workspaceRoot = path.join(baseDir, "workspace");
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+
+    server = await createTestServer({
+      cwd: "/test",
+      baseDir,
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const createdAt = new Date().toISOString();
+    const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "project.create",
+      commandId: "cmd-cross-thread-attachment-project-create",
+      projectId: "project-cross-thread-attachment",
+      title: "Cross Thread Attachment Project",
+      workspaceRoot,
+      defaultModelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
+      createdAt,
+    });
+    expect(createProjectResponse.error).toBeUndefined();
+
+    for (const threadId of ["thread-cross-a", "thread-cross-b"]) {
+      const createThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+        type: "thread.create",
+        commandId: `cmd-${threadId}-create`,
+        threadId,
+        projectId: "project-cross-thread-attachment",
+        title: threadId,
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      expect(createThreadResponse.error).toBeUndefined();
+    }
+
+    const enqueueResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.queued-follow-up.enqueue",
+      commandId: "cmd-cross-thread-attachment-enqueue",
+      threadId: "thread-cross-a",
+      followUp: {
+        id: "follow-up-cross-thread-attachment-1",
+        createdAt,
+        prompt: "Queue with image",
+        attachments: [
+          {
+            type: "image",
+            name: "queued.png",
+            mimeType: "image/png",
+            sizeBytes: 68,
+            dataUrl: TINY_PNG_DATA_URL,
+          },
+        ],
+        terminalContexts: [],
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        lastSendError: null,
+      },
+      createdAt,
+    });
+    expect(enqueueResponse.error).toBeUndefined();
+
+    const snapshotResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getSnapshot);
+    expect(snapshotResponse.error).toBeUndefined();
+    const snapshot = snapshotResponse.result as {
+      threads: Array<{
+        id: string;
+        queuedFollowUps: Array<{
+          attachments: Array<{
+            id: string;
+            name: string;
+            mimeType: string;
+            sizeBytes: number;
+          }>;
+        }>;
+      }>;
+    };
+    const persistedAttachment = snapshot.threads.find((thread) => thread.id === "thread-cross-a")
+      ?.queuedFollowUps[0]?.attachments[0];
+
+    expect(persistedAttachment?.id).toBeTruthy();
+
+    const crossThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.turn.start",
+      commandId: "cmd-cross-thread-attachment-send",
+      threadId: "thread-cross-b",
+      message: {
+        messageId: "msg-cross-thread-attachment",
+        role: "user",
+        text: "use another thread attachment",
+        attachments: [
+          {
+            type: "image",
+            id: persistedAttachment!.id,
+            name: persistedAttachment!.name,
+            mimeType: persistedAttachment!.mimeType,
+            sizeBytes: persistedAttachment!.sizeBytes,
+          },
+        ],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt,
+    });
+
+    expect(crossThreadResponse.result).toBeUndefined();
+    expect(crossThreadResponse.error?.message).toContain("does not belong to this thread");
+  });
+
+  it("rejects persisted attachment ids from a colliding normalized thread segment", async () => {
+    const baseDir = makeTempDir("t3code-ws-queued-attachments-thread-collision-");
+    const workspaceRoot = path.join(baseDir, "workspace");
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+
+    const sharedPrefix = `thread-${"x".repeat(90)}`;
+    const threadA = `${sharedPrefix}-a`;
+    const threadB = `${sharedPrefix}-b`;
+    expect(toSafeThreadAttachmentSegment(threadA)).toBe(toSafeThreadAttachmentSegment(threadB));
+
+    server = await createTestServer({
+      cwd: "/test",
+      baseDir,
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const createdAt = new Date().toISOString();
+    const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "project.create",
+      commandId: "cmd-colliding-thread-attachment-project-create",
+      projectId: "project-colliding-thread-attachment",
+      title: "Colliding Thread Attachment Project",
+      workspaceRoot,
+      defaultModelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
+      createdAt,
+    });
+    expect(createProjectResponse.error).toBeUndefined();
+
+    for (const threadId of [threadA, threadB]) {
+      const createThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+        type: "thread.create",
+        commandId: `cmd-${threadId}-create`,
+        threadId,
+        projectId: "project-colliding-thread-attachment",
+        title: threadId,
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      expect(createThreadResponse.error).toBeUndefined();
+    }
+
+    const enqueueResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.queued-follow-up.enqueue",
+      commandId: "cmd-colliding-thread-attachment-enqueue",
+      threadId: threadA,
+      followUp: {
+        id: "follow-up-colliding-thread-attachment-1",
+        createdAt,
+        prompt: "Queue with image",
+        attachments: [
+          {
+            type: "image",
+            name: "queued.png",
+            mimeType: "image/png",
+            sizeBytes: 68,
+            dataUrl: TINY_PNG_DATA_URL,
+          },
+        ],
+        terminalContexts: [],
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        lastSendError: null,
+      },
+      createdAt,
+    });
+    expect(enqueueResponse.error).toBeUndefined();
+
+    const snapshotResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getSnapshot);
+    expect(snapshotResponse.error).toBeUndefined();
+    const snapshot = snapshotResponse.result as {
+      threads: Array<{
+        id: string;
+        queuedFollowUps: Array<{
+          attachments: Array<{
+            id: string;
+            name: string;
+            mimeType: string;
+            sizeBytes: number;
+          }>;
+        }>;
+      }>;
+    };
+    const persistedAttachment = snapshot.threads.find((thread) => thread.id === threadA)
+      ?.queuedFollowUps[0]?.attachments[0];
+
+    expect(persistedAttachment?.id).toBeTruthy();
+
+    const crossThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.turn.start",
+      commandId: "cmd-colliding-thread-attachment-send",
+      threadId: threadB,
+      message: {
+        messageId: "msg-colliding-thread-attachment",
+        role: "user",
+        text: "use another thread attachment",
+        attachments: [
+          {
+            type: "image",
+            id: persistedAttachment!.id,
+            name: persistedAttachment!.name,
+            mimeType: persistedAttachment!.mimeType,
+            sizeBytes: persistedAttachment!.sizeBytes,
+          },
+        ],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt,
+    });
+
+    expect(crossThreadResponse.result).toBeUndefined();
+    expect(crossThreadResponse.error?.message).toContain("does not belong to this thread");
   });
 
   it("routes terminal RPC methods and broadcasts terminal events", async () => {

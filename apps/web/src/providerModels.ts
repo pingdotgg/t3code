@@ -7,15 +7,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { normalizeModelSlug, resolveContextWindow, resolveEffort } from "@t3tools/shared/model";
-
-const EMPTY_CAPABILITIES: ModelCapabilities = {
-  reasoningEffortLevels: [],
-  supportsFastMode: false,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-};
+import { getModelCapabilities, resolveContextWindow, resolveEffort } from "@t3tools/shared/model";
 
 export function getProviderModels(
   providers: ReadonlyArray<ServerProvider>,
@@ -54,8 +46,7 @@ export function getProviderModelCapabilities(
   model: string | null | undefined,
   provider: ProviderKind,
 ): ModelCapabilities {
-  const slug = normalizeModelSlug(model, provider);
-  return models.find((candidate) => candidate.slug === slug)?.capabilities ?? EMPTY_CAPABILITIES;
+  return getModelCapabilities(models, model, provider);
 }
 
 export function getDefaultServerModel(

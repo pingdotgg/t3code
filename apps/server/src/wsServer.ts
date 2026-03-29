@@ -12,8 +12,11 @@ import type { Duplex } from "node:stream";
 import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
+  type ChatAttachment,
+  type ClientChatAttachment,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
+  type OrchestrationQueuedFollowUp,
   type OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
@@ -103,6 +106,29 @@ export interface ServerShape {
  * Server - Service tag for HTTP/WebSocket lifecycle management.
  */
 export class Server extends ServiceMap.Service<Server, ServerShape>()("t3/wsServer/Server") {}
+
+interface PersistedAttachmentOwnerLike {
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+}
+
+interface ThreadPersistedAttachmentOwnershipLike {
+  readonly messages: ReadonlyArray<PersistedAttachmentOwnerLike>;
+  readonly queuedFollowUps: ReadonlyArray<PersistedAttachmentOwnerLike>;
+}
+
+function collectPersistedAttachmentIdsForThread(
+  thread: ThreadPersistedAttachmentOwnershipLike,
+): Set<string> {
+  const attachmentIds = new Set<string>();
+  for (const item of [...thread.messages, ...thread.queuedFollowUps]) {
+    for (const attachment of item.attachments ?? []) {
+      if (attachment.type === "image") {
+        attachmentIds.add(attachment.id);
+      }
+    }
+  }
+  return attachmentIds;
+}
 
 const isServerNotRunningError = (error: Error): boolean => {
   const maybeCode = (error as NodeJS.ErrnoException).code;
@@ -308,51 +334,50 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       (cause) => new ServerLifecycleError({ operation: "serverSettingsRuntimeStart", cause }),
     ),
   );
+  const orchestrationEngine = yield* OrchestrationEngineService;
+  const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
+  const checkpointDiffQuery = yield* CheckpointDiffQuery;
+  const orchestrationReactor = yield* OrchestrationReactor;
+  const { openInEditor } = yield* Open;
 
-  const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
-    readonly command: ClientOrchestrationCommand;
-  }) {
-    const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
-      const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
-      const workspaceStat = yield* fileSystem
-        .stat(normalizedWorkspaceRoot)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (!workspaceStat) {
-        return yield* new RouteRequestError({
-          message: `Project directory does not exist: ${normalizedWorkspaceRoot}`,
-        });
-      }
-      if (workspaceStat.type !== "Directory") {
-        return yield* new RouteRequestError({
-          message: `Project path is not a directory: ${normalizedWorkspaceRoot}`,
-        });
-      }
-      return normalizedWorkspaceRoot;
-    });
+  const listThreadPersistedAttachmentIds = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const snapshot = yield* projectionReadModelQuery.getSnapshot();
+    const thread = snapshot.threads.find(
+      (entry) => entry.id === threadId && entry.deletedAt === null,
+    );
+    return thread ? collectPersistedAttachmentIdsForThread(thread) : new Set<string>();
+  });
 
-    if (input.command.type === "project.create") {
-      return {
-        ...input.command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
-      } satisfies OrchestrationCommand;
-    }
+  const normalizeClientAttachments = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    attachments: ReadonlyArray<ClientChatAttachment>,
+  ) {
+    const threadPersistedAttachmentIds = attachments.some((attachment) => "id" in attachment)
+      ? yield* listThreadPersistedAttachmentIds(threadId)
+      : null;
 
-    if (input.command.type === "project.meta.update" && input.command.workspaceRoot !== undefined) {
-      return {
-        ...input.command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
-      } satisfies OrchestrationCommand;
-    }
-
-    if (input.command.type !== "thread.turn.start") {
-      return input.command as OrchestrationCommand;
-    }
-    const turnStartCommand = input.command;
-
-    const normalizedAttachments = yield* Effect.forEach(
-      turnStartCommand.message.attachments,
+    return yield* Effect.forEach(
+      attachments,
       (attachment) =>
         Effect.gen(function* () {
+          if ("id" in attachment) {
+            if (!threadPersistedAttachmentIds?.has(attachment.id)) {
+              return yield* new RouteRequestError({
+                message: `Persisted attachment '${attachment.name}' does not belong to this thread.`,
+              });
+            }
+            const persistedPath = resolveAttachmentPathById({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachmentId: attachment.id,
+            });
+            if (!persistedPath) {
+              return yield* new RouteRequestError({
+                message: `Persisted attachment '${attachment.name}' could not be found.`,
+              });
+            }
+            return attachment;
+          }
+
           const parsed = parseBase64DataUrl(attachment.dataUrl);
           if (!parsed || !parsed.mimeType.startsWith("image/")) {
             return yield* new RouteRequestError({
@@ -367,7 +392,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             });
           }
 
-          const attachmentId = createAttachmentId(turnStartCommand.threadId);
+          const attachmentId = createAttachmentId(threadId);
           if (!attachmentId) {
             return yield* new RouteRequestError({
               message: "Failed to create a safe attachment id.",
@@ -412,6 +437,75 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           return persistedAttachment;
         }),
       { concurrency: 1 },
+    );
+  });
+
+  const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
+    const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
+    const workspaceStat = yield* fileSystem
+      .stat(normalizedWorkspaceRoot)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!workspaceStat) {
+      return yield* new RouteRequestError({
+        message: `Project directory does not exist: ${normalizedWorkspaceRoot}`,
+      });
+    }
+    if (workspaceStat.type !== "Directory") {
+      return yield* new RouteRequestError({
+        message: `Project path is not a directory: ${normalizedWorkspaceRoot}`,
+      });
+    }
+    return normalizedWorkspaceRoot;
+  });
+
+  const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
+    readonly command: ClientOrchestrationCommand;
+  }) {
+    if (input.command.type === "project.create") {
+      return {
+        ...input.command,
+        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+      } satisfies OrchestrationCommand;
+    }
+
+    if (input.command.type === "project.meta.update" && input.command.workspaceRoot !== undefined) {
+      return {
+        ...input.command,
+        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+      } satisfies OrchestrationCommand;
+    }
+
+    if (input.command.type !== "thread.turn.start") {
+      if (input.command.type === "thread.queued-follow-up.enqueue") {
+        return {
+          ...input.command,
+          followUp: {
+            ...input.command.followUp,
+            attachments: (yield* normalizeClientAttachments(
+              input.command.threadId,
+              input.command.followUp.attachments,
+            )) as OrchestrationQueuedFollowUp["attachments"],
+          },
+        } satisfies OrchestrationCommand;
+      }
+      if (input.command.type === "thread.queued-follow-up.update") {
+        return {
+          ...input.command,
+          followUp: {
+            ...input.command.followUp,
+            attachments: (yield* normalizeClientAttachments(
+              input.command.threadId,
+              input.command.followUp.attachments,
+            )) as OrchestrationQueuedFollowUp["attachments"],
+          },
+        } satisfies OrchestrationCommand;
+      }
+      return input.command as OrchestrationCommand;
+    }
+    const turnStartCommand = input.command;
+    const normalizedAttachments = yield* normalizeClientAttachments(
+      turnStartCommand.threadId,
+      turnStartCommand.message.attachments,
     );
 
     return {
@@ -610,12 +704,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
 
   const listenOptions = host ? { host, port } : { port };
-
-  const orchestrationEngine = yield* OrchestrationEngineService;
-  const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
-  const checkpointDiffQuery = yield* CheckpointDiffQuery;
-  const orchestrationReactor = yield* OrchestrationReactor;
-  const { openInEditor } = yield* Open;
 
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));

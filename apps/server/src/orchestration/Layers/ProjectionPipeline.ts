@@ -27,6 +27,10 @@ import {
   type ProjectionTurn,
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
+import {
+  type ProjectionThreadQueuedFollowUp,
+  ProjectionThreadQueuedFollowUpRepository,
+} from "../../persistence/Services/ProjectionThreadQueuedFollowUps.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
@@ -36,6 +40,7 @@ import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionThreadQueuedFollowUpRepositoryLive } from "../../persistence/Layers/ProjectionThreadQueuedFollowUps.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -56,6 +61,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadProposedPlans: "projection.thread-proposed-plans",
   threadActivities: "projection.thread-activities",
   threadSessions: "projection.thread-sessions",
+  queuedFollowUps: "projection.thread-queued-follow-ups",
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
@@ -75,6 +81,10 @@ interface ProjectorDefinition {
 interface AttachmentSideEffects {
   readonly deletedThreadIds: Set<string>;
   readonly prunedThreadRelativePaths: Map<string, Set<string>>;
+}
+
+interface ProjectionAttachmentOwnerLike {
+  readonly attachments?: ReadonlyArray<ChatAttachment> | null | undefined;
 }
 
 const materializeAttachmentsForProjection = Effect.fn("materializeAttachmentsForProjection")(
@@ -214,17 +224,17 @@ function retainProjectionProposedPlansAfterRevert(
   );
 }
 
-function collectThreadAttachmentRelativePaths(
+function collectProjectedAttachmentRelativePaths<Item extends ProjectionAttachmentOwnerLike>(
   threadId: string,
-  messages: ReadonlyArray<ProjectionThreadMessage>,
+  items: ReadonlyArray<Item>,
 ): Set<string> {
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
   if (!threadSegment) {
     return new Set();
   }
   const relativePaths = new Set<string>();
-  for (const message of messages) {
-    for (const attachment of message.attachments ?? []) {
+  for (const item of items) {
+    for (const attachment of item.attachments ?? []) {
       if (attachment.type !== "image") {
         continue;
       }
@@ -236,6 +246,13 @@ function collectThreadAttachmentRelativePaths(
     }
   }
   return relativePaths;
+}
+
+function mergeThreadAttachmentRelativePaths(
+  messagePaths: ReadonlySet<string>,
+  queuedFollowUpPaths: ReadonlySet<string>,
+): Set<string> {
+  return new Set([...messagePaths, ...queuedFollowUpPaths]);
 }
 
 const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function* (
@@ -368,6 +385,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
+    const projectionThreadQueuedFollowUpRepository =
+      yield* ProjectionThreadQueuedFollowUpRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
@@ -684,7 +703,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }).pipe(Effect.asVoid);
           attachmentSideEffects.prunedThreadRelativePaths.set(
             event.payload.threadId,
-            collectThreadAttachmentRelativePaths(event.payload.threadId, keptRows),
+            collectProjectedAttachmentRelativePaths(event.payload.threadId, keptRows),
           );
           return;
         }
@@ -1070,6 +1089,213 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    const applyQueuedFollowUpsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyQueuedFollowUpsProjection",
+    )(function* (event, attachmentSideEffects) {
+      const replaceThreadQueue = (
+        threadId: ProjectionThreadQueuedFollowUp["threadId"],
+        followUps: ReadonlyArray<ProjectionThreadQueuedFollowUp>,
+      ) =>
+        projectionThreadQueuedFollowUpRepository.replaceByThreadId({
+          threadId,
+          followUps: followUps.map((followUp, index) => ({
+            ...followUp,
+            queuePosition: index,
+          })),
+        });
+      const syncQueuedFollowUpAttachmentPaths = Effect.fn("syncQueuedFollowUpAttachmentPaths")(
+        function* (
+          threadId: ProjectionThreadQueuedFollowUp["threadId"],
+          followUps: ReadonlyArray<ProjectionThreadQueuedFollowUp>,
+        ) {
+          const messageRows = yield* projectionThreadMessageRepository.listByThreadId({
+            threadId,
+          });
+          attachmentSideEffects.prunedThreadRelativePaths.set(
+            threadId,
+            mergeThreadAttachmentRelativePaths(
+              collectProjectedAttachmentRelativePaths(threadId, messageRows),
+              collectProjectedAttachmentRelativePaths(threadId, followUps),
+            ),
+          );
+        },
+      );
+      const touchProjectedThreadUpdatedAt = Effect.fn("touchProjectedThreadUpdatedAt")(function* (
+        threadId: ProjectionThreadQueuedFollowUp["threadId"],
+        updatedAt: string,
+      ) {
+        const existingThread = yield* projectionThreadRepository.getById({ threadId });
+        if (Option.isNone(existingThread)) {
+          return;
+        }
+        yield* projectionThreadRepository.upsert({
+          ...existingThread.value,
+          updatedAt,
+        });
+      });
+
+      switch (event.type) {
+        case "thread.queued-follow-up-enqueued": {
+          const current = yield* projectionThreadQueuedFollowUpRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const nextFollowUp: ProjectionThreadQueuedFollowUp = {
+            followUpId: event.payload.followUp.id,
+            threadId: event.payload.threadId,
+            queuePosition: current.length,
+            createdAt: event.payload.followUp.createdAt,
+            updatedAt: event.payload.createdAt,
+            prompt: event.payload.followUp.prompt,
+            attachments: event.payload.followUp.attachments,
+            terminalContexts: event.payload.followUp.terminalContexts,
+            modelSelection: event.payload.followUp.modelSelection,
+            runtimeMode: event.payload.followUp.runtimeMode,
+            interactionMode: event.payload.followUp.interactionMode,
+            lastSendError: event.payload.followUp.lastSendError,
+          };
+          const withoutExisting = current.filter(
+            (followUp) => followUp.followUpId !== nextFollowUp.followUpId,
+          );
+          const targetIndex =
+            event.payload.targetIndex === undefined
+              ? withoutExisting.length
+              : Math.max(0, Math.min(event.payload.targetIndex, withoutExisting.length));
+          const nextQueuedFollowUps = [
+            ...withoutExisting.slice(0, targetIndex),
+            nextFollowUp,
+            ...withoutExisting.slice(targetIndex),
+          ];
+          yield* replaceThreadQueue(event.payload.threadId, nextQueuedFollowUps);
+          yield* syncQueuedFollowUpAttachmentPaths(event.payload.threadId, nextQueuedFollowUps);
+          yield* touchProjectedThreadUpdatedAt(event.payload.threadId, event.occurredAt);
+          return;
+        }
+
+        case "thread.queued-follow-up-updated": {
+          const current = yield* projectionThreadQueuedFollowUpRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const nextFollowUps = current.map((followUp) =>
+            followUp.followUpId === event.payload.followUp.id
+              ? Object.assign({}, followUp, {
+                  updatedAt: event.payload.createdAt,
+                  prompt: event.payload.followUp.prompt,
+                  attachments: event.payload.followUp.attachments,
+                  terminalContexts: event.payload.followUp.terminalContexts,
+                  modelSelection: event.payload.followUp.modelSelection,
+                  runtimeMode: event.payload.followUp.runtimeMode,
+                  interactionMode: event.payload.followUp.interactionMode,
+                  lastSendError: event.payload.followUp.lastSendError,
+                })
+              : followUp,
+          );
+          yield* replaceThreadQueue(event.payload.threadId, nextFollowUps);
+          yield* syncQueuedFollowUpAttachmentPaths(event.payload.threadId, nextFollowUps);
+          yield* touchProjectedThreadUpdatedAt(event.payload.threadId, event.occurredAt);
+          return;
+        }
+
+        case "thread.queued-follow-up-removed": {
+          const current = yield* projectionThreadQueuedFollowUpRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const nextFollowUps = current.filter(
+            (followUp) => followUp.followUpId !== event.payload.followUpId,
+          );
+          yield* replaceThreadQueue(event.payload.threadId, nextFollowUps);
+          yield* syncQueuedFollowUpAttachmentPaths(event.payload.threadId, nextFollowUps);
+          yield* touchProjectedThreadUpdatedAt(event.payload.threadId, event.occurredAt);
+          return;
+        }
+
+        case "thread.queued-follow-up-reordered": {
+          const current = yield* projectionThreadQueuedFollowUpRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const currentIndex = current.findIndex(
+            (followUp) => followUp.followUpId === event.payload.followUpId,
+          );
+          if (currentIndex < 0) {
+            return;
+          }
+          const boundedTargetIndex = Math.max(
+            0,
+            Math.min(event.payload.targetIndex, current.length - 1),
+          );
+          const nextQueuedFollowUps = [...current];
+          const [movedFollowUp] = nextQueuedFollowUps.splice(currentIndex, 1);
+          if (!movedFollowUp) {
+            return;
+          }
+          nextQueuedFollowUps.splice(boundedTargetIndex, 0, {
+            ...movedFollowUp,
+            updatedAt: event.payload.createdAt,
+          });
+          yield* replaceThreadQueue(event.payload.threadId, nextQueuedFollowUps);
+          yield* touchProjectedThreadUpdatedAt(event.payload.threadId, event.occurredAt);
+          return;
+        }
+
+        case "thread.queued-follow-up-send-failed": {
+          const current = yield* projectionThreadQueuedFollowUpRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* replaceThreadQueue(
+            event.payload.threadId,
+            current.map((followUp) =>
+              followUp.followUpId === event.payload.followUpId
+                ? Object.assign({}, followUp, {
+                    updatedAt: event.payload.createdAt,
+                    lastSendError: event.payload.lastSendError,
+                  })
+                : followUp,
+            ),
+          );
+          yield* touchProjectedThreadUpdatedAt(event.payload.threadId, event.occurredAt);
+          return;
+        }
+
+        case "thread.queued-follow-up-send-error-cleared": {
+          const current = yield* projectionThreadQueuedFollowUpRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* replaceThreadQueue(
+            event.payload.threadId,
+            current.map((followUp) =>
+              followUp.followUpId === event.payload.followUpId
+                ? Object.assign({}, followUp, {
+                    updatedAt: event.payload.createdAt,
+                    lastSendError: null,
+                  })
+                : followUp,
+            ),
+          );
+          yield* touchProjectedThreadUpdatedAt(event.payload.threadId, event.occurredAt);
+          return;
+        }
+
+        case "thread.deleted":
+        case "thread.reverted": {
+          yield* projectionThreadQueuedFollowUpRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          if (event.type === "thread.reverted") {
+            const messageRows = yield* projectionThreadMessageRepository.listByThreadId({
+              threadId: event.payload.threadId,
+            });
+            attachmentSideEffects.prunedThreadRelativePaths.set(
+              event.payload.threadId,
+              collectProjectedAttachmentRelativePaths(event.payload.threadId, messageRows),
+            );
+          }
+          return;
+        }
+
+        default:
+          return;
+      }
+    });
+
     const applyCheckpointsProjection: ProjectorDefinition["apply"] = () => Effect.void;
 
     const applyPendingApprovalsProjection: ProjectorDefinition["apply"] = Effect.fn(
@@ -1180,6 +1406,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
         apply: applyThreadSessionsProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.queuedFollowUps,
+        apply: applyQueuedFollowUpsProjection,
       },
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadTurns,
@@ -1298,6 +1528,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),
   Layer.provideMerge(ProjectionThreadActivityRepositoryLive),
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
+  Layer.provideMerge(ProjectionThreadQueuedFollowUpRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),

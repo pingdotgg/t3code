@@ -10,6 +10,8 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationCheckpointSummary,
+  type OrchestrationQueuedFollowUp,
+  OrchestrationQueuedTerminalContext,
   type OrchestrationLatestTurn,
   type OrchestrationMessage,
   type OrchestrationProposedPlan,
@@ -37,6 +39,10 @@ import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionTh
 import { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
+import {
+  projectionQueuedFollowUpToContract,
+  ProjectionThreadQueuedFollowUp,
+} from "../../persistence/Services/ProjectionThreadQueuedFollowUps.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
@@ -74,6 +80,13 @@ const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
   }),
 );
+const ProjectionThreadQueuedFollowUpDbRowSchema = ProjectionThreadQueuedFollowUp.mapFields(
+  Struct.assign({
+    attachments: Schema.fromJsonString(Schema.Array(ChatAttachment)),
+    terminalContexts: Schema.fromJsonString(Schema.Array(OrchestrationQueuedTerminalContext)),
+    modelSelection: Schema.fromJsonString(ModelSelection),
+  }),
+);
 const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   threadId: ProjectionThread.fields.threadId,
   turnId: TurnId,
@@ -94,6 +107,7 @@ const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans,
   ORCHESTRATION_PROJECTOR_NAMES.threadActivities,
   ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
+  ORCHESTRATION_PROJECTOR_NAMES.queuedFollowUps,
   ORCHESTRATION_PROJECTOR_NAMES.checkpoints,
 ] as const;
 
@@ -265,6 +279,29 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listQueuedFollowUpRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadQueuedFollowUpDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          follow_up_id AS "followUpId",
+          thread_id AS "threadId",
+          queue_position AS "queuePosition",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          prompt,
+          attachments_json AS "attachments",
+          terminal_contexts_json AS "terminalContexts",
+          model_selection_json AS "modelSelection",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          last_send_error AS "lastSendError"
+        FROM projection_thread_queued_follow_ups
+        ORDER BY thread_id ASC, queue_position ASC, created_at ASC, follow_up_id ASC
+      `,
+  });
+
   const listCheckpointRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionCheckpointDbRowSchema,
@@ -330,6 +367,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             proposedPlanRows,
             activityRows,
             sessionRows,
+            queuedFollowUpRows,
             checkpointRows,
             latestTurnRows,
             stateRows,
@@ -382,6 +420,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 ),
               ),
             ),
+            listQueuedFollowUpRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listQueuedFollowUps:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listQueuedFollowUps:decodeRows",
+                ),
+              ),
+            ),
             listCheckpointRows(undefined).pipe(
               Effect.mapError(
                 toPersistenceSqlOrDecodeError(
@@ -411,6 +457,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
           const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
           const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
+          const queuedFollowUpsByThread = new Map<string, Array<OrchestrationQueuedFollowUp>>();
           const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
           const sessionsByThread = new Map<string, OrchestrationSession>();
           const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
@@ -489,6 +536,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             checkpointsByThread.set(row.threadId, threadCheckpoints);
           }
 
+          for (const row of queuedFollowUpRows) {
+            updatedAt = maxIso(updatedAt, row.updatedAt);
+            const threadQueuedFollowUps = queuedFollowUpsByThread.get(row.threadId) ?? [];
+            threadQueuedFollowUps.push(projectionQueuedFollowUpToContract(row));
+            queuedFollowUpsByThread.set(row.threadId, threadQueuedFollowUps);
+          }
+
           for (const row of latestTurnRows) {
             updatedAt = maxIso(updatedAt, row.requestedAt);
             if (row.startedAt !== null) {
@@ -565,6 +619,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             deletedAt: row.deletedAt,
             messages: messagesByThread.get(row.threadId) ?? [],
             proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
+            queuedFollowUps: queuedFollowUpsByThread.get(row.threadId) ?? [],
             activities: activitiesByThread.get(row.threadId) ?? [],
             checkpoints: checkpointsByThread.get(row.threadId) ?? [],
             session: sessionsByThread.get(row.threadId) ?? null,

@@ -1,6 +1,7 @@
 import type {
   ModelSelection,
   OrchestrationLatestTurn,
+  OrchestrationQueuedTerminalContext,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
@@ -60,6 +61,18 @@ export interface ProposedPlan {
   updatedAt: string;
 }
 
+export interface QueuedFollowUp {
+  id: string;
+  createdAt: string;
+  prompt: string;
+  attachments: ChatAttachment[];
+  terminalContexts: OrchestrationQueuedTerminalContext[];
+  modelSelection: ModelSelection;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+  lastSendError: string | null;
+}
+
 export interface TurnDiffFileChange {
   path: string;
   kind?: string | undefined;
@@ -98,6 +111,7 @@ export interface Thread {
   interactionMode: ProviderInteractionMode;
   session: ThreadSession | null;
   messages: ChatMessage[];
+  queuedFollowUps?: QueuedFollowUp[] | undefined;
   proposedPlans: ProposedPlan[];
   error: string | null;
   createdAt: string;

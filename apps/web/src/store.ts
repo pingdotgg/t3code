@@ -288,6 +288,30 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           };
           return normalizedMessage;
         }),
+        queuedFollowUps: thread.queuedFollowUps.map((followUp) => ({
+          id: followUp.id,
+          createdAt: followUp.createdAt,
+          prompt: followUp.prompt,
+          attachments: followUp.attachments.map((attachment) => ({
+            type: "image" as const,
+            id: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            previewUrl: toAttachmentPreviewUrl(attachmentPreviewRoutePath(attachment.id)),
+          })),
+          terminalContexts: followUp.terminalContexts.map((context) => ({ ...context })),
+          modelSelection: {
+            ...followUp.modelSelection,
+            model: resolveModelSlugForProvider(
+              followUp.modelSelection.provider,
+              followUp.modelSelection.model,
+            ),
+          },
+          runtimeMode: followUp.runtimeMode,
+          interactionMode: followUp.interactionMode,
+          lastSendError: followUp.lastSendError,
+        })),
         proposedPlans: thread.proposedPlans.map((proposedPlan) => ({
           id: proposedPlan.id,
           turnId: proposedPlan.turnId,

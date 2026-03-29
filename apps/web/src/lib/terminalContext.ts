@@ -197,6 +197,33 @@ export function materializeInlineTerminalContextPrompt(
   return result;
 }
 
+export function materializeSendableInlineTerminalContextPrompt<
+  T extends {
+    text: string;
+    terminalLabel: string;
+    lineStart: number;
+    lineEnd: number;
+  },
+>(prompt: string, contexts: ReadonlyArray<T>): string {
+  let nextContextIndex = 0;
+  let result = "";
+
+  for (const char of prompt) {
+    if (char !== INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
+      result += char;
+      continue;
+    }
+    const context = contexts[nextContextIndex] ?? null;
+    nextContextIndex += 1;
+    if (!context || !hasTerminalContextText(context)) {
+      continue;
+    }
+    result += formatInlineTerminalContextLabel(context);
+  }
+
+  return result;
+}
+
 export function appendTerminalContextsToPrompt(
   prompt: string,
   contexts: ReadonlyArray<TerminalContextSelection>,

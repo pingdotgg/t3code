@@ -28,6 +28,10 @@
       "types": "./src/DrainableWorker.ts",
       "import": "./src/DrainableWorker.ts"
     },
+    "./orchestration": {
+      "types": "./src/orchestration.ts",
+      "import": "./src/orchestration.ts"
+    },
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"

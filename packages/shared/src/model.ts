@@ -5,12 +5,21 @@ import {
   type ModelCapabilities,
   type ModelSelection,
   type ProviderKind,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 
 export interface SelectableModelOption {
   slug: string;
   name: string;
 }
+
+const EMPTY_CAPABILITIES: ModelCapabilities = {
+  reasoningEffortLevels: [],
+  supportsFastMode: false,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+};
 
 // ── Effort helpers ────────────────────────────────────────────────────
 
@@ -107,6 +116,15 @@ export function normalizeModelSlug(
   return typeof aliased === "string" ? aliased : trimmed;
 }
 
+export function getModelCapabilities(
+  models: ReadonlyArray<ServerProviderModel>,
+  model: string | null | undefined,
+  provider: ProviderKind,
+): ModelCapabilities {
+  const slug = normalizeModelSlug(model, provider);
+  return models.find((candidate) => candidate.slug === slug)?.capabilities ?? EMPTY_CAPABILITIES;
+}
+
 export function resolveSelectableModel(
   provider: ProviderKind,
   value: string | null | undefined,
@@ -153,6 +171,17 @@ export function resolveModelSlugForProvider(
   model: string | null | undefined,
 ): string {
   return resolveModelSlug(model, provider);
+}
+
+export function promptEffortFromModelSelection(modelSelection: ModelSelection): string | null {
+  switch (modelSelection.provider) {
+    case "claudeAgent":
+      return modelSelection.options?.effort ?? null;
+    case "codex":
+      return modelSelection.options?.reasoningEffort ?? null;
+    default:
+      return null;
+  }
 }
 
 /** Trim a string, returning null for empty/missing values. */
@@ -204,4 +233,18 @@ export function applyClaudePromptEffortPrefix(
     return trimmed;
   }
   return `Ultrathink:\n${trimmed}`;
+}
+
+export function formatOutgoingPrompt(params: {
+  provider: ProviderKind;
+  model: string | null | undefined;
+  models: ReadonlyArray<ServerProviderModel>;
+  effort: string | null | undefined;
+  text: string;
+}): string {
+  const caps = getModelCapabilities(params.models, params.model, params.provider);
+  if (params.effort && caps.promptInjectedEffortLevels.includes(params.effort)) {
+    return applyClaudePromptEffortPrefix(params.text, params.effort as ClaudeCodeEffort | null);
+  }
+  return params.text;
 }

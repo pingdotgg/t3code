@@ -896,6 +896,8 @@ function ComposerPromptEditorInner({
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
   const terminalContextsSignature = terminalContextSignature(terminalContexts);
   const terminalContextsSignatureRef = useRef(terminalContextsSignature);
+  const controlledValueRef = useRef(value);
+  const controlledTerminalContextIdsRef = useRef(terminalContexts.map((context) => context.id));
   const snapshotRef = useRef({
     value,
     cursor: initialCursor,
@@ -911,6 +913,11 @@ function ComposerPromptEditorInner({
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  useEffect(() => {
+    controlledValueRef.current = value;
+    controlledTerminalContextIdsRef.current = terminalContexts.map((context) => context.id);
+  }, [terminalContexts, value]);
 
   useEffect(() => {
     editor.setEditable(!disabled);
@@ -961,23 +968,25 @@ function ComposerPromptEditorInner({
     (nextCursor: number) => {
       const rootElement = editor.getRootElement();
       if (!rootElement) return;
-      const boundedCursor = clampCollapsedComposerCursor(snapshotRef.current.value, nextCursor);
+      const controlledValue = controlledValueRef.current;
+      const controlledTerminalContextIds = controlledTerminalContextIdsRef.current;
+      const boundedCursor = clampCollapsedComposerCursor(controlledValue, nextCursor);
       rootElement.focus();
       editor.update(() => {
         $setSelectionAtComposerOffset(boundedCursor);
       });
       snapshotRef.current = {
-        value: snapshotRef.current.value,
+        value: controlledValue,
         cursor: boundedCursor,
-        expandedCursor: expandCollapsedComposerCursor(snapshotRef.current.value, boundedCursor),
-        terminalContextIds: snapshotRef.current.terminalContextIds,
+        expandedCursor: expandCollapsedComposerCursor(controlledValue, boundedCursor),
+        terminalContextIds: controlledTerminalContextIds,
       };
       onChangeRef.current(
-        snapshotRef.current.value,
+        controlledValue,
         boundedCursor,
         snapshotRef.current.expandedCursor,
         false,
-        snapshotRef.current.terminalContextIds,
+        controlledTerminalContextIds,
       );
     },
     [editor],
@@ -1025,12 +1034,8 @@ function ComposerPromptEditorInner({
       },
       focusAt,
       focusAtEnd: () => {
-        focusAt(
-          collapseExpandedComposerCursor(
-            snapshotRef.current.value,
-            snapshotRef.current.value.length,
-          ),
-        );
+        const controlledValue = controlledValueRef.current;
+        focusAt(collapseExpandedComposerCursor(controlledValue, controlledValue.length));
       },
       readSnapshot,
     }),
