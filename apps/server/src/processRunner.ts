@@ -1,4 +1,6 @@
 import { type ChildProcess as ChildProcessHandle, spawn, spawnSync } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
+import { resolveCommandPath } from "./pathUtils";
 
 export interface ProcessRunOptions {
   cwd?: string | undefined;
@@ -102,6 +104,7 @@ function appendChunkWithinLimit(
   currentBytes: number,
   chunk: Buffer,
   maxBytes: number,
+  decoder: StringDecoder,
 ): {
   next: string;
   nextBytes: number;
@@ -113,13 +116,13 @@ function appendChunkWithinLimit(
   }
   if (chunk.length <= remaining) {
     return {
-      next: `${target}${chunk.toString()}`,
+      next: `${target}${decoder.write(chunk)}`,
       nextBytes: currentBytes + chunk.length,
       truncated: false,
     };
   }
   return {
-    next: `${target}${chunk.subarray(0, remaining).toString()}`,
+    next: `${target}${decoder.write(chunk.subarray(0, remaining))}`,
     nextBytes: currentBytes + remaining,
     truncated: true,
   };
@@ -134,12 +137,32 @@ export async function runProcess(
   const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
   const outputMode = options.outputMode ?? "error";
 
+  const commandPath = resolveCommandPath(command, { env: options.env });
+
   return new Promise<ProcessRunResult>((resolve, reject) => {
-    const child = spawn(command, args, {
+    if (!commandPath) {
+      reject(new Error(`Command not found: ${command}`));
+      return;
+    }
+
+    const isWindows = process.platform === "win32";
+    const isBatchFile = isWindows && /\.(bat|cmd)$/i.test(commandPath);
+
+    const spawnCommand = isBatchFile ? (process.env.comspec || "cmd.exe") : commandPath;
+
+    // On Windows, when executing a .bat or .cmd file via cmd.exe, arguments must be
+    // manually quoted because Node's default spawn escaping (C-runtime) is incompatible
+    // with cmd.exe's parsing rules.
+    const spawnArgs = isBatchFile
+      ? ["/d", "/s", "/c", `"${commandPath}"`, ...args.map(arg => `"${arg.replace(/"/g, '""')}"`)]
+      : args;
+
+    const child = spawn(spawnCommand, spawnArgs as string[], {
       cwd: options.cwd,
       env: options.env,
       stdio: "pipe",
-      shell: process.platform === "win32",
+      shell: false,
+      windowsVerbatimArguments: isBatchFile,
     });
 
     let stdout = "";
@@ -151,6 +174,9 @@ export async function runProcess(
     let timedOut = false;
     let settled = false;
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
 
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
@@ -179,30 +205,43 @@ export async function runProcess(
 
     const appendOutput = (stream: "stdout" | "stderr", chunk: Buffer | string): Error | null => {
       const chunkBuffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-      const text = chunkBuffer.toString();
+      const decoder = stream === "stdout" ? stdoutDecoder : stderrDecoder;
       const byteLength = chunkBuffer.length;
+
       if (stream === "stdout") {
         if (outputMode === "truncate") {
-          const appended = appendChunkWithinLimit(stdout, stdoutBytes, chunkBuffer, maxBufferBytes);
+          const appended = appendChunkWithinLimit(
+            stdout,
+            stdoutBytes,
+            chunkBuffer,
+            maxBufferBytes,
+            decoder,
+          );
           stdout = appended.next;
           stdoutBytes = appended.nextBytes;
           stdoutTruncated = stdoutTruncated || appended.truncated;
           return null;
         }
-        stdout += text;
+        stdout += decoder.write(chunkBuffer);
         stdoutBytes += byteLength;
         if (stdoutBytes > maxBufferBytes) {
           return normalizeBufferError(command, args, "stdout", maxBufferBytes);
         }
       } else {
         if (outputMode === "truncate") {
-          const appended = appendChunkWithinLimit(stderr, stderrBytes, chunkBuffer, maxBufferBytes);
+          const appended = appendChunkWithinLimit(
+            stderr,
+            stderrBytes,
+            chunkBuffer,
+            maxBufferBytes,
+            decoder,
+          );
           stderr = appended.next;
           stderrBytes = appended.nextBytes;
           stderrTruncated = stderrTruncated || appended.truncated;
           return null;
         }
-        stderr += text;
+        stderr += decoder.write(chunkBuffer);
         stderrBytes += byteLength;
         if (stderrBytes > maxBufferBytes) {
           return normalizeBufferError(command, args, "stderr", maxBufferBytes);
@@ -232,6 +271,9 @@ export async function runProcess(
     });
 
     child.once("close", (code, signal) => {
+      stdout += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
+
       const result: ProcessRunResult = {
         stdout,
         stderr,
