@@ -19,7 +19,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     yield* providerRuntimeIngestion.start();
     yield* providerCommandReactor.start();
     yield* checkpointReactor.start();
-    yield* queuedFollowUpReactor.start;
+    yield* queuedFollowUpReactor.start();
   });
 
   return {

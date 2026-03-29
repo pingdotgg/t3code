@@ -210,26 +210,27 @@ const make = Effect.gen(function* () {
 
   const enqueueThread = (threadId: ThreadId) => worker.enqueue(threadId);
 
-  const start: QueuedFollowUpReactorShape["start"] = Effect.gen(function* () {
-    const snapshot = yield* orchestrationEngine.getReadModel();
-    yield* Effect.forEach(
-      snapshot.threads,
-      (thread) =>
-        thread.deletedAt === null && thread.queuedFollowUps.length > 0
-          ? enqueueThread(thread.id)
-          : Effect.void,
-      { concurrency: 1 },
-    );
+  const start: QueuedFollowUpReactorShape["start"] = () =>
+    Effect.gen(function* () {
+      const snapshot = yield* orchestrationEngine.getReadModel();
+      yield* Effect.forEach(
+        snapshot.threads,
+        (thread) =>
+          thread.deletedAt === null && thread.queuedFollowUps.length > 0
+            ? enqueueThread(thread.id)
+            : Effect.void,
+        { concurrency: 1 },
+      );
 
-    yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event: OrchestrationEvent) => {
-        if (event.aggregateKind !== "thread") {
-          return Effect.void;
-        }
-        return enqueueThread(event.aggregateId as ThreadId);
-      }),
-    );
-  }).pipe(Effect.asVoid);
+      yield* Effect.forkScoped(
+        Stream.runForEach(orchestrationEngine.streamDomainEvents, (event: OrchestrationEvent) => {
+          if (event.aggregateKind !== "thread") {
+            return Effect.void;
+          }
+          return enqueueThread(event.aggregateId as ThreadId);
+        }),
+      );
+    }).pipe(Effect.asVoid);
 
   return {
     start,

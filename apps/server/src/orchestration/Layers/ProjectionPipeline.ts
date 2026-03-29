@@ -83,6 +83,10 @@ interface AttachmentSideEffects {
   readonly prunedThreadRelativePaths: Map<string, Set<string>>;
 }
 
+interface ProjectionAttachmentOwnerLike {
+  readonly attachments?: ReadonlyArray<ChatAttachment> | null | undefined;
+}
+
 const materializeAttachmentsForProjection = Effect.fn("materializeAttachmentsForProjection")(
   (input: { readonly attachments: ReadonlyArray<ChatAttachment> }) =>
     Effect.succeed(input.attachments.length === 0 ? [] : input.attachments),
@@ -220,41 +224,17 @@ function retainProjectionProposedPlansAfterRevert(
   );
 }
 
-function collectThreadAttachmentRelativePaths(
+function collectProjectedAttachmentRelativePaths<Item extends ProjectionAttachmentOwnerLike>(
   threadId: string,
-  messages: ReadonlyArray<ProjectionThreadMessage>,
+  items: ReadonlyArray<Item>,
 ): Set<string> {
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
   if (!threadSegment) {
     return new Set();
   }
   const relativePaths = new Set<string>();
-  for (const message of messages) {
-    for (const attachment of message.attachments ?? []) {
-      if (attachment.type !== "image") {
-        continue;
-      }
-      const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachment.id);
-      if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
-        continue;
-      }
-      relativePaths.add(attachmentRelativePath(attachment));
-    }
-  }
-  return relativePaths;
-}
-
-function collectQueuedFollowUpAttachmentRelativePaths(
-  threadId: string,
-  followUps: ReadonlyArray<ProjectionThreadQueuedFollowUp>,
-): Set<string> {
-  const threadSegment = toSafeThreadAttachmentSegment(threadId);
-  if (!threadSegment) {
-    return new Set();
-  }
-  const relativePaths = new Set<string>();
-  for (const followUp of followUps) {
-    for (const attachment of followUp.attachments ?? []) {
+  for (const item of items) {
+    for (const attachment of item.attachments ?? []) {
       if (attachment.type !== "image") {
         continue;
       }
@@ -723,7 +703,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }).pipe(Effect.asVoid);
           attachmentSideEffects.prunedThreadRelativePaths.set(
             event.payload.threadId,
-            collectThreadAttachmentRelativePaths(event.payload.threadId, keptRows),
+            collectProjectedAttachmentRelativePaths(event.payload.threadId, keptRows),
           );
           return;
         }
@@ -1134,8 +1114,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           attachmentSideEffects.prunedThreadRelativePaths.set(
             threadId,
             mergeThreadAttachmentRelativePaths(
-              collectThreadAttachmentRelativePaths(threadId, messageRows),
-              collectQueuedFollowUpAttachmentRelativePaths(threadId, followUps),
+              collectProjectedAttachmentRelativePaths(threadId, messageRows),
+              collectProjectedAttachmentRelativePaths(threadId, followUps),
             ),
           );
         },
@@ -1308,7 +1288,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             });
             attachmentSideEffects.prunedThreadRelativePaths.set(
               event.payload.threadId,
-              collectThreadAttachmentRelativePaths(event.payload.threadId, messageRows),
+              collectProjectedAttachmentRelativePaths(event.payload.threadId, messageRows),
             );
           }
           return;

@@ -52,9 +52,10 @@ describe("OrchestrationReactor", () => {
         ),
         Layer.provideMerge(
           Layer.succeed(QueuedFollowUpReactor, {
-            start: Effect.sync(() => {
-              started.push("queued-follow-up-reactor");
-            }),
+            start: () =>
+              Effect.sync(() => {
+                started.push("queued-follow-up-reactor");
+              }),
             drain: Effect.void,
           }),
         ),

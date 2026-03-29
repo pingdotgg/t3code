@@ -2629,7 +2629,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         planMarkdown: activeProposedPlan.planMarkdown,
       });
       promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
+      clearComposerDraftContent(activeThread.id, { revokeImagePreviewUrls: true });
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
       setComposerTrigger(null);

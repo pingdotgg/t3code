@@ -141,7 +141,7 @@ describe("QueuedFollowUpReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
     const scope = await Effect.runPromise(Scope.make("sequential"));
 
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     await runtime.runPromise(reactor.drain);
 
     expect(dispatched.map((command) => command.type)).toEqual([
@@ -199,7 +199,7 @@ describe("QueuedFollowUpReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
     const scope = await Effect.runPromise(Scope.make("sequential"));
 
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     await runtime.runPromise(reactor.drain);
 
     const turnStart = dispatched[0];
@@ -254,7 +254,7 @@ describe("QueuedFollowUpReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
     const scope = await Effect.runPromise(Scope.make("sequential"));
 
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     await runtime.runPromise(reactor.drain);
 
     const turnStart = dispatched[0];
@@ -293,7 +293,7 @@ describe("QueuedFollowUpReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
     const scope = await Effect.runPromise(Scope.make("sequential"));
 
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     await runtime.runPromise(reactor.drain);
 
     expect(dispatched.map((command) => command.type)).toEqual([
@@ -326,7 +326,7 @@ describe("QueuedFollowUpReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
     const scope = await Effect.runPromise(Scope.make("sequential"));
 
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     await runtime.runPromise(reactor.drain);
 
     expect(dispatched).toEqual([]);
@@ -374,7 +374,7 @@ describe("QueuedFollowUpReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
     const scope = await Effect.runPromise(Scope.make("sequential"));
 
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     await runtime.runPromise(reactor.drain);
 
     expect(dispatched).toEqual([]);
@@ -434,7 +434,7 @@ describe("QueuedFollowUpReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
     const scope = await Effect.runPromise(Scope.make("sequential"));
 
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     await runtime.runPromise(reactor.drain);
 
     expect(dispatched).toEqual([]);
@@ -498,7 +498,7 @@ describe("QueuedFollowUpReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
     const scope = await Effect.runPromise(Scope.make("sequential"));
 
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     await runtime.runPromise(reactor.drain);
 
     expect(dispatched.map((command) => command.type)).toEqual([
@@ -584,7 +584,7 @@ describe("QueuedFollowUpReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
     const scope = await Effect.runPromise(Scope.make("sequential"));
 
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     await runtime.runPromise(reactor.drain);
 
     expect(dispatched.map((command) => command.type)).toEqual([
