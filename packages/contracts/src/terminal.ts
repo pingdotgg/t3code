@@ -32,7 +32,7 @@ const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: TerminalIdWithDefaultSchema,
 });
-export type TerminalSessionInput = typeof TerminalSessionInput.Type;
+export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
 
 export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,
@@ -41,23 +41,23 @@ export const TerminalOpenInput = Schema.Struct({
   rows: Schema.optional(TerminalRowsSchema),
   env: Schema.optional(TerminalEnvSchema),
 });
-export type TerminalOpenInput = typeof TerminalOpenInput.Type;
+export type TerminalOpenInput = Schema.Codec.Encoded<typeof TerminalOpenInput>;
 
 export const TerminalWriteInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   data: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
 });
-export type TerminalWriteInput = typeof TerminalWriteInput.Type;
+export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 
 export const TerminalResizeInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
 });
-export type TerminalResizeInput = typeof TerminalResizeInput.Type;
+export type TerminalResizeInput = Schema.Codec.Encoded<typeof TerminalResizeInput>;
 
 export const TerminalClearInput = TerminalSessionInput;
-export type TerminalClearInput = typeof TerminalClearInput.Type;
+export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>;
 
 export const TerminalRestartInput = Schema.Struct({
   ...TerminalSessionInput.fields,
@@ -66,7 +66,7 @@ export const TerminalRestartInput = Schema.Struct({
   rows: TerminalRowsSchema,
   env: Schema.optional(TerminalEnvSchema),
 });
-export type TerminalRestartInput = typeof TerminalRestartInput.Type;
+export type TerminalRestartInput = Schema.Codec.Encoded<typeof TerminalRestartInput>;
 
 export const TerminalCloseInput = Schema.Struct({
   ...TerminalThreadInput.fields,

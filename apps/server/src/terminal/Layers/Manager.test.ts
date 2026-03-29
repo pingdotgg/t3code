@@ -12,17 +12,15 @@ import {
 import { Effect, Encoding, Exit, Layer, ManagedRuntime, Ref, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ServerConfig } from "../../config";
 import { TerminalManager } from "../Services/Manager";
 import {
-  PtyAdapter,
   type PtyAdapterShape,
   type PtyExitEvent,
   type PtyProcess,
   type PtySpawnInput,
   PtySpawnError,
 } from "../Services/PTY";
-import { makeTerminalManagerWithOptions, TerminalManagerLive } from "./Manager";
+import { makeTerminalManagerWithOptions } from "./Manager";
 
 class FakePtyProcess implements PtyProcess {
   readonly writes: string[] = [];
@@ -194,11 +192,27 @@ async function makeManager(
   const logsDir = path.join(baseDir, "userdata", "logs", "terminals");
   const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
 
-  const terminalLayer = TerminalManagerLive.pipe(
-    Layer.provideMerge(Layer.succeed(PtyAdapter, ptyAdapter)),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
-    Layer.provideMerge(NodeServices.layer),
-  );
+  const terminalLayer = Layer.effect(
+    TerminalManager,
+    makeTerminalManagerWithOptions({
+      logsDir,
+      historyLineLimit,
+      ptyAdapter,
+      ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
+      ...(options.subprocessChecker !== undefined
+        ? { subprocessChecker: options.subprocessChecker }
+        : {}),
+      ...(options.subprocessPollIntervalMs !== undefined
+        ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
+        : {}),
+      ...(options.processKillGraceMs !== undefined
+        ? { processKillGraceMs: options.processKillGraceMs }
+        : {}),
+      ...(options.maxRetainedInactiveSessions !== undefined
+        ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
+        : {}),
+    }),
+  ).pipe(Layer.provideMerge(NodeServices.layer));
 
   const runtime = ManagedRuntime.make(terminalLayer);
   const manager = await runtime.runPromise(Effect.service(TerminalManager));
@@ -209,60 +223,6 @@ async function makeManager(
       Ref.update(eventsRef, (events) => [...events, event]),
     ).pipe(Effect.forkIn(eventScope)),
   );
-
-  if (
-    historyLineLimit !== 5 ||
-    options.shellResolver ||
-    options.subprocessChecker ||
-    options.subprocessPollIntervalMs ||
-    options.processKillGraceMs ||
-    options.maxRetainedInactiveSessions
-  ) {
-    await runtime.dispose();
-
-    const customLayer = Layer.effect(
-      TerminalManager,
-      makeTerminalManagerWithOptions({
-        logsDir,
-        historyLineLimit,
-        ptyAdapter,
-        ...(options.shellResolver ? { shellResolver: options.shellResolver } : {}),
-        ...(options.subprocessChecker ? { subprocessChecker: options.subprocessChecker } : {}),
-        ...(options.subprocessPollIntervalMs
-          ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
-          : {}),
-        ...(options.processKillGraceMs ? { processKillGraceMs: options.processKillGraceMs } : {}),
-        ...(options.maxRetainedInactiveSessions
-          ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
-          : {}),
-      }),
-    ).pipe(Layer.provideMerge(NodeServices.layer));
-
-    const customRuntime = ManagedRuntime.make(customLayer);
-    const customManager = await customRuntime.runPromise(Effect.service(TerminalManager));
-    const customEventsRef = await Effect.runPromise(Ref.make<TerminalEvent[]>([]));
-    const customEventScope = await Effect.runPromise(Scope.make("sequential"));
-    await customRuntime.runPromise(
-      Stream.runForEach(customManager.streamEvents, (event) =>
-        Ref.update(customEventsRef, (events) => [...events, event]),
-      ).pipe(Effect.forkIn(customEventScope)),
-    );
-
-    return {
-      baseDir,
-      logsDir,
-      ptyAdapter,
-      runtime: customRuntime,
-      manager: customManager,
-      eventsRef: customEventsRef,
-      run: <A, E>(effect: Effect.Effect<A, E>) => customRuntime.runPromise(effect),
-      getEvents: () => Effect.runPromise(Ref.get(customEventsRef)),
-      dispose: async () => {
-        await Effect.runPromise(Scope.close(customEventScope, Exit.void));
-        await customRuntime.dispose();
-      },
-    };
-  }
 
   return {
     baseDir,
@@ -636,7 +596,7 @@ describe("TerminalManager", () => {
   });
 
   it("evicts oldest inactive terminal sessions when retention limit is exceeded", async () => {
-    const { manager, ptyAdapter, run, logsDir } = await createManager(5, {
+    const { manager, ptyAdapter, run, logsDir, getEvents } = await createManager(5, {
       maxRetainedInactiveSessions: 1,
     });
 
@@ -656,7 +616,10 @@ describe("TerminalManager", () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     second.emitExit({ exitCode: 0, signal: 0 });
 
-    await waitFor(() => ptyAdapter.processes.length === 2);
+    await waitFor(async () => {
+      const events = await getEvents();
+      return events.filter((event) => event.type === "exited").length === 2;
+    });
 
     const reopenedSecond = await run(manager.open(openInput({ threadId: "thread-2" })));
     const reopenedFirst = await run(manager.open(openInput({ threadId: "thread-1" })));

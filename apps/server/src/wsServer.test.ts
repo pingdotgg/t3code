@@ -208,14 +208,18 @@ class MockTerminalManager implements TerminalManagerShape {
     });
 
   get streamEvents(): TerminalManagerShape["streamEvents"] {
-    this.activeSubscriptions += 1;
-    return Stream.fromPubSub(this.eventPubSub).pipe(
-      Stream.ensuring(
+    return Stream.unwrap(
+      Effect.acquireRelease(
         Effect.sync(() => {
-          this.activeSubscriptions -= 1;
+          this.activeSubscriptions += 1;
+          return Stream.fromPubSub(this.eventPubSub);
         }),
+        () =>
+          Effect.sync(() => {
+            this.activeSubscriptions -= 1;
+          }),
       ),
-    );
+    ).pipe(Stream.scoped);
   }
 }
 

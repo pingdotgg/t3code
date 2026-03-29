@@ -1574,7 +1574,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
                   threadId: session.threadId,
                   terminalId: session.terminalId,
                   terminalPid,
-                  error: error.message,
+                  error: error instanceof Error ? error.message : String(error),
                 }).pipe(Effect.as(Option.none<boolean>())),
               ),
             );
@@ -1657,18 +1657,19 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
           yield* assertValidCwd(input.cwd);
 
-          const sessionKey = toSessionKey(input.threadId, input.terminalId);
-          const existing = yield* getSession(input.threadId, input.terminalId);
+          const sessionKey = toSessionKey(input.threadId, terminalId);
+          const existing = yield* getSession(input.threadId, terminalId);
           if (Option.isNone(existing)) {
-            yield* flushPersist(input.threadId, input.terminalId);
-            const history = yield* readHistory(input.threadId, input.terminalId);
+            yield* flushPersist(input.threadId, terminalId);
+            const history = yield* readHistory(input.threadId, terminalId);
             const cols = input.cols ?? DEFAULT_OPEN_COLS;
             const rows = input.rows ?? DEFAULT_OPEN_ROWS;
             const session: TerminalSessionState = {
               threadId: input.threadId,
-              terminalId: input.terminalId,
+              terminalId,
               cwd: input.cwd,
               status: "starting",
               pid: null,
@@ -1698,7 +1699,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               session,
               {
                 threadId: input.threadId,
-                terminalId: input.terminalId,
+                terminalId,
                 cwd: input.cwd,
                 cols,
                 rows,
@@ -1746,7 +1747,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               liveSession,
               {
                 threadId: input.threadId,
-                terminalId: input.terminalId,
+                terminalId,
                 cwd: input.cwd,
                 cols: targetCols,
                 rows: targetRows,
@@ -1770,7 +1771,8 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
 
     const write: TerminalManagerShape["write"] = (input) =>
       Effect.gen(function* () {
-        const session = yield* requireSession(input.threadId, input.terminalId);
+        const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+        const session = yield* requireSession(input.threadId, terminalId);
         const process = session.process;
         if (!process || session.status !== "running") {
           if (session.status === "exited") {
@@ -1778,7 +1780,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           }
           return yield* new TerminalNotRunningError({
             threadId: input.threadId,
-            terminalId: input.terminalId,
+            terminalId,
           });
         }
         yield* Effect.sync(() => process.write(input.data));
@@ -1786,12 +1788,13 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
 
     const resize: TerminalManagerShape["resize"] = (input) =>
       Effect.gen(function* () {
-        const session = yield* requireSession(input.threadId, input.terminalId);
+        const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+        const session = yield* requireSession(input.threadId, terminalId);
         const process = session.process;
         if (!process || session.status !== "running") {
           return yield* new TerminalNotRunningError({
             threadId: input.threadId,
-            terminalId: input.terminalId,
+            terminalId,
           });
         }
         session.cols = input.cols;
@@ -1804,15 +1807,16 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
-          const session = yield* requireSession(input.threadId, input.terminalId);
+          const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+          const session = yield* requireSession(input.threadId, terminalId);
           session.history = "";
           session.pendingHistoryControlSequence = "";
           session.updatedAt = new Date().toISOString();
-          yield* persistHistory(input.threadId, input.terminalId, session.history);
+          yield* persistHistory(input.threadId, terminalId, session.history);
           yield* publishEvent({
             type: "cleared",
             threadId: input.threadId,
-            terminalId: input.terminalId,
+            terminalId,
             createdAt: new Date().toISOString(),
           });
         }),
@@ -1822,17 +1826,18 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
           yield* assertValidCwd(input.cwd);
 
-          const sessionKey = toSessionKey(input.threadId, input.terminalId);
-          const existingSession = yield* getSession(input.threadId, input.terminalId);
+          const sessionKey = toSessionKey(input.threadId, terminalId);
+          const existingSession = yield* getSession(input.threadId, terminalId);
           let session: TerminalSessionState;
           if (Option.isNone(existingSession)) {
             const cols = input.cols ?? DEFAULT_OPEN_COLS;
             const rows = input.rows ?? DEFAULT_OPEN_ROWS;
             session = {
               threadId: input.threadId,
-              terminalId: input.terminalId,
+              terminalId,
               cwd: input.cwd,
               status: "starting",
               pid: null,
@@ -1868,12 +1873,12 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
 
           session.history = "";
           session.pendingHistoryControlSequence = "";
-          yield* persistHistory(input.threadId, input.terminalId, session.history);
+          yield* persistHistory(input.threadId, terminalId, session.history);
           yield* startSession(
             session,
             {
               threadId: input.threadId,
-              terminalId: input.terminalId,
+              terminalId,
               cwd: input.cwd,
               cols,
               rows,
