@@ -912,29 +912,34 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       if (baseBranch.includes("/")) {
         return baseBranch;
       }
-      // Try to fetch the base branch from the primary remote (usually "origin")
-      // and use the remote tracking ref for range computation.
-      const remoteName = "origin";
+      // Try to fetch the base branch from the remote and use the remote
+      // tracking ref for range computation.  Prefer the head context's
+      // remote when available (e.g. fork remotes) and fall back to "origin".
+      const remoteName = headContext.remoteName ?? "origin";
       const remoteRef = `${remoteName}/${baseBranch}`;
-      const fetched = yield* gitCore
-        .execute({
-          operation: "runPrStep.fetchBaseBranch",
-          cwd,
-          args: [
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            remoteName,
-            `+refs/heads/${baseBranch}:refs/remotes/${remoteRef}`,
-          ],
-          timeoutMs: 30_000,
-        })
-        .pipe(
-          Effect.map(() => true),
-          Effect.catch(() => Effect.succeed(false)),
-        );
-      return fetched ? remoteRef : baseBranch;
-    });
+      yield* gitCore.execute({
+        operation: "runPrStep.fetchBaseBranch",
+        cwd,
+        args: [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          remoteName,
+          `+refs/heads/${baseBranch}:refs/remotes/${remoteRef}`,
+        ],
+        allowNonZeroExit: true,
+        timeoutMs: 30_000,
+      });
+      // Verify the remote ref exists after fetch; if it does, prefer it.
+      const verifyResult = yield* gitCore.execute({
+        operation: "runPrStep.verifyRemoteRef",
+        cwd,
+        args: ["rev-parse", "--verify", remoteRef],
+        allowNonZeroExit: true,
+      });
+      return verifyResult.code === 0 ? remoteRef : baseBranch;
+    }).pipe(Effect.catch(() => Effect.succeed(baseBranch)));
+
     const rangeContext = yield* gitCore.readRangeContext(cwd, rangeRef);
 
     const generated = yield* textGeneration.generatePrContent({
