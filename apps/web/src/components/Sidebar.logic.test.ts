@@ -429,6 +429,9 @@ describe("getVisibleThreadsForProject", () => {
       ThreadId.makeUnsafe("thread-6"),
       ThreadId.makeUnsafe("thread-8"),
     ]);
+    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual([
+      ThreadId.makeUnsafe("thread-7"),
+    ]);
   });
 
   it("returns all threads when the list is expanded", () => {
@@ -449,6 +452,7 @@ describe("getVisibleThreadsForProject", () => {
     expect(result.visibleThreads.map((thread) => thread.id)).toEqual(
       threads.map((thread) => thread.id),
     );
+    expect(result.hiddenThreads).toEqual([]);
   });
 });
 
