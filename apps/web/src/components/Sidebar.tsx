@@ -1098,6 +1098,7 @@ export default function Sidebar() {
         const renderedThreads = pinnedCollapsedThread
           ? [pinnedCollapsedThread]
           : visibleProjectThreads;
+        const showEmptyThreadState = project.expanded && projectThreads.length === 0;
 
         return {
           hasHiddenThreads,
@@ -1108,6 +1109,7 @@ export default function Sidebar() {
           projectThreads,
           threadStatuses,
           renderedThreads,
+          showEmptyThreadState,
           shouldShowThreadPanel,
           isThreadListExpanded,
         };
@@ -1255,6 +1257,7 @@ export default function Sidebar() {
       projectThreads,
       threadStatuses,
       renderedThreads,
+      showEmptyThreadState,
       shouldShowThreadPanel,
       isThreadListExpanded,
     } = renderedProject;
@@ -1572,6 +1575,16 @@ export default function Sidebar() {
           ref={attachThreadListAutoAnimateRef}
           className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
         >
+          {shouldShowThreadPanel && showEmptyThreadState ? (
+            <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+              <div
+                data-thread-selection-safe
+                className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
+              >
+                <span>No threads yet</span>
+              </div>
+            </SidebarMenuSubItem>
+          ) : null}
           {shouldShowThreadPanel && renderedThreads.map((thread) => renderThreadRow(thread))}
 
           {project.expanded && hasHiddenThreads && !isThreadListExpanded && (

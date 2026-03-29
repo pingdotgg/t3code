@@ -1041,6 +1041,19 @@ describe("ChatView timeline estimator parity (full app)", () => {
     },
   );
 
+  it("shows an explicit empty state for projects without threads in the sidebar", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      await expect.element(page.getByText("No threads yet")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("opens the project cwd for draft threads without a worktree path", async () => {
     setDraftThreadWithoutWorktree();
 
