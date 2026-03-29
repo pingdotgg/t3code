@@ -14,7 +14,7 @@
     },
     "apps/desktop": {
       "name": "@t3tools/desktop",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "dependencies": {
         "effect": "catalog:",
         "electron": "40.6.0",
@@ -43,7 +43,7 @@
     },
     "apps/server": {
       "name": "t3",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "bin": {
         "t3": "./dist/index.mjs",
       },
@@ -73,7 +73,7 @@
     },
     "apps/web": {
       "name": "@t3tools/web",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "dependencies": {
         "@base-ui/react": "^1.2.0",
         "@dnd-kit/core": "^6.3.1",
@@ -124,7 +124,7 @@
     },
     "packages/contracts": {
       "name": "@t3tools/contracts",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "dependencies": {
         "effect": "catalog:",
       },
