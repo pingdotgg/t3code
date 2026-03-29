@@ -4,6 +4,8 @@ import {
   renderableWorkEntryPreview,
   type TimelineRow,
 } from "./MessagesTimeline.logic";
+import { stripDisplayedPlanMarkdown, proposedPlanTitle } from "~/proposedPlan";
+import { markdownToPlainText } from "~/lib/markdownPlainText";
 import { deriveDisplayedUserMessageState } from "~/lib/terminalContext";
 
 export interface ThreadSearchResult {
@@ -50,6 +52,10 @@ function countMatches(haystack: string, needle: string): number {
 function collectRowSearchText(row: TimelineRow): string[] {
   switch (row.kind) {
     case "message": {
+      const visibleAssistantText =
+        row.message.role === "assistant"
+          ? row.message.text || (row.message.streaming ? "" : "(empty response)")
+          : "";
       const visibleMessageState =
         row.message.role === "user" ? deriveDisplayedUserMessageState(row.message.text) : null;
       const visibleAttachmentNames =
@@ -63,13 +69,18 @@ function collectRowSearchText(row: TimelineRow): string[] {
           ? (visibleMessageState?.contexts.map((context) => context.header) ?? [])
           : [];
       return [
-        row.message.role === "user" ? (visibleMessageState?.visibleText ?? "") : row.message.text,
+        row.message.role === "user"
+          ? (visibleMessageState?.visibleText ?? "")
+          : markdownToPlainText(visibleAssistantText),
         ...visibleTerminalChipLabels,
         ...visibleAttachmentNames,
       ];
     }
-    case "proposed-plan":
-      return [row.proposedPlan.planMarkdown];
+    case "proposed-plan": {
+      const title = proposedPlanTitle(row.proposedPlan.planMarkdown) ?? "";
+      const displayedBody = stripDisplayedPlanMarkdown(row.proposedPlan.planMarkdown);
+      return [title, markdownToPlainText(displayedBody)];
+    }
     case "work":
       return row.groupedEntries.flatMap((entry) => [
         renderableWorkEntryHeading(entry),

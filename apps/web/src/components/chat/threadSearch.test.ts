@@ -35,6 +35,27 @@ const rows: TimelineRow[] = [
   },
   {
     kind: "message",
+    id: "assistant-markdown-row",
+    createdAt: "2026-03-28T12:00:02.000Z",
+    durationStart: "2026-03-28T12:00:02.000Z",
+    showCompletionDivider: false,
+    message: {
+      id: MessageId.makeUnsafe("message-1a"),
+      role: "assistant",
+      text: [
+        "See [thread search docs](https://example.com/thread-search) for **alpha marker** details.",
+        "",
+        "```ts",
+        "const planSeed = 'seeded';",
+        "```",
+      ].join("\n"),
+      createdAt: "2026-03-28T12:00:02.000Z",
+      streaming: false,
+      attachments: [],
+    },
+  },
+  {
+    kind: "message",
     id: "user-message-row",
     createdAt: "2026-03-28T12:00:05.000Z",
     durationStart: "2026-03-28T12:00:05.000Z",
@@ -110,11 +131,34 @@ const rows: TimelineRow[] = [
     proposedPlan: {
       id: "plan-1" as never,
       turnId: null,
-      planMarkdown: "1. Add thread search\n2. Jump to the matching row",
+      planMarkdown: [
+        "# Seeded Thread Search Plan",
+        "",
+        "## Summary",
+        "",
+        "1. Add **thread search**",
+        "2. Jump to the matching row",
+        "3. Review [plan docs](https://example.com/plan-docs)",
+      ].join("\n"),
       implementedAt: null,
       implementationThreadId: null,
       createdAt: "2026-03-28T12:00:20.000Z",
       updatedAt: "2026-03-28T12:00:20.000Z",
+    },
+  },
+  {
+    kind: "message",
+    id: "assistant-empty-row",
+    createdAt: "2026-03-28T12:00:25.000Z",
+    durationStart: "2026-03-28T12:00:25.000Z",
+    showCompletionDivider: false,
+    message: {
+      id: MessageId.makeUnsafe("message-empty"),
+      role: "assistant",
+      text: "",
+      createdAt: "2026-03-28T12:00:25.000Z",
+      streaming: false,
+      attachments: [],
     },
   },
   {
@@ -133,8 +177,15 @@ describe("findThreadSearchResults", () => {
         normalizedTexts: ["needle in the response. another needle is here."],
       },
       {
-        rowId: "user-message-row",
+        rowId: "assistant-markdown-row",
         rowIndex: 1,
+        normalizedTexts: [
+          "see thread search docs for alpha marker details.\n\nconst planseed = 'seeded';",
+        ],
+      },
+      {
+        rowId: "user-message-row",
+        rowIndex: 2,
         normalizedTexts: [
           "visible composer text @terminal-1:1-5",
           "terminal 1 lines 1-5",
@@ -143,12 +194,12 @@ describe("findThreadSearchResults", () => {
       },
       {
         rowId: "work-row",
-        rowIndex: 2,
+        rowIndex: 3,
         normalizedTexts: ["edit readme", "bun run lint", "readme.md"],
       },
       {
         rowId: "work-row-visible-files",
-        rowIndex: 3,
+        rowIndex: 4,
         normalizedTexts: [
           "apply patch",
           "git status",
@@ -160,12 +211,20 @@ describe("findThreadSearchResults", () => {
       },
       {
         rowId: "plan-row",
-        rowIndex: 4,
-        normalizedTexts: ["1. add thread search\n2. jump to the matching row"],
+        rowIndex: 5,
+        normalizedTexts: [
+          "seeded thread search plan",
+          "add thread search\njump to the matching row\nreview plan docs",
+        ],
+      },
+      {
+        rowId: "assistant-empty-row",
+        rowIndex: 6,
+        normalizedTexts: ["(empty response)"],
       },
       {
         rowId: "working-row",
-        rowIndex: 5,
+        rowIndex: 7,
         normalizedTexts: [],
       },
     ]);
@@ -185,7 +244,7 @@ describe("findThreadSearchResults", () => {
     expect(findThreadSearchResults(rows, "readme")).toEqual([
       {
         rowId: "work-row",
-        rowIndex: 2,
+        rowIndex: 3,
         matchCount: 2,
       },
     ]);
@@ -195,17 +254,17 @@ describe("findThreadSearchResults", () => {
     expect(findThreadSearchResults(rows, "edit readme")).toEqual([
       {
         rowId: "work-row",
-        rowIndex: 2,
+        rowIndex: 3,
         matchCount: 1,
       },
     ]);
   });
 
-  it("matches proposed plans and ignores the working indicator", () => {
-    expect(findThreadSearchResults(rows, "thread search")).toEqual([
+  it("matches displayed proposed-plan body content and ignores the working indicator", () => {
+    expect(findThreadSearchResults(rows, "jump to the matching row")).toEqual([
       {
         rowId: "plan-row",
-        rowIndex: 4,
+        rowIndex: 5,
         matchCount: 1,
       },
     ]);
@@ -218,21 +277,21 @@ describe("findThreadSearchResults", () => {
     expect(findThreadSearchResults(rows, "visible composer text")).toEqual([
       {
         rowId: "user-message-row",
-        rowIndex: 1,
+        rowIndex: 2,
         matchCount: 1,
       },
     ]);
     expect(findThreadSearchResults(rows, "terminal 1 lines 1-5")).toEqual([
       {
         rowId: "user-message-row",
-        rowIndex: 1,
+        rowIndex: 2,
         matchCount: 1,
       },
     ]);
     expect(findThreadSearchResults(rows, "visible-upload-name")).toEqual([
       {
         rowId: "user-message-row",
-        rowIndex: 1,
+        rowIndex: 2,
         matchCount: 1,
       },
     ]);
@@ -242,7 +301,7 @@ describe("findThreadSearchResults", () => {
     expect(findThreadSearchResults(rows, "apply patch")).toEqual([
       {
         rowId: "work-row-visible-files",
-        rowIndex: 3,
+        rowIndex: 4,
         matchCount: 1,
       },
     ]);
@@ -250,11 +309,58 @@ describe("findThreadSearchResults", () => {
     expect(findThreadSearchResults(rows, "src/d.ts")).toEqual([
       {
         rowId: "work-row-visible-files",
-        rowIndex: 3,
+        rowIndex: 4,
         matchCount: 1,
       },
     ]);
     expect(findThreadSearchResults(rows, "src/e.ts")).toEqual([]);
+  });
+
+  it("indexes assistant markdown by rendered text instead of raw markdown syntax", () => {
+    expect(findThreadSearchResults(rows, "thread search docs")).toEqual([
+      {
+        rowId: "assistant-markdown-row",
+        rowIndex: 1,
+        matchCount: 1,
+      },
+    ]);
+    expect(findThreadSearchResults(rows, "alpha marker")).toEqual([
+      {
+        rowId: "assistant-markdown-row",
+        rowIndex: 1,
+        matchCount: 1,
+      },
+    ]);
+    expect(findThreadSearchResults(rows, "https://example.com/thread-search")).toEqual([]);
+  });
+
+  it("indexes proposed plans by displayed title and body instead of raw markdown", () => {
+    expect(findThreadSearchResults(rows, "seeded thread search plan")).toEqual([
+      {
+        rowId: "plan-row",
+        rowIndex: 5,
+        matchCount: 1,
+      },
+    ]);
+    expect(findThreadSearchResults(rows, "plan docs")).toEqual([
+      {
+        rowId: "plan-row",
+        rowIndex: 5,
+        matchCount: 1,
+      },
+    ]);
+    expect(findThreadSearchResults(rows, "summary")).toEqual([]);
+    expect(findThreadSearchResults(rows, "https://example.com/plan-docs")).toEqual([]);
+  });
+
+  it("indexes the rendered empty assistant placeholder text", () => {
+    expect(findThreadSearchResults(rows, "(empty response)")).toEqual([
+      {
+        rowId: "assistant-empty-row",
+        rowIndex: 6,
+        matchCount: 1,
+      },
+    ]);
   });
 
   it("returns no results for empty queries", () => {
@@ -265,7 +371,7 @@ describe("findThreadSearchResults", () => {
     expect(findThreadSearchResults(rows, "row")).toEqual([
       {
         rowId: "plan-row",
-        rowIndex: 4,
+        rowIndex: 5,
         matchCount: 1,
       },
     ]);
@@ -299,7 +405,10 @@ describe("findThreadSearchResults", () => {
     const previousState = findThreadSearchLookupState(index, "thread search");
     const nextState = findThreadSearchLookupState(index, "e", previousState);
 
-    expect(previousState.matchingEntries.map((entry) => entry.rowId)).toEqual(["plan-row"]);
+    expect(previousState.matchingEntries.map((entry) => entry.rowId)).toEqual([
+      "assistant-markdown-row",
+      "plan-row",
+    ]);
     expect(nextState.results).toEqual(findThreadSearchResultsFromIndex(index, "e"));
   });
 });
