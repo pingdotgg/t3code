@@ -10,6 +10,7 @@ import {
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationReadModel,
+  type TurnId,
 } from "@t3tools/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
@@ -503,6 +504,93 @@ describe("QueuedFollowUpReactor", () => {
     expect(dispatched.map((command) => command.type)).toEqual([
       "thread.turn.start",
       "thread.queued-follow-up.remove",
+    ]);
+
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+  });
+
+  it("blocks redispatch when both queue cleanup and send-failed persistence fail", async () => {
+    const dispatched: OrchestrationCommand[] = [];
+    let readModel = makeReadModel({
+      queuedPrompts: ["first"],
+      latestTurnState: {
+        turnId: "latest-turn-1" as TurnId,
+        state: "completed",
+        requestedAt: "2026-03-28T12:00:01.000Z",
+        startedAt: "2026-03-28T12:00:01.100Z",
+        completedAt: "2026-03-28T12:00:02.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const threadEvent = {
+      eventId: EventId.makeUnsafe("evt-queued-follow-up-reactor-double-failure"),
+      sequence: 1,
+      type: "thread.queued-follow-up-enqueued",
+      aggregateKind: "thread",
+      aggregateId: ThreadId.makeUnsafe("thread-1"),
+      occurredAt: NOW_ISO,
+      commandId: CommandId.makeUnsafe("cmd-queued-follow-up-reactor-double-failure"),
+      causationEventId: null,
+      correlationId: "corr-queued-follow-up-reactor-double-failure",
+      payload: {
+        createdAt: NOW_ISO,
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        followUp: readModel.threads[0]!.queuedFollowUps[0]!,
+      },
+      metadata: {},
+    } as unknown as OrchestrationEvent;
+    const engine: OrchestrationEngineShape = {
+      getReadModel: () => Effect.succeed(readModel),
+      readEvents: () => Stream.empty,
+      dispatch: (command) =>
+        Effect.sync(() => {
+          dispatched.push(command);
+          if (command.type === "thread.turn.start") {
+            readModel = {
+              ...readModel,
+              threads: [
+                {
+                  ...readModel.threads[0]!,
+                  latestTurn: {
+                    turnId: "latest-turn-2" as TurnId,
+                    state: "completed",
+                    requestedAt: "2026-03-28T12:00:03.000Z",
+                    startedAt: "2026-03-28T12:00:03.100Z",
+                    completedAt: "2026-03-28T12:00:04.000Z",
+                    assistantMessageId: null,
+                  },
+                },
+              ],
+            };
+            return { sequence: dispatched.length };
+          }
+          if (
+            command.type === "thread.queued-follow-up.remove" ||
+            command.type === "thread.queued-follow-up.send-failed"
+          ) {
+            throw new Error(`${command.type} failed`);
+          }
+          return { sequence: dispatched.length };
+        }),
+      streamDomainEvents: Stream.fromIterable([threadEvent, threadEvent]),
+    };
+
+    runtime = ManagedRuntime.make(
+      QueuedFollowUpReactorLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(QueuedFollowUpReactor));
+    const scope = await Effect.runPromise(Scope.make("sequential"));
+
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    await runtime.runPromise(reactor.drain);
+
+    expect(dispatched.map((command) => command.type)).toEqual([
+      "thread.turn.start",
+      "thread.queued-follow-up.remove",
+      "thread.queued-follow-up.send-failed",
     ]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));

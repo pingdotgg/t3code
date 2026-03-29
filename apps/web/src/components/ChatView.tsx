@@ -142,6 +142,7 @@ import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
   insertInlineTerminalContextPlaceholder,
+  materializeSendableInlineTerminalContextPrompt,
   removeInlineTerminalContextPlaceholder,
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -3227,16 +3228,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const createFollowUpSnapshotFromComposer = useCallback(
     async (createdAt: string): Promise<FollowUpSubmissionSnapshot | null> => {
       const promptForSend = promptRef.current;
-      const {
-        trimmedPrompt,
-        sendableTerminalContexts,
-        expiredTerminalContextCount,
-        hasSendableContent,
-      } = deriveComposerSendState({
-        prompt: promptForSend,
-        imageCount: composerImagesRef.current.length,
-        terminalContexts: composerTerminalContextsRef.current,
-      });
+      const { sendableTerminalContexts, expiredTerminalContextCount, hasSendableContent } =
+        deriveComposerSendState({
+          prompt: promptForSend,
+          imageCount: composerImagesRef.current.length,
+          terminalContexts: composerTerminalContextsRef.current,
+        });
       if (!hasSendableContent) {
         if (expiredTerminalContextCount > 0) {
           const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -3261,7 +3258,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         })),
       );
       return buildQueuedFollowUpDraft({
-        prompt: trimmedPrompt,
+        prompt: materializeSendableInlineTerminalContextPrompt(
+          promptForSend,
+          composerTerminalContextsRef.current,
+        ).trim(),
         attachments: persistedAttachments,
         terminalContexts: sendableTerminalContexts,
         modelSelection: selectedModelSelection,

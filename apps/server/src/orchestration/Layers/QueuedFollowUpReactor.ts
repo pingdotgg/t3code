@@ -19,6 +19,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const inFlightFollowUpIds = new Set<string>();
   const pendingQueuedDispatchByThreadId = new Map<ThreadId, string>();
+  const blockedQueuedFollowUpIdsByThreadId = new Map<ThreadId, string>();
 
   const hasQueuedDispatchSettled = Effect.fnUntraced(function* (threadId: ThreadId) {
     const dispatchedAt = pendingQueuedDispatchByThreadId.get(threadId);
@@ -51,7 +52,18 @@ const make = Effect.gen(function* () {
     );
     if (!thread) {
       pendingQueuedDispatchByThreadId.delete(threadId);
+      blockedQueuedFollowUpIdsByThreadId.delete(threadId);
       return;
+    }
+    const blockedFollowUpId = blockedQueuedFollowUpIdsByThreadId.get(threadId);
+    if (blockedFollowUpId) {
+      const blockedQueuedFollowUpStillPresent = thread.queuedFollowUps.some(
+        (followUp) => followUp.id === blockedFollowUpId,
+      );
+      if (blockedQueuedFollowUpStillPresent) {
+        return;
+      }
+      blockedQueuedFollowUpIdsByThreadId.delete(threadId);
     }
     if (pendingQueuedDispatchByThreadId.has(threadId)) {
       const settled = yield* hasQueuedDispatchSettled(threadId);
@@ -80,6 +92,17 @@ const make = Effect.gen(function* () {
 
     inFlightFollowUpIds.add(queuedHead.id);
     yield* Effect.gen(function* () {
+      const blockQueuedFollowUpAfterPersistenceFailure = Effect.fnUntraced(function* () {
+        blockedQueuedFollowUpIdsByThreadId.set(threadId, queuedHead.id);
+        yield* Effect.logWarning(
+          "queued follow-up reactor blocked a queued item after persistence failure",
+          {
+            threadId,
+            followUpId: queuedHead.id,
+          },
+        );
+      });
+
       const turnStartCreatedAt = new Date().toISOString();
       const turnStartExit = yield* Effect.exit(
         orchestrationEngine.dispatch({
@@ -115,10 +138,16 @@ const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.catchCause((nestedCause) =>
-              Effect.logWarning("queued follow-up reactor failed to persist send failure", {
-                threadId,
-                followUpId: queuedHead.id,
-                cause: Cause.pretty(nestedCause),
+              Effect.gen(function* () {
+                yield* Effect.logWarning(
+                  "queued follow-up reactor failed to persist send failure",
+                  {
+                    threadId,
+                    followUpId: queuedHead.id,
+                    cause: Cause.pretty(nestedCause),
+                  },
+                );
+                yield* blockQueuedFollowUpAfterPersistenceFailure();
               }),
             ),
           );
@@ -148,10 +177,16 @@ const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.catchCause((nestedCause) =>
-              Effect.logWarning("queued follow-up reactor failed to persist send failure", {
-                threadId,
-                followUpId: queuedHead.id,
-                cause: Cause.pretty(nestedCause),
+              Effect.gen(function* () {
+                yield* Effect.logWarning(
+                  "queued follow-up reactor failed to persist send failure",
+                  {
+                    threadId,
+                    followUpId: queuedHead.id,
+                    cause: Cause.pretty(nestedCause),
+                  },
+                );
+                yield* blockQueuedFollowUpAfterPersistenceFailure();
               }),
             ),
           );

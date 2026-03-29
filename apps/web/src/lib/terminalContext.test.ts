@@ -17,6 +17,7 @@ import {
   insertInlineTerminalContextPlaceholder,
   isTerminalContextExpired,
   materializeInlineTerminalContextPrompt,
+  materializeSendableInlineTerminalContextPrompt,
   removeInlineTerminalContextPlaceholder,
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
@@ -206,5 +207,24 @@ describe("terminalContext", () => {
         [makeContext()],
       ),
     ).toBe("Investigate @terminal-1:12-13 carefully");
+  });
+
+  it("skips expired inline terminal contexts without shifting later inline labels", () => {
+    const placeholder = INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+    expect(
+      materializeSendableInlineTerminalContextPrompt(`Check ${placeholder} and ${placeholder}`, [
+        makeContext({
+          id: "context-expired",
+          text: "",
+        }),
+        makeContext({
+          id: "context-live",
+          terminalLabel: "Terminal 2",
+          lineStart: 40,
+          lineEnd: 41,
+          text: "npm run lint\nok",
+        }),
+      ]),
+    ).toBe("Check  and @terminal-2:40-41");
   });
 });

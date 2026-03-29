@@ -2198,6 +2198,53 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("preserves inline terminal markers when steering a running follow-up", async () => {
+    useComposerDraftStore.getState().addTerminalContext(
+      THREAD_ID,
+      createTerminalContext({
+        id: "ctx-inline-follow-up",
+        terminalLabel: "Terminal 2",
+        lineStart: 40,
+        lineEnd: 41,
+        text: "npm run lint\nok",
+      }),
+    );
+    useComposerDraftStore
+      .getState()
+      .setPrompt(THREAD_ID, `Check ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} now`);
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-follow-up-inline-terminal" as MessageId,
+        targetText: "follow-up inline terminal target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      const submitButton = await waitForComposerSubmitButton("Steer follow-up");
+      submitButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(getTurnStartRequests()).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const turnStart = getTurnStartRequests()[0] as
+        | (WsRequestEnvelope["body"] & {
+            command: { type: string; message?: { text?: string } };
+          })
+        | undefined;
+      expect(turnStart?.command.message?.text).toContain("Check @terminal-2:40-41 now");
+      expect(turnStart?.command.message?.text).toContain("<terminal_context>");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("interrupts the active run before sending a steered follow-up", async () => {
     let sawInterrupt = false;
     const mounted = await mountChatView({

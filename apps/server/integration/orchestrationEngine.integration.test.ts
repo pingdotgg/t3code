@@ -267,6 +267,11 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
 it.live("replays queued follow-ups after orchestration restarts", () =>
   Effect.gen(function* () {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-orchestration-queue-restart-"));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        fs.rmSync(rootDir, { recursive: true, force: true });
+      }),
+    );
 
     yield* withHarnessOptions({ rootDir }, (harness) =>
       Effect.gen(function* () {
