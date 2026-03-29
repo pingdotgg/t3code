@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
 import {
+  canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
-  shouldHighlightDesktopUpdateError,
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
@@ -67,6 +68,16 @@ describe("desktop update button state", () => {
     expect(shouldShowDesktopUpdateButton(state)).toBe(true);
     expect(resolveDesktopUpdateButtonAction(state)).toBe("install");
     expect(getDesktopUpdateButtonTooltip(state)).toContain("Click to retry");
+  });
+
+  it("prefers install when a downloaded version already exists", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "available",
+      availableVersion: "1.1.0",
+      downloadedVersion: "1.1.0",
+    };
+    expect(resolveDesktopUpdateButtonAction(state)).toBe("install");
   });
 
   it("hides the button for non-actionable check errors", () => {
@@ -145,38 +156,26 @@ describe("getDesktopUpdateActionError", () => {
 });
 
 describe("desktop update UI helpers", () => {
-  it("toasts only for accepted incomplete actions", () => {
+  it("toasts only for actionable updater errors", () => {
     expect(
       shouldToastDesktopUpdateActionResult({
         accepted: true,
         completed: false,
-        state: baseState,
+        state: { ...baseState, message: "checksum mismatch" },
       }),
     ).toBe(true);
     expect(
       shouldToastDesktopUpdateActionResult({
         accepted: true,
-        completed: true,
-        state: baseState,
+        completed: false,
+        state: { ...baseState, message: null },
       }),
     ).toBe(false);
-  });
-
-  it("highlights only actionable updater errors", () => {
     expect(
-      shouldHighlightDesktopUpdateError({
-        ...baseState,
-        status: "error",
-        errorContext: "download",
-        canRetry: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldHighlightDesktopUpdateError({
-        ...baseState,
-        status: "error",
-        errorContext: "check",
-        canRetry: true,
+      shouldToastDesktopUpdateActionResult({
+        accepted: true,
+        completed: true,
+        state: { ...baseState, message: "checksum mismatch" },
       }),
     ).toBe(false);
   });
@@ -205,5 +204,88 @@ describe("desktop update UI helpers", () => {
     };
 
     expect(getArm64IntelBuildWarningDescription(state)).toContain("Download the available update");
+  });
+
+  it("includes the downloaded version in the install confirmation copy", () => {
+    expect(
+      getDesktopUpdateInstallConfirmationMessage({
+        availableVersion: "1.1.0",
+        downloadedVersion: "1.1.1",
+      }),
+    ).toContain("Install update 1.1.1 and restart T3 Code?");
+  });
+
+  it("falls back to generic install confirmation copy when no version is available", () => {
+    expect(
+      getDesktopUpdateInstallConfirmationMessage({
+        availableVersion: null,
+        downloadedVersion: null,
+      }),
+    ).toContain("Install update and restart T3 Code?");
+  });
+});
+
+describe("canCheckForUpdate", () => {
+  it("returns false for null state", () => {
+    expect(canCheckForUpdate(null)).toBe(false);
+  });
+
+  it("returns false when updates are disabled", () => {
+    expect(canCheckForUpdate({ ...baseState, enabled: false, status: "disabled" })).toBe(false);
+  });
+
+  it("returns false while checking", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "checking" })).toBe(false);
+  });
+
+  it("returns false while downloading", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "downloading", downloadPercent: 50 })).toBe(
+      false,
+    );
+  });
+
+  it("returns false once an update has been downloaded", () => {
+    expect(
+      canCheckForUpdate({
+        ...baseState,
+        status: "downloaded",
+        availableVersion: "1.1.0",
+        downloadedVersion: "1.1.0",
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true when idle", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "idle" })).toBe(true);
+  });
+
+  it("returns true when up-to-date", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "up-to-date" })).toBe(true);
+  });
+
+  it("returns true when an update is available", () => {
+    expect(
+      canCheckForUpdate({ ...baseState, status: "available", availableVersion: "1.1.0" }),
+    ).toBe(true);
+  });
+
+  it("returns true on error so the user can retry", () => {
+    expect(
+      canCheckForUpdate({
+        ...baseState,
+        status: "error",
+        errorContext: "check",
+        message: "network",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("getDesktopUpdateButtonTooltip", () => {
+  it("returns 'Up to date' for non-actionable states", () => {
+    expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "idle" })).toBe("Up to date");
+    expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
+      "Up to date",
+    );
   });
 });

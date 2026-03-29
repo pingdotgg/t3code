@@ -119,19 +119,24 @@ export interface BranchNamePromptInput {
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
 
-export function buildBranchNamePrompt(input: BranchNamePromptInput) {
+interface PromptFromMessageInput {
+  instruction: string;
+  responseShape: string;
+  rules: ReadonlyArray<string>;
+  message: string;
+  attachments?: ReadonlyArray<ChatAttachment> | undefined;
+}
+
+function buildPromptFromMessage(input: PromptFromMessageInput): string {
   const attachmentLines = (input.attachments ?? []).map(
     (attachment) => `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,
   );
 
   const promptSections = [
-    "You generate concise git branch names.",
-    "Return a JSON object with key: branch.",
+    input.instruction,
+    input.responseShape,
     "Rules:",
-    "- Branch should describe the requested work from the user message.",
-    "- Keep it short and specific (2-6 words).",
-    "- Use plain words only, no issue prefixes and no punctuation-heavy text.",
-    "- If images are attached, use them as primary context for visual/UI issues.",
+    ...input.rules.map((rule) => `- ${rule}`),
     "",
     "User message:",
     limitSection(input.message, 8_000),
@@ -144,9 +149,53 @@ export function buildBranchNamePrompt(input: BranchNamePromptInput) {
     );
   }
 
-  const prompt = promptSections.join("\n");
+  return promptSections.join("\n");
+}
+
+export function buildBranchNamePrompt(input: BranchNamePromptInput) {
+  const prompt = buildPromptFromMessage({
+    instruction: "You generate concise git branch names.",
+    responseShape: "Return a JSON object with key: branch.",
+    rules: [
+      "Branch should describe the requested work from the user message.",
+      "Keep it short and specific (2-6 words).",
+      "Use plain words only, no issue prefixes and no punctuation-heavy text.",
+      "If images are attached, use them as primary context for visual/UI issues.",
+    ],
+    message: input.message,
+    attachments: input.attachments,
+  });
   const outputSchema = Schema.Struct({
     branch: Schema.String,
+  });
+
+  return { prompt, outputSchema };
+}
+
+// ---------------------------------------------------------------------------
+// Thread title
+// ---------------------------------------------------------------------------
+
+export interface ThreadTitlePromptInput {
+  message: string;
+  attachments?: ReadonlyArray<ChatAttachment> | undefined;
+}
+
+export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
+  const prompt = buildPromptFromMessage({
+    instruction: "You write concise thread titles for coding conversations.",
+    responseShape: "Return a JSON object with key: title.",
+    rules: [
+      "Title should summarize the user's request, not restate it verbatim.",
+      "Keep it short and specific (3-8 words).",
+      "Avoid quotes, filler, prefixes, and trailing punctuation.",
+      "If images are attached, use them as primary context for visual/UI issues.",
+    ],
+    message: input.message,
+    attachments: input.attachments,
+  });
+  const outputSchema = Schema.Struct({
+    title: Schema.String,
   });
 
   return { prompt, outputSchema };

@@ -22,7 +22,7 @@ export interface ProviderCommandReactorShape {
    * Filters orchestration domain events to provider-intent types before
    * processing.
    */
-  readonly start: Effect.Effect<void, never, Scope.Scope>;
+  readonly start: () => Effect.Effect<void, never, Scope.Scope>;
 
   /**
    * Resolves when the internal processing queue is empty and idle.

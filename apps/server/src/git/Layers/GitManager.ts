@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 
-import { Effect, FileSystem, Layer, Path } from "effect";
-import { GitActionProgressEvent, GitActionProgressPhase, ModelSelection } from "@t3tools/contracts";
+import { Effect, FileSystem, Layer, Option, Path, Ref } from "effect";
+import {
+  GitActionProgressEvent,
+  GitActionProgressPhase,
+  GitRunStackedActionResult,
+  ModelSelection,
+} from "@t3tools/contracts";
 import {
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
@@ -20,6 +25,7 @@ import { GitCore } from "../Services/GitCore.ts";
 import { GitHubCli } from "../Services/GitHubCli.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import type { GitManagerServiceError } from "../Errors.ts";
 
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;
@@ -355,7 +361,7 @@ function toPullRequestHeadRemoteInfo(pr: {
   };
 }
 
-export const makeGitManager = Effect.gen(function* () {
+export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   const gitCore = yield* GitCore;
   const gitHubCli = yield* GitHubCli;
   const textGeneration = yield* TextGeneration;
@@ -384,12 +390,12 @@ export const makeGitManager = Effect.gen(function* () {
     };
   };
 
-  const configurePullRequestHeadUpstream = (
-    cwd: string,
-    pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
-    localBranch = pullRequest.headBranch,
-  ) =>
-    Effect.gen(function* () {
+  const configurePullRequestHeadUpstreamBase = Effect.fn("configurePullRequestHeadUpstream")(
+    function* (
+      cwd: string,
+      pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+      localBranch = pullRequest.headBranch,
+    ) {
       const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
       if (repositoryNameWithOwner.length === 0) {
         return;
@@ -417,7 +423,15 @@ export const makeGitManager = Effect.gen(function* () {
         remoteName,
         remoteBranch: pullRequest.headBranch,
       });
-    }).pipe(
+    },
+  );
+
+  const configurePullRequestHeadUpstream = (
+    cwd: string,
+    pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+    localBranch = pullRequest.headBranch,
+  ) =>
+    configurePullRequestHeadUpstreamBase(cwd, pullRequest, localBranch).pipe(
       Effect.catch((error) =>
         Effect.logWarning(
           `GitManager.configurePullRequestHeadUpstream: failed to configure upstream for ${localBranch} -> ${pullRequest.headBranch} in ${cwd}: ${error.message}`,
@@ -425,12 +439,12 @@ export const makeGitManager = Effect.gen(function* () {
       ),
     );
 
-  const materializePullRequestHeadBranch = (
-    cwd: string,
-    pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
-    localBranch = pullRequest.headBranch,
-  ) =>
-    Effect.gen(function* () {
+  const materializePullRequestHeadBranchBase = Effect.fn("materializePullRequestHeadBranch")(
+    function* (
+      cwd: string,
+      pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+      localBranch = pullRequest.headBranch,
+    ) {
       const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
 
       if (repositoryNameWithOwner.length === 0) {
@@ -470,7 +484,15 @@ export const makeGitManager = Effect.gen(function* () {
         remoteName,
         remoteBranch: pullRequest.headBranch,
       });
-    }).pipe(
+    },
+  );
+
+  const materializePullRequestHeadBranch = (
+    cwd: string,
+    pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+    localBranch = pullRequest.headBranch,
+  ) =>
+    materializePullRequestHeadBranchBase(cwd, pullRequest, localBranch).pipe(
       Effect.catch(() =>
         gitCore.fetchPullRequestBranch({
           cwd,
@@ -487,208 +509,211 @@ export const makeGitManager = Effect.gen(function* () {
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.catch(() => Effect.succeed(null)));
 
-  const resolveRemoteRepositoryContext = (cwd: string, remoteName: string | null) =>
-    Effect.gen(function* () {
-      if (!remoteName) {
-        return {
-          repositoryNameWithOwner: null,
-          ownerLogin: null,
-        };
-      }
-
-      const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
-      const repositoryNameWithOwner = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
+  const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
+    cwd: string,
+    remoteName: string | null,
+  ) {
+    if (!remoteName) {
       return {
-        repositoryNameWithOwner,
-        ownerLogin: parseRepositoryOwnerLogin(repositoryNameWithOwner),
+        repositoryNameWithOwner: null,
+        ownerLogin: null,
       };
-    });
+    }
 
-  const resolveBranchHeadContext = (
+    const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
+    const repositoryNameWithOwner = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
+    return {
+      repositoryNameWithOwner,
+      ownerLogin: parseRepositoryOwnerLogin(repositoryNameWithOwner),
+    };
+  });
+
+  const resolveBranchHeadContext = Effect.fn("resolveBranchHeadContext")(function* (
     cwd: string,
     details: { branch: string; upstreamRef: string | null },
-  ) =>
-    Effect.gen(function* () {
-      const remoteName = yield* readConfigValueNullable(cwd, `branch.${details.branch}.remote`);
-      const headBranchFromUpstream = details.upstreamRef
-        ? extractBranchFromRef(details.upstreamRef)
-        : "";
-      const headBranch =
-        headBranchFromUpstream.length > 0 ? headBranchFromUpstream : details.branch;
+  ) {
+    const remoteName = yield* readConfigValueNullable(cwd, `branch.${details.branch}.remote`);
+    const headBranchFromUpstream = details.upstreamRef
+      ? extractBranchFromRef(details.upstreamRef)
+      : "";
+    const headBranch = headBranchFromUpstream.length > 0 ? headBranchFromUpstream : details.branch;
 
-      const [remoteRepository, originRepository] = yield* Effect.all(
-        [
-          resolveRemoteRepositoryContext(cwd, remoteName),
-          resolveRemoteRepositoryContext(cwd, "origin"),
-        ],
-        { concurrency: "unbounded" },
-      );
+    const [remoteRepository, originRepository] = yield* Effect.all(
+      [
+        resolveRemoteRepositoryContext(cwd, remoteName),
+        resolveRemoteRepositoryContext(cwd, "origin"),
+      ],
+      { concurrency: "unbounded" },
+    );
 
-      const isCrossRepository =
-        remoteRepository.repositoryNameWithOwner !== null &&
-        originRepository.repositoryNameWithOwner !== null
-          ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
-            originRepository.repositoryNameWithOwner.toLowerCase()
-          : remoteName !== null &&
-            remoteName !== "origin" &&
-            remoteRepository.repositoryNameWithOwner !== null;
+    const isCrossRepository =
+      remoteRepository.repositoryNameWithOwner !== null &&
+      originRepository.repositoryNameWithOwner !== null
+        ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
+          originRepository.repositoryNameWithOwner.toLowerCase()
+        : remoteName !== null &&
+          remoteName !== "origin" &&
+          remoteRepository.repositoryNameWithOwner !== null;
 
-      const ownerHeadSelector =
-        remoteRepository.ownerLogin && headBranch.length > 0
-          ? `${remoteRepository.ownerLogin}:${headBranch}`
-          : null;
-      const remoteAliasHeadSelector =
-        remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
-      const shouldProbeRemoteOwnedSelectors =
-        isCrossRepository || (remoteName !== null && remoteName !== "origin");
+    const ownerHeadSelector =
+      remoteRepository.ownerLogin && headBranch.length > 0
+        ? `${remoteRepository.ownerLogin}:${headBranch}`
+        : null;
+    const remoteAliasHeadSelector =
+      remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
+    const shouldProbeRemoteOwnedSelectors =
+      isCrossRepository || (remoteName !== null && remoteName !== "origin");
 
-      const headSelectors: string[] = [];
-      if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {
-        appendUnique(headSelectors, ownerHeadSelector);
-        appendUnique(
-          headSelectors,
-          remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
-        );
-      }
-      appendUnique(headSelectors, details.branch);
-      appendUnique(headSelectors, headBranch !== details.branch ? headBranch : null);
-      if (!isCrossRepository && shouldProbeRemoteOwnedSelectors) {
-        appendUnique(headSelectors, ownerHeadSelector);
-        appendUnique(
-          headSelectors,
-          remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
-        );
-      }
-
-      return {
-        localBranch: details.branch,
-        headBranch,
+    const headSelectors: string[] = [];
+    if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {
+      appendUnique(headSelectors, ownerHeadSelector);
+      appendUnique(
         headSelectors,
-        preferredHeadSelector:
-          ownerHeadSelector && isCrossRepository ? ownerHeadSelector : headBranch,
-        remoteName,
-        headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
-        headRepositoryOwnerLogin: remoteRepository.ownerLogin,
-        isCrossRepository,
-      } satisfies BranchHeadContext;
-    });
+        remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
+      );
+    }
+    appendUnique(headSelectors, details.branch);
+    appendUnique(headSelectors, headBranch !== details.branch ? headBranch : null);
+    if (!isCrossRepository && shouldProbeRemoteOwnedSelectors) {
+      appendUnique(headSelectors, ownerHeadSelector);
+      appendUnique(
+        headSelectors,
+        remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
+      );
+    }
 
-  const findOpenPr = (cwd: string, headSelectors: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      for (const headSelector of headSelectors) {
-        const pullRequests = yield* gitHubCli.listOpenPullRequests({
-          cwd,
-          headSelector,
-          limit: 1,
-        });
+    return {
+      localBranch: details.branch,
+      headBranch,
+      headSelectors,
+      preferredHeadSelector:
+        ownerHeadSelector && isCrossRepository ? ownerHeadSelector : headBranch,
+      remoteName,
+      headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
+      headRepositoryOwnerLogin: remoteRepository.ownerLogin,
+      isCrossRepository,
+    } satisfies BranchHeadContext;
+  });
 
-        const [firstPullRequest] = pullRequests;
-        if (firstPullRequest) {
-          return {
-            number: firstPullRequest.number,
-            title: firstPullRequest.title,
-            url: firstPullRequest.url,
-            baseRefName: firstPullRequest.baseRefName,
-            headRefName: firstPullRequest.headRefName,
-            state: "open",
-            updatedAt: null,
-          } satisfies PullRequestInfo;
-        }
-      }
-
-      return null;
-    });
-
-  const findLatestPr = (cwd: string, details: { branch: string; upstreamRef: string | null }) =>
-    Effect.gen(function* () {
-      const headContext = yield* resolveBranchHeadContext(cwd, details);
-      const parsedByNumber = new Map<number, PullRequestInfo>();
-
-      for (const headSelector of headContext.headSelectors) {
-        const stdout = yield* gitHubCli
-          .execute({
-            cwd,
-            args: [
-              "pr",
-              "list",
-              "--head",
-              headSelector,
-              "--state",
-              "all",
-              "--limit",
-              "20",
-              "--json",
-              "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
-            ],
-          })
-          .pipe(Effect.map((result) => result.stdout));
-
-        const raw = stdout.trim();
-        if (raw.length === 0) {
-          continue;
-        }
-
-        const parsedJson = yield* Effect.try({
-          try: () => JSON.parse(raw) as unknown,
-          catch: (cause) =>
-            gitManagerError("findLatestPr", "GitHub CLI returned invalid PR list JSON.", cause),
-        });
-
-        for (const pr of parsePullRequestList(parsedJson)) {
-          parsedByNumber.set(pr.number, pr);
-        }
-      }
-
-      const parsed = Array.from(parsedByNumber.values()).toSorted((a, b) => {
-        const left = a.updatedAt ? Date.parse(a.updatedAt) : 0;
-        const right = b.updatedAt ? Date.parse(b.updatedAt) : 0;
-        return right - left;
+  const findOpenPr = Effect.fn("findOpenPr")(function* (
+    cwd: string,
+    headSelectors: ReadonlyArray<string>,
+  ) {
+    for (const headSelector of headSelectors) {
+      const pullRequests = yield* gitHubCli.listOpenPullRequests({
+        cwd,
+        headSelector,
+        limit: 1,
       });
 
-      const latestOpenPr = parsed.find((pr) => pr.state === "open");
-      if (latestOpenPr) {
-        return latestOpenPr;
+      const [firstPullRequest] = pullRequests;
+      if (firstPullRequest) {
+        return {
+          number: firstPullRequest.number,
+          title: firstPullRequest.title,
+          url: firstPullRequest.url,
+          baseRefName: firstPullRequest.baseRefName,
+          headRefName: firstPullRequest.headRefName,
+          state: "open",
+          updatedAt: null,
+        } satisfies PullRequestInfo;
       }
-      return parsed[0] ?? null;
+    }
+
+    return null;
+  });
+
+  const findLatestPr = Effect.fn("findLatestPr")(function* (
+    cwd: string,
+    details: { branch: string; upstreamRef: string | null },
+  ) {
+    const headContext = yield* resolveBranchHeadContext(cwd, details);
+    const parsedByNumber = new Map<number, PullRequestInfo>();
+
+    for (const headSelector of headContext.headSelectors) {
+      const stdout = yield* gitHubCli
+        .execute({
+          cwd,
+          args: [
+            "pr",
+            "list",
+            "--head",
+            headSelector,
+            "--state",
+            "all",
+            "--limit",
+            "20",
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
+          ],
+        })
+        .pipe(Effect.map((result) => result.stdout));
+
+      const raw = stdout.trim();
+      if (raw.length === 0) {
+        continue;
+      }
+
+      const parsedJson = yield* Effect.try({
+        try: () => JSON.parse(raw) as unknown,
+        catch: (cause) =>
+          gitManagerError("findLatestPr", "GitHub CLI returned invalid PR list JSON.", cause),
+      });
+
+      for (const pr of parsePullRequestList(parsedJson)) {
+        parsedByNumber.set(pr.number, pr);
+      }
+    }
+
+    const parsed = Array.from(parsedByNumber.values()).toSorted((a, b) => {
+      const left = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+      const right = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+      return right - left;
     });
 
-  const resolveBaseBranch = (
+    const latestOpenPr = parsed.find((pr) => pr.state === "open");
+    if (latestOpenPr) {
+      return latestOpenPr;
+    }
+    return parsed[0] ?? null;
+  });
+
+  const resolveBaseBranch = Effect.fn("resolveBaseBranch")(function* (
     cwd: string,
     branch: string,
     upstreamRef: string | null,
     headContext: Pick<BranchHeadContext, "isCrossRepository">,
-  ) =>
-    Effect.gen(function* () {
-      const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
-      if (configured) return configured;
+  ) {
+    const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
+    if (configured) return configured;
 
-      if (upstreamRef && !headContext.isCrossRepository) {
-        const upstreamBranch = extractBranchFromRef(upstreamRef);
-        if (upstreamBranch.length > 0 && upstreamBranch !== branch) {
-          return upstreamBranch;
-        }
+    if (upstreamRef && !headContext.isCrossRepository) {
+      const upstreamBranch = extractBranchFromRef(upstreamRef);
+      if (upstreamBranch.length > 0 && upstreamBranch !== branch) {
+        return upstreamBranch;
       }
+    }
 
-      const defaultFromGh = yield* gitHubCli
-        .getDefaultBranch({ cwd })
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (defaultFromGh) {
-        return defaultFromGh;
-      }
+    const defaultFromGh = yield* gitHubCli
+      .getDefaultBranch({ cwd })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (defaultFromGh) {
+      return defaultFromGh;
+    }
 
-      return "main";
-    });
+    return "main";
+  });
 
-  const resolveCommitAndBranchSuggestion = (input: {
-    cwd: string;
-    branch: string | null;
-    commitMessage?: string;
-    /** When true, also produce a semantic feature branch name. */
-    includeBranch?: boolean;
-    filePaths?: readonly string[];
-    modelSelection: ModelSelection;
-  }) =>
-    Effect.gen(function* () {
+  const resolveCommitAndBranchSuggestion = Effect.fn("resolveCommitAndBranchSuggestion")(
+    function* (input: {
+      cwd: string;
+      branch: string | null;
+      commitMessage?: string;
+      /** When true, also produce a semantic feature branch name. */
+      includeBranch?: boolean;
+      filePaths?: readonly string[];
+      modelSelection: ModelSelection;
+    }) {
       const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths);
       if (!context) {
         return null;
@@ -723,9 +748,10 @@ export const makeGitManager = Effect.gen(function* () {
         ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
         commitMessage: formatCommitMessage(generated.subject, generated.body),
       };
-    });
+    },
+  );
 
-  const runCommitStep = (
+  const runCommitStep = Effect.fn("runCommitStep")(function* (
     modelSelection: ModelSelection,
     cwd: string,
     action: "commit" | "commit_push" | "commit_push_pr",
@@ -735,196 +761,198 @@ export const makeGitManager = Effect.gen(function* () {
     filePaths?: readonly string[],
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
-  ) =>
-    Effect.gen(function* () {
-      const emit = (event: GitActionProgressPayload) =>
-        progressReporter && actionId
-          ? progressReporter.publish({
-              actionId,
-              cwd,
-              action,
-              ...event,
-            } as GitActionProgressEvent)
-          : Effect.void;
+  ) {
+    const emit = (event: GitActionProgressPayload) =>
+      progressReporter && actionId
+        ? progressReporter.publish({
+            actionId,
+            cwd,
+            action,
+            ...event,
+          } as GitActionProgressEvent)
+        : Effect.void;
 
-      let suggestion: CommitAndBranchSuggestion | null | undefined = preResolvedSuggestion;
-      if (!suggestion) {
-        const needsGeneration = !commitMessage?.trim();
-        if (needsGeneration) {
-          yield* emit({
-            kind: "phase_started",
-            phase: "commit",
-            label: "Generating commit message...",
-          });
-        }
-        suggestion = yield* resolveCommitAndBranchSuggestion({
-          cwd,
-          branch,
-          ...(commitMessage ? { commitMessage } : {}),
-          ...(filePaths ? { filePaths } : {}),
-          modelSelection,
+    let suggestion: CommitAndBranchSuggestion | null | undefined = preResolvedSuggestion;
+    if (!suggestion) {
+      const needsGeneration = !commitMessage?.trim();
+      if (needsGeneration) {
+        yield* emit({
+          kind: "phase_started",
+          phase: "commit",
+          label: "Generating commit message...",
         });
       }
-      if (!suggestion) {
-        return { status: "skipped_no_changes" as const };
-      }
-
-      yield* emit({
-        kind: "phase_started",
-        phase: "commit",
-        label: "Committing...",
+      suggestion = yield* resolveCommitAndBranchSuggestion({
+        cwd,
+        branch,
+        ...(commitMessage ? { commitMessage } : {}),
+        ...(filePaths ? { filePaths } : {}),
+        modelSelection,
       });
+    }
+    if (!suggestion) {
+      return { status: "skipped_no_changes" as const };
+    }
 
-      let currentHookName: string | null = null;
-      const commitProgress =
-        progressReporter && actionId
-          ? {
-              onOutputLine: ({ stream, text }: { stream: "stdout" | "stderr"; text: string }) => {
-                const sanitized = sanitizeProgressText(text);
-                if (!sanitized) {
-                  return Effect.void;
-                }
-                return emit({
-                  kind: "hook_output",
-                  hookName: currentHookName,
-                  stream,
-                  text: sanitized,
-                });
-              },
-              onHookStarted: (hookName: string) => {
-                currentHookName = hookName;
-                return emit({
-                  kind: "hook_started",
-                  hookName,
-                });
-              },
-              onHookFinished: ({
+    yield* emit({
+      kind: "phase_started",
+      phase: "commit",
+      label: "Committing...",
+    });
+
+    let currentHookName: string | null = null;
+    const commitProgress =
+      progressReporter && actionId
+        ? {
+            onOutputLine: ({ stream, text }: { stream: "stdout" | "stderr"; text: string }) => {
+              const sanitized = sanitizeProgressText(text);
+              if (!sanitized) {
+                return Effect.void;
+              }
+              return emit({
+                kind: "hook_output",
+                hookName: currentHookName,
+                stream,
+                text: sanitized,
+              });
+            },
+            onHookStarted: (hookName: string) => {
+              currentHookName = hookName;
+              return emit({
+                kind: "hook_started",
+                hookName,
+              });
+            },
+            onHookFinished: ({
+              hookName,
+              exitCode,
+              durationMs,
+            }: {
+              hookName: string;
+              exitCode: number | null;
+              durationMs: number | null;
+            }) => {
+              if (currentHookName === hookName) {
+                currentHookName = null;
+              }
+              return emit({
+                kind: "hook_finished",
                 hookName,
                 exitCode,
                 durationMs,
-              }: {
-                hookName: string;
-                exitCode: number | null;
-                durationMs: number | null;
-              }) => {
-                if (currentHookName === hookName) {
-                  currentHookName = null;
-                }
-                return emit({
-                  kind: "hook_finished",
-                  hookName,
-                  exitCode,
-                  durationMs,
-                });
-              },
-            }
-          : null;
-      const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
-        timeoutMs: COMMIT_TIMEOUT_MS,
-        ...(commitProgress ? { progress: commitProgress } : {}),
+              });
+            },
+          }
+        : null;
+    const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
+      timeoutMs: COMMIT_TIMEOUT_MS,
+      ...(commitProgress ? { progress: commitProgress } : {}),
+    });
+    if (currentHookName !== null) {
+      yield* emit({
+        kind: "hook_finished",
+        hookName: currentHookName,
+        exitCode: 0,
+        durationMs: null,
       });
-      if (currentHookName !== null) {
-        yield* emit({
-          kind: "hook_finished",
-          hookName: currentHookName,
-          exitCode: 0,
-          durationMs: null,
-        });
-        currentHookName = null;
-      }
-      return {
-        status: "created" as const,
-        commitSha,
-        subject: suggestion.subject,
-      };
+      currentHookName = null;
+    }
+    return {
+      status: "created" as const,
+      commitSha,
+      subject: suggestion.subject,
+    };
+  });
+
+  const runPrStep = Effect.fn("runPrStep")(function* (
+    modelSelection: ModelSelection,
+    cwd: string,
+    fallbackBranch: string | null,
+  ) {
+    const details = yield* gitCore.statusDetails(cwd);
+    const branch = details.branch ?? fallbackBranch;
+    if (!branch) {
+      return yield* gitManagerError(
+        "runPrStep",
+        "Cannot create a pull request from detached HEAD.",
+      );
+    }
+    if (!details.hasUpstream) {
+      return yield* gitManagerError(
+        "runPrStep",
+        "Current branch has not been pushed. Push before creating a PR.",
+      );
+    }
+
+    const headContext = yield* resolveBranchHeadContext(cwd, {
+      branch,
+      upstreamRef: details.upstreamRef,
     });
 
-  const runPrStep = (modelSelection: ModelSelection, cwd: string, fallbackBranch: string | null) =>
-    Effect.gen(function* () {
-      const details = yield* gitCore.statusDetails(cwd);
-      const branch = details.branch ?? fallbackBranch;
-      if (!branch) {
-        return yield* gitManagerError(
-          "runPrStep",
-          "Cannot create a pull request from detached HEAD.",
-        );
-      }
-      if (!details.hasUpstream) {
-        return yield* gitManagerError(
-          "runPrStep",
-          "Current branch has not been pushed. Push before creating a PR.",
-        );
-      }
+    const existing = yield* findOpenPr(cwd, headContext.headSelectors);
+    if (existing) {
+      return {
+        status: "opened_existing" as const,
+        url: existing.url,
+        number: existing.number,
+        baseBranch: existing.baseRefName,
+        headBranch: existing.headRefName,
+        title: existing.title,
+      };
+    }
 
-      const headContext = yield* resolveBranchHeadContext(cwd, {
-        branch,
-        upstreamRef: details.upstreamRef,
-      });
+    const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef, headContext);
+    const rangeContext = yield* gitCore.readRangeContext(cwd, baseBranch);
 
-      const existing = yield* findOpenPr(cwd, headContext.headSelectors);
-      if (existing) {
-        return {
-          status: "opened_existing" as const,
-          url: existing.url,
-          number: existing.number,
-          baseBranch: existing.baseRefName,
-          headBranch: existing.headRefName,
-          title: existing.title,
-        };
-      }
+    const generated = yield* textGeneration.generatePrContent({
+      cwd,
+      baseBranch,
+      headBranch: headContext.headBranch,
+      commitSummary: limitContext(rangeContext.commitSummary, 20_000),
+      diffSummary: limitContext(rangeContext.diffSummary, 20_000),
+      diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+      modelSelection,
+    });
 
-      const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef, headContext);
-      const rangeContext = yield* gitCore.readRangeContext(cwd, baseBranch);
-
-      const generated = yield* textGeneration.generatePrContent({
+    const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
+    yield* fileSystem
+      .writeFileString(bodyFile, generated.body)
+      .pipe(
+        Effect.mapError((cause) =>
+          gitManagerError("runPrStep", "Failed to write pull request body temp file.", cause),
+        ),
+      );
+    yield* gitHubCli
+      .createPullRequest({
         cwd,
         baseBranch,
-        headBranch: headContext.headBranch,
-        commitSummary: limitContext(rangeContext.commitSummary, 20_000),
-        diffSummary: limitContext(rangeContext.diffSummary, 20_000),
-        diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-        modelSelection,
-      });
+        headSelector: headContext.preferredHeadSelector,
+        title: generated.title,
+        bodyFile,
+      })
+      .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
 
-      const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
-      yield* fileSystem
-        .writeFileString(bodyFile, generated.body)
-        .pipe(
-          Effect.mapError((cause) =>
-            gitManagerError("runPrStep", "Failed to write pull request body temp file.", cause),
-          ),
-        );
-      yield* gitHubCli
-        .createPullRequest({
-          cwd,
-          baseBranch,
-          headSelector: headContext.preferredHeadSelector,
-          title: generated.title,
-          bodyFile,
-        })
-        .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
-
-      const created = yield* findOpenPr(cwd, headContext.headSelectors);
-      if (!created) {
-        return {
-          status: "created" as const,
-          baseBranch,
-          headBranch: headContext.headBranch,
-          title: generated.title,
-        };
-      }
-
+    const created = yield* findOpenPr(cwd, headContext.headSelectors);
+    if (!created) {
       return {
         status: "created" as const,
-        url: created.url,
-        number: created.number,
-        baseBranch: created.baseRefName,
-        headBranch: created.headRefName,
-        title: created.title,
+        baseBranch,
+        headBranch: headContext.headBranch,
+        title: generated.title,
       };
-    });
+    }
 
-  const status: GitManagerShape["status"] = Effect.fnUntraced(function* (input) {
+    return {
+      status: "created" as const,
+      url: created.url,
+      number: created.number,
+      baseBranch: created.baseRefName,
+      headBranch: created.headRefName,
+      title: created.title,
+    };
+  });
+
+  const status: GitManagerShape["status"] = Effect.fn("status")(function* (input) {
     const details = yield* gitCore.statusDetails(input.cwd);
 
     const pr =
@@ -949,7 +977,7 @@ export const makeGitManager = Effect.gen(function* () {
     };
   });
 
-  const resolvePullRequest: GitManagerShape["resolvePullRequest"] = Effect.fnUntraced(
+  const resolvePullRequest: GitManagerShape["resolvePullRequest"] = Effect.fn("resolvePullRequest")(
     function* (input) {
       const pullRequest = yield* gitHubCli
         .getPullRequest({
@@ -962,185 +990,185 @@ export const makeGitManager = Effect.gen(function* () {
     },
   );
 
-  const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fnUntraced(
-    function* (input) {
-      const normalizedReference = normalizePullRequestReference(input.reference);
-      const rootWorktreePath = canonicalizeExistingPath(input.cwd);
-      const pullRequestSummary = yield* gitHubCli.getPullRequest({
+  const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fn(
+    "preparePullRequestThread",
+  )(function* (input) {
+    const normalizedReference = normalizePullRequestReference(input.reference);
+    const rootWorktreePath = canonicalizeExistingPath(input.cwd);
+    const pullRequestSummary = yield* gitHubCli.getPullRequest({
+      cwd: input.cwd,
+      reference: normalizedReference,
+    });
+    const pullRequest = toResolvedPullRequest(pullRequestSummary);
+
+    if (input.mode === "local") {
+      yield* gitHubCli.checkoutPullRequest({
         cwd: input.cwd,
         reference: normalizedReference,
+        force: true,
       });
-      const pullRequest = toResolvedPullRequest(pullRequestSummary);
-
-      if (input.mode === "local") {
-        yield* gitHubCli.checkoutPullRequest({
-          cwd: input.cwd,
-          reference: normalizedReference,
-          force: true,
-        });
-        const details = yield* gitCore.statusDetails(input.cwd);
-        yield* configurePullRequestHeadUpstream(
-          input.cwd,
-          {
-            ...pullRequest,
-            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-          },
-          details.branch ?? pullRequest.headBranch,
-        );
-        return {
-          pullRequest,
-          branch: details.branch ?? pullRequest.headBranch,
-          worktreePath: null,
-        };
-      }
-
-      const ensureExistingWorktreeUpstream = (worktreePath: string) =>
-        Effect.gen(function* () {
-          const details = yield* gitCore.statusDetails(worktreePath);
-          yield* configurePullRequestHeadUpstream(
-            worktreePath,
-            {
-              ...pullRequest,
-              ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-            },
-            details.branch ?? pullRequest.headBranch,
-          );
-        });
-
-      const pullRequestWithRemoteInfo = {
-        ...pullRequest,
-        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-      } as const;
-      const localPullRequestBranch =
-        resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
-
-      const findLocalHeadBranch = (cwd: string) =>
-        gitCore.listBranches({ cwd }).pipe(
-          Effect.map((result) => {
-            const localBranch = result.branches.find(
-              (branch) => !branch.isRemote && branch.name === localPullRequestBranch,
-            );
-            if (localBranch) {
-              return localBranch;
-            }
-            if (localPullRequestBranch === pullRequest.headBranch) {
-              return null;
-            }
-            return (
-              result.branches.find(
-                (branch) =>
-                  !branch.isRemote &&
-                  branch.name === pullRequest.headBranch &&
-                  branch.worktreePath !== null &&
-                  canonicalizeExistingPath(branch.worktreePath) !== rootWorktreePath,
-              ) ?? null
-            );
-          }),
-        );
-
-      const existingBranchBeforeFetch = yield* findLocalHeadBranch(input.cwd);
-      const existingBranchBeforeFetchPath = existingBranchBeforeFetch?.worktreePath
-        ? canonicalizeExistingPath(existingBranchBeforeFetch.worktreePath)
-        : null;
-      if (
-        existingBranchBeforeFetch?.worktreePath &&
-        existingBranchBeforeFetchPath !== rootWorktreePath
-      ) {
-        yield* ensureExistingWorktreeUpstream(existingBranchBeforeFetch.worktreePath);
-        return {
-          pullRequest,
-          branch: localPullRequestBranch,
-          worktreePath: existingBranchBeforeFetch.worktreePath,
-        };
-      }
-      if (existingBranchBeforeFetchPath === rootWorktreePath) {
-        return yield* gitManagerError(
-          "preparePullRequestThread",
-          "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
-        );
-      }
-
-      yield* materializePullRequestHeadBranch(
+      const details = yield* gitCore.statusDetails(input.cwd);
+      yield* configurePullRequestHeadUpstream(
         input.cwd,
-        pullRequestWithRemoteInfo,
-        localPullRequestBranch,
+        {
+          ...pullRequest,
+          ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+        },
+        details.branch ?? pullRequest.headBranch,
       );
-
-      const existingBranchAfterFetch = yield* findLocalHeadBranch(input.cwd);
-      const existingBranchAfterFetchPath = existingBranchAfterFetch?.worktreePath
-        ? canonicalizeExistingPath(existingBranchAfterFetch.worktreePath)
-        : null;
-      if (
-        existingBranchAfterFetch?.worktreePath &&
-        existingBranchAfterFetchPath !== rootWorktreePath
-      ) {
-        yield* ensureExistingWorktreeUpstream(existingBranchAfterFetch.worktreePath);
-        return {
-          pullRequest,
-          branch: localPullRequestBranch,
-          worktreePath: existingBranchAfterFetch.worktreePath,
-        };
-      }
-      if (existingBranchAfterFetchPath === rootWorktreePath) {
-        return yield* gitManagerError(
-          "preparePullRequestThread",
-          "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
-        );
-      }
-
-      const worktree = yield* gitCore.createWorktree({
-        cwd: input.cwd,
-        branch: localPullRequestBranch,
-        path: null,
-      });
-      yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
-
       return {
         pullRequest,
-        branch: worktree.worktree.branch,
-        worktreePath: worktree.worktree.path,
+        branch: details.branch ?? pullRequest.headBranch,
+        worktreePath: null,
       };
-    },
-  );
+    }
 
-  const runFeatureBranchStep = (
+    const ensureExistingWorktreeUpstream = Effect.fn("ensureExistingWorktreeUpstream")(function* (
+      worktreePath: string,
+    ) {
+      const details = yield* gitCore.statusDetails(worktreePath);
+      yield* configurePullRequestHeadUpstream(
+        worktreePath,
+        {
+          ...pullRequest,
+          ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+        },
+        details.branch ?? pullRequest.headBranch,
+      );
+    });
+
+    const pullRequestWithRemoteInfo = {
+      ...pullRequest,
+      ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+    } as const;
+    const localPullRequestBranch =
+      resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
+
+    const findLocalHeadBranch = (cwd: string) =>
+      gitCore.listBranches({ cwd }).pipe(
+        Effect.map((result) => {
+          const localBranch = result.branches.find(
+            (branch) => !branch.isRemote && branch.name === localPullRequestBranch,
+          );
+          if (localBranch) {
+            return localBranch;
+          }
+          if (localPullRequestBranch === pullRequest.headBranch) {
+            return null;
+          }
+          return (
+            result.branches.find(
+              (branch) =>
+                !branch.isRemote &&
+                branch.name === pullRequest.headBranch &&
+                branch.worktreePath !== null &&
+                canonicalizeExistingPath(branch.worktreePath) !== rootWorktreePath,
+            ) ?? null
+          );
+        }),
+      );
+
+    const existingBranchBeforeFetch = yield* findLocalHeadBranch(input.cwd);
+    const existingBranchBeforeFetchPath = existingBranchBeforeFetch?.worktreePath
+      ? canonicalizeExistingPath(existingBranchBeforeFetch.worktreePath)
+      : null;
+    if (
+      existingBranchBeforeFetch?.worktreePath &&
+      existingBranchBeforeFetchPath !== rootWorktreePath
+    ) {
+      yield* ensureExistingWorktreeUpstream(existingBranchBeforeFetch.worktreePath);
+      return {
+        pullRequest,
+        branch: localPullRequestBranch,
+        worktreePath: existingBranchBeforeFetch.worktreePath,
+      };
+    }
+    if (existingBranchBeforeFetchPath === rootWorktreePath) {
+      return yield* gitManagerError(
+        "preparePullRequestThread",
+        "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
+      );
+    }
+
+    yield* materializePullRequestHeadBranch(
+      input.cwd,
+      pullRequestWithRemoteInfo,
+      localPullRequestBranch,
+    );
+
+    const existingBranchAfterFetch = yield* findLocalHeadBranch(input.cwd);
+    const existingBranchAfterFetchPath = existingBranchAfterFetch?.worktreePath
+      ? canonicalizeExistingPath(existingBranchAfterFetch.worktreePath)
+      : null;
+    if (
+      existingBranchAfterFetch?.worktreePath &&
+      existingBranchAfterFetchPath !== rootWorktreePath
+    ) {
+      yield* ensureExistingWorktreeUpstream(existingBranchAfterFetch.worktreePath);
+      return {
+        pullRequest,
+        branch: localPullRequestBranch,
+        worktreePath: existingBranchAfterFetch.worktreePath,
+      };
+    }
+    if (existingBranchAfterFetchPath === rootWorktreePath) {
+      return yield* gitManagerError(
+        "preparePullRequestThread",
+        "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
+      );
+    }
+
+    const worktree = yield* gitCore.createWorktree({
+      cwd: input.cwd,
+      branch: localPullRequestBranch,
+      path: null,
+    });
+    yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
+
+    return {
+      pullRequest,
+      branch: worktree.worktree.branch,
+      worktreePath: worktree.worktree.path,
+    };
+  });
+
+  const runFeatureBranchStep = Effect.fn("runFeatureBranchStep")(function* (
     modelSelection: ModelSelection,
     cwd: string,
     branch: string | null,
     commitMessage?: string,
     filePaths?: readonly string[],
-  ) =>
-    Effect.gen(function* () {
-      const suggestion = yield* resolveCommitAndBranchSuggestion({
-        cwd,
-        branch,
-        ...(commitMessage ? { commitMessage } : {}),
-        ...(filePaths ? { filePaths } : {}),
-        includeBranch: true,
-        modelSelection,
-      });
-      if (!suggestion) {
-        return yield* gitManagerError(
-          "runFeatureBranchStep",
-          "Cannot create a feature branch because there are no changes to commit.",
-        );
-      }
-
-      const preferredBranch = suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
-      const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
-      const resolvedBranch = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
-
-      yield* gitCore.createBranch({ cwd, branch: resolvedBranch });
-      yield* Effect.scoped(gitCore.checkoutBranch({ cwd, branch: resolvedBranch }));
-
-      return {
-        branchStep: { status: "created" as const, name: resolvedBranch },
-        resolvedCommitMessage: suggestion.commitMessage,
-        resolvedCommitSuggestion: suggestion,
-      };
+  ) {
+    const suggestion = yield* resolveCommitAndBranchSuggestion({
+      cwd,
+      branch,
+      ...(commitMessage ? { commitMessage } : {}),
+      ...(filePaths ? { filePaths } : {}),
+      includeBranch: true,
+      modelSelection,
     });
+    if (!suggestion) {
+      return yield* gitManagerError(
+        "runFeatureBranchStep",
+        "Cannot create a feature branch because there are no changes to commit.",
+      );
+    }
 
-  const runStackedAction: GitManagerShape["runStackedAction"] = Effect.fnUntraced(
+    const preferredBranch = suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
+    const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
+    const resolvedBranch = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
+
+    yield* gitCore.createBranch({ cwd, branch: resolvedBranch });
+    yield* Effect.scoped(gitCore.checkoutBranch({ cwd, branch: resolvedBranch }));
+
+    return {
+      branchStep: { status: "created" as const, name: resolvedBranch },
+      resolvedCommitMessage: suggestion.commitMessage,
+      resolvedCommitSuggestion: suggestion,
+    };
+  });
+
+  const runStackedAction: GitManagerShape["runStackedAction"] = Effect.fn("runStackedAction")(
     function* (input, options) {
       const progress = createProgressEmitter(input, options);
       const phases: GitActionProgressPhase[] = [
@@ -1149,9 +1177,12 @@ export const makeGitManager = Effect.gen(function* () {
         ...(input.action !== "commit" ? (["push"] as const) : []),
         ...(input.action === "commit_push_pr" ? (["pr"] as const) : []),
       ];
-      let currentPhase: GitActionProgressPhase | null = null;
+      const currentPhase = yield* Ref.make<Option.Option<GitActionProgressPhase>>(Option.none());
 
-      const runAction = Effect.gen(function* () {
+      const runAction = Effect.fn("runStackedAction.runAction")(function* (): Effect.fn.Return<
+        GitRunStackedActionResult,
+        GitManagerServiceError
+      > {
         yield* progress.emit({
           kind: "action_started",
           phases,
@@ -1183,7 +1214,7 @@ export const makeGitManager = Effect.gen(function* () {
         );
 
         if (input.featureBranch) {
-          currentPhase = "branch";
+          yield* Ref.set(currentPhase, Option.some("branch"));
           yield* progress.emit({
             kind: "phase_started",
             phase: "branch",
@@ -1205,7 +1236,7 @@ export const makeGitManager = Effect.gen(function* () {
 
         const currentBranch = branchStep.name ?? initialStatus.branch;
 
-        currentPhase = "commit";
+        yield* Ref.set(currentPhase, Option.some("commit"));
         const commit = yield* runCommitStep(
           modelSelection,
           input.cwd,
@@ -1226,12 +1257,8 @@ export const makeGitManager = Effect.gen(function* () {
                 label: "Pushing...",
               })
               .pipe(
-                Effect.flatMap(() =>
-                  Effect.gen(function* () {
-                    currentPhase = "push";
-                    return yield* gitCore.pushCurrentBranch(input.cwd, currentBranch);
-                  }),
-                ),
+                Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
+                Effect.flatMap(() => gitCore.pushCurrentBranch(input.cwd, currentBranch)),
               )
           : { status: "skipped_not_requested" as const };
 
@@ -1243,12 +1270,8 @@ export const makeGitManager = Effect.gen(function* () {
                 label: "Creating PR...",
               })
               .pipe(
-                Effect.flatMap(() =>
-                  Effect.gen(function* () {
-                    currentPhase = "pr";
-                    return yield* runPrStep(modelSelection, input.cwd, currentBranch);
-                  }),
-                ),
+                Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
+                Effect.flatMap(() => runPrStep(modelSelection, input.cwd, currentBranch)),
               )
           : { status: "skipped_not_requested" as const };
 
@@ -1266,15 +1289,15 @@ export const makeGitManager = Effect.gen(function* () {
         return result;
       });
 
-      return yield* runAction.pipe(
-        Effect.catch((error) =>
-          progress
-            .emit({
+      return yield* runAction().pipe(
+        Effect.tapError((error) =>
+          Effect.flatMap(Ref.get(currentPhase), (phase) =>
+            progress.emit({
               kind: "action_failed",
-              phase: currentPhase,
+              phase: Option.getOrNull(phase),
               message: error.message,
-            })
-            .pipe(Effect.flatMap(() => Effect.fail(error))),
+            }),
+          ),
         ),
       );
     },
@@ -1288,4 +1311,4 @@ export const makeGitManager = Effect.gen(function* () {
   } satisfies GitManagerShape;
 });
 
-export const GitManagerLive = Layer.effect(GitManager, makeGitManager);
+export const GitManagerLive = Layer.effect(GitManager, makeGitManager());

@@ -766,7 +766,7 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processInputSafely);
 
-  const start: CheckpointReactorShape["start"] = Effect.gen(function* () {
+  const start: CheckpointReactorShape["start"] = Effect.fn("start")(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (

@@ -29,9 +29,6 @@ export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
 
 export type TypeId = "~local/sqlite-node/SqliteClient";
 
-const classifyError = (cause: unknown, message: string, operation: string) =>
-  classifySqliteError(cause, { message, operation });
-
 /**
  * SqliteClient - Effect service tag for the sqlite SQL client.
  */
@@ -114,7 +111,10 @@ const makeWithDatabase = (
             try: () => db.prepare(sql),
             catch: (cause) =>
               new SqlError({
-                reason: classifyError(cause, "Failed to prepare statement", "prepare"),
+                reason: classifySqliteError(cause, {
+                  message: "Failed to prepare statement",
+                  operation: "prepare",
+                }),
               }),
           }),
       });
@@ -135,7 +135,10 @@ const makeWithDatabase = (
           } catch (cause) {
             return Effect.fail(
               new SqlError({
-                reason: classifyError(cause, "Failed to execute statement", "execute"),
+                reason: classifySqliteError(cause, {
+                  message: "Failed to execute statement",
+                  operation: "execute",
+                }),
               }),
             );
           }
@@ -162,7 +165,10 @@ const makeWithDatabase = (
               },
               catch: (cause) =>
                 new SqlError({
-                  reason: classifyError(cause, "Failed to execute statement", "execute"),
+                  reason: classifySqliteError(cause, {
+                    message: "Failed to execute statement",
+                    operation: "execute",
+                  }),
                 }),
             }),
           (statement) =>

@@ -4,8 +4,9 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadTitlePrompt,
 } from "./Prompts.ts";
-import { normalizeCliError } from "./Utils.ts";
+import { normalizeCliError, sanitizeThreadTitle } from "./Utils.ts";
 import { TextGenerationError } from "./Errors.ts";
 
 describe("buildCommitMessagePrompt", () => {
@@ -100,6 +101,48 @@ describe("buildBranchNamePrompt", () => {
     expect(result.prompt).toContain("screenshot.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("12345 bytes");
+  });
+});
+
+describe("buildThreadTitlePrompt", () => {
+  it("includes the user message in the prompt", () => {
+    const result = buildThreadTitlePrompt({
+      message: "Investigate reconnect regressions after session restore",
+    });
+
+    expect(result.prompt).toContain("User message:");
+    expect(result.prompt).toContain("Investigate reconnect regressions after session restore");
+    expect(result.prompt).not.toContain("Attachment metadata:");
+  });
+
+  it("includes attachment metadata when attachments are provided", () => {
+    const result = buildThreadTitlePrompt({
+      message: "Name this thread from the screenshot",
+      attachments: [
+        {
+          type: "image" as const,
+          id: "att-456",
+          name: "thread.png",
+          mimeType: "image/png",
+          sizeBytes: 67890,
+        },
+      ],
+    });
+
+    expect(result.prompt).toContain("Attachment metadata:");
+    expect(result.prompt).toContain("thread.png");
+    expect(result.prompt).toContain("image/png");
+    expect(result.prompt).toContain("67890 bytes");
+  });
+});
+
+describe("sanitizeThreadTitle", () => {
+  it("truncates long titles with the shared sidebar-safe limit", () => {
+    expect(
+      sanitizeThreadTitle(
+        '  "Reconnect failures after restart because the session state does not recover"  ',
+      ),
+    ).toBe("Reconnect failures after restart because the se...");
   });
 });
 

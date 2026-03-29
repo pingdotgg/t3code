@@ -17,6 +17,8 @@ type SidebarProject = {
 };
 type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt" | "messages">;
 
+export type ThreadTraversalDirection = "previous" | "next";
+
 export interface ThreadStatusPill {
   label:
     | "Working"
@@ -65,6 +67,54 @@ export function resolveSidebarNewThreadEnvMode(input: {
   defaultEnvMode: SidebarNewThreadEnvMode;
 }): SidebarNewThreadEnvMode {
   return input.requestedEnvMode ?? input.defaultEnvMode;
+}
+
+export function getVisibleSidebarThreadIds<TThreadId>(
+  renderedProjects: readonly {
+    renderedThreads: readonly {
+      id: TThreadId;
+    }[];
+  }[],
+): TThreadId[] {
+  return renderedProjects.flatMap((renderedProject) =>
+    renderedProject.renderedThreads.map((thread) => thread.id),
+  );
+}
+
+export function resolveAdjacentThreadId<T>(input: {
+  threadIds: readonly T[];
+  currentThreadId: T | null;
+  direction: ThreadTraversalDirection;
+}): T | null {
+  const { currentThreadId, direction, threadIds } = input;
+
+  if (threadIds.length === 0) {
+    return null;
+  }
+
+  if (currentThreadId === null) {
+    return direction === "previous" ? (threadIds.at(-1) ?? null) : (threadIds[0] ?? null);
+  }
+
+  const currentIndex = threadIds.indexOf(currentThreadId);
+  if (currentIndex === -1) {
+    return null;
+  }
+
+  if (direction === "previous") {
+    return currentIndex > 0 ? (threadIds[currentIndex - 1] ?? null) : null;
+  }
+
+  return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
+}
+
+export function isContextMenuPointerDown(input: {
+  button: number;
+  ctrlKey: boolean;
+  isMac: boolean;
+}): boolean {
+  if (input.button === 2) return true;
+  return input.isMac && input.button === 0 && input.ctrlKey;
 }
 
 export function resolveThreadRowClassName(input: {
@@ -194,6 +244,7 @@ export function getVisibleThreadsForProject(input: {
   previewLimit: number;
 }): {
   hasHiddenThreads: boolean;
+  hiddenThreads: Thread[];
   visibleThreads: Thread[];
 } {
   const { activeThreadId, isThreadListExpanded, previewLimit, threads } = input;
@@ -202,6 +253,7 @@ export function getVisibleThreadsForProject(input: {
   if (!hasHiddenThreads || isThreadListExpanded) {
     return {
       hasHiddenThreads,
+      hiddenThreads: [],
       visibleThreads: [...threads],
     };
   }
@@ -210,6 +262,7 @@ export function getVisibleThreadsForProject(input: {
   if (!activeThreadId || previewThreads.some((thread) => thread.id === activeThreadId)) {
     return {
       hasHiddenThreads: true,
+      hiddenThreads: threads.slice(previewLimit),
       visibleThreads: previewThreads,
     };
   }
@@ -218,6 +271,7 @@ export function getVisibleThreadsForProject(input: {
   if (!activeThread) {
     return {
       hasHiddenThreads: true,
+      hiddenThreads: threads.slice(previewLimit),
       visibleThreads: previewThreads,
     };
   }
@@ -226,6 +280,7 @@ export function getVisibleThreadsForProject(input: {
 
   return {
     hasHiddenThreads: true,
+    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
 }

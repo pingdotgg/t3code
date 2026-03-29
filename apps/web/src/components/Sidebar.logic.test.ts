@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getVisibleSidebarThreadIds,
+  resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
+  isContextMenuPointerDown,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -93,6 +96,112 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("resolveAdjacentThreadId", () => {
+  it("resolves adjacent thread ids in ordered sidebar traversal", () => {
+    const threads = [
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-3"),
+    ];
+
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: threads[1] ?? null,
+        direction: "previous",
+      }),
+    ).toBe(threads[0]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: threads[1] ?? null,
+        direction: "next",
+      }),
+    ).toBe(threads[2]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: null,
+        direction: "next",
+      }),
+    ).toBe(threads[0]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: null,
+        direction: "previous",
+      }),
+    ).toBe(threads[2]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: threads[0] ?? null,
+        direction: "previous",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("getVisibleSidebarThreadIds", () => {
+  it("returns only the rendered visible thread order across projects", () => {
+    expect(
+      getVisibleSidebarThreadIds([
+        {
+          renderedThreads: [
+            { id: ThreadId.makeUnsafe("thread-12") },
+            { id: ThreadId.makeUnsafe("thread-11") },
+            { id: ThreadId.makeUnsafe("thread-10") },
+          ],
+        },
+        {
+          renderedThreads: [
+            { id: ThreadId.makeUnsafe("thread-8") },
+            { id: ThreadId.makeUnsafe("thread-6") },
+          ],
+        },
+      ]),
+    ).toEqual([
+      ThreadId.makeUnsafe("thread-12"),
+      ThreadId.makeUnsafe("thread-11"),
+      ThreadId.makeUnsafe("thread-10"),
+      ThreadId.makeUnsafe("thread-8"),
+      ThreadId.makeUnsafe("thread-6"),
+    ]);
+  });
+});
+
+describe("isContextMenuPointerDown", () => {
+  it("treats secondary-button presses as context menu gestures on all platforms", () => {
+    expect(
+      isContextMenuPointerDown({
+        button: 2,
+        ctrlKey: false,
+        isMac: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("treats ctrl+primary-click as a context menu gesture on macOS", () => {
+    expect(
+      isContextMenuPointerDown({
+        button: 0,
+        ctrlKey: true,
+        isMac: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not treat ctrl+primary-click as a context menu gesture off macOS", () => {
+    expect(
+      isContextMenuPointerDown({
+        button: 0,
+        ctrlKey: true,
+        isMac: false,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -320,6 +429,9 @@ describe("getVisibleThreadsForProject", () => {
       ThreadId.makeUnsafe("thread-6"),
       ThreadId.makeUnsafe("thread-8"),
     ]);
+    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual([
+      ThreadId.makeUnsafe("thread-7"),
+    ]);
   });
 
   it("returns all threads when the list is expanded", () => {
@@ -340,6 +452,7 @@ describe("getVisibleThreadsForProject", () => {
     expect(result.visibleThreads.map((thread) => thread.id)).toEqual(
       threads.map((thread) => thread.id),
     );
+    expect(result.hiddenThreads).toEqual([]);
   });
 });
 

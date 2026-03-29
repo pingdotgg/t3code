@@ -22,7 +22,7 @@ export interface CheckpointReactorShape {
    * Consumes both orchestration-domain and provider-runtime events via an
    * internal queue.
    */
-  readonly start: Effect.Effect<void, never, Scope.Scope>;
+  readonly start: () => Effect.Effect<void, never, Scope.Scope>;
 
   /**
    * Resolves when the internal processing queue is empty and idle.

@@ -5,16 +5,13 @@ export type DesktopUpdateButtonAction = "download" | "install" | "none";
 export function resolveDesktopUpdateButtonAction(
   state: DesktopUpdateState,
 ): DesktopUpdateButtonAction {
+  if (state.downloadedVersion) {
+    return "install";
+  }
   if (state.status === "available") {
     return "download";
   }
-  if (state.status === "downloaded") {
-    return "install";
-  }
   if (state.status === "error") {
-    if (state.errorContext === "install" && state.downloadedVersion) {
-      return "install";
-    }
     if (state.errorContext === "download" && state.availableVersion) {
       return "download";
     }
@@ -76,7 +73,14 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     }
     return state.message ?? "Update failed";
   }
-  return "Update available";
+  return "Up to date";
+}
+
+export function getDesktopUpdateInstallConfirmationMessage(
+  state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
+): string {
+  const version = state.downloadedVersion ?? state.availableVersion;
+  return `Install update${version ? ` ${version}` : ""} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
 }
 
 export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): string | null {
@@ -87,10 +91,20 @@ export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): 
 }
 
 export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateActionResult): boolean {
-  return result.accepted && !result.completed;
+  return getDesktopUpdateActionError(result) !== null;
 }
 
 export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | null): boolean {
   if (!state || state.status !== "error") return false;
   return state.errorContext === "download" || state.errorContext === "install";
+}
+
+export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
+  if (!state || !state.enabled) return false;
+  return (
+    state.status !== "checking" &&
+    state.status !== "downloading" &&
+    state.status !== "downloaded" &&
+    state.status !== "disabled"
+  );
 }
