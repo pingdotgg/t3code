@@ -188,6 +188,7 @@ interface TerminalViewportProps {
   runtimeEnv?: Record<string, string>;
   onSessionExited: () => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  onOpenUrlInBrowser?: ((url: string) => void) | undefined;
   focusRequestId: number;
   autoFocus: boolean;
   resizeEpoch: number;
@@ -202,6 +203,7 @@ function TerminalViewport({
   runtimeEnv,
   onSessionExited,
   onAddTerminalContext,
+  onOpenUrlInBrowser,
   focusRequestId,
   autoFocus,
   resizeEpoch,
@@ -393,12 +395,16 @@ function TerminalViewport({
               if (!latestTerminal) return;
 
               if (match.kind === "url") {
-                void api.shell.openExternal(match.text).catch((error) => {
-                  writeSystemMessage(
-                    latestTerminal,
-                    error instanceof Error ? error.message : "Unable to open link",
-                  );
-                });
+                if (onOpenUrlInBrowser) {
+                  onOpenUrlInBrowser(match.text);
+                } else {
+                  void api.shell.openExternal(match.text).catch((error) => {
+                    writeSystemMessage(
+                      latestTerminal,
+                      error instanceof Error ? error.message : "Unable to open link",
+                    );
+                  });
+                }
                 return;
               }
 
@@ -662,6 +668,7 @@ interface ThreadTerminalDrawerProps {
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  onOpenUrlInBrowser?: (url: string) => void;
 }
 
 interface TerminalActionButtonProps {
@@ -712,6 +719,7 @@ export default function ThreadTerminalDrawer({
   onCloseTerminal,
   onHeightChange,
   onAddTerminalContext,
+  onOpenUrlInBrowser,
 }: ThreadTerminalDrawerProps) {
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
   const [resizeEpoch, setResizeEpoch] = useState(0);
@@ -1013,6 +1021,7 @@ export default function ThreadTerminalDrawer({
                         {...(runtimeEnv ? { runtimeEnv } : {})}
                         onSessionExited={() => onCloseTerminal(terminalId)}
                         onAddTerminalContext={onAddTerminalContext}
+                        onOpenUrlInBrowser={onOpenUrlInBrowser}
                         focusRequestId={focusRequestId}
                         autoFocus={terminalId === resolvedActiveTerminalId}
                         resizeEpoch={resizeEpoch}
@@ -1033,6 +1042,7 @@ export default function ThreadTerminalDrawer({
                   {...(runtimeEnv ? { runtimeEnv } : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   onAddTerminalContext={onAddTerminalContext}
+                  onOpenUrlInBrowser={onOpenUrlInBrowser}
                   focusRequestId={focusRequestId}
                   autoFocus
                   resizeEpoch={resizeEpoch}

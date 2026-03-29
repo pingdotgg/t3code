@@ -1,18 +1,13 @@
-import { ThreadId } from "@t3tools/contracts";
+import { type ProjectId, ThreadId } from "@t3tools/contracts";
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import ChatView from "../components/ChatView";
-import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
-import {
-  DiffPanelHeaderSkeleton,
-  DiffPanelLoadingState,
-  DiffPanelShell,
-  type DiffPanelMode,
-} from "../components/DiffPanelShell";
+import { RightPanelTabs } from "../components/RightPanelTabs";
 import { useComposerDraftStore } from "../composerDraftStore";
 import {
   type DiffRouteSearch,
+  type RightPanelTab,
   parseDiffRouteSearch,
   stripDiffSearchParams,
 } from "../diffRouteSearch";
@@ -21,24 +16,23 @@ import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
-const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
 const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
 
-const DiffPanelSheet = (props: {
+const RightPanelSheet = (props: {
   children: ReactNode;
-  diffOpen: boolean;
-  onCloseDiff: () => void;
+  open: boolean;
+  onClose: () => void;
 }) => {
   return (
     <Sheet
-      open={props.diffOpen}
+      open={props.open}
       onOpenChange={(open) => {
         if (!open) {
-          props.onCloseDiff();
+          props.onClose();
         }
       }}
     >
@@ -54,40 +48,26 @@ const DiffPanelSheet = (props: {
   );
 };
 
-const DiffLoadingFallback = (props: { mode: DiffPanelMode }) => {
-  return (
-    <DiffPanelShell mode={props.mode} header={<DiffPanelHeaderSkeleton />}>
-      <DiffPanelLoadingState label="Loading diff viewer..." />
-    </DiffPanelShell>
-  );
-};
-
-const LazyDiffPanel = (props: { mode: DiffPanelMode }) => {
-  return (
-    <DiffWorkerPoolProvider>
-      <Suspense fallback={<DiffLoadingFallback mode={props.mode} />}>
-        <DiffPanel mode={props.mode} />
-      </Suspense>
-    </DiffWorkerPoolProvider>
-  );
-};
-
-const DiffPanelInlineSidebar = (props: {
-  diffOpen: boolean;
-  onCloseDiff: () => void;
-  onOpenDiff: () => void;
-  renderDiffContent: boolean;
+const RightPanelInlineSidebar = (props: {
+  panelOpen: boolean;
+  onClose: () => void;
+  onOpen: () => void;
+  activeTab: RightPanelTab;
+  onTabChange: (tab: RightPanelTab) => void;
+  projectId: ProjectId | null;
+  renderDiff: boolean;
+  renderBrowser: boolean;
 }) => {
-  const { diffOpen, onCloseDiff, onOpenDiff, renderDiffContent } = props;
+  const { panelOpen, onClose, onOpen, activeTab, onTabChange, projectId, renderDiff, renderBrowser } = props;
   const onOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
-        onOpenDiff();
+        onOpen();
         return;
       }
-      onCloseDiff();
+      onClose();
     },
-    [onCloseDiff, onOpenDiff],
+    [onClose, onOpen],
   );
   const shouldAcceptInlineSidebarWidth = useCallback(
     ({ nextWidth, wrapper }: { nextWidth: number; wrapper: HTMLElement }) => {
@@ -138,7 +118,7 @@ const DiffPanelInlineSidebar = (props: {
   return (
     <SidebarProvider
       defaultOpen={false}
-      open={diffOpen}
+      open={panelOpen}
       onOpenChange={onOpenChange}
       className="w-auto min-h-0 flex-none bg-transparent"
       style={{ "--sidebar-width": DIFF_INLINE_DEFAULT_WIDTH } as React.CSSProperties}
@@ -153,7 +133,14 @@ const DiffPanelInlineSidebar = (props: {
           storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >
-        {renderDiffContent ? <LazyDiffPanel mode="sidebar" /> : null}
+        <RightPanelTabs
+          activeTab={activeTab}
+          onTabChange={onTabChange}
+          mode="sidebar"
+          projectId={projectId}
+          renderDiff={renderDiff}
+          renderBrowser={renderBrowser}
+        />
         <SidebarRail />
       </Sidebar>
     </SidebarProvider>
@@ -172,19 +159,28 @@ function ChatThreadRouteView() {
     Object.hasOwn(store.draftThreadsByThreadId, threadId),
   );
   const routeThreadExists = threadExists || draftThreadExists;
-  const diffOpen = search.diff === "1";
-  const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
+  const panelOpen = search.diff === "1";
+  const activeRightPanelTab: RightPanelTab = search.rpt ?? "diff";
+  const shouldUseSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
+
+  // Resolve projectId for the active thread
+  const activeThread = useStore((store) => store.threads.find((t) => t.id === threadId));
+  const projectId: ProjectId | null = activeThread?.projectId ?? null;
+
   // TanStack Router keeps active route components mounted across param-only navigations
   // unless remountDeps are configured, so this stays warm across thread switches.
-  const [hasOpenedDiff, setHasOpenedDiff] = useState(diffOpen);
-  const closeDiff = useCallback(() => {
+  const [hasOpenedDiff, setHasOpenedDiff] = useState(panelOpen && activeRightPanelTab === "diff");
+  const [hasOpenedBrowser, setHasOpenedBrowser] = useState(panelOpen && activeRightPanelTab === "browser");
+
+  const closePanel = useCallback(() => {
     void navigate({
       to: "/$threadId",
       params: { threadId },
       search: { diff: undefined },
     });
   }, [navigate, threadId]);
-  const openDiff = useCallback(() => {
+
+  const openPanel = useCallback(() => {
     void navigate({
       to: "/$threadId",
       params: { threadId },
@@ -195,11 +191,30 @@ function ChatThreadRouteView() {
     });
   }, [navigate, threadId]);
 
+  const changeTab = useCallback(
+    (tab: RightPanelTab) => {
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        replace: true,
+        search: (previous) => ({
+          ...previous,
+          diff: "1",
+          rpt: tab,
+        }),
+      });
+    },
+    [navigate, threadId],
+  );
+
   useEffect(() => {
-    if (diffOpen) {
+    if (panelOpen && activeRightPanelTab === "diff") {
       setHasOpenedDiff(true);
     }
-  }, [diffOpen]);
+    if (panelOpen && activeRightPanelTab === "browser") {
+      setHasOpenedBrowser(true);
+    }
+  }, [panelOpen, activeRightPanelTab]);
 
   useEffect(() => {
     if (!threadsHydrated) {
@@ -216,19 +231,24 @@ function ChatThreadRouteView() {
     return null;
   }
 
-  const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
+  const shouldRenderDiff = panelOpen || hasOpenedDiff;
+  const shouldRenderBrowser = panelOpen || hasOpenedBrowser;
 
-  if (!shouldUseDiffSheet) {
+  if (!shouldUseSheet) {
     return (
       <>
         <SidebarInset className="h-dvh  min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
           <ChatView key={threadId} threadId={threadId} />
         </SidebarInset>
-        <DiffPanelInlineSidebar
-          diffOpen={diffOpen}
-          onCloseDiff={closeDiff}
-          onOpenDiff={openDiff}
-          renderDiffContent={shouldRenderDiffContent}
+        <RightPanelInlineSidebar
+          panelOpen={panelOpen}
+          onClose={closePanel}
+          onOpen={openPanel}
+          activeTab={activeRightPanelTab}
+          onTabChange={changeTab}
+          projectId={projectId}
+          renderDiff={shouldRenderDiff}
+          renderBrowser={shouldRenderBrowser}
         />
       </>
     );
@@ -239,9 +259,16 @@ function ChatThreadRouteView() {
       <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
         <ChatView key={threadId} threadId={threadId} />
       </SidebarInset>
-      <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
-        {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
-      </DiffPanelSheet>
+      <RightPanelSheet open={panelOpen} onClose={closePanel}>
+        <RightPanelTabs
+          activeTab={activeRightPanelTab}
+          onTabChange={changeTab}
+          mode="sheet"
+          projectId={projectId}
+          renderDiff={shouldRenderDiff}
+          renderBrowser={shouldRenderBrowser}
+        />
+      </RightPanelSheet>
     </>
   );
 }
@@ -249,7 +276,7 @@ function ChatThreadRouteView() {
 export const Route = createFileRoute("/_chat/$threadId")({
   validateSearch: (search) => parseDiffRouteSearch(search),
   search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
+    middlewares: [retainSearchParams<DiffRouteSearch>(["diff", "rpt"])],
   },
   component: ChatThreadRouteView,
 });

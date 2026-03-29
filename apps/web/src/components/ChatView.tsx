@@ -88,6 +88,7 @@ import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { useBrowserPanelStore } from "../browserPanelStore";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
@@ -1158,6 +1159,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "diff.toggle"),
     [keybindings],
   );
+  const browserPanelShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "browser.toggle"),
+    [keybindings],
+  );
+  const rightPanelTab = rawSearch.rpt ?? "diff";
+  const browserOpen = diffOpen && rightPanelTab === "browser";
+  const openUrlInBrowserStore = useBrowserPanelStore((store) => store.openUrlInProject);
+
   const onToggleDiff = useCallback(() => {
     void navigate({
       to: "/$threadId",
@@ -1165,10 +1174,47 @@ export default function ChatView({ threadId }: ChatViewProps) {
       replace: true,
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
-        return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
+        if (diffOpen && rightPanelTab === "diff") {
+          return { ...rest, diff: undefined };
+        }
+        return { ...rest, diff: "1", rpt: "diff" };
       },
     });
-  }, [diffOpen, navigate, threadId]);
+  }, [diffOpen, rightPanelTab, navigate, threadId]);
+
+  const onToggleBrowser = useCallback(() => {
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      replace: true,
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        if (diffOpen && rightPanelTab === "browser") {
+          return { ...rest, diff: undefined };
+        }
+        return { ...rest, diff: "1", rpt: "browser" };
+      },
+    });
+  }, [diffOpen, rightPanelTab, navigate, threadId]);
+
+  const onOpenUrlInBrowser = useCallback(
+    (url: string) => {
+      const projectId = activeProject?.id;
+      if (!projectId) return;
+      openUrlInBrowserStore(projectId, url);
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        replace: true,
+        search: (previous) => ({
+          ...previous,
+          diff: "1",
+          rpt: "browser",
+        }),
+      });
+    },
+    [activeProject?.id, openUrlInBrowserStore, navigate, threadId],
+  );
 
   const envLocked = Boolean(
     activeThread &&
@@ -2188,6 +2234,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "browser.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggleBrowser();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2210,6 +2263,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     splitTerminal,
     keybindings,
     onToggleDiff,
+    onToggleBrowser,
     toggleTerminalVisibility,
   ]);
 
@@ -3508,6 +3562,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
+          browserOpen={browserOpen}
+          browserToggleShortcutLabel={browserPanelShortcutLabel}
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}
@@ -3516,6 +3572,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
+          onToggleBrowser={onToggleBrowser}
         />
       </header>
 
@@ -4159,6 +4216,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             onCloseTerminal={closeTerminal}
             onHeightChange={setTerminalHeight}
             onAddTerminalContext={addTerminalContextToDraft}
+            onOpenUrlInBrowser={onOpenUrlInBrowser}
           />
         );
       })()}
