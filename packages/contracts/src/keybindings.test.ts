@@ -46,6 +46,12 @@ it.effect("parses keybinding rules", () =>
       command: "chat.newLocal",
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
+
+    const parsedThreadPrevious = yield* decode(KeybindingRule, {
+      key: "mod+shift+[",
+      command: "thread.previous",
+    });
+    assert.strictEqual(parsedThreadPrevious.command, "thread.previous");
   }),
 );
 
@@ -120,8 +126,19 @@ it.effect("parses resolved keybindings arrays", () =>
           modKey: true,
         },
       },
+      {
+        command: "thread.jump.3",
+        shortcut: {
+          key: "3",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      },
     ]);
-    assert.lengthOf(parsed, 1);
+    assert.lengthOf(parsed, 2);
   }),
 );
 

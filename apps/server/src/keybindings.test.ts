@@ -165,6 +165,19 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("ships configurable thread navigation defaults", () =>
+    Effect.sync(() => {
+      const defaultsByCommand = new Map(
+        DEFAULT_KEYBINDINGS.map((binding) => [binding.command, binding.key] as const),
+      );
+
+      assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
+      assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
+      assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
+      assert.equal(defaultsByCommand.get("thread.jump.9"), "mod+9");
+    }),
+  );
+
   it.effect("uses defaults in runtime when config is malformed without overriding file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
