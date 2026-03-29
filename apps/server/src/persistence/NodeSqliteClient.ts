@@ -20,7 +20,7 @@ import * as Stream from "effect/Stream";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as Client from "effect/unstable/sql/SqlClient";
 import type { Connection } from "effect/unstable/sql/SqlConnection";
-import { SqlError } from "effect/unstable/sql/SqlError";
+import { SqlError, classifySqliteError } from "effect/unstable/sql/SqlError";
 import * as Statement from "effect/unstable/sql/Statement";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
@@ -29,14 +29,8 @@ export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
 
 export type TypeId = "~local/sqlite-node/SqliteClient";
 
-const toSqlError = (cause: unknown, message: string, operation: string) =>
-  new SqlError({
-    cause,
-    message:
-      cause instanceof Error && cause.message.length > 0
-        ? `${message} (${operation}): ${cause.message}`
-        : `${message} (${operation})`,
-  });
+const classifyError = (cause: unknown, message: string, operation: string) =>
+  classifySqliteError(cause, { message, operation });
 
 /**
  * SqliteClient - Effect service tag for the sqlite SQL client.
@@ -118,7 +112,10 @@ const makeWithDatabase = (
         lookup: (sql: string) =>
           Effect.try({
             try: () => db.prepare(sql),
-            catch: (cause) => toSqlError(cause, "Failed to prepare statement", "prepare"),
+            catch: (cause) =>
+              new SqlError({
+                reason: classifyError(cause, "Failed to prepare statement", "prepare"),
+              }),
           }),
       });
 
@@ -136,7 +133,11 @@ const makeWithDatabase = (
             const result = statement.run(...(params as any));
             return Effect.succeed(raw ? (result as unknown as ReadonlyArray<any>) : []);
           } catch (cause) {
-            return Effect.fail(toSqlError(cause, "Failed to execute statement", "execute"));
+            return Effect.fail(
+              new SqlError({
+                reason: classifyError(cause, "Failed to execute statement", "execute"),
+              }),
+            );
           }
         });
 
@@ -159,7 +160,10 @@ const makeWithDatabase = (
                 statement.run(...(params as any));
                 return [];
               },
-              catch: (cause) => toSqlError(cause, "Failed to execute statement", "execute"),
+              catch: (cause) =>
+                new SqlError({
+                  reason: classifyError(cause, "Failed to execute statement", "execute"),
+                }),
             }),
           (statement) =>
             Effect.sync(() => {

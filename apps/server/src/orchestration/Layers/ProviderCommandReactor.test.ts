@@ -194,12 +194,6 @@ describe("ProviderCommandReactor", () => {
     );
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
-    const textGeneration: TextGenerationShape = {
-      generateCommitMessage: () => unsupported(),
-      generatePrContent: () => unsupported(),
-      generateBranchName,
-      generateThreadTitle,
-    };
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
@@ -226,7 +220,12 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
-      Layer.provideMerge(Layer.succeed(TextGeneration, textGeneration)),
+      Layer.provideMerge(
+        Layer.mock(TextGeneration, {
+          generateBranchName,
+          generateThreadTitle,
+        }),
+      ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
