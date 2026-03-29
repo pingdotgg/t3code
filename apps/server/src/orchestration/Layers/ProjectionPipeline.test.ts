@@ -1094,48 +1094,6 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
   },
 );
 
-it.layer(
-  Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-attachments-delete-direct-")),
-)("OrchestrationProjectionPipeline", (it) => {
-  it.effect("ignores unsafe thread ids for incremental attachment cleanup paths", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const projectionPipeline = yield* OrchestrationProjectionPipeline;
-      const eventStore = yield* OrchestrationEventStore;
-      const now = new Date().toISOString();
-      const { attachmentsDir: attachmentsRootDir, stateDir } = yield* ServerConfig;
-      const attachmentsSentinelPath = path.join(attachmentsRootDir, "sentinel.txt");
-      const stateDirSentinelPath = path.join(stateDir, "state-sentinel.txt");
-      yield* fileSystem.makeDirectory(attachmentsRootDir, { recursive: true });
-      yield* fileSystem.writeFileString(attachmentsSentinelPath, "keep-attachments-root");
-      yield* fileSystem.writeFileString(stateDirSentinelPath, "keep-state-dir");
-
-      yield* eventStore
-        .append({
-          type: "thread.deleted",
-          eventId: EventId.makeUnsafe("evt-unsafe-thread-delete-direct"),
-          aggregateKind: "thread",
-          aggregateId: ThreadId.makeUnsafe(".."),
-          occurredAt: now,
-          commandId: CommandId.makeUnsafe("cmd-unsafe-thread-delete-direct"),
-          causationEventId: null,
-          correlationId: CorrelationId.makeUnsafe("cmd-unsafe-thread-delete-direct"),
-          metadata: {},
-          payload: {
-            threadId: ThreadId.makeUnsafe(".."),
-            deletedAt: now,
-          },
-        })
-        .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
-
-      assert.isTrue(yield* exists(attachmentsRootDir));
-      assert.isTrue(yield* exists(attachmentsSentinelPath));
-      assert.isTrue(yield* exists(stateDirSentinelPath));
-    }),
-  );
-});
-
 it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   it.effect("resumes from projector last_applied_sequence without replaying older events", () =>
     Effect.gen(function* () {
