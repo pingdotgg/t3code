@@ -37,13 +37,13 @@ export const makeDrainableWorker = <A, E, R>(
   process: (item: A) => Effect.Effect<void, E, R>,
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
-    const ref = yield* Effect.transaction(TxRef.make(0));
+    const ref = yield* TxRef.make(0);
 
-    const queue = yield* Effect.acquireRelease(Effect.transaction(TxQueue.unbounded<A>()), (queue) =>
-      Effect.asVoid(Effect.transaction(TxQueue.shutdown(queue))),
+    const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), (queue) =>
+      TxQueue.shutdown(queue),
     );
 
-    const takeItem = Effect.transaction(
+    const takeItem = Effect.tx(
       Effect.gen(function* () {
         const item = yield* TxQueue.take(queue);
         yield* TxRef.update(ref, (n) => n + 1);
@@ -53,26 +53,24 @@ export const makeDrainableWorker = <A, E, R>(
 
     yield* takeItem.pipe(
       Effect.flatMap((item) =>
-        process(item).pipe(
-          Effect.ensuring(Effect.transaction(TxRef.update(ref, (n) => n - 1))),
-        ),
+        process(item).pipe(Effect.ensuring(TxRef.update(ref, (n) => n - 1))),
       ),
       Effect.forever,
       Effect.forkScoped,
     );
 
-    const drain: DrainableWorker<A>["drain"] = Effect.transaction(
+    const drain: DrainableWorker<A>["drain"] = Effect.tx(
       Effect.gen(function* () {
         const inFlight = yield* TxRef.get(ref);
         const isEmpty = yield* TxQueue.isEmpty(queue);
         if (inFlight > 0 || !isEmpty) {
-          return yield* Effect.retryTransaction;
+          return yield* Effect.txRetry;
         }
       }),
     );
 
     return {
-      enqueue: (item) => Effect.asVoid(Effect.transaction(TxQueue.offer(queue, item))),
+      enqueue: (item) => TxQueue.offer(queue, item),
       drain,
     } satisfies DrainableWorker<A>;
   });

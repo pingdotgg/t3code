@@ -679,11 +679,7 @@ export function GeneralSettingsPanel() {
             >
               <SelectTrigger className="w-full sm:w-48" aria-label="Assistant copy format">
                 <SelectValue>
-                  {
-                    ASSISTANT_RESPONSE_COPY_FORMAT_LABELS[
-                      settings.assistantResponseCopyFormat
-                    ]
-                  }
+                  {ASSISTANT_RESPONSE_COPY_FORMAT_LABELS[settings.assistantResponseCopyFormat]}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>

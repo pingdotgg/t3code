@@ -80,12 +80,16 @@ async function renderTimelineWithCopyFormat(options: {
       onImageExpand={() => {}}
       markdownCwd={undefined}
       resolvedTheme="light"
-      assistantResponseCopyFormat={options.assistantResponseCopyFormat}
       timestampFormat="locale"
       workspaceRoot={undefined}
       activeSearchRowId={null}
       matchedSearchRowIds={new Set()}
       searchQuery=""
+      {...(options.assistantResponseCopyFormat
+        ? {
+            assistantResponseCopyFormat: options.assistantResponseCopyFormat,
+          }
+        : {})}
     />,
   );
 }
