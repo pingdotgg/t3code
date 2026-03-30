@@ -1801,8 +1801,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (threadId.length === 0) {
           return;
         }
-        const nextRuntimeMode =
-          runtimeMode === "approval-required" || runtimeMode === "full-access" ? runtimeMode : null;
+        const nextRuntimeMode = runtimeMode ?? null;
         set((state) => {
           const existing = state.draftsByThreadId[threadId];
           if (!existing && nextRuntimeMode === null) {
