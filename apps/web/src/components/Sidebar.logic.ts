@@ -244,6 +244,7 @@ export function getVisibleThreadsForProject(input: {
   previewLimit: number;
 }): {
   hasHiddenThreads: boolean;
+  hiddenThreads: Thread[];
   visibleThreads: Thread[];
 } {
   const { activeThreadId, isThreadListExpanded, previewLimit, threads } = input;
@@ -252,6 +253,7 @@ export function getVisibleThreadsForProject(input: {
   if (!hasHiddenThreads || isThreadListExpanded) {
     return {
       hasHiddenThreads,
+      hiddenThreads: [],
       visibleThreads: [...threads],
     };
   }
@@ -260,6 +262,7 @@ export function getVisibleThreadsForProject(input: {
   if (!activeThreadId || previewThreads.some((thread) => thread.id === activeThreadId)) {
     return {
       hasHiddenThreads: true,
+      hiddenThreads: threads.slice(previewLimit),
       visibleThreads: previewThreads,
     };
   }
@@ -268,6 +271,7 @@ export function getVisibleThreadsForProject(input: {
   if (!activeThread) {
     return {
       hasHiddenThreads: true,
+      hiddenThreads: threads.slice(previewLimit),
       visibleThreads: previewThreads,
     };
   }
@@ -276,6 +280,7 @@ export function getVisibleThreadsForProject(input: {
 
   return {
     hasHiddenThreads: true,
+    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
 }

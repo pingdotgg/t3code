@@ -27,6 +27,7 @@ import {
   FileSystem,
   Layer,
   Path,
+  Equal,
   PubSub,
   Ref,
   Schema,
@@ -130,9 +131,12 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
   };
 }
 
+// Values under these keys are compared as a whole — never stripped field-by-field.
+const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set(["textGenerationModelSelection"]);
+
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
-    return JSON.stringify(current) === JSON.stringify(defaults) ? undefined : current;
+    return Equal.equals(current, defaults) ? undefined : current;
   }
 
   if (
@@ -146,9 +150,15 @@ function stripDefaultServerSettings(current: unknown, defaults: unknown): unknow
     const next: Record<string, unknown> = {};
 
     for (const key of Object.keys(currentRecord)) {
-      const stripped = stripDefaultServerSettings(currentRecord[key], defaultsRecord[key]);
-      if (stripped !== undefined) {
-        next[key] = stripped;
+      if (ATOMIC_SETTINGS_KEYS.has(key)) {
+        if (!Equal.equals(currentRecord[key], defaultsRecord[key])) {
+          next[key] = currentRecord[key];
+        }
+      } else {
+        const stripped = stripDefaultServerSettings(currentRecord[key], defaultsRecord[key]);
+        if (stripped !== undefined) {
+          next[key] = stripped;
+        }
       }
     }
 
