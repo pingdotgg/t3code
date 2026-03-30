@@ -2195,18 +2195,21 @@ export function useEffectiveComposerModelState(input: {
 }
 
 /**
- * Clear draft threads that have been promoted to server threads.
+ * Clear a draft thread once the server has materialized the same thread id.
  *
- * Call this after a snapshot sync so the route guard in `_chat.$threadId`
- * sees the server thread before the draft is removed — avoids a redirect
- * to `/` caused by a gap where neither draft nor server thread exists.
+ * Use the single-thread helper for live `thread.created` events and the
+ * iterable helper for bootstrap/recovery paths that discover multiple server
+ * threads at once.
  */
-export function clearPromotedDraftThreads(serverThreadIds: ReadonlySet<ThreadId>): void {
-  const store = useComposerDraftStore.getState();
-  const draftThreadIds = Object.keys(store.draftThreadsByThreadId) as ThreadId[];
-  for (const draftId of draftThreadIds) {
-    if (serverThreadIds.has(draftId)) {
-      store.clearDraftThread(draftId);
-    }
+export function clearPromotedDraftThread(threadId: ThreadId): void {
+  if (!useComposerDraftStore.getState().getDraftThread(threadId)) {
+    return;
+  }
+  useComposerDraftStore.getState().clearDraftThread(threadId);
+}
+
+export function clearPromotedDraftThreads(serverThreadIds: Iterable<ThreadId>): void {
+  for (const threadId of serverThreadIds) {
+    clearPromotedDraftThread(threadId);
   }
 }

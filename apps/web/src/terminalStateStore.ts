@@ -485,6 +485,7 @@ interface TerminalStateStoreState {
     hasRunningSubprocess: boolean,
   ) => void;
   clearTerminalState: (threadId: ThreadId) => void;
+  removeTerminalState: (threadId: ThreadId) => void;
   removeOrphanedTerminalStates: (activeThreadIds: Set<ThreadId>) => void;
 }
 
@@ -530,6 +531,15 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
           ),
         clearTerminalState: (threadId) =>
           updateTerminal(threadId, () => createDefaultThreadTerminalState()),
+        removeTerminalState: (threadId) =>
+          set((state) => {
+            if (state.terminalStateByThreadId[threadId] === undefined) {
+              return state;
+            }
+            const next = { ...state.terminalStateByThreadId };
+            delete next[threadId];
+            return { terminalStateByThreadId: next };
+          }),
         removeOrphanedTerminalStates: (activeThreadIds) =>
           set((state) => {
             const orphanedIds = Object.keys(state.terminalStateByThreadId).filter(

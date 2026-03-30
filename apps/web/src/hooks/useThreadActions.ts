@@ -16,8 +16,6 @@ import { toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
 
 export function useThreadActions() {
-  const threads = useStore((store) => store.threads);
-  const projects = useStore((store) => store.projects);
   const appSettings = useSettings();
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
@@ -37,7 +35,7 @@ export function useThreadActions() {
     async (threadId: ThreadId) => {
       const api = readNativeApi();
       if (!api) return;
-      const thread = threads.find((entry) => entry.id === threadId);
+      const thread = useStore.getState().threads.find((entry) => entry.id === threadId);
       if (!thread) return;
       if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
         throw new Error("Cannot archive a running thread.");
@@ -53,7 +51,7 @@ export function useThreadActions() {
         await handleNewThread(thread.projectId);
       }
     },
-    [handleNewThread, routeThreadId, threads],
+    [handleNewThread, routeThreadId],
   );
 
   const unarchiveThread = useCallback(async (threadId: ThreadId) => {
@@ -70,6 +68,7 @@ export function useThreadActions() {
     async (threadId: ThreadId, opts: { deletedThreadIds?: ReadonlySet<ThreadId> } = {}) => {
       const api = readNativeApi();
       if (!api) return;
+      const { projects, threads } = useStore.getState();
       const thread = threads.find((entry) => entry.id === threadId);
       if (!thread) return;
       const threadProject = projects.find((project) => project.id === thread.projectId);
@@ -171,10 +170,8 @@ export function useThreadActions() {
       clearTerminalState,
       appSettings.sidebarThreadSortOrder,
       navigate,
-      projects,
       removeWorktreeMutation,
       routeThreadId,
-      threads,
     ],
   );
 
@@ -182,7 +179,7 @@ export function useThreadActions() {
     async (threadId: ThreadId) => {
       const api = readNativeApi();
       if (!api) return;
-      const thread = threads.find((entry) => entry.id === threadId);
+      const thread = useStore.getState().threads.find((entry) => entry.id === threadId);
       if (!thread) return;
 
       if (appSettings.confirmThreadDelete) {
@@ -199,7 +196,7 @@ export function useThreadActions() {
 
       await deleteThread(threadId);
     },
-    [appSettings.confirmThreadDelete, deleteThread, threads],
+    [appSettings.confirmThreadDelete, deleteThread],
   );
 
   return {
