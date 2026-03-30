@@ -719,9 +719,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   }
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe((event) =>
-    runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
+    pushBus.publishAll(WS_CHANNELS.terminalEvent, event),
   );
-  yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
+  yield* Scope.addFinalizer(subscriptionsScope, Effect.sync(unsubscribeTerminalEvents));
   yield* readiness.markTerminalSubscriptionsReady;
 
   yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(

@@ -28,6 +28,10 @@
       "types": "./src/DrainableWorker.ts",
       "import": "./src/DrainableWorker.ts"
     },
+    "./KeyedCoalescingWorker": {
+      "types": "./src/KeyedCoalescingWorker.ts",
+      "import": "./src/KeyedCoalescingWorker.ts"
+    },
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"
