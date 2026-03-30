@@ -14,7 +14,7 @@ export async function showDesktopConfirmDialog(
   const options = {
     type: "question" as const,
     buttons: ["No", "Yes"],
-    defaultId: CONFIRM_BUTTON_INDEX,
+    defaultId: 0,
     cancelId: 0,
     noLink: true,
     message: normalizedMessage,
