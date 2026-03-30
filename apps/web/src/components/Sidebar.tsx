@@ -120,6 +120,7 @@ import {
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
+import { isProjectWorkspaceAvailable, isThreadWorkspaceAvailable } from "../workspaceAvailability";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -438,15 +439,16 @@ export default function Sidebar() {
       threads.map((thread) => ({
         threadId: thread.id,
         branch: thread.branch,
-        cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
+        cwd: thread.effectiveCwd,
+        enabled: isThreadWorkspaceAvailable(thread),
       })),
-    [projectCwdById, threads],
+    [threads],
   );
   const threadGitStatusCwds = useMemo(
     () => [
       ...new Set(
         threadGitTargets
-          .filter((target) => target.branch !== null)
+          .filter((target) => target.enabled && target.branch !== null)
           .map((target) => target.cwd)
           .filter((cwd): cwd is string => cwd !== null),
       ),
@@ -455,7 +457,7 @@ export default function Sidebar() {
   );
   const threadGitStatusQueries = useQueries({
     queries: threadGitStatusCwds.map((cwd) => ({
-      ...gitStatusQueryOptions(cwd),
+      ...gitStatusQueryOptions(cwd, true),
       staleTime: 30_000,
       refetchInterval: 60_000,
     })),
@@ -1261,10 +1263,12 @@ export default function Sidebar() {
       shouldShowThreadPanel,
       isThreadListExpanded,
     } = renderedProject;
+    const projectWorkspaceAvailable = isProjectWorkspaceAvailable(project);
     const renderThreadRow = (thread: (typeof projectThreads)[number]) => {
       const isActive = routeThreadId === thread.id;
       const isSelected = selectedThreadIds.has(thread.id);
       const isHighlighted = isActive || isSelected;
+      const threadWorkspaceAvailable = isThreadWorkspaceAvailable(thread);
       const jumpLabel = threadJumpLabelById.get(thread.id) ?? null;
       const isThreadRunning =
         thread.session?.status === "running" && thread.session.activeTurnId != null;
@@ -1294,7 +1298,7 @@ export default function Sidebar() {
             className={`${resolveThreadRowClassName({
               isActive,
               isSelected,
-            })} relative`}
+            })} relative ${threadWorkspaceAvailable ? "" : "opacity-60"}`}
             onClick={(event) => {
               handleThreadClick(event, thread.id, orderedProjectThreadIds);
             }}
@@ -1496,7 +1500,7 @@ export default function Sidebar() {
             size="sm"
             className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
               isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-            }`}
+            } ${projectWorkspaceAvailable ? "" : "opacity-60"}`}
             {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
             {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
             onPointerDownCapture={handleProjectTitlePointerDownCapture}

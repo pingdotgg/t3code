@@ -45,6 +45,8 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
   Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
 
+fs.mkdirSync("/tmp/provider-project", { recursive: true });
+
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs = 2000,

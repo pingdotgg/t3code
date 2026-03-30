@@ -31,6 +31,7 @@ function makeSnapshot(input: {
         id: input.projectId,
         title: "Project",
         workspaceRoot: input.workspaceRoot,
+        workspaceState: "available",
         defaultModelSelection: null,
         scripts: [],
         createdAt: "2026-01-01T00:00:00.000Z",
@@ -51,6 +52,9 @@ function makeSnapshot(input: {
         runtimeMode: "full-access",
         branch: null,
         worktreePath: input.worktreePath,
+        effectiveCwd: input.worktreePath ?? input.workspaceRoot,
+        effectiveCwdSource: input.worktreePath ? "worktree" : "project",
+        effectiveCwdState: "available",
         latestTurn: {
           turnId: TurnId.makeUnsafe("turn-1"),
           state: "completed",

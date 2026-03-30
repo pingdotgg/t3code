@@ -141,10 +141,24 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const WorkspaceAvailabilityState = Schema.Literals([
+  "available",
+  "missing",
+  "not_directory",
+  "inaccessible",
+]);
+export type WorkspaceAvailabilityState = typeof WorkspaceAvailabilityState.Type;
+
+export const ThreadEffectiveCwdSource = Schema.Literals(["project", "worktree"]);
+export type ThreadEffectiveCwdSource = typeof ThreadEffectiveCwdSource.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  workspaceState: WorkspaceAvailabilityState.pipe(
+    Schema.withDecodingDefault(() => "available" as const),
+  ),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
@@ -281,6 +295,13 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  effectiveCwd: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  effectiveCwdSource: Schema.NullOr(ThreadEffectiveCwdSource).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  effectiveCwdState: WorkspaceAvailabilityState.pipe(
+    Schema.withDecodingDefault(() => "available" as const),
+  ),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

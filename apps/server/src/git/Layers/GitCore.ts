@@ -29,6 +29,7 @@ import {
 } from "../Services/GitCore.ts";
 import { ServerConfig } from "../../config.ts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { assertWorkspaceDirectory } from "../../workspacePaths.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -518,12 +519,13 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   const { worktreesDir } = yield* ServerConfig;
 
   let execute: GitCoreShape["execute"];
+  let rawExecute: GitCoreShape["execute"];
 
   if (options?.executeOverride) {
-    execute = options.executeOverride;
+    rawExecute = options.executeOverride;
   } else {
     const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    execute = Effect.fnUntraced(function* (input) {
+    rawExecute = Effect.fnUntraced(function* (input) {
       const commandInput = {
         ...input,
         args: [...input.args],
@@ -613,6 +615,22 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     });
   }
 
+  execute = Effect.fnUntraced(function* (input) {
+    yield* assertWorkspaceDirectory(input.cwd, input.operation).pipe(
+      Effect.mapError(
+        (error) =>
+          new GitCommandError({
+            operation: input.operation,
+            command: quoteGitCommand(input.args),
+            cwd: input.cwd,
+            detail: error.message,
+            cause: error,
+          }),
+      ),
+    );
+    return yield* rawExecute(input);
+  });
+
   const executeGit = (
     operation: string,
     cwd: string,
@@ -653,6 +671,20 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
           ),
         );
       }),
+    );
+
+  const ensureGitWorkspace = (operation: string, cwd: string, args: readonly string[] = []) =>
+    assertWorkspaceDirectory(cwd, operation).pipe(
+      Effect.mapError(
+        (error) =>
+          new GitCommandError({
+            operation,
+            command: quoteGitCommand(args),
+            cwd,
+            detail: error.message,
+            cause: error,
+          }),
+      ),
     );
 
   const runGit = (
@@ -1041,6 +1073,11 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   });
 
   const statusDetails: GitCoreShape["statusDetails"] = Effect.fn("statusDetails")(function* (cwd) {
+    yield* ensureGitWorkspace("GitCore.statusDetails", cwd, [
+      "status",
+      "--porcelain=2",
+      "--branch",
+    ]);
     yield* refreshStatusUpstreamIfStale(cwd).pipe(Effect.ignoreCause({ log: true }));
 
     const [statusStdout, unstagedNumstatStdout, stagedNumstatStdout] = yield* Effect.all(

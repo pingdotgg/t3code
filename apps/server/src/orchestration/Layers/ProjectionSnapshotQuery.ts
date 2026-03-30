@@ -18,6 +18,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   ModelSelection,
+  type WorkspaceAvailabilityState,
 } from "@t3tools/contracts";
 import { Effect, Layer, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -42,6 +43,7 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
+import { inspectWorkspacePathState } from "../../workspacePaths.ts";
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
@@ -134,6 +136,12 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
       ? toPersistenceDecodeError(decodeOperation)(cause)
       : toPersistenceSqlError(sqlOperation)(cause);
 }
+
+type EffectiveWorkspaceMetadata = {
+  readonly effectiveCwd: string | null;
+  readonly effectiveCwdSource: "project" | "worktree" | null;
+  readonly effectiveCwdState: WorkspaceAvailabilityState;
+};
 
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -538,10 +546,35 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             });
           }
 
+          const workspaceRoots = new Set(projectRows.map((row) => row.workspaceRoot));
+          const worktreePaths = new Set(
+            threadRows.flatMap((row) => (row.worktreePath ? [row.worktreePath] : [])),
+          );
+          const workspaceStateEntries = yield* Effect.promise(() =>
+            Promise.all(
+              [...new Set([...workspaceRoots, ...worktreePaths])].map(async (workspacePath) => {
+                const workspaceState = await inspectWorkspacePathState(workspacePath);
+                return [workspacePath, workspaceState] as const;
+              }),
+            ),
+          );
+          const workspaceStates = new Map(workspaceStateEntries);
+          const projectRowsById = new Map(projectRows.map((row) => [row.projectId, row] as const));
+          const projectWorkspaceStateById = new Map(
+            projectRows.map((row) => [
+              row.projectId,
+              workspaceStates.get(row.workspaceRoot) ??
+                ("inaccessible" satisfies WorkspaceAvailabilityState),
+            ]),
+          );
+
           const projects: ReadonlyArray<OrchestrationProject> = projectRows.map((row) => ({
             id: row.projectId,
             title: row.title,
             workspaceRoot: row.workspaceRoot,
+            workspaceState:
+              projectWorkspaceStateById.get(row.projectId) ??
+              ("inaccessible" satisfies WorkspaceAvailabilityState),
             defaultModelSelection: row.defaultModelSelection,
             scripts: row.scripts,
             createdAt: row.createdAt,
@@ -549,26 +582,48 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             deletedAt: row.deletedAt,
           }));
 
-          const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
-            id: row.threadId,
-            projectId: row.projectId,
-            title: row.title,
-            modelSelection: row.modelSelection,
-            runtimeMode: row.runtimeMode,
-            interactionMode: row.interactionMode,
-            branch: row.branch,
-            worktreePath: row.worktreePath,
-            latestTurn: latestTurnByThread.get(row.threadId) ?? null,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-            archivedAt: row.archivedAt,
-            deletedAt: row.deletedAt,
-            messages: messagesByThread.get(row.threadId) ?? [],
-            proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
-            activities: activitiesByThread.get(row.threadId) ?? [],
-            checkpoints: checkpointsByThread.get(row.threadId) ?? [],
-            session: sessionsByThread.get(row.threadId) ?? null,
-          }));
+          const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => {
+            const effectiveWorkspace: EffectiveWorkspaceMetadata =
+              row.worktreePath !== null
+                ? {
+                    effectiveCwd: row.worktreePath,
+                    effectiveCwdSource: "worktree",
+                    effectiveCwdState:
+                      workspaceStates.get(row.worktreePath) ??
+                      ("inaccessible" satisfies WorkspaceAvailabilityState),
+                  }
+                : {
+                    effectiveCwd: projectRowsById.get(row.projectId)?.workspaceRoot ?? null,
+                    effectiveCwdSource: projectRowsById.has(row.projectId) ? "project" : null,
+                    effectiveCwdState:
+                      projectWorkspaceStateById.get(row.projectId) ??
+                      ("inaccessible" satisfies WorkspaceAvailabilityState),
+                  };
+
+            return {
+              id: row.threadId,
+              projectId: row.projectId,
+              title: row.title,
+              modelSelection: row.modelSelection,
+              runtimeMode: row.runtimeMode,
+              interactionMode: row.interactionMode,
+              branch: row.branch,
+              worktreePath: row.worktreePath,
+              effectiveCwd: effectiveWorkspace.effectiveCwd,
+              effectiveCwdSource: effectiveWorkspace.effectiveCwdSource,
+              effectiveCwdState: effectiveWorkspace.effectiveCwdState,
+              latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt,
+              archivedAt: row.archivedAt,
+              deletedAt: row.deletedAt,
+              messages: messagesByThread.get(row.threadId) ?? [],
+              proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
+              activities: activitiesByThread.get(row.threadId) ?? [],
+              checkpoints: checkpointsByThread.get(row.threadId) ?? [],
+              session: sessionsByThread.get(row.threadId) ?? null,
+            };
+          });
 
           const snapshot = {
             snapshotSequence: computeSnapshotSequence(stateRows),

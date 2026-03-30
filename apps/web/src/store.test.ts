@@ -33,6 +33,9 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    effectiveCwd: "/tmp/project",
+    effectiveCwdSource: "project",
+    effectiveCwdState: "available",
     ...overrides,
   };
 }
@@ -44,6 +47,7 @@ function makeState(thread: Thread): AppState {
         id: ProjectId.makeUnsafe("project-1"),
         name: "Project",
         cwd: "/tmp/project",
+        workspaceState: "available",
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -70,6 +74,9 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     interactionMode: DEFAULT_INTERACTION_MODE,
     branch: null,
     worktreePath: null,
+    effectiveCwd: "/tmp/project",
+    effectiveCwdSource: "project",
+    effectiveCwdState: "available",
     latestTurn: null,
     createdAt: "2026-02-27T00:00:00.000Z",
     updatedAt: "2026-02-27T00:00:00.000Z",
@@ -93,6 +100,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         id: ProjectId.makeUnsafe("project-1"),
         title: "Project",
         workspaceRoot: "/tmp/project",
+        workspaceState: "available",
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5.3-codex",
@@ -114,6 +122,7 @@ function makeReadModelProject(
     id: ProjectId.makeUnsafe("project-1"),
     title: "Project",
     workspaceRoot: "/tmp/project",
+    workspaceState: "available",
     defaultModelSelection: {
       provider: "codex",
       model: "gpt-5.3-codex",
@@ -176,6 +185,7 @@ describe("store pure functions", () => {
           id: project1,
           name: "Project 1",
           cwd: "/tmp/project-1",
+          workspaceState: "available",
           defaultModelSelection: {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
@@ -187,6 +197,7 @@ describe("store pure functions", () => {
           id: project2,
           name: "Project 2",
           cwd: "/tmp/project-2",
+          workspaceState: "available",
           defaultModelSelection: {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
@@ -198,6 +209,7 @@ describe("store pure functions", () => {
           id: project3,
           name: "Project 3",
           cwd: "/tmp/project-3",
+          workspaceState: "available",
           defaultModelSelection: {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
@@ -297,6 +309,7 @@ describe("store read model sync", () => {
           id: project2,
           name: "Project 2",
           cwd: "/tmp/project-2",
+          workspaceState: "available",
           defaultModelSelection: {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
@@ -308,6 +321,7 @@ describe("store read model sync", () => {
           id: project1,
           name: "Project 1",
           cwd: "/tmp/project-1",
+          workspaceState: "available",
           defaultModelSelection: {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,

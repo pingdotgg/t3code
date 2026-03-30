@@ -13,6 +13,8 @@ import type {
   CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
+  WorkspaceAvailabilityState,
+  ThreadEffectiveCwdSource,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -81,6 +83,7 @@ export interface Project {
   id: ProjectId;
   name: string;
   cwd: string;
+  workspaceState: WorkspaceAvailabilityState;
   defaultModelSelection: ModelSelection | null;
   expanded: boolean;
   createdAt?: string | undefined;
@@ -107,6 +110,9 @@ export interface Thread {
   lastVisitedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  effectiveCwd: string | null;
+  effectiveCwdSource: ThreadEffectiveCwdSource | null;
+  effectiveCwdState: WorkspaceAvailabilityState;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
 }

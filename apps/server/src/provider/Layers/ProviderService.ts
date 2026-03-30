@@ -34,6 +34,7 @@ import {
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { assertWorkspaceDirectory } from "../../workspacePaths.ts";
 
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogPath?: string;
@@ -228,6 +229,21 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
         const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
+        if (persistedCwd) {
+          yield* assertWorkspaceDirectory(
+            persistedCwd,
+            "ProviderService.recoverSessionForThread",
+          ).pipe(
+            Effect.mapError((error) =>
+              toValidationError(
+                input.operation,
+                `Cannot recover thread '${input.binding.threadId}'. ${error.message}`,
+                error,
+              ),
+            ),
+          );
+        }
+
         const resumed = yield* adapter.startSession({
           threadId: input.binding.threadId,
           provider: input.binding.provider,
@@ -315,6 +331,13 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           (persistedBinding?.provider === input.provider
             ? persistedBinding.resumeCursor
             : undefined);
+        if (input.cwd) {
+          yield* assertWorkspaceDirectory(input.cwd, "ProviderService.startSession").pipe(
+            Effect.mapError((error) =>
+              toValidationError("ProviderService.startSession", error.message, error),
+            ),
+          );
+        }
         const adapter = yield* registry.getByProvider(input.provider);
         const session = yield* adapter.startSession({
           ...input,

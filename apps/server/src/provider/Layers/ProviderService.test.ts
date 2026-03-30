@@ -20,7 +20,7 @@ import {
 import { it, assert, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 
-import { Effect, Fiber, Layer, Option, PubSub, Ref, Stream } from "effect";
+import { Cause, Effect, Fiber, Layer, Option, PubSub, Ref, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
@@ -44,6 +44,7 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
+import { clearWorkspacePathStateCache } from "../../workspacePaths.ts";
 
 const defaultServerSettingsLayer = ServerSettingsService.layerTest();
 
@@ -229,6 +230,16 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
 
 const sleep = (ms: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+
+for (const workspaceRoot of [
+  "/tmp/project",
+  "/tmp/project-claude",
+  "/tmp/project-send-turn",
+  "/tmp/project-claude-send-turn",
+  "/tmp/project-claude-start",
+]) {
+  fs.mkdirSync(workspaceRoot, { recursive: true });
+}
 
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
@@ -678,6 +689,46 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.threadId, initial.threadId);
       }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("fails recovery cleanly when the persisted workspace has been deleted", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "provider-missing-cwd-"));
+
+      const initial = yield* provider.startSession(asThreadId("thread-missing-cwd"), {
+        provider: "codex",
+        threadId: asThreadId("thread-missing-cwd"),
+        cwd: workspaceRoot,
+        runtimeMode: "full-access",
+      });
+
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+      clearWorkspacePathStateCache(workspaceRoot);
+      yield* routing.codex.stopAll();
+      routing.codex.startSession.mockClear();
+      routing.codex.sendTurn.mockClear();
+
+      const exit = yield* Effect.exit(
+        provider.sendTurn({
+          threadId: initial.threadId,
+          input: "resume",
+          attachments: [],
+        }),
+      );
+
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 0);
+      assert.equal(exit._tag, "Failure");
+      if (exit._tag === "Failure") {
+        const error = Cause.squash(exit.cause);
+        assert.equal(Schema.is(ProviderValidationError)(error), true);
+        assert.equal(
+          (error as ProviderValidationError).message.includes("Workspace folder is missing"),
+          true,
+        );
+      }
     }),
   );
 

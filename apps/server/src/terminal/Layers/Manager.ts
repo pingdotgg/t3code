@@ -27,6 +27,7 @@ import {
   TerminalSessionState,
   TerminalStartInput,
 } from "../Services/Manager";
+import { inspectWorkspacePathState, WorkspacePathError } from "../../workspacePaths.ts";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
@@ -1242,17 +1243,13 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   }
 
   private async assertValidCwd(cwd: string): Promise<void> {
-    let stats: fs.Stats;
-    try {
-      stats = await fs.promises.stat(cwd);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new Error(`Terminal cwd does not exist: ${cwd}`, { cause: error });
-      }
-      throw error;
-    }
-    if (!stats.isDirectory()) {
-      throw new Error(`Terminal cwd is not a directory: ${cwd}`);
+    const state = await inspectWorkspacePathState(cwd);
+    if (state !== "available") {
+      throw new WorkspacePathError({
+        operation: "TerminalManager.assertValidCwd",
+        path: cwd,
+        state,
+      });
     }
   }
 

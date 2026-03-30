@@ -76,6 +76,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         id: PROJECT_ID,
         title: "Project",
         workspaceRoot: "/repo/project",
+        workspaceState: "available",
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5",
@@ -99,6 +100,9 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         runtimeMode: "full-access",
         branch: "main",
         worktreePath: null,
+        effectiveCwd: "/repo/project",
+        effectiveCwdSource: "project",
+        effectiveCwdState: "available",
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,

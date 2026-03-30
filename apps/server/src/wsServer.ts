@@ -79,6 +79,7 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { assertWorkspaceDirectory, WorkspacePathError } from "./workspacePaths.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -232,6 +233,22 @@ export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycl
 class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("RouteRequestError", {
   message: Schema.String,
 }) {}
+
+function formatOperationalError(cause: Cause.Cause<unknown>): string {
+  const error = Cause.squash(cause);
+  if (
+    Schema.is(RouteRequestError)(error) ||
+    Schema.is(WorkspacePathError)(error) ||
+    (typeof error === "object" &&
+      error !== null &&
+      "message" in error &&
+      typeof error.message === "string" &&
+      error.message.trim().length > 0)
+  ) {
+    return (error as { message: string }).message;
+  }
+  return Cause.pretty(cause);
+}
 
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
   http.Server,
@@ -768,6 +785,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.projectsSearchEntries: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.projects.searchEntries");
         return yield* Effect.tryPromise({
           try: () => searchWorkspaceEntries(body),
           catch: (cause) =>
@@ -779,6 +797,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.projectsWriteFile: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.projects.writeFile");
         const target = yield* resolveWorkspaceWritePath({
           workspaceRoot: body.cwd,
           relativePath: body.relativePath,
@@ -807,21 +826,25 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.shellOpenInEditor: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.shell.openInEditor");
         return yield* openInEditor(body);
       }
 
       case WS_METHODS.gitStatus: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.status");
         return yield* gitManager.status(body);
       }
 
       case WS_METHODS.gitPull: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.pull");
         return yield* git.pullCurrentBranch(body.cwd);
       }
 
       case WS_METHODS.gitRunStackedAction: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.runStackedAction");
         return yield* gitManager.runStackedAction(body, {
           actionId: body.actionId,
           progressReporter: {
@@ -833,46 +856,55 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.gitResolvePullRequest: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.resolvePullRequest");
         return yield* gitManager.resolvePullRequest(body);
       }
 
       case WS_METHODS.gitPreparePullRequestThread: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.preparePullRequestThread");
         return yield* gitManager.preparePullRequestThread(body);
       }
 
       case WS_METHODS.gitListBranches: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.listBranches");
         return yield* git.listBranches(body);
       }
 
       case WS_METHODS.gitCreateWorktree: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.createWorktree");
         return yield* git.createWorktree(body);
       }
 
       case WS_METHODS.gitRemoveWorktree: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.removeWorktree");
         return yield* git.removeWorktree(body);
       }
 
       case WS_METHODS.gitCreateBranch: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.createBranch");
         return yield* git.createBranch(body);
       }
 
       case WS_METHODS.gitCheckout: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.checkout");
         return yield* Effect.scoped(git.checkoutBranch(body));
       }
 
       case WS_METHODS.gitInit: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.git.init");
         return yield* git.initRepo(body);
       }
 
       case WS_METHODS.terminalOpen: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.terminal.open");
         return yield* terminalManager.open(body);
       }
 
@@ -893,6 +925,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.terminalRestart: {
         const body = stripRequestTag(request.body);
+        yield* assertWorkspaceDirectory(body.cwd, "ws.terminal.restart");
         return yield* terminalManager.restart(body);
       }
 
@@ -973,7 +1006,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (Exit.isFailure(result)) {
       return yield* sendWsResponse({
         id: request.success.id,
-        error: { message: Cause.pretty(result.cause) },
+        error: { message: formatOperationalError(result.cause) },
       });
     }
 

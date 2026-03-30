@@ -13,6 +13,7 @@ import {
 } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
+import { isProjectWorkspaceAvailable, isThreadWorkspaceAvailable } from "../workspaceAvailability";
 
 const envModeItems = [
   { value: "local", label: "Local" },
@@ -46,7 +47,13 @@ export default function BranchToolbar({
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
-  const branchCwd = activeWorktreePath ?? activeProject?.cwd ?? null;
+  const branchCwd = serverThread
+    ? isThreadWorkspaceAvailable(serverThread)
+      ? serverThread.effectiveCwd
+      : null
+    : activeProject && isProjectWorkspaceAvailable(activeProject)
+      ? activeProject.cwd
+      : null;
   const hasServerThread = serverThread !== undefined;
   const effectiveEnvMode = resolveEffectiveEnvMode({
     activeWorktreePath,

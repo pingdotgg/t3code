@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { CheckpointRef, EventId, MessageId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
@@ -23,6 +27,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
+      const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "projection-snapshot-"));
 
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`DELETE FROM projection_state`;
@@ -43,7 +48,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         VALUES (
           'project-1',
           'Project 1',
-          '/tmp/project-1',
+          ${workspaceRoot},
           '{"provider":"codex","model":"gpt-5-codex"}',
           '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           '2026-02-24T00:00:00.000Z',
@@ -233,7 +238,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         {
           id: asProjectId("project-1"),
           title: "Project 1",
-          workspaceRoot: "/tmp/project-1",
+          workspaceRoot,
+          workspaceState: "available",
           defaultModelSelection: {
             provider: "codex",
             model: "gpt-5-codex",
@@ -265,6 +271,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          effectiveCwd: workspaceRoot,
+          effectiveCwdSource: "project",
+          effectiveCwdState: "available",
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",

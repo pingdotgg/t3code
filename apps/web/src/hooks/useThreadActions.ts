@@ -14,6 +14,7 @@ import { useTerminalStateStore } from "../terminalStateStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
+import { isProjectWorkspaceAvailable } from "../workspaceAvailability";
 
 export function useThreadActions() {
   const threads = useStore((store) => store.threads);
@@ -82,7 +83,10 @@ export function useThreadActions() {
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
-      const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== undefined;
+      const canDeleteWorktree =
+        orphanedWorktreePath !== null &&
+        threadProject !== undefined &&
+        isProjectWorkspaceAvailable(threadProject);
       const shouldDeleteWorktree =
         canDeleteWorktree &&
         (await api.dialogs.confirm(

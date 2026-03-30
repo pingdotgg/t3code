@@ -26,6 +26,7 @@ import { migrateLocalSettingsToServer } from "../hooks/useSettings";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { gitQueryKeys } from "../lib/gitReactQuery";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -171,6 +172,10 @@ function EventRouter() {
         draftThreadIds,
       });
       removeOrphanedTerminalStates(activeThreadIds);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: gitQueryKeys.all }),
+        queryClient.invalidateQueries({ queryKey: projectQueryKeys.all }),
+      ]);
       if (pending) {
         pending = false;
         await flushSnapshotSync();
@@ -261,6 +266,14 @@ function EventRouter() {
         handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
       })().catch(() => undefined);
     });
+    const handleWorkspaceRefresh = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      void syncSnapshot();
+    };
+    window.addEventListener("focus", handleWorkspaceRefresh);
+    document.addEventListener("visibilitychange", handleWorkspaceRefresh);
     // onServerConfigUpdated replays the latest cached value synchronously
     // during subscribe. Skip the toast for that replay so effect re-runs
     // don't produce duplicate toasts.
@@ -323,6 +336,8 @@ function EventRouter() {
       unsubDomainEvent();
       unsubTerminalEvent();
       unsubWelcome();
+      window.removeEventListener("focus", handleWorkspaceRefresh);
+      document.removeEventListener("visibilitychange", handleWorkspaceRefresh);
       unsubServerConfigUpdated();
       unsubProvidersUpdated();
     };

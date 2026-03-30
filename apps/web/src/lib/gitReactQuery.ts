@@ -26,7 +26,7 @@ export function invalidateGitQueries(queryClient: QueryClient) {
   return queryClient.invalidateQueries({ queryKey: gitQueryKeys.all });
 }
 
-export function gitStatusQueryOptions(cwd: string | null) {
+export function gitStatusQueryOptions(cwd: string | null, enabled = true) {
   return queryOptions({
     queryKey: gitQueryKeys.status(cwd),
     queryFn: async () => {
@@ -34,15 +34,15 @@ export function gitStatusQueryOptions(cwd: string | null) {
       if (!cwd) throw new Error("Git status is unavailable.");
       return api.git.status({ cwd });
     },
-    enabled: cwd !== null,
+    enabled: enabled && cwd !== null,
     staleTime: GIT_STATUS_STALE_TIME_MS,
-    refetchOnWindowFocus: "always",
-    refetchOnReconnect: "always",
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     refetchInterval: GIT_STATUS_REFETCH_INTERVAL_MS,
   });
 }
 
-export function gitBranchesQueryOptions(cwd: string | null) {
+export function gitBranchesQueryOptions(cwd: string | null, enabled = true) {
   return queryOptions({
     queryKey: gitQueryKeys.branches(cwd),
     queryFn: async () => {
@@ -50,10 +50,10 @@ export function gitBranchesQueryOptions(cwd: string | null) {
       if (!cwd) throw new Error("Git branches are unavailable.");
       return api.git.listBranches({ cwd });
     },
-    enabled: cwd !== null,
+    enabled: enabled && cwd !== null,
     staleTime: GIT_BRANCHES_STALE_TIME_MS,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
   });
 }
@@ -61,6 +61,7 @@ export function gitBranchesQueryOptions(cwd: string | null) {
 export function gitResolvePullRequestQueryOptions(input: {
   cwd: string | null;
   reference: string | null;
+  enabled?: boolean;
 }) {
   return queryOptions({
     queryKey: ["git", "pull-request", input.cwd, input.reference] as const,
@@ -71,7 +72,7 @@ export function gitResolvePullRequestQueryOptions(input: {
       }
       return api.git.resolvePullRequest({ cwd: input.cwd, reference: input.reference });
     },
-    enabled: input.cwd !== null && input.reference !== null,
+    enabled: (input.enabled ?? true) && input.cwd !== null && input.reference !== null,
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,

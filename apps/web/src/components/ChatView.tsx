@@ -107,7 +107,6 @@ import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   commandForProjectScript,
   nextProjectScriptId,
-  projectScriptCwd,
   projectScriptRuntimeEnv,
   projectScriptIdFromCommand,
   setupProjectScript,
@@ -178,6 +177,12 @@ import {
   SendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import {
+  isProjectWorkspaceAvailable,
+  isThreadWorkspaceAvailable,
+  workspaceUnavailableReason,
+} from "../workspaceAvailability";
+import { useThreadActions } from "../hooks/useThreadActions";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -253,6 +258,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const settings = useSettings();
+  const { confirmAndDeleteThread } = useThreadActions();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -501,6 +507,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const projectWorkspaceAvailable = activeProject
+    ? isProjectWorkspaceAvailable(activeProject)
+    : false;
+  const threadWorkspaceAvailable = activeThread ? isThreadWorkspaceAvailable(activeThread) : false;
+  const missingProjectWorkspace = activeProject !== undefined && !projectWorkspaceAvailable;
+  const missingWorktreeWorkspace =
+    activeThread?.effectiveCwdSource === "worktree" &&
+    activeThread.effectiveCwd !== null &&
+    !threadWorkspaceAvailable &&
+    projectWorkspaceAvailable;
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -1009,12 +1025,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     latestTurnSettled,
     timelineEntries,
   ]);
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.cwd },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
+  const gitCwd = threadWorkspaceAvailable ? (activeThread?.effectiveCwd ?? null) : null;
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
@@ -1024,7 +1035,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
-  const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
+  const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd, threadWorkspaceAvailable));
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
   const modelOptionsByProvider = useMemo(
@@ -1062,7 +1073,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
       query: effectivePathQuery,
-      enabled: isPathTrigger,
+      enabled: isPathTrigger && threadWorkspaceAvailable,
       limit: 80,
     }),
   );
@@ -1160,8 +1171,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       worktreePath: activeThreadWorktreePath,
     });
   }, [activeProjectCwd, activeThreadWorktreePath]);
-  // Default true while loading to avoid toolbar flicker.
-  const isGitRepo = branchesQuery.data?.isRepo ?? true;
+  const isGitRepo = threadWorkspaceAvailable && (branchesQuery.data?.isRepo ?? true);
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
@@ -1246,6 +1256,50 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [setStoreThreadError, threads],
   );
+  const relinkProjectWorkspace = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || !activeProject) return;
+    const nextWorkspaceRoot = await api.dialogs.pickFolder();
+    if (!nextWorkspaceRoot) {
+      return;
+    }
+    await api.orchestration.dispatchCommand({
+      type: "project.meta.update",
+      commandId: newCommandId(),
+      projectId: activeProject.id,
+      workspaceRoot: nextWorkspaceRoot,
+    });
+  }, [activeProject]);
+  const useProjectRootForThread = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || !activeThread) return;
+    if (activeThread.session && activeThread.session.status !== "closed") {
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.session.stop",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          createdAt: new Date().toISOString(),
+        })
+        .catch(() => undefined);
+    }
+    await api.orchestration.dispatchCommand({
+      type: "thread.meta.update",
+      commandId: newCommandId(),
+      threadId: activeThread.id,
+      branch: null,
+      worktreePath: null,
+    });
+  }, [activeThread]);
+  const removeActiveProject = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || !activeProject) return;
+    await api.orchestration.dispatchCommand({
+      type: "project.delete",
+      commandId: newCommandId(),
+      projectId: activeProject.id,
+    });
+  }, [activeProject]);
 
   const focusComposer = useCallback(() => {
     composerEditorRef.current?.focusAtEnd();
@@ -3569,6 +3623,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
     );
   }
 
+  const headerWorkspaceUnavailableReason = missingProjectWorkspace
+    ? workspaceUnavailableReason({
+        state: activeProject?.workspaceState ?? "available",
+        kind: "project",
+      })
+    : missingWorktreeWorkspace
+      ? workspaceUnavailableReason({
+          state: activeThread.effectiveCwdState,
+          kind: "worktree",
+        })
+      : null;
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
       {/* Top bar */}
@@ -3583,14 +3649,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
           isGitRepo={isGitRepo}
+          workspaceUnavailableReason={headerWorkspaceUnavailableReason}
           openInCwd={gitCwd}
-          activeProjectScripts={activeProject?.scripts}
+          activeProjectScripts={projectWorkspaceAvailable ? activeProject?.scripts : undefined}
           preferredScriptId={
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
           }
           keybindings={keybindings}
           availableEditors={availableEditors}
-          terminalAvailable={activeProject !== undefined}
+          terminalAvailable={activeProject !== undefined && threadWorkspaceAvailable}
           terminalOpen={terminalState.terminalOpen}
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
@@ -3613,6 +3680,52 @@ export default function ChatView({ threadId }: ChatViewProps) {
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
+      {missingProjectWorkspace && activeProject && (
+        <div className="border-b border-amber-200/70 bg-amber-50 px-3 py-3 text-amber-950 sm:px-5 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex-1 text-sm">
+              <div className="font-medium">Project folder is missing</div>
+              <div className="text-xs text-amber-900/80 dark:text-amber-200/80">
+                {workspaceUnavailableReason({
+                  state: activeProject.workspaceState,
+                  kind: "project",
+                })}
+              </div>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => void relinkProjectWorkspace()}>
+              Relink project
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => void removeActiveProject()}>
+              Remove project
+            </Button>
+          </div>
+        </div>
+      )}
+      {missingWorktreeWorkspace && activeThread && (
+        <div className="border-b border-amber-200/70 bg-amber-50 px-3 py-3 text-amber-950 sm:px-5 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex-1 text-sm">
+              <div className="font-medium">Worktree is missing</div>
+              <div className="text-xs text-amber-900/80 dark:text-amber-200/80">
+                {workspaceUnavailableReason({
+                  state: activeThread.effectiveCwdState,
+                  kind: "worktree",
+                })}
+              </div>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => void useProjectRootForThread()}>
+              Use project root
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void confirmAndDeleteThread(activeThread.id)}
+            >
+              Delete thread
+            </Button>
+          </div>
+        </div>
+      )}
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
@@ -3656,7 +3769,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
-                workspaceRoot={activeProject?.cwd ?? undefined}
+                workspaceRoot={
+                  projectWorkspaceAvailable ? (activeProject?.cwd ?? undefined) : undefined
+                }
               />
             </div>
 
@@ -4208,7 +4323,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
             activePlan={activePlan}
             activeProposedPlan={sidebarProposedPlan}
             markdownCwd={gitCwd ?? undefined}
-            workspaceRoot={activeProject?.cwd ?? undefined}
+            workspaceRoot={
+              projectWorkspaceAvailable ? (activeProject?.cwd ?? undefined) : undefined
+            }
             timestampFormat={timestampFormat}
             onClose={() => {
               setPlanSidebarOpen(false);
@@ -4224,14 +4341,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* end horizontal flex container */}
 
       {(() => {
-        if (!terminalState.terminalOpen || !activeProject) {
+        if (!terminalState.terminalOpen || !activeProject || !threadWorkspaceAvailable || !gitCwd) {
           return null;
         }
         return (
           <ThreadTerminalDrawer
             key={activeThread.id}
             threadId={activeThread.id}
-            cwd={gitCwd ?? activeProject.cwd}
+            cwd={gitCwd}
             runtimeEnv={threadTerminalRuntimeEnv}
             height={terminalState.terminalHeight}
             terminalIds={terminalState.terminalIds}

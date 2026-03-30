@@ -25,6 +25,7 @@ import {
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { assertWorkspaceDirectory } from "../../workspacePaths.ts";
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -254,6 +255,12 @@ const make = Effect.gen(function* () {
       thread,
       projects: readModel.projects,
     });
+    if (effectiveCwd) {
+      yield* assertWorkspaceDirectory(
+        effectiveCwd,
+        "ProviderCommandReactor.ensureSessionForThread",
+      );
+    }
 
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService

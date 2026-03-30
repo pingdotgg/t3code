@@ -25,6 +25,10 @@ import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
+import {
+  inspectWorkspacePathState,
+  resolveWorkspaceUnavailableReason,
+} from "../../workspacePaths.ts";
 
 type ReactorInput =
   | {
@@ -154,7 +158,12 @@ const make = Effect.gen(function* () {
   // a git repository.
   const resolveCheckpointCwd = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
-    readonly thread: { readonly projectId: ProjectId; readonly worktreePath: string | null };
+    readonly thread: {
+      readonly projectId: ProjectId;
+      readonly worktreePath: string | null;
+      readonly effectiveCwd: string | null;
+      readonly effectiveCwdState: string;
+    };
     readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
     readonly preferSessionRuntime: boolean;
   }): Effect.fn.Return<string | undefined> {
@@ -175,7 +184,7 @@ const make = Effect.gen(function* () {
           onSome: (runtime) => runtime.cwd,
         }));
 
-    if (!cwd) {
+    if (input.thread.effectiveCwdState !== "available" || !cwd) {
       return undefined;
     }
     if (!isGitWorkspace(cwd)) {
@@ -579,6 +588,20 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,
         detail: "No active provider session with workspace cwd is bound to this thread.",
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+    const sessionWorkspaceState = yield* Effect.promise(() =>
+      inspectWorkspacePathState(sessionRuntime.value.cwd),
+    );
+    if (sessionWorkspaceState !== "available") {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail:
+          resolveWorkspaceUnavailableReason(sessionWorkspaceState) ??
+          "Workspace folder is unavailable.",
         createdAt: now,
       }).pipe(Effect.catch(() => Effect.void));
       return;

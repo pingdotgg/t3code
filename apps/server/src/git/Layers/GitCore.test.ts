@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, PlatformError, Scope } from "effect";
 import { describe, expect, vi } from "vitest";
 
 import { GitCoreLive, makeGitCore } from "./GitCore.ts";
@@ -1280,6 +1281,20 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* writeTextFile(path.join(tmp, "README.md"), "updated\n");
         const dirty = yield* core.statusDetails(tmp);
         expect(dirty.hasWorkingTreeChanges).toBe(true);
+      }),
+    );
+
+    it.effect("fails cleanly when statusDetails is requested for a missing workspace", () =>
+      Effect.gen(function* () {
+        const missingCwd = path.join(os.tmpdir(), `git-missing-${crypto.randomUUID()}`);
+        const result = yield* Effect.exit((yield* GitCore).statusDetails(missingCwd));
+
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const error = Cause.squash(result.cause);
+          expect(error).toBeInstanceOf(GitCommandError);
+          expect((error as GitCommandError).detail).toContain("Workspace folder is missing");
+        }
       }),
     );
 
