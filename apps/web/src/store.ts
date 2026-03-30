@@ -808,6 +808,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           messages,
           proposedPlans,
           activities,
+          pendingSourceProposedPlan: undefined,
           latestTurn:
             latestCheckpoint === null
               ? null
