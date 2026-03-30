@@ -1,3 +1,4 @@
+import * as React from "react";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { Thread } from "../types";
 import { cn } from "../lib/utils";
@@ -8,6 +9,7 @@ import {
 } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
+export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
@@ -46,6 +48,91 @@ type ThreadStatusInput = Pick<
   "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
 >;
 
+export interface ThreadJumpHintVisibilityController {
+  sync: (shouldShow: boolean) => void;
+  dispose: () => void;
+}
+
+export function createThreadJumpHintVisibilityController(input: {
+  delayMs: number;
+  onVisibilityChange: (visible: boolean) => void;
+  setTimeoutFn?: typeof globalThis.setTimeout;
+  clearTimeoutFn?: typeof globalThis.clearTimeout;
+}): ThreadJumpHintVisibilityController {
+  const setTimeoutFn = input.setTimeoutFn ?? globalThis.setTimeout;
+  const clearTimeoutFn = input.clearTimeoutFn ?? globalThis.clearTimeout;
+  let isVisible = false;
+  let timeoutId: NodeJS.Timeout | null = null;
+
+  const clearPendingShow = () => {
+    if (timeoutId === null) {
+      return;
+    }
+    clearTimeoutFn(timeoutId);
+    timeoutId = null;
+  };
+
+  return {
+    sync: (shouldShow) => {
+      if (!shouldShow) {
+        clearPendingShow();
+        if (isVisible) {
+          isVisible = false;
+          input.onVisibilityChange(false);
+        }
+        return;
+      }
+
+      if (isVisible || timeoutId !== null) {
+        return;
+      }
+
+      timeoutId = setTimeoutFn(() => {
+        timeoutId = null;
+        isVisible = true;
+        input.onVisibilityChange(true);
+      }, input.delayMs);
+    },
+    dispose: () => {
+      clearPendingShow();
+    },
+  };
+}
+
+export function useThreadJumpHintVisibility(): {
+  showThreadJumpHints: boolean;
+  updateThreadJumpHintsVisibility: (shouldShow: boolean) => void;
+} {
+  const [showThreadJumpHints, setShowThreadJumpHints] = React.useState(false);
+  const controllerRef = React.useRef<ThreadJumpHintVisibilityController | null>(null);
+
+  React.useEffect(() => {
+    const controller = createThreadJumpHintVisibilityController({
+      delayMs: THREAD_JUMP_HINT_SHOW_DELAY_MS,
+      onVisibilityChange: (visible) => {
+        setShowThreadJumpHints(visible);
+      },
+      setTimeoutFn: window.setTimeout.bind(window),
+      clearTimeoutFn: window.clearTimeout.bind(window),
+    });
+    controllerRef.current = controller;
+
+    return () => {
+      controller.dispose();
+      controllerRef.current = null;
+    };
+  }, []);
+
+  const updateThreadJumpHintsVisibility = React.useCallback((shouldShow: boolean) => {
+    controllerRef.current?.sync(shouldShow);
+  }, []);
+
+  return {
+    showThreadJumpHints,
+    updateThreadJumpHintsVisibility,
+  };
+}
+
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
@@ -71,13 +158,16 @@ export function resolveSidebarNewThreadEnvMode(input: {
 
 export function getVisibleSidebarThreadIds<TThreadId>(
   renderedProjects: readonly {
+    shouldShowThreadPanel?: boolean;
     renderedThreads: readonly {
       id: TThreadId;
     }[];
   }[],
 ): TThreadId[] {
   return renderedProjects.flatMap((renderedProject) =>
-    renderedProject.renderedThreads.map((thread) => thread.id),
+    renderedProject.shouldShowThreadPanel === false
+      ? []
+      : renderedProject.renderedThreads.map((thread) => thread.id),
   );
 }
 
