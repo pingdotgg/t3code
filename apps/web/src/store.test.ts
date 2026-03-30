@@ -50,6 +50,7 @@ function makeState(thread: Thread): AppState {
         },
         expanded: true,
         scripts: [],
+        cachedProviderSlashCommands: {},
       },
     ],
     threads: [thread],
@@ -101,6 +102,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         updatedAt: "2026-02-27T00:00:00.000Z",
         deletedAt: null,
         scripts: [],
+        cachedProviderSlashCommands: {},
       },
     ],
     threads: [thread],
@@ -122,6 +124,7 @@ function makeReadModelProject(
     updatedAt: "2026-02-27T00:00:00.000Z",
     deletedAt: null,
     scripts: [],
+    cachedProviderSlashCommands: {},
     ...overrides,
   };
 }
@@ -182,6 +185,7 @@ describe("store pure functions", () => {
           },
           expanded: true,
           scripts: [],
+          cachedProviderSlashCommands: {},
         },
         {
           id: project2,
@@ -193,6 +197,7 @@ describe("store pure functions", () => {
           },
           expanded: true,
           scripts: [],
+          cachedProviderSlashCommands: {},
         },
         {
           id: project3,
@@ -204,6 +209,7 @@ describe("store pure functions", () => {
           },
           expanded: true,
           scripts: [],
+          cachedProviderSlashCommands: {},
         },
       ],
       threads: [],
@@ -248,6 +254,7 @@ describe("store read model sync", () => {
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
+          providerSlashCommands: [],
           updatedAt: "2026-02-27T00:00:00.000Z",
         },
       }),
@@ -303,6 +310,7 @@ describe("store read model sync", () => {
           },
           expanded: true,
           scripts: [],
+          cachedProviderSlashCommands: {},
         },
         {
           id: project1,
@@ -314,6 +322,7 @@ describe("store read model sync", () => {
           },
           expanded: true,
           scripts: [],
+          cachedProviderSlashCommands: {},
         },
       ],
       threads: [],

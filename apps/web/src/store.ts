@@ -151,6 +151,7 @@ function mapProjectsFromReadModel(
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
       scripts: project.scripts.map((script) => ({ ...script })),
+      cachedProviderSlashCommands: project.cachedProviderSlashCommands ?? {},
     } satisfies Project;
   });
 
@@ -266,6 +267,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
               createdAt: thread.session.updatedAt,
               updatedAt: thread.session.updatedAt,
               ...(thread.session.lastError ? { lastError: thread.session.lastError } : {}),
+              providerSlashCommands: thread.session.providerSlashCommands ?? [],
             }
           : null,
         messages: thread.messages.map((message) => {

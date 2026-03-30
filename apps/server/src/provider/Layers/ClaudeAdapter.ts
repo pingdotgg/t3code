@@ -50,6 +50,7 @@ import {
   Cause,
   DateTime,
   Deferred,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -170,6 +171,7 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
+  readonly supportedCommands: () => Promise<Array<{ name: string; description: string; argumentHint: string }>>;
   readonly close: () => void;
 }
 
@@ -3038,6 +3040,59 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     ).pipe(Effect.tap(() => Queue.shutdown(runtimeEventQueue))),
   );
 
+  const discoverSlashCommands: ClaudeAdapterShape["discoverSlashCommands"] = (input) => {
+    async function* helloPrompt(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: "user",
+        session_id: "",
+        parent_tool_use_id: null,
+        message: { role: "user", content: [{ type: "text", text: "hello" }] },
+      } as SDKUserMessage;
+    }
+
+    return Effect.tryPromise({
+      try: async () => {
+        const probeQuery = createQuery({
+          prompt: helloPrompt(),
+          options: {
+            cwd: input.cwd,
+            pathToClaudeCodeExecutable: "claude",
+            settingSources: [...CLAUDE_SETTING_SOURCES],
+            permissionMode: "plan",
+            env: process.env,
+          },
+        });
+
+        try {
+          const commands = await probeQuery.supportedCommands();
+          return commands.map((cmd) => ({
+            name: cmd.name,
+            description: cmd.description,
+            argumentHint: cmd.argumentHint,
+          }));
+        } finally {
+          probeQuery.close();
+        }
+      },
+      catch: (cause) =>
+        new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId: "" as any,
+          detail: `Failed to discover slash commands: ${String(cause)}`,
+          cause,
+        }),
+    }).pipe(
+      Effect.timeout(Duration.seconds(15)),
+      Effect.map((option) => option ?? []),
+      Effect.catchCause((cause: Cause.Cause<unknown>) =>
+        Effect.logWarning("ClaudeAdapter.discoverSlashCommands failed", {
+          cwd: input.cwd,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as([] as ReadonlyArray<{ name: string; description: string; argumentHint: string }>)),
+      ),
+    );
+  };
+
   return {
     provider: PROVIDER,
     capabilities: {
@@ -3054,6 +3109,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     listSessions,
     hasSession,
     stopAll,
+    discoverSlashCommands,
     streamEvents: Stream.fromQueue(runtimeEventQueue),
   } satisfies ClaudeAdapterShape;
 });

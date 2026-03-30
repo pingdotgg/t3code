@@ -4,8 +4,10 @@ import {
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
+  type ProviderSlashCommandInfo,
   ProviderKind,
   type OrchestrationSession,
+  ProjectCreatedPayload,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -284,6 +286,7 @@ const make = Effect.gen(function* () {
           // Provider turn ids are not orchestration turn ids.
           activeTurnId: null,
           lastError: session.lastError ?? null,
+          providerSlashCommands: [],
           updatedAt: session.updatedAt,
         },
         createdAt,
@@ -718,6 +721,7 @@ const make = Effect.gen(function* () {
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
         lastError: thread.session?.lastError ?? null,
+        providerSlashCommands: thread.session?.providerSlashCommands ?? [],
         updatedAt: now,
       },
       createdAt: now,
@@ -773,6 +777,53 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
+  // Discover provider slash commands for a project and cache them.
+  const discoverAndCacheSlashCommands = (projectId: string, workspaceRoot: string) =>
+    Effect.gen(function* () {
+      const providers = ["claudeAgent", "codex"] as const;
+      for (const provider of providers) {
+        const commands: ReadonlyArray<ProviderSlashCommandInfo> =
+          yield* providerService.discoverSlashCommands({
+            provider,
+            cwd: workspaceRoot,
+          });
+        if (commands.length > 0) {
+          yield* orchestrationEngine.dispatch({
+            type: "project.provider-slash-commands.set",
+            commandId: serverCommandId("slash-command-discovery"),
+            projectId: projectId as any,
+            provider,
+            commands: [...commands],
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+    }).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return Effect.logWarning(
+          "provider command reactor failed to discover slash commands on project creation",
+          { projectId, cause: Cause.pretty(cause) },
+        );
+      }),
+    );
+
+  // Background listener for project.created events to trigger slash command discovery.
+  const projectCreatedWorker = Stream.runForEach(
+    orchestrationEngine.streamDomainEvents,
+    (event) => {
+      if (event.type !== "project.created") {
+        return Effect.void;
+      }
+      const payload = Schema.decodeUnknownSync(ProjectCreatedPayload)(event.payload);
+      return Effect.forkScoped(
+        discoverAndCacheSlashCommands(payload.projectId, payload.workspaceRoot),
+      ).pipe(Effect.asVoid);
+    },
+  );
+
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
@@ -790,6 +841,7 @@ const make = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
     );
+    yield* Effect.forkScoped(projectCreatedWorker);
   });
 
   return {

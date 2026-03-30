@@ -6,6 +6,16 @@ import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandItem, CommandList } from "../ui/command";
 import { VscodeEntryIcon } from "./VscodeEntryIcon";
+import { ClaudeAI, OpenAI, type Icon } from "../Icons";
+
+const PROVIDER_ICON: Record<string, Icon> = {
+  codex: OpenAI,
+  claudeAgent: ClaudeAI,
+};
+
+function providerIconClassName(provider: string): string {
+  return provider === "claudeAgent" ? "text-[#d97757]" : "text-muted-foreground/80";
+}
 
 export type ComposerCommandItem =
   | {
@@ -20,6 +30,14 @@ export type ComposerCommandItem =
       id: string;
       type: "slash-command";
       command: ComposerSlashCommand;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "provider-slash-command";
+      provider: ProviderKind;
+      command: string;
       label: string;
       description: string;
     }
@@ -126,15 +144,26 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "slash-command" ? (
         <BotIcon className="size-4 text-muted-foreground/80" />
       ) : null}
+      {props.item.type === "provider-slash-command" ? (
+        (() => {
+          const ProviderIcon = PROVIDER_ICON[props.item.provider];
+          return ProviderIcon ? (
+            <ProviderIcon
+              aria-hidden="true"
+              className={cn("size-4 shrink-0", providerIconClassName(props.item.provider))}
+            />
+          ) : (
+            <BotIcon className="size-4 text-muted-foreground/80" />
+          );
+        })()
+      ) : null}
       {props.item.type === "model" ? (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           model
         </Badge>
       ) : null}
-      <span className="flex min-w-0 items-center gap-1.5 truncate">
-        <span className="truncate">{props.item.label}</span>
-      </span>
-      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+      <span className="shrink-0 whitespace-nowrap">{props.item.label}</span>
+      <span className="min-w-0 truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
     </CommandItem>
   );
 });

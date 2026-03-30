@@ -5,6 +5,7 @@ import type {
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
+  ProviderSlashCommandInfo,
   ThreadId,
   ProjectId,
   TurnId,
@@ -86,6 +87,7 @@ export interface Project {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
+  cachedProviderSlashCommands: Record<string, readonly ProviderSlashCommandInfo[]>;
 }
 
 export interface Thread {
@@ -119,4 +121,5 @@ export interface ThreadSession {
   updatedAt: string;
   lastError?: string;
   orchestrationStatus: OrchestrationSessionStatus;
+  providerSlashCommands: readonly string[];
 }

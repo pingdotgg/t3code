@@ -68,7 +68,11 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
     sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
-const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
+const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession.mapFields(
+  Struct.assign({
+    providerSlashCommandsJson: Schema.NullOr(Schema.String),
+  }),
+);
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
@@ -149,6 +153,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
+          cached_provider_slash_commands_json AS "cachedProviderSlashCommandsJson",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -259,6 +264,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          provider_slash_commands_json AS "providerSlashCommandsJson",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         ORDER BY thread_id ASC
@@ -527,6 +533,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
           for (const row of sessionRows) {
             updatedAt = maxIso(updatedAt, row.updatedAt);
+            const providerSlashCommands: Array<string> = (() => {
+              const json = row.providerSlashCommandsJson;
+              if (!json) return [];
+              try {
+                const parsed: unknown = JSON.parse(json);
+                return Array.isArray(parsed) ? (parsed as Array<string>) : [];
+              } catch {
+                return [];
+              }
+            })();
             sessionsByThread.set(row.threadId, {
               threadId: row.threadId,
               status: row.status,
@@ -534,20 +550,33 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               runtimeMode: row.runtimeMode,
               activeTurnId: row.activeTurnId,
               lastError: row.lastError,
+              providerSlashCommands,
               updatedAt: row.updatedAt,
             });
           }
 
-          const projects: ReadonlyArray<OrchestrationProject> = projectRows.map((row) => ({
-            id: row.projectId,
-            title: row.title,
-            workspaceRoot: row.workspaceRoot,
-            defaultModelSelection: row.defaultModelSelection,
-            scripts: row.scripts,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-            deletedAt: row.deletedAt,
-          }));
+          const projects: ReadonlyArray<OrchestrationProject> = projectRows.map((row) => {
+            const cachedProviderSlashCommands: OrchestrationProject["cachedProviderSlashCommands"] =
+              (() => {
+                if (!row.cachedProviderSlashCommandsJson) return {};
+                try {
+                  return JSON.parse(row.cachedProviderSlashCommandsJson) as OrchestrationProject["cachedProviderSlashCommands"];
+                } catch {
+                  return {};
+                }
+              })();
+            return {
+              id: row.projectId,
+              title: row.title,
+              workspaceRoot: row.workspaceRoot,
+              defaultModelSelection: row.defaultModelSelection,
+              scripts: row.scripts,
+              cachedProviderSlashCommands,
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt,
+              deletedAt: row.deletedAt,
+            };
+          });
 
           const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
             id: row.threadId,

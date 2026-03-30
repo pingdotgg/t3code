@@ -189,6 +189,52 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_PROVIDER_SLASH_COMMANDS: string[] = [];
+
+/**
+ * Module-level cache of provider slash commands, keyed by provider kind.
+ * Once any session for a provider reports its slash commands, we cache them
+ * so that new threads with the same provider can show them immediately
+ * without waiting for the session to start.
+ *
+ * The cache is also persisted to localStorage so that commands survive
+ * page reloads.
+ */
+const PROVIDER_SLASH_COMMANDS_CACHE_KEY = "t3:providerSlashCommandsCache";
+
+function loadProviderSlashCommandsCache(): Map<string, readonly string[]> {
+  const cache = new Map<string, readonly string[]>();
+  try {
+    const raw = localStorage.getItem(PROVIDER_SLASH_COMMANDS_CACHE_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+          if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
+            cache.set(key, value as string[]);
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return cache;
+}
+
+function persistProviderSlashCommandsCache(cache: Map<string, readonly string[]>): void {
+  try {
+    const obj: Record<string, readonly string[]> = {};
+    for (const [key, value] of cache) {
+      obj[key] = value;
+    }
+    localStorage.setItem(PROVIDER_SLASH_COMMANDS_CACHE_KEY, JSON.stringify(obj));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+const providerSlashCommandsCache = loadProviderSlashCommandsCache();
 
 function formatOutgoingPrompt(params: {
   provider: ProviderKind;
@@ -395,6 +441,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeComposerMenuItemRef = useRef<ComposerCommandItem | null>(null);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
+  const providerSlashCommandsRef = useRef<readonly string[]>(EMPTY_PROVIDER_SLASH_COMMANDS);
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
@@ -460,6 +507,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         detectComposerTrigger(
           nextPrompt.prompt,
           expandCollapsedComposerCursor(nextPrompt.prompt, nextPrompt.cursor),
+          providerSlashCommandsRef.current,
         ),
       );
     },
@@ -632,6 +680,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProviderByThreadId ?? threadProvider ?? "codex",
   );
   const selectedProvider: ProviderKind = lockedProvider ?? unlockedSelectedProvider;
+
+  // Derive provider slash commands: use session commands if available, then project-level
+  // cached commands (populated on project creation), then localStorage cache as last fallback.
+  const sessionSlashCommands = activeThread?.session?.providerSlashCommands;
+  const projectCachedCommands = activeProject?.cachedProviderSlashCommands?.[selectedProvider];
+  const providerSlashCommands = useMemo(() => {
+    if (sessionSlashCommands && sessionSlashCommands.length > 0) {
+      providerSlashCommandsCache.set(selectedProvider, sessionSlashCommands);
+      persistProviderSlashCommandsCache(providerSlashCommandsCache);
+      return sessionSlashCommands;
+    }
+    if (projectCachedCommands && projectCachedCommands.length > 0) {
+      const names = projectCachedCommands.map((cmd) => cmd.name);
+      providerSlashCommandsCache.set(selectedProvider, names);
+      persistProviderSlashCommandsCache(providerSlashCommandsCache);
+      return names;
+    }
+    return providerSlashCommandsCache.get(selectedProvider) ?? EMPTY_PROVIDER_SLASH_COMMANDS;
+  }, [sessionSlashCommands, projectCachedCommands, selectedProvider]);
+  providerSlashCommandsRef.current = providerSlashCommands;
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadId,
     providers: providerStatuses,
@@ -791,6 +859,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       detectComposerTrigger(
         nextCustomAnswer,
         expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
+        providerSlashCommandsRef.current,
       ),
     );
     setComposerHighlightedItemId(null);
@@ -1081,7 +1150,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     if (composerTrigger.kind === "slash-command") {
-      const slashCommandItems = [
+      const slashCommandItems: ComposerCommandItem[] = [
         {
           id: "slash:model",
           type: "slash-command",
@@ -1103,13 +1172,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
-      ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+        ...providerSlashCommands.map((cmd) => {
+          const richInfo = projectCachedCommands?.find((c) => c.name === cmd);
+          return {
+            id: `provider-slash:${cmd}`,
+            type: "provider-slash-command" as const,
+            provider: selectedProvider,
+            command: cmd,
+            label: `/${cmd}`,
+            description: richInfo?.description || "Provider command",
+          };
+        }),
+      ];
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
-        return [...slashCommandItems];
+        return slashCommandItems;
       }
       return slashCommandItems.filter(
-        (item) => item.command.includes(query) || item.label.slice(1).includes(query),
+        (item) => {
+          const command = item.type === "slash-command" || item.type === "provider-slash-command"
+            ? item.command
+            : "";
+          return command.includes(query) || item.label.slice(1).includes(query);
+        },
       );
     }
 
@@ -1129,7 +1214,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, searchableModelOptions, workspaceEntries, providerSlashCommands, selectedProvider, projectCachedCommands]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -1290,7 +1375,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       promptRef.current = insertion.prompt;
       setComposerCursor(nextCollapsedCursor);
-      setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
+      setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor, providerSlashCommandsRef.current));
       window.requestAnimationFrame(() => {
         composerEditorRef.current?.focusAt(nextCollapsedCursor);
       });
@@ -2024,7 +2109,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setSendStartedAt(null);
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
-    setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length, providerSlashCommandsRef.current));
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
@@ -2763,7 +2848,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
         addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
         addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
-        setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
+        setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length, providerSlashCommandsRef.current));
       }
       setThreadError(
         threadIdForSend,
@@ -2902,7 +2987,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }));
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(value, expandedCursor),
+        cursorAdjacentToMention ? null : detectComposerTrigger(value, expandedCursor, providerSlashCommandsRef.current),
       );
     },
     [activePendingUserInput],
@@ -3226,7 +3311,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setPrompt(nextPrompt);
       const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
       setComposerCursor(nextCursor);
-      setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
+      setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length, providerSlashCommandsRef.current));
       scheduleComposerFocus();
     },
     [scheduleComposerFocus, setPrompt],
@@ -3295,7 +3380,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        detectComposerTrigger(next.text, expandCollapsedComposerCursor(next.text, nextCursor)),
+        detectComposerTrigger(next.text, expandCollapsedComposerCursor(next.text, nextCursor), providerSlashCommandsRef.current),
       );
       window.requestAnimationFrame(() => {
         composerEditorRef.current?.focusAt(nextCursor);
@@ -3330,7 +3415,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const snapshot = readComposerSnapshot();
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor, providerSlashCommandsRef.current),
     };
   }, [readComposerSnapshot]);
 
@@ -3345,6 +3430,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!trigger) return;
       if (item.type === "path") {
         const replacement = `@${item.path} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "provider-slash-command") {
+        const replacement = `/${item.command} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,
@@ -3459,7 +3562,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor, providerSlashCommandsRef.current),
       );
     },
     [

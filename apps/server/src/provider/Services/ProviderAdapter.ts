@@ -11,6 +11,7 @@ import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderKind,
+  ProviderSlashCommandInfo,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -118,6 +119,16 @@ export interface ProviderAdapterShape<TError> {
    * Stop all sessions owned by this adapter.
    */
   readonly stopAll: () => Effect.Effect<void, TError>;
+
+  /**
+   * Discover available slash commands without a full session.
+   *
+   * Fires a lightweight probe query and returns the provider's available
+   * slash commands with rich metadata (name, description, argumentHint).
+   */
+  readonly discoverSlashCommands: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<ProviderSlashCommandInfo>, TError>;
 
   /**
    * Canonical runtime event stream emitted by this adapter.

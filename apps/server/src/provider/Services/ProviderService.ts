@@ -20,6 +20,7 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  ProviderSlashCommandInfo,
   ProviderStopSessionInput,
   ThreadId,
   ProviderTurnStartResult,
@@ -98,6 +99,14 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Discover available slash commands for a provider without a full session.
+   */
+  readonly discoverSlashCommands: (input: {
+    readonly provider: ProviderKind;
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<ProviderSlashCommandInfo>, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.

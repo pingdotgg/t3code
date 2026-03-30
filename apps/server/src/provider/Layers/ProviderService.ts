@@ -578,6 +578,12 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       ),
     );
 
+    const discoverSlashCommands: ProviderServiceShape["discoverSlashCommands"] = (input) =>
+      Effect.gen(function* () {
+        const adapter = yield* registry.getByProvider(input.provider);
+        return yield* adapter.discoverSlashCommands({ cwd: input.cwd });
+      });
+
     return {
       startSession,
       sendTurn,
@@ -588,6 +594,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       listSessions,
       getCapabilities,
       rollbackConversation,
+      discoverSlashCommands,
       // Each access creates a fresh PubSub subscription so that multiple
       // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
       // independently receive all runtime events.

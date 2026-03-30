@@ -141,12 +141,22 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const ProviderSlashCommandInfo = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String,
+  argumentHint: Schema.String,
+});
+export type ProviderSlashCommandInfo = typeof ProviderSlashCommandInfo.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  cachedProviderSlashCommands: Schema.Record(Schema.String, Schema.Array(ProviderSlashCommandInfo)).pipe(
+    Schema.withDecodingDefault(() => ({}) as Record<string, Array<ProviderSlashCommandInfo>>),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -205,6 +215,9 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  providerSlashCommands: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(() => [] as Array<string>),
+  ),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
@@ -573,6 +586,15 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ProjectProviderSlashCommandsSetCommand = Schema.Struct({
+  type: Schema.Literal("project.provider-slash-commands.set"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  provider: ProviderKind,
+  commands: Schema.Array(ProviderSlashCommandInfo),
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -581,6 +603,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ProjectProviderSlashCommandsSetCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -594,6 +617,7 @@ export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
   "project.deleted",
+  "project.provider-slash-commands-set",
   "thread.created",
   "thread.deleted",
   "thread.archived",
@@ -642,6 +666,13 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
 export const ProjectDeletedPayload = Schema.Struct({
   projectId: ProjectId,
   deletedAt: IsoDateTime,
+});
+
+export const ProjectProviderSlashCommandsSetPayload = Schema.Struct({
+  projectId: ProjectId,
+  provider: ProviderKind,
+  commands: Schema.Array(ProviderSlashCommandInfo),
+  updatedAt: IsoDateTime,
 });
 
 export const ThreadCreatedPayload = Schema.Struct({
@@ -916,6 +947,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("project.provider-slash-commands-set"),
+    payload: ProjectProviderSlashCommandsSetPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

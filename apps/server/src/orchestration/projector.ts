@@ -13,6 +13,7 @@ import {
   ProjectCreatedPayload,
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
+  ProjectProviderSlashCommandsSetPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
@@ -185,6 +186,7 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
+            cachedProviderSlashCommands: {},
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
@@ -646,6 +648,30 @@ export function projectEvent(
             }),
           };
         }),
+      );
+
+    case "project.provider-slash-commands-set":
+      return decodeForEvent(
+        ProjectProviderSlashCommandsSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          projects: nextBase.projects.map((project) =>
+            project.id === payload.projectId
+              ? {
+                  ...project,
+                  cachedProviderSlashCommands: {
+                    ...project.cachedProviderSlashCommands,
+                    [payload.provider]: payload.commands,
+                  },
+                  updatedAt: payload.updatedAt,
+                }
+              : project,
+          ),
+        })),
       );
 
     default:

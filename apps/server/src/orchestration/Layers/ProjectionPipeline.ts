@@ -385,6 +385,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             workspaceRoot: event.payload.workspaceRoot,
             defaultModelSelection: event.payload.defaultModelSelection,
             scripts: event.payload.scripts,
+            cachedProviderSlashCommandsJson: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
@@ -424,6 +425,26 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             deletedAt: event.payload.deletedAt,
             updatedAt: event.payload.deletedAt,
+          });
+          return;
+        }
+
+        case "project.provider-slash-commands-set": {
+          const existingRow = yield* projectionProjectRepository.getById({
+            projectId: event.payload.projectId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          // Merge new provider commands into existing cached map.
+          const existingCache: Record<string, unknown> = existingRow.value.cachedProviderSlashCommandsJson
+            ? JSON.parse(existingRow.value.cachedProviderSlashCommandsJson)
+            : {};
+          existingCache[event.payload.provider] = event.payload.commands;
+          yield* projectionProjectRepository.upsert({
+            ...existingRow.value,
+            cachedProviderSlashCommandsJson: JSON.stringify(existingCache),
+            updatedAt: event.payload.updatedAt,
           });
           return;
         }
@@ -803,6 +824,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       if (event.type !== "thread.session-set") {
         return;
       }
+      const providerSlashCommands = event.payload.session.providerSlashCommands;
       yield* projectionThreadSessionRepository.upsert({
         threadId: event.payload.threadId,
         status: event.payload.session.status,
@@ -810,6 +832,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         runtimeMode: event.payload.session.runtimeMode,
         activeTurnId: event.payload.session.activeTurnId,
         lastError: event.payload.session.lastError,
+        providerSlashCommandsJson:
+          providerSlashCommands && providerSlashCommands.length > 0
+            ? JSON.stringify(providerSlashCommands)
+            : null,
         updatedAt: event.payload.session.updatedAt,
       });
     });
