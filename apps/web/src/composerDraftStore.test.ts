@@ -1,15 +1,18 @@
 import * as Schema from "effect/Schema";
 import {
+  type ServerProvider,
   ProjectId,
   ThreadId,
   type ModelSelection,
   type ProviderModelOptions,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   type ComposerImageAttachment,
+  deriveEffectiveComposerModelState,
   useComposerDraftStore,
 } from "./composerDraftStore";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
@@ -92,6 +95,70 @@ function modelSelection(
 function providerModelOptions(options: ProviderModelOptions): ProviderModelOptions {
   return options;
 }
+
+const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
+  {
+    provider: "codex",
+    enabled: true,
+    installed: true,
+    version: "0.1.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [
+      {
+        slug: "gpt-5.4",
+        name: "GPT-5.4",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [
+            { value: "medium", label: "Medium", isDefault: true },
+            { value: "high", label: "High" },
+          ],
+          supportsFastMode: true,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+      },
+      {
+        slug: "gpt-5.3-codex",
+        name: "GPT-5.3 Codex",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [{ value: "medium", label: "Medium", isDefault: true }],
+          supportsFastMode: true,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+      },
+    ],
+  },
+  {
+    provider: "claudeAgent",
+    enabled: true,
+    installed: true,
+    version: "0.1.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [
+      {
+        slug: "claude-sonnet-4-6",
+        name: "Claude Sonnet 4.6",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [{ value: "high", label: "High", isDefault: true }],
+          supportsFastMode: true,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+      },
+    ],
+  },
+];
 
 describe("composerDraftStore addImages", () => {
   const threadId = ThreadId.makeUnsafe("thread-dedupe");
@@ -932,6 +999,62 @@ describe("composerDraftStore sticky composer settings", () => {
       },
       activeProvider: "claudeAgent",
     });
+  });
+
+  it("uses sticky model selection when refresh has no thread-specific draft override", () => {
+    const result = deriveEffectiveComposerModelState({
+      draft: null,
+      stickyModelSelectionByProvider: {
+        codex: modelSelection("codex", "gpt-5.3-codex", {
+          reasoningEffort: "medium",
+          fastMode: true,
+        }),
+      },
+      providers: TEST_PROVIDERS,
+      selectedProvider: "codex",
+      threadModelSelection: modelSelection("codex", "gpt-5.4"),
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(result.selectedModel).toBe("gpt-5.3-codex");
+    expect(result.modelOptions).toEqual(
+      providerModelOptions({
+        codex: { reasoningEffort: "medium", fastMode: true },
+      }),
+    );
+  });
+
+  it("prefers thread draft selection over sticky model selection", () => {
+    const result = deriveEffectiveComposerModelState({
+      draft: {
+        modelSelectionByProvider: {
+          codex: modelSelection("codex", "gpt-5.4", {
+            reasoningEffort: "high",
+            fastMode: true,
+          }),
+        },
+        activeProvider: "codex",
+      },
+      stickyModelSelectionByProvider: {
+        codex: modelSelection("codex", "gpt-5.3-codex", {
+          reasoningEffort: "medium",
+          fastMode: true,
+        }),
+      },
+      providers: TEST_PROVIDERS,
+      selectedProvider: "codex",
+      threadModelSelection: modelSelection("codex", "gpt-5.3-codex"),
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(result.selectedModel).toBe("gpt-5.4");
+    expect(result.modelOptions).toEqual(
+      providerModelOptions({
+        codex: { reasoningEffort: "high", fastMode: true },
+      }),
+    );
   });
 });
 

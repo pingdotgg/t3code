@@ -622,6 +622,7 @@ export function deriveEffectiveComposerModelState(input: {
     | Pick<ComposerThreadDraftState, "modelSelectionByProvider" | "activeProvider">
     | null
     | undefined;
+  stickyModelSelectionByProvider?: Partial<Record<ProviderKind, ModelSelection>> | null | undefined;
   providers: ReadonlyArray<ServerProvider>;
   selectedProvider: ProviderKind;
   threadModelSelection: ModelSelection | null | undefined;
@@ -634,16 +635,19 @@ export function deriveEffectiveComposerModelState(input: {
       input.selectedProvider,
     ) ?? getDefaultServerModel(input.providers, input.selectedProvider);
   const activeSelection = input.draft?.modelSelectionByProvider?.[input.selectedProvider];
-  const selectedModel = activeSelection?.model
+  const stickySelection = input.stickyModelSelectionByProvider?.[input.selectedProvider];
+  const preferredSelection = activeSelection ?? stickySelection;
+  const selectedModel = preferredSelection?.model
     ? resolveAppModelSelection(
         input.selectedProvider,
         input.settings,
         input.providers,
-        activeSelection.model,
+        preferredSelection.model,
       )
     : baseModel;
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
+    modelSelectionByProviderToOptions(input.stickyModelSelectionByProvider) ??
     providerModelOptionsFromSelection(input.threadModelSelection) ??
     providerModelOptionsFromSelection(input.projectModelSelection) ??
     null;
@@ -2174,11 +2178,15 @@ export function useEffectiveComposerModelState(input: {
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const draft = useComposerThreadDraft(input.threadId);
+  const stickyModelSelectionByProvider = useComposerDraftStore(
+    (state) => state.stickyModelSelectionByProvider,
+  );
 
   return useMemo(
     () =>
       deriveEffectiveComposerModelState({
         draft,
+        stickyModelSelectionByProvider,
         providers: input.providers,
         selectedProvider: input.selectedProvider,
         threadModelSelection: input.threadModelSelection,
@@ -2192,6 +2200,7 @@ export function useEffectiveComposerModelState(input: {
       input.projectModelSelection,
       input.selectedProvider,
       input.threadModelSelection,
+      stickyModelSelectionByProvider,
     ],
   );
 }
