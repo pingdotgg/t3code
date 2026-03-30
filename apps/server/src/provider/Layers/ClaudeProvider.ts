@@ -1,6 +1,5 @@
 import type {
   ClaudeSettings,
-  ClaudeModelOptions,
   ModelCapabilities,
   ServerProvider,
   ServerProviderModel,
@@ -9,7 +8,6 @@ import type {
 } from "@t3tools/contracts";
 import { Cache, Duration, Effect, Equal, Layer, Option, Result, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { resolveContextWindow, resolveEffort } from "@t3tools/shared/model";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk";
 
@@ -96,25 +94,6 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
       promptInjectedEffortLevels: [],
     }
   );
-}
-
-export function normalizeClaudeModelOptions(
-  model: string | null | undefined,
-  modelOptions: ClaudeModelOptions | null | undefined,
-): ClaudeModelOptions | undefined {
-  const caps = getClaudeModelCapabilities(model);
-  const effort = resolveEffort(caps, modelOptions?.effort);
-  const thinking =
-    caps.supportsThinkingToggle && modelOptions?.thinking === false ? false : undefined;
-  const fastMode = caps.supportsFastMode && modelOptions?.fastMode === true ? true : undefined;
-  const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
-  const nextOptions: ClaudeModelOptions = {
-    ...(thinking === false ? { thinking: false } : {}),
-    ...(effort ? { effort: effort as ClaudeModelOptions["effort"] } : {}),
-    ...(fastMode ? { fastMode: true } : {}),
-    ...(contextWindow ? { contextWindow } : {}),
-  };
-  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
 export function parseClaudeAuthStatusFromOutput(result: CommandResult): {

@@ -1,7 +1,6 @@
 import * as OS from "node:os";
 import type {
   ModelCapabilities,
-  CodexModelOptions,
   CodexSettings,
   ServerProvider,
   ServerProviderModel,
@@ -21,7 +20,6 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { resolveEffort } from "@t3tools/shared/model";
 
 import {
   buildServerProvider,
@@ -168,22 +166,6 @@ export function getCodexModelCapabilities(model: string | null | undefined): Mod
       promptInjectedEffortLevels: [],
     }
   );
-}
-
-export function normalizeCodexModelOptions(
-  model: string | null | undefined,
-  modelOptions: CodexModelOptions | null | undefined,
-): CodexModelOptions | undefined {
-  const caps = getCodexModelCapabilities(model);
-  const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
-  const fastModeEnabled = modelOptions?.fastMode === true;
-  const nextOptions: CodexModelOptions = {
-    ...(reasoningEffort
-      ? { reasoningEffort: reasoningEffort as CodexModelOptions["reasoningEffort"] }
-      : {}),
-    ...(fastModeEnabled ? { fastMode: true } : {}),
-  };
-  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
 export function parseAuthStatusFromOutput(result: CommandResult): {

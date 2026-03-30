@@ -136,7 +136,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set(["textGenerationModelS
 
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
-    return JSON.stringify(current) === JSON.stringify(defaults) ? undefined : current;
+    return Equal.equals(current, defaults) ? undefined : current;
   }
 
   if (

@@ -6,12 +6,12 @@ import {
 } from "@t3tools/contracts";
 import { isClaudeUltrathinkPrompt, resolveEffort } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
+import { getProviderModelCapabilities } from "../../providerModels";
+import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 import {
-  getProviderModelCapabilities,
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
-} from "../../providerModels";
-import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+} from "@t3tools/shared/model";
 
 export type ComposerProviderStateInput = {
   provider: ProviderKind;

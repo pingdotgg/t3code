@@ -2,6 +2,8 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   type ClaudeCodeEffort,
+  type ClaudeModelOptions,
+  type CodexModelOptions,
   type ModelCapabilities,
   type ModelSelection,
   type ProviderKind,
@@ -81,6 +83,38 @@ export function resolveContextWindow(
   const defaultValue = getDefaultContextWindow(caps);
   if (!raw) return defaultValue ?? undefined;
   return hasContextWindowOption(caps, raw) ? raw : (defaultValue ?? undefined);
+}
+
+export function normalizeCodexModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: CodexModelOptions | null | undefined,
+): CodexModelOptions | undefined {
+  const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
+  const fastMode = caps.supportsFastMode ? modelOptions?.fastMode : undefined;
+  const nextOptions: CodexModelOptions = {
+    ...(reasoningEffort
+      ? { reasoningEffort: reasoningEffort as CodexModelOptions["reasoningEffort"] }
+      : {}),
+    ...(fastMode !== undefined ? { fastMode } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
+export function normalizeClaudeModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: ClaudeModelOptions | null | undefined,
+): ClaudeModelOptions | undefined {
+  const effort = resolveEffort(caps, modelOptions?.effort);
+  const thinking = caps.supportsThinkingToggle ? modelOptions?.thinking : undefined;
+  const fastMode = caps.supportsFastMode ? modelOptions?.fastMode : undefined;
+  const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
+  const nextOptions: ClaudeModelOptions = {
+    ...(thinking !== undefined ? { thinking } : {}),
+    ...(effort ? { effort: effort as ClaudeModelOptions["effort"] } : {}),
+    ...(fastMode !== undefined ? { fastMode } : {}),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {

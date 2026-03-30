@@ -28,8 +28,9 @@ import {
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "../Utils.ts";
-import { normalizeCodexModelOptions } from "../../provider/Layers/CodexProvider.ts";
+import { getCodexModelCapabilities } from "../../provider/Layers/CodexProvider.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { normalizeCodexModelOptionsWithCapabilities } from "@t3tools/shared/model";
 
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
@@ -156,8 +157,8 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       ).pipe(Effect.catch(() => Effect.undefined));
 
       const runCodexCommand = Effect.gen(function* () {
-        const normalizedOptions = normalizeCodexModelOptions(
-          modelSelection.model,
+        const normalizedOptions = normalizeCodexModelOptionsWithCapabilities(
+          getCodexModelCapabilities(modelSelection.model),
           modelSelection.options,
         );
         const reasoningEffort =
