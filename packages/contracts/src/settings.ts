@@ -39,6 +39,14 @@ export type ClientSettings = typeof ClientSettingsSchema.Type;
 
 export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientSettingsSchema)({});
 
+// ── Appearance ──────────────────────────────────────────────────
+
+export const ColorMode = Schema.Literals(["light", "dark", "system"]);
+export type ColorMode = typeof ColorMode.Type;
+export const DEFAULT_COLOR_MODE: ColorMode = "system";
+
+export const DEFAULT_ACTIVE_THEME_ID = "t3code";
+
 // ── Server Settings (server-authoritative) ────────────────────
 
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
@@ -82,6 +90,13 @@ export const ServerSettings = Schema.Struct({
       model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
     })),
   ),
+
+  // Appearance
+  colorMode: ColorMode.pipe(
+    Schema.withDecodingDefault(() => "system" as const satisfies ColorMode),
+  ),
+  activeThemeId: Schema.String.pipe(Schema.withDecodingDefault(() => DEFAULT_ACTIVE_THEME_ID)),
+  accentHue: Schema.NullOr(Schema.Number).pipe(Schema.withDecodingDefault(() => null)),
 
   // Provider specific settings
   providers: Schema.Struct({
@@ -145,6 +160,9 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  colorMode: Schema.optionalKey(ColorMode),
+  activeThemeId: Schema.optionalKey(Schema.String),
+  accentHue: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),

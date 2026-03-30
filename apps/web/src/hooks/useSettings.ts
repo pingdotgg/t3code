@@ -70,9 +70,7 @@ function splitPatch(patch: Partial<UnifiedSettings>): {
  * only re-render when the slice they care about changes.
  */
 
-export function useSettings<T extends UnifiedSettings = UnifiedSettings>(
-  selector?: (s: UnifiedSettings) => T,
-): T {
+export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings) => T): T {
   const { data: serverConfig } = useQuery(serverConfigQueryOptions());
   const [clientSettings] = useLocalStorage(
     CLIENT_SETTINGS_STORAGE_KEY,
@@ -239,6 +237,18 @@ export function migrateLocalSettingsToServer(): void {
 
   const raw = localStorage.getItem(OLD_SETTINGS_KEY);
   if (!raw) return;
+
+  // Migrate old t3code:theme localStorage key to server colorMode
+  try {
+    const oldTheme = localStorage.getItem("t3code:theme");
+    if (oldTheme === "light" || oldTheme === "dark" || oldTheme === "system") {
+      const api = ensureNativeApi();
+      void api.server.updateSettings({ colorMode: oldTheme });
+      localStorage.removeItem("t3code:theme");
+    }
+  } catch {
+    // Best-effort — don't block startup
+  }
 
   try {
     const old = JSON.parse(raw);

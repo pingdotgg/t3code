@@ -73,6 +73,12 @@ export type DesktopUpdateStatus =
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
 
+export type DesktopAppearance = {
+  mode: DesktopTheme;
+  themeId: string;
+  accentHue: number | null;
+};
+
 export interface DesktopRuntimeInfo {
   hostArch: DesktopRuntimeArch;
   appArch: DesktopRuntimeArch;
@@ -110,7 +116,9 @@ export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
+  /** @deprecated Use `setAppearance` instead. */
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  setAppearance: (appearance: DesktopAppearance) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

@@ -22,6 +22,7 @@ import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerProvidersUpdated, onServerWelcome } from "../wsNativeApi";
+import { useAppearance } from "../hooks/useAppearance";
 import { migrateLocalSettingsToServer } from "../hooks/useSettings";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
@@ -38,6 +39,11 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
+  // Mount appearance system — drives .dark class, theme tokens, and Electron sync.
+  // Must be called before any early returns to satisfy React's Rules of Hooks.
+  // The import also triggers module-scope FOUC prevention.
+  useAppearance();
+
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">

@@ -50,6 +50,7 @@ syncShellEnvironment();
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
+const SET_APPEARANCE_CHANNEL = "desktop:set-appearance";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
@@ -1158,6 +1159,17 @@ function registerIpcHandlers(): void {
     }
 
     nativeTheme.themeSource = theme;
+  });
+
+  ipcMain.removeHandler(SET_APPEARANCE_CHANNEL);
+  ipcMain.handle(SET_APPEARANCE_CHANNEL, async (_event, raw: unknown) => {
+    if (typeof raw !== "object" || raw === null) return;
+    const appearance = raw as Record<string, unknown>;
+    const mode = getSafeTheme(appearance.mode);
+    if (!mode) return;
+    nativeTheme.themeSource = mode;
+    // themeId and accentHue are stored for future Electron shell styling
+    // (title bar tint, vibrancy, etc.)
   });
 
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);

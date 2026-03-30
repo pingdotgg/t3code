@@ -4,6 +4,8 @@
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
+  --color-diff-deletion: var(--diff-deletion);
+  --color-diff-addition: var(--diff-addition);
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
@@ -89,6 +91,8 @@
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
+  --diff-addition: var(--success);
+  --diff-deletion: var(--destructive);
 
   @variant dark {
     color-scheme: dark;
@@ -117,6 +121,8 @@
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
+    --diff-addition: var(--success);
+    --diff-deletion: var(--destructive);
   }
 }
 

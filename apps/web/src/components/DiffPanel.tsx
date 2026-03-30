@@ -25,7 +25,7 @@ import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
-import { useTheme } from "../hooks/useTheme";
+import { useAppearance } from "../hooks/useAppearance";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -55,18 +55,20 @@ const DIFF_PANEL_UNSAFE_CSS = `
   --diffs-bg-separator-override: color-mix(in srgb, var(--background) 95%, var(--foreground));
   --diffs-bg-buffer-override: color-mix(in srgb, var(--background) 90%, var(--foreground));
 
-  --diffs-bg-addition-override: color-mix(in srgb, var(--background) 92%, var(--success));
-  --diffs-bg-addition-number-override: color-mix(in srgb, var(--background) 88%, var(--success));
-  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--background) 85%, var(--success));
-  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--background) 80%, var(--success));
+  --diffs-addition-color-override: var(--diff-addition);
+  --diffs-bg-addition-override: color-mix(in srgb, var(--background) 92%, var(--diff-addition));
+  --diffs-bg-addition-number-override: color-mix(in srgb, var(--background) 88%, var(--diff-addition));
+  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--background) 85%, var(--diff-addition));
+  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--background) 80%, var(--diff-addition));
 
-  --diffs-bg-deletion-override: color-mix(in srgb, var(--background) 92%, var(--destructive));
-  --diffs-bg-deletion-number-override: color-mix(in srgb, var(--background) 88%, var(--destructive));
-  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--background) 85%, var(--destructive));
+  --diffs-deletion-color-override: var(--diff-deletion);
+  --diffs-bg-deletion-override: color-mix(in srgb, var(--background) 92%, var(--diff-deletion));
+  --diffs-bg-deletion-number-override: color-mix(in srgb, var(--background) 88%, var(--diff-deletion));
+  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--background) 85%, var(--diff-deletion));
   --diffs-bg-deletion-emphasis-override: color-mix(
     in srgb,
     var(--background) 80%,
-    var(--destructive)
+    var(--diff-deletion)
   );
 
   background-color: var(--diffs-bg) !important;
@@ -165,7 +167,7 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme } = useAppearance();
   const settings = useSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
