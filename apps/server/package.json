@@ -18,7 +18,6 @@
     "dev": "bun run src/index.ts",
     "build": "node scripts/cli.ts build",
     "start": "node dist/index.mjs",
-    "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

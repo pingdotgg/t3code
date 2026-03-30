@@ -3,7 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "effect-language-service patch",
     "claude-fast-mode-probe": "bun run claude-fast-mode-probe.ts",
     "claude-haiku-thinking-probe": "bun run claude-haiku-thinking-probe.ts",
     "typecheck": "tsc --noEmit",
