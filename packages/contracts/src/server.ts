@@ -35,6 +35,13 @@ export const ServerProviderAuthStatus = Schema.Literals([
 ]);
 export type ServerProviderAuthStatus = typeof ServerProviderAuthStatus.Type;
 
+export const ServerProviderAuth = Schema.Struct({
+  status: ServerProviderAuthStatus,
+  type: Schema.optional(TrimmedNonEmptyString),
+  label: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderAuth = typeof ServerProviderAuth.Type;
+
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
@@ -49,7 +56,7 @@ export const ServerProvider = Schema.Struct({
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
   status: ServerProviderState,
-  authStatus: ServerProviderAuthStatus,
+  auth: ServerProviderAuth,
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
