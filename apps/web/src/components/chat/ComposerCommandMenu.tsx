@@ -43,6 +43,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
 }) {
   return (
     <Command
+      autoHighlight={false}
       mode="none"
       onItemHighlighted={(highlightedValue) => {
         props.onHighlightedItemChange(
@@ -58,6 +59,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               item={item}
               resolvedTheme={props.resolvedTheme}
               isActive={props.activeItemId === item.id}
+              onHighlight={props.onHighlightedItemChange}
               onSelect={props.onSelect}
             />
           ))}
@@ -80,15 +82,19 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   item: ComposerCommandItem;
   resolvedTheme: "light" | "dark";
   isActive: boolean;
+  onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   return (
     <CommandItem
       value={props.item.id}
       className={cn(
-        "cursor-pointer select-none gap-2",
-        props.isActive && "bg-accent text-accent-foreground",
+        "cursor-pointer select-none gap-2 data-highlighted:bg-transparent data-highlighted:text-inherit",
+        props.isActive && "bg-accent! text-accent-foreground!",
       )}
+      onMouseMove={() => {
+        if (!props.isActive) props.onHighlight(props.item.id);
+      }}
       onMouseDown={(event) => {
         event.preventDefault();
       }}
