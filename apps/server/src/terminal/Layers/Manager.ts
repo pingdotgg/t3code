@@ -11,6 +11,7 @@ import {
   Data,
   Effect,
   Encoding,
+  Equal,
   Exit,
   Fiber,
   FileSystem,
@@ -1547,8 +1548,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           const currentRuntimeEnv = liveSession.runtimeEnv;
           const targetCols = input.cols ?? liveSession.cols;
           const targetRows = input.rows ?? liveSession.rows;
-          const runtimeEnvChanged =
-            JSON.stringify(currentRuntimeEnv) !== JSON.stringify(nextRuntimeEnv);
+          const runtimeEnvChanged = !Equal.equals(currentRuntimeEnv, nextRuntimeEnv);
 
           if (liveSession.cwd !== input.cwd || runtimeEnvChanged) {
             yield* stopProcess(liveSession);
@@ -1570,8 +1570,6 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               liveSession.terminalId,
               liveSession.history,
             );
-          } else if (currentRuntimeEnv !== nextRuntimeEnv) {
-            liveSession.runtimeEnv = nextRuntimeEnv;
           }
 
           if (!liveSession.process) {
