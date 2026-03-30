@@ -164,6 +164,7 @@ import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
   buildExpiredTerminalContextToastCopy,
+  buildRunningTurnBlockedMessage,
   buildLocalDraftThread,
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
@@ -667,6 +668,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const hasRunningTerminalSubprocess = terminalState.runningTerminalIds.length > 0;
+  const runningTurnBlockedMessage = buildRunningTurnBlockedMessage(hasRunningTerminalSubprocess);
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -2450,6 +2453,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (phase === "running") {
+      setThreadError(activeThread.id, runningTurnBlockedMessage);
+      return;
+    }
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -4048,22 +4055,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             </Button>
                           </div>
                         ) : phase === "running" ? (
-                          <button
-                            type="button"
-                            className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-                            onClick={() => void onInterrupt()}
-                            aria-label="Stop generation"
-                          >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 12 12"
-                              fill="currentColor"
-                              aria-hidden="true"
+                          <div className="flex items-center gap-2">
+                            <span className="hidden max-w-52 text-right text-xs text-muted-foreground/70 sm:inline">
+                              {runningTurnBlockedMessage}
+                            </span>
+                            <button
+                              type="button"
+                              className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-full bg-rose-500/90 px-3 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8"
+                              onClick={() => void onInterrupt()}
+                              aria-label="Stop generation"
+                              title={runningTurnBlockedMessage}
                             >
-                              <rect x="2" y="2" width="8" height="8" rx="1.5" />
-                            </svg>
-                          </button>
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 12 12"
+                                fill="currentColor"
+                                aria-hidden="true"
+                              >
+                                <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                              </svg>
+                              <span className="hidden sm:inline">Stop</span>
+                            </button>
+                          </div>
                         ) : pendingUserInputs.length === 0 ? (
                           showPlanFollowUpPrompt ? (
                             prompt.trim().length > 0 ? (

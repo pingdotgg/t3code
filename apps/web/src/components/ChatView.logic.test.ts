@@ -1,7 +1,11 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { buildExpiredTerminalContextToastCopy, deriveComposerSendState } from "./ChatView.logic";
+import {
+  buildExpiredTerminalContextToastCopy,
+  buildRunningTurnBlockedMessage,
+  deriveComposerSendState,
+} from "./ChatView.logic";
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
@@ -65,5 +69,19 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("buildRunningTurnBlockedMessage", () => {
+  it("explains when a turn is still running", () => {
+    expect(buildRunningTurnBlockedMessage(false)).toBe(
+      "A turn is still running. Stop it before sending another prompt.",
+    );
+  });
+
+  it("explains when a long-running command is keeping the turn active", () => {
+    expect(buildRunningTurnBlockedMessage(true)).toBe(
+      "A long-running command is still active. Stop the current turn before sending another prompt.",
+    );
   });
 });

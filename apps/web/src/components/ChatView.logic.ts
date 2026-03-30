@@ -161,3 +161,9 @@ export function buildExpiredTerminalContextToastCopy(
     description: "Re-add it if you want that terminal output included.",
   };
 }
+
+export function buildRunningTurnBlockedMessage(hasRunningSubprocess: boolean): string {
+  return hasRunningSubprocess
+    ? "A long-running command is still active. Stop the current turn before sending another prompt."
+    : "A turn is still running. Stop it before sending another prompt.";
+}
