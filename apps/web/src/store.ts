@@ -158,6 +158,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     archivedAt: thread.archivedAt,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
@@ -214,7 +215,12 @@ function buildLatestTurn(params: {
   startedAt: string | null;
   completedAt: string | null;
   assistantMessageId: NonNullable<Thread["latestTurn"]>["assistantMessageId"];
+  sourceProposedPlan?: Thread["pendingSourceProposedPlan"];
 }): NonNullable<Thread["latestTurn"]> {
+  const resolvedPlan =
+    params.previous?.turnId === params.turnId
+      ? params.previous.sourceProposedPlan
+      : params.sourceProposedPlan;
   return {
     turnId: params.turnId,
     state: params.state,
@@ -222,9 +228,7 @@ function buildLatestTurn(params: {
     startedAt: params.startedAt,
     completedAt: params.completedAt,
     assistantMessageId: params.assistantMessageId,
-    ...(params.previous?.turnId === params.turnId && params.previous.sourceProposedPlan
-      ? { sourceProposedPlan: params.previous.sourceProposedPlan }
-      : {}),
+    ...(resolvedPlan ? { sourceProposedPlan: resolvedPlan } : {}),
   };
 }
 
@@ -534,6 +538,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           : {}),
         runtimeMode: event.payload.runtimeMode,
         interactionMode: event.payload.interactionMode,
+        pendingSourceProposedPlan: event.payload.sourceProposedPlan,
         updatedAt: event.occurredAt,
       }));
       return threads === state.threads ? state : { ...state, threads };
@@ -629,6 +634,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
                   thread.latestTurn?.turnId === event.payload.turnId
                     ? (thread.latestTurn.startedAt ?? event.payload.createdAt)
                     : event.payload.createdAt,
+                sourceProposedPlan: thread.pendingSourceProposedPlan,
                 completedAt: event.payload.streaming
                   ? thread.latestTurn?.turnId === event.payload.turnId
                     ? (thread.latestTurn.completedAt ?? null)
@@ -671,6 +677,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
                   thread.latestTurn?.turnId === event.payload.session.activeTurnId
                     ? thread.latestTurn.assistantMessageId
                     : null,
+                sourceProposedPlan: thread.pendingSourceProposedPlan,
               })
             : thread.latestTurn,
         updatedAt: event.occurredAt,
@@ -755,6 +762,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
                 startedAt: thread.latestTurn?.startedAt ?? event.payload.completedAt,
                 completedAt: event.payload.completedAt,
                 assistantMessageId: event.payload.assistantMessageId,
+                sourceProposedPlan: thread.pendingSourceProposedPlan,
               })
             : thread.latestTurn;
         return {
