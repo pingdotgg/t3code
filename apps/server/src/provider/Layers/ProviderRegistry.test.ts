@@ -201,7 +201,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "pro");
-          assert.strictEqual(status.auth.label, "Pro");
+          assert.strictEqual(status.auth.label, "ChatGPT Pro Subscription");
           assert.deepStrictEqual(
             status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
             true,
@@ -233,7 +233,69 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "plus");
-          assert.strictEqual(status.auth.label, "Plus");
+          assert.strictEqual(status.auth.label, "ChatGPT Plus Subscription");
+          assert.deepStrictEqual(
+            status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
+            false,
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("hides spark from codex models for non-pro chatgpt subscriptions", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(() =>
+            Effect.succeed({
+              type: "chatgpt" as const,
+              planType: "team" as const,
+              sparkEnabled: false,
+            }),
+          );
+
+          assert.strictEqual(status.provider, "codex");
+          assert.strictEqual(status.auth.type, "team");
+          assert.strictEqual(status.auth.label, "ChatGPT Team Subscription");
+          assert.deepStrictEqual(
+            status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
+            false,
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("returns an api key label for codex api key auth", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(() =>
+            Effect.succeed({
+              type: "apiKey" as const,
+              planType: null,
+              sparkEnabled: false,
+            }),
+          );
+
+          assert.strictEqual(status.provider, "codex");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "apiKey");
+          assert.strictEqual(status.auth.label, "OpenAI API Key");
           assert.deepStrictEqual(
             status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
             false,
@@ -804,7 +866,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "maxplan");
-          assert.strictEqual(status.auth.label, "Max");
+          assert.strictEqual(status.auth.label, "Claude Max Subscription");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -813,6 +875,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               if (joined === "auth status")
                 return {
                   stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("returns an api key label for claude api key auth", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus();
+          assert.strictEqual(status.provider, "claudeAgent");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "apiKey");
+          assert.strictEqual(status.auth.label, "Claude API Key");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"api-key"}\n',
                   stderr: "",
                   code: 0,
                 };

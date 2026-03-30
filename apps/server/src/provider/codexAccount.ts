@@ -19,8 +19,7 @@ export interface CodexAccountSnapshot {
 
 export const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
 export const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
-
-const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "plus"]);
+const CODEX_SPARK_ENABLED_PLAN_TYPES = new Set<CodexPlanType>(["pro"]);
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") {
@@ -42,7 +41,7 @@ export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapsho
     return {
       type: "apiKey",
       planType: null,
-      sparkEnabled: true,
+      sparkEnabled: false,
     };
   }
 
@@ -51,43 +50,51 @@ export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapsho
     return {
       type: "chatgpt",
       planType,
-      sparkEnabled: !CODEX_SPARK_DISABLED_PLAN_TYPES.has(planType),
+      sparkEnabled: CODEX_SPARK_ENABLED_PLAN_TYPES.has(planType),
     };
   }
 
   return {
     type: "unknown",
     planType: null,
-    sparkEnabled: true,
+    sparkEnabled: false,
   };
 }
 
 export function codexAuthSubType(account: CodexAccountSnapshot | undefined): string | undefined {
+  if (account?.type === "apiKey") {
+    return "apiKey";
+  }
+
   if (account?.type !== "chatgpt") {
     return undefined;
   }
 
-  return account.planType && account.planType !== "unknown" ? account.planType : undefined;
+  return account.planType && account.planType !== "unknown" ? account.planType : "chatgpt";
 }
 
 export function codexAuthSubLabel(account: CodexAccountSnapshot | undefined): string | undefined {
   switch (codexAuthSubType(account)) {
+    case "apiKey":
+      return "OpenAI API Key";
+    case "chatgpt":
+      return "ChatGPT Subscription";
     case "free":
-      return "Free";
+      return "ChatGPT Free Subscription";
     case "go":
-      return "Go";
+      return "ChatGPT Go Subscription";
     case "plus":
-      return "Plus";
+      return "ChatGPT Plus Subscription";
     case "pro":
-      return "Pro";
+      return "ChatGPT Pro Subscription";
     case "team":
-      return "Team";
+      return "ChatGPT Team Subscription";
     case "business":
-      return "Business";
+      return "ChatGPT Business Subscription";
     case "enterprise":
-      return "Enterprise";
+      return "ChatGPT Enterprise Subscription";
     case "edu":
-      return "Edu";
+      return "ChatGPT Edu Subscription";
     default:
       return undefined;
   }

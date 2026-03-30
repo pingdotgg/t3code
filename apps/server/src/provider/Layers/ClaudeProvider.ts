@@ -216,6 +216,8 @@ const SUBSCRIPTION_TYPE_KEYS = [
 
 /** Keys whose value may be a nested object containing subscription info. */
 const SUBSCRIPTION_CONTAINER_KEYS = ["account", "subscription", "user", "billing"] as const;
+const AUTH_METHOD_KEYS = ["authMethod", "auth_method"] as const;
+const AUTH_METHOD_CONTAINER_KEYS = ["auth", "account", "session"] as const;
 
 /** Lift an unknown value into `Option<string>` if it is a non-empty string. */
 const asNonEmptyString = (v: unknown): Option.Option<string> =>
@@ -252,6 +254,27 @@ function findSubscriptionType(value: unknown): Option.Option<string> {
   );
 }
 
+function findAuthMethod(value: unknown): Option.Option<string> {
+  if (globalThis.Array.isArray(value)) {
+    return Option.firstSomeOf(value.map(findAuthMethod));
+  }
+
+  return asRecord(value).pipe(
+    Option.flatMap((record) => {
+      const direct = Option.firstSomeOf(
+        AUTH_METHOD_KEYS.map((key) => asNonEmptyString(record[key])),
+      );
+      if (Option.isSome(direct)) return direct;
+
+      return Option.firstSomeOf(
+        AUTH_METHOD_CONTAINER_KEYS.map((key) =>
+          asRecord(record[key]).pipe(Option.flatMap(findAuthMethod)),
+        ),
+      );
+    }),
+  );
+}
+
 /**
  * Try to extract a subscription type from the `claude auth status` JSON
  * output. This is a zero-cost operation on data we already have.
@@ -262,6 +285,12 @@ function extractSubscriptionTypeFromOutput(result: CommandResult): string | unde
   const parsed = decodeUnknownJson(result.stdout.trim());
   if (Result.isFailure(parsed)) return undefined;
   return Option.getOrUndefined(findSubscriptionType(parsed.success));
+}
+
+function extractClaudeAuthMethodFromOutput(result: CommandResult): string | undefined {
+  const parsed = decodeUnknownJson(result.stdout.trim());
+  if (Result.isFailure(parsed)) return undefined;
+  return Option.getOrUndefined(findAuthMethod(parsed.success));
 }
 
 // ── Dynamic model capability adjustment ─────────────────────────────
@@ -305,6 +334,35 @@ function claudeSubscriptionLabel(subscriptionType: string | undefined): string |
     default:
       return toTitleCaseWords(subscriptionType!);
   }
+}
+
+function normalizeClaudeAuthMethod(authMethod: string | undefined): string | undefined {
+  const normalized = authMethod?.toLowerCase().replace(/[\s_-]+/g, "");
+  if (!normalized) return undefined;
+  if (normalized === "apikey") return "apiKey";
+  return undefined;
+}
+
+function claudeAuthMetadata(input: {
+  readonly subscriptionType: string | undefined;
+  readonly authMethod: string | undefined;
+}): { readonly type: string; readonly label: string } | undefined {
+  if (normalizeClaudeAuthMethod(input.authMethod) === "apiKey") {
+    return {
+      type: "apiKey",
+      label: "Claude API Key",
+    };
+  }
+
+  if (input.subscriptionType) {
+    const subscriptionLabel = claudeSubscriptionLabel(input.subscriptionType);
+    return {
+      type: input.subscriptionType,
+      label: `Claude ${subscriptionLabel ?? toTitleCaseWords(input.subscriptionType)} Subscription`,
+    };
+  }
+
+  return undefined;
 }
 
 /**
@@ -505,9 +563,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   //    immediately — no API tokens are consumed)
 
   let subscriptionType: string | undefined;
+  let authMethod: string | undefined;
 
   if (Result.isSuccess(authProbe) && Option.isSome(authProbe.success)) {
     subscriptionType = extractSubscriptionTypeFromOutput(authProbe.success.value);
+    authMethod = extractClaudeAuthMethodFromOutput(authProbe.success.value);
   }
 
   if (!subscriptionType && resolveSubscriptionType) {
@@ -555,7 +615,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const parsed = parseClaudeAuthStatusFromOutput(authProbe.success.value);
-  const subscriptionLabel = claudeSubscriptionLabel(subscriptionType);
+  const authMetadata = claudeAuthMetadata({ subscriptionType, authMethod });
   return buildServerProvider({
     provider: PROVIDER,
     enabled: claudeSettings.enabled,
@@ -567,8 +627,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       status: parsed.status,
       auth: {
         ...parsed.auth,
-        ...(subscriptionType ? { type: subscriptionType } : {}),
-        ...(subscriptionLabel ? { label: subscriptionLabel } : {}),
+        ...(authMetadata ? authMetadata : {}),
       },
       ...(parsed.message ? { message: parsed.message } : {}),
     },
