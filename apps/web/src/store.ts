@@ -608,7 +608,9 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           : [...thread.messages, message];
         const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
         const latestTurn: Thread["latestTurn"] =
-          event.payload.role === "assistant" && event.payload.turnId !== null
+          event.payload.role === "assistant" &&
+          event.payload.turnId !== null &&
+          (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
             ? buildLatestTurn({
                 previous: thread.latestTurn,
                 turnId: event.payload.turnId,
