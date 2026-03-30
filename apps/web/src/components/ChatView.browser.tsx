@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  type TurnId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -435,6 +436,61 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithProposedPlan(options?: {
+  branch?: string | null;
+  worktreePath?: string | null;
+  scripts?: OrchestrationReadModel["projects"][number]["scripts"];
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-plan-target" as MessageId,
+    targetText: "plan thread",
+  });
+  const turnId = "turn-proposed-plan-browser" as TurnId;
+  return {
+    ...snapshot,
+    projects: snapshot.projects.map((project) =>
+      project.id === PROJECT_ID ? { ...project, scripts: options?.scripts ?? [] } : project,
+    ),
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? Object.assign({}, thread, {
+            interactionMode: "plan",
+            branch: options?.branch ?? "main",
+            worktreePath: options?.worktreePath ?? null,
+            latestTurn: {
+              turnId,
+              state: "completed",
+              requestedAt: isoAt(100),
+              startedAt: isoAt(101),
+              completedAt: isoAt(102),
+              assistantMessageId: "msg-assistant-plan" as MessageId,
+            },
+            proposedPlans: [
+              {
+                id: "plan-browser" as OrchestrationReadModel["threads"][number]["proposedPlans"][number]["id"],
+                turnId,
+                planMarkdown: "# Build this feature\n\nImplement the approved plan.",
+                implementedAt: null,
+                implementationThreadId: null,
+                createdAt: isoAt(102),
+                updatedAt: isoAt(102),
+              },
+            ],
+            session: {
+              threadId: THREAD_ID,
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: isoAt(102),
+            },
+          })
+        : thread,
+    ),
+  };
+}
+
 function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   const customResult = customWsRpcResolver?.(body);
   if (customResult !== undefined) {
@@ -520,12 +576,23 @@ const worker = setupWorker(
       const method = request.body?._tag;
       if (typeof method !== "string") return;
       wsRequests.push(request.body);
-      client.send(
-        JSON.stringify({
-          id: request.id,
-          result: resolveWsRpc(request.body),
-        }),
-      );
+      try {
+        client.send(
+          JSON.stringify({
+            id: request.id,
+            result: resolveWsRpc(request.body),
+          }),
+        );
+      } catch (error) {
+        client.send(
+          JSON.stringify({
+            id: request.id,
+            error: {
+              message: error instanceof Error ? error.message : "Mock websocket request failed.",
+            },
+          }),
+        );
+      }
     });
   }),
   http.get("*/attachments/:attachmentId", () =>
@@ -1525,6 +1592,114 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows implement-in-new-worktree in the plan implementation actions", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithProposedPlan(),
+    });
+
+    try {
+      await page.getByRole("button", { name: "Implementation actions" }).click();
+      await expect.element(page.getByRole("menuitem", { name: "Implement in a new thread" })).toBeVisible();
+      await expect.element(
+        page.getByRole("menuitem", { name: "Implement in new worktree" }),
+      ).toBeVisible();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("starts plan implementation in a newly created worktree from the current branch", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithProposedPlan(),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitCreateWorktree) {
+          return {
+            worktree: {
+              path: "/repo/project/.t3/worktrees/t3code-abcd1234",
+              branch: "t3code/abcd1234",
+            },
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByRole("button", { name: "Implementation actions" }).click();
+      await page.getByRole("menuitem", { name: "Implement in new worktree" }).click();
+
+      await vi.waitFor(
+        () => {
+          const createWorktreeRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.gitCreateWorktree,
+          );
+          expect(createWorktreeRequest).toMatchObject({
+            _tag: WS_METHODS.gitCreateWorktree,
+            cwd: "/repo/project",
+            branch: "main",
+          });
+
+          const dispatches = wsRequests.filter(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          );
+          const createThreadCommand = dispatches
+            .map(
+              (request) =>
+                request.command as { type?: string; branch?: string; worktreePath?: string },
+            )
+            .find((command) => command.type === "thread.create");
+          expect(createThreadCommand).toMatchObject({
+            type: "thread.create",
+            branch: "t3code/abcd1234",
+            worktreePath: "/repo/project/.t3/worktrees/t3code-abcd1234",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows rollback options when worktree creation succeeds but the implementation thread fails", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithProposedPlan(),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitCreateWorktree) {
+          return {
+            worktree: {
+              path: "/repo/project/.t3/worktrees/t3code-abcd1234",
+              branch: "t3code/abcd1234",
+            },
+          };
+        }
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          const command = body.command as { type?: string } | undefined;
+          if (command?.type === "thread.create") {
+            throw new Error("thread.create failed");
+          }
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByRole("button", { name: "Implementation actions" }).click();
+      await page.getByRole("menuitem", { name: "Implement in new worktree" }).click();
+
+      await expect.element(page.getByText(/keep worktree/i)).toBeVisible();
+      await expect.element(page.getByText(/delete worktree/i)).toBeVisible();
+      await expect.element(
+        page.getByText("/repo/project/.t3/worktrees/t3code-abcd1234"),
+      ).toBeVisible();
     } finally {
       await mounted.cleanup();
     }
