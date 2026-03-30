@@ -492,10 +492,18 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
   const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
-  const taskLabel =
+  const taskSummary =
+    isTaskActivity && typeof payload?.summary === "string" && payload.summary.length > 0
+      ? payload.summary
+      : null;
+  const taskDetailAsLabel =
     isTaskActivity &&
-    ((typeof payload?.summary === "string" && payload.summary.length > 0 && payload.summary) ||
-      (typeof payload?.detail === "string" && payload.detail.length > 0 && payload.detail));
+    !taskSummary &&
+    typeof payload?.detail === "string" &&
+    payload.detail.length > 0
+      ? payload.detail
+      : null;
+  const taskLabel = taskSummary || taskDetailAsLabel;
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
@@ -510,7 +518,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
-  if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
+  if (
+    !taskDetailAsLabel &&
+    payload &&
+    typeof payload.detail === "string" &&
+    payload.detail.length > 0
+  ) {
     const detail = stripTrailingExitCode(payload.detail).output;
     if (detail) {
       entry.detail = detail;
