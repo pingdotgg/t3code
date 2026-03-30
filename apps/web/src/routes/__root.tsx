@@ -26,6 +26,7 @@ import { migrateLocalSettingsToServer } from "../hooks/useSettings";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -138,6 +139,7 @@ function EventRouter() {
   const applyOrchestrationEvents = useStore((store) => store.applyOrchestrationEvents);
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setProjectExpanded = useStore((store) => store.setProjectExpanded);
+  const removeTerminalState = useTerminalStateStore((store) => store.removeTerminalState);
   const removeOrphanedTerminalStates = useTerminalStateStore(
     (store) => store.removeOrphanedTerminalStates,
   );
@@ -163,7 +165,7 @@ function EventRouter() {
     let pendingReplay = false;
     let needsProviderInvalidation = false;
 
-    const syncThreadDerivedState = () => {
+    const reconcileSnapshotDerivedState = () => {
       const threads = useStore.getState().threads;
       clearPromotedDraftThreads(new Set(threads.map((thread) => thread.id)));
       const draftThreadIds = Object.keys(
@@ -205,18 +207,21 @@ function EventRouter() {
       latestSequence = nextEvents.at(-1)?.sequence ?? latestSequence;
       highestObservedSequence = Math.max(highestObservedSequence, latestSequence);
 
-      if (
-        nextEvents.some(
-          (event) =>
-            event.type === "thread.turn-diff-completed" || event.type === "thread.reverted",
-        )
-      ) {
+      const batchEffects = deriveOrchestrationBatchEffects(nextEvents);
+
+      if (batchEffects.needsProviderInvalidation) {
         needsProviderInvalidation = true;
         void queryInvalidationThrottler.maybeExecute();
       }
 
       applyOrchestrationEvents(nextEvents);
-      syncThreadDerivedState();
+      const draftStore = useComposerDraftStore.getState();
+      for (const threadId of batchEffects.clearDraftThreadIds) {
+        draftStore.clearDraftThread(threadId);
+      }
+      for (const threadId of batchEffects.removeTerminalStateThreadIds) {
+        removeTerminalState(threadId);
+      }
     };
 
     const replayFromLatest = async (): Promise<void> => {
@@ -265,7 +270,7 @@ function EventRouter() {
           highestObservedSequence = Math.max(highestObservedSequence, latestSequence);
           syncServerReadModel(snapshot);
           bootstrapped = true;
-          syncThreadDerivedState();
+          reconcileSnapshotDerivedState();
         }
       } catch {
         // Keep prior state and wait for welcome or a later replay attempt.
@@ -407,6 +412,7 @@ function EventRouter() {
     applyOrchestrationEvents,
     navigate,
     queryClient,
+    removeTerminalState,
     removeOrphanedTerminalStates,
     setProjectExpanded,
     syncServerReadModel,
