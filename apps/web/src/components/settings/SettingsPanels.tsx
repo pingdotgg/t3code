@@ -49,7 +49,7 @@ import {
 import { ensureNativeApi, readNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
-import { cn } from "../../lib/utils";
+import { cn, isMacPlatform } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -475,6 +475,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
+      ...(settings.dockBounceOnCompletion !== DEFAULT_UNIFIED_SETTINGS.dockBounceOnCompletion
+        ? ["Completion dock bounce"]
+        : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
@@ -483,6 +486,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       isGitWritingModelDirty,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.dockBounceOnCompletion,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
@@ -516,6 +520,7 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
+  const isMacDesktop = isElectron && isMacPlatform(navigator.platform);
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
@@ -957,6 +962,35 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        {isMacDesktop ? (
+          <SettingsRow
+            title="Completion dock bounce"
+            description="Bounce the macOS Dock icon when a thread finishes while the app is in the background."
+            resetAction={
+              settings.dockBounceOnCompletion !==
+              DEFAULT_UNIFIED_SETTINGS.dockBounceOnCompletion ? (
+                <SettingResetButton
+                  label="completion dock bounce"
+                  onClick={() =>
+                    updateSettings({
+                      dockBounceOnCompletion: DEFAULT_UNIFIED_SETTINGS.dockBounceOnCompletion,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.dockBounceOnCompletion}
+                onCheckedChange={(checked) =>
+                  updateSettings({ dockBounceOnCompletion: Boolean(checked) })
+                }
+                aria-label="Bounce the macOS Dock icon when a thread completes"
+              />
+            }
+          />
+        ) : null}
 
         <SettingsRow
           title="Text generation model"

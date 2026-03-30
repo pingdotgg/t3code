@@ -70,9 +70,7 @@ function splitPatch(patch: Partial<UnifiedSettings>): {
  * only re-render when the slice they care about changes.
  */
 
-export function useSettings<T extends UnifiedSettings = UnifiedSettings>(
-  selector?: (s: UnifiedSettings) => T,
-): T {
+export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings) => T): T {
   const { data: serverConfig } = useQuery(serverConfigQueryOptions());
   const [clientSettings] = useLocalStorage(
     CLIENT_SETTINGS_STORAGE_KEY,
@@ -208,6 +206,10 @@ export function buildLegacyClientSettingsMigrationPatch(
 
   if (Predicate.isBoolean(legacySettings.confirmThreadDelete)) {
     patch.confirmThreadDelete = legacySettings.confirmThreadDelete;
+  }
+
+  if (Predicate.isBoolean(legacySettings.dockBounceOnCompletion)) {
+    patch.dockBounceOnCompletion = legacySettings.dockBounceOnCompletion;
   }
 
   if (Predicate.isBoolean(legacySettings.diffWordWrap)) {

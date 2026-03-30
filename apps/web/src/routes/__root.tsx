@@ -15,6 +15,13 @@ import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { isElectron } from "../env";
+import { useSettings } from "../hooks/useSettings";
+import {
+  getCompletionAttentionState,
+  shouldRequestCompletionAttention,
+} from "../lib/desktopCompletionAttention";
+import { isMacPlatform } from "../lib/utils";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDraftStore";
@@ -54,6 +61,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <EventRouter />
+        <DesktopCompletionAttention />
         <DesktopProjectBootstrap />
         <AppSidebarLayout>
           <Outlet />
@@ -61,6 +69,39 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function DesktopCompletionAttention() {
+  const threads = useStore((store) => store.threads);
+  const dockBounceOnCompletion = useSettings((settings) => settings.dockBounceOnCompletion);
+  const previousStatesRef = useRef<Map<string, ReturnType<typeof getCompletionAttentionState>>>(
+    new Map(),
+  );
+
+  useEffect(() => {
+    const previousStates = previousStatesRef.current;
+    const nextStates = new Map<string, ReturnType<typeof getCompletionAttentionState>>();
+    let shouldBounce = false;
+    for (const thread of threads) {
+      const nextState = getCompletionAttentionState(thread);
+      nextStates.set(thread.id, nextState);
+      if (!shouldBounce) {
+        shouldBounce = shouldRequestCompletionAttention(previousStates.get(thread.id), nextState);
+      }
+    }
+    previousStatesRef.current = nextStates;
+
+    if (!dockBounceOnCompletion || !isElectron || !isMacPlatform(navigator.platform)) {
+      return;
+    }
+    if (!shouldBounce) {
+      return;
+    }
+
+    void window.desktopBridge?.requestUserAttention?.();
+  }, [dockBounceOnCompletion, threads]);
+
+  return null;
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {

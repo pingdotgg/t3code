@@ -7,10 +7,12 @@ describe("buildLegacyClientSettingsMigrationPatch", () => {
       buildLegacyClientSettingsMigrationPatch({
         confirmThreadArchive: true,
         confirmThreadDelete: false,
+        dockBounceOnCompletion: false,
       }),
     ).toEqual({
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      dockBounceOnCompletion: false,
     });
   });
 });

@@ -49,6 +49,7 @@ syncShellEnvironment();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
+const REQUEST_USER_ATTENTION_CHANNEL = "desktop:request-user-attention";
 const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
@@ -1150,6 +1151,9 @@ function registerIpcHandlers(): void {
     return showDesktopConfirmDialog(message, owner);
   });
 
+  ipcMain.removeHandler(REQUEST_USER_ATTENTION_CHANNEL);
+  ipcMain.handle(REQUEST_USER_ATTENTION_CHANNEL, async () => requestUserAttention());
+
   ipcMain.removeHandler(SET_THEME_CHANNEL);
   ipcMain.handle(SET_THEME_CHANNEL, async (_event, rawTheme: unknown) => {
     const theme = getSafeTheme(rawTheme);
@@ -1289,6 +1293,20 @@ function getIconOption(): { icon: string } | Record<string, never> {
   const ext = process.platform === "win32" ? "ico" : "png";
   const iconPath = resolveIconPath(ext);
   return iconPath ? { icon: iconPath } : {};
+}
+
+function requestUserAttention(): boolean {
+  if (process.platform !== "darwin" || !app.dock) {
+    return false;
+  }
+
+  const anyFocusedWindow = BrowserWindow.getAllWindows().some((window) => window.isFocused());
+  if (anyFocusedWindow) {
+    return false;
+  }
+
+  app.dock.bounce("informational");
+  return true;
 }
 
 function createWindow(): BrowserWindow {
