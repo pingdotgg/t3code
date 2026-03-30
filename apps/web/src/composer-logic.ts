@@ -210,7 +210,7 @@ export function detectComposerTrigger(
         ...SLASH_COMMANDS,
         ...providerSlashCommands,
       ];
-      if (allCommands.some((command) => command.startsWith(commandQuery.toLowerCase()))) {
+      if (allCommands.some((command) => command.toLowerCase().startsWith(commandQuery.toLowerCase()))) {
         return {
           kind: "slash-command",
           query: commandQuery,
