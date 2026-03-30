@@ -59,7 +59,10 @@ import {
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
 } from "~/composer-logic";
-import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
+import {
+  selectionTouchesMentionBoundary,
+  splitPromptIntoComposerSegments,
+} from "~/composer-editor-mentions";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -986,8 +989,12 @@ function ComposerSurroundSelectionPlugin(props: {
             if (!range || range.start === range.end) {
               return null;
             }
+            const value = $getRoot().getTextContent();
+            if (selectionTouchesMentionBoundary(value, range.start, range.end)) {
+              return null;
+            }
             return {
-              value: $getRoot().getTextContent(),
+              value,
               expandedStart: range.start,
               expandedEnd: range.end,
             };
@@ -1055,8 +1062,14 @@ function ComposerSurroundSelectionPlugin(props: {
           pendingDeadKeySelectionRef.current = null;
           return;
         }
+        const value = $getRoot().getTextContent();
+        if (selectionTouchesMentionBoundary(value, range.start, range.end)) {
+          pendingSurroundSelectionRef.current = null;
+          pendingDeadKeySelectionRef.current = null;
+          return;
+        }
         const snapshot = {
-          value: $getRoot().getTextContent(),
+          value,
           expandedStart: range.start,
           expandedEnd: range.end,
         };

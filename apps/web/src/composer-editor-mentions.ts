@@ -19,6 +19,10 @@ export type ComposerPromptSegment =
 
 const MENTION_TOKEN_REGEX = /(^|\s)@([^\s@]+)(?=\s)/g;
 
+function rangeIncludesIndex(start: number, end: number, index: number): boolean {
+  return start <= index && index < end;
+}
+
 function pushTextSegment(segments: ComposerPromptSegment[], text: string): void {
   if (!text) return;
   const last = segments[segments.length - 1];
@@ -62,6 +66,44 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
   }
 
   return segments;
+}
+
+export function selectionTouchesMentionBoundary(
+  prompt: string,
+  start: number,
+  end: number,
+): boolean {
+  if (!prompt || start >= end) {
+    return false;
+  }
+
+  for (const match of prompt.matchAll(MENTION_TOKEN_REGEX)) {
+    const fullMatch = match[0];
+    const prefix = match[1] ?? "";
+    const matchIndex = match.index ?? 0;
+    const mentionStart = matchIndex + prefix.length;
+    const mentionEnd = mentionStart + fullMatch.length - prefix.length;
+    const beforeMentionIndex = mentionStart - 1;
+    const afterMentionIndex = mentionEnd;
+
+    if (
+      beforeMentionIndex >= 0 &&
+      /\s/.test(prompt[beforeMentionIndex] ?? "") &&
+      rangeIncludesIndex(start, end, beforeMentionIndex)
+    ) {
+      return true;
+    }
+
+    if (
+      afterMentionIndex < prompt.length &&
+      /\s/.test(prompt[afterMentionIndex] ?? "") &&
+      rangeIncludesIndex(start, end, afterMentionIndex)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function splitPromptIntoComposerSegments(

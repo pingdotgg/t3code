@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
+import {
+  selectionTouchesMentionBoundary,
+  splitPromptIntoComposerSegments,
+} from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 describe("splitPromptIntoComposerSegments", () => {
@@ -37,5 +40,37 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "mention", path: "AGENTS.md" },
       { type: "text", text: " please" },
     ]);
+  });
+});
+
+describe("selectionTouchesMentionBoundary", () => {
+  it("returns true when selection includes the whitespace after a mention", () => {
+    expect(
+      selectionTouchesMentionBoundary(
+        "hi @package.json there",
+        "hi @package.json".length,
+        "hi @package.json there".length,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when selection includes the whitespace before a mention", () => {
+    expect(
+      selectionTouchesMentionBoundary(
+        "hi there @package.json later",
+        "hi there".length,
+        "hi there ".length,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when selection starts after the mention boundary whitespace", () => {
+    expect(
+      selectionTouchesMentionBoundary(
+        "hi @package.json there",
+        "hi @package.json ".length,
+        "hi @package.json there".length,
+      ),
+    ).toBe(false);
   });
 });
