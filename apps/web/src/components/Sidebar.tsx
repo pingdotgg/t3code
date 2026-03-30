@@ -1934,7 +1934,6 @@ export default function Sidebar() {
                   </Tooltip>
                 </div>
               </div>
-
               {shouldShowProjectPathEntry && (
                 <div className="mb-2 px-1">
                   {isElectron && (
@@ -1985,18 +1984,6 @@ export default function Sidebar() {
                       {addProjectError}
                     </p>
                   )}
-                  <div className="mt-1.5 px-0.5">
-                    <button
-                      type="button"
-                      className="text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground"
-                      onClick={() => {
-                        setAddingProject(false);
-                        setAddProjectError(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
                 </div>
               )}
 
