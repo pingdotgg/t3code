@@ -192,6 +192,10 @@ const makeEventStore = Effect.gen(function* () {
       payloadJson: event.payload,
       metadataJson: event.metadata,
     }).pipe(
+      Effect.retry({
+        while: (error) => error._tag === "SqlError" && error.reason._tag === "ConstraintError",
+        times: 3,
+      }),
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "OrchestrationEventStore.append:insert",
