@@ -261,7 +261,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.mode, "web");
       assert.equal(resolvedConfig?.port, 4666);
-      assert.equal(resolvedConfig?.host, undefined);
+      assert.equal(resolvedConfig?.host, "127.0.0.1");
     }),
   );
 
@@ -300,6 +300,19 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.port, 3773);
       assert.equal(resolvedConfig?.host, "127.0.0.1");
       assert.equal(resolvedConfig?.mode, "desktop");
+    }),
+  );
+
+  it.effect("uses fixed loopback defaults in web mode", () =>
+    Effect.gen(function* () {
+      yield* runCli([], {
+        T3CODE_MODE: "web",
+        T3CODE_NO_BROWSER: "true",
+      });
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.mode, "web");
+      assert.equal(resolvedConfig?.host, "127.0.0.1");
     }),
   );
 

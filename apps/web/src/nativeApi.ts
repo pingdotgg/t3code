@@ -4,6 +4,21 @@ import { createWsNativeApi } from "./wsNativeApi";
 
 let cachedApi: NativeApi | undefined;
 
+export function initializeNativeApi(): NativeApi {
+  if (typeof window === "undefined") {
+    throw new Error("Native API not available outside the browser");
+  }
+  if (cachedApi) return cachedApi;
+
+  if (window.nativeApi) {
+    cachedApi = window.nativeApi;
+    return cachedApi;
+  }
+
+  cachedApi = createWsNativeApi();
+  return cachedApi;
+}
+
 export function readNativeApi(): NativeApi | undefined {
   if (typeof window === "undefined") return undefined;
   if (cachedApi) return cachedApi;

@@ -1,5 +1,6 @@
 import * as Http from "node:http";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -56,6 +57,7 @@ import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
+import { BrowserAuth, BrowserAuthLive } from "./browserAuth.ts";
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -245,6 +247,8 @@ interface SocketChannels {
 }
 
 const channelsBySocket = new WeakMap<WebSocket, SocketChannels>();
+let currentBootstrapToken: string | null = null;
+let currentBrowserCookie: string | null = null;
 
 function enqueue<T>(channel: MessageChannel<T>, item: T) {
   const waiter = channel.waiters.shift();
@@ -290,10 +294,46 @@ function asWebSocketResponse(message: unknown): WebSocketResponse | null {
   return message as WebSocketResponse;
 }
 
-function connectWsOnce(port: number, token?: string): Promise<WebSocket> {
+interface ConnectWsOptions {
+  readonly token?: string;
+  readonly headers?: Record<string, string>;
+}
+
+async function pairBrowserSession(
+  port: number,
+  origin = `http://127.0.0.1:${port}`,
+): Promise<string> {
+  if (!currentBootstrapToken) {
+    throw new Error("Browser bootstrap token not initialized");
+  }
+
+  const response = await requestPath(port, "/api/auth/bootstrap", {
+    method: "POST",
+    headers: {
+      Origin: origin,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ token: currentBootstrapToken }),
+  });
+  if (response.statusCode !== 204) {
+    throw new Error(`Browser bootstrap failed with status ${response.statusCode}`);
+  }
+
+  const setCookie = response.headers["set-cookie"];
+  const cookieHeader = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  if (!cookieHeader) {
+    throw new Error("Browser bootstrap missing auth cookie");
+  }
+
+  return cookieHeader.split(";", 1)[0] ?? "";
+}
+
+function connectWsOnce(port: number, options: ConnectWsOptions = {}): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const query = token ? `?token=${encodeURIComponent(token)}` : "";
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/${query}`);
+    const query = options.token ? `?token=${encodeURIComponent(options.token)}` : "";
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/${query}`, {
+      headers: options.headers,
+    });
     const channels: SocketChannels = {
       push: { queue: [], waiters: [] },
       response: { queue: [], waiters: [] },
@@ -317,12 +357,25 @@ function connectWsOnce(port: number, token?: string): Promise<WebSocket> {
   });
 }
 
-async function connectWs(port: number, token?: string, attempts = 5): Promise<WebSocket> {
+async function connectWs(
+  port: number,
+  options: ConnectWsOptions = {},
+  attempts = 5,
+): Promise<WebSocket> {
+  const normalizedOptions =
+    options.token || options.headers
+      ? options
+      : {
+          headers: {
+            Origin: `http://127.0.0.1:${port}`,
+            Cookie: (currentBrowserCookie ??= await pairBrowserSession(port)),
+          },
+        };
   let lastError: unknown = new Error("WebSocket connection failed");
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      return await connectWsOnce(port, token);
+      return await connectWsOnce(port, normalizedOptions);
     } catch (error) {
       lastError = error;
       if (attempt < attempts - 1) {
@@ -337,9 +390,9 @@ async function connectWs(port: number, token?: string, attempts = 5): Promise<We
 /** Connect and wait for the server.welcome push. Returns [ws, welcomeData]. */
 async function connectAndAwaitWelcome(
   port: number,
-  token?: string,
+  options: ConnectWsOptions = {},
 ): Promise<[WebSocket, WsPushMessage<typeof WS_CHANNELS.serverWelcome>]> {
-  const ws = await connectWs(port, token);
+  const ws = await connectWs(port, options);
   const welcome = await waitForPush(ws, WS_CHANNELS.serverWelcome);
   return [ws, welcome];
 }
@@ -411,14 +464,20 @@ async function rewriteKeybindingsAndWaitForPush(
 async function requestPath(
   port: number,
   requestPath: string,
-): Promise<{ statusCode: number; body: string }> {
+  options: {
+    readonly method?: string;
+    readonly headers?: Record<string, string>;
+    readonly body?: string;
+  } = {},
+): Promise<{ statusCode: number; body: string; headers: Http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const req = Http.request(
       {
         hostname: "127.0.0.1",
         port,
         path: requestPath,
-        method: "GET",
+        method: options.method ?? "GET",
+        headers: options.headers,
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -429,11 +488,15 @@ async function requestPath(
           resolve({
             statusCode: res.statusCode ?? 0,
             body: Buffer.concat(chunks).toString("utf8"),
+            headers: res.headers,
           });
         });
       },
     );
     req.once("error", reject);
+    if (options.body) {
+      req.write(options.body);
+    }
     req.end();
   });
 }
@@ -483,6 +546,24 @@ describe("WebSocket Server", () => {
     return dir;
   }
 
+  async function reserveLoopbackPort(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const server = net.createServer();
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        const port = typeof address === "object" && address !== null ? address.port : 0;
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(port);
+        });
+      });
+    });
+  }
+
   async function createTestServer(
     options: {
       persistenceLayer?: Layer.Layer<
@@ -512,6 +593,7 @@ describe("WebSocket Server", () => {
     const baseDir = options.baseDir ?? makeTempDir("t3code-ws-base-");
     const devUrl = options.devUrl ? new URL(options.devUrl) : undefined;
     const derivedPaths = deriveServerPathsSync(baseDir, devUrl);
+    const reservedPort = await reserveLoopbackPort();
     const scope = await Effect.runPromise(Scope.make("sequential"));
     const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
     const providerLayer = options.providerLayer ?? makeServerProviderLayer();
@@ -522,8 +604,8 @@ describe("WebSocket Server", () => {
     const openLayer = Layer.succeed(Open, options.open ?? defaultOpenService);
     const serverConfigLayer = Layer.succeed(ServerConfig, {
       mode: "web",
-      port: 0,
-      host: undefined,
+      port: reservedPort,
+      host: "127.0.0.1",
       cwd: options.cwd ?? "/test/project",
       baseDir,
       ...derivedPaths,
@@ -534,6 +616,7 @@ describe("WebSocket Server", () => {
       autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd ?? false,
       logWebSocketEvents: options.logWebSocketEvents ?? Boolean(options.devUrl),
     } satisfies ServerConfigShape);
+    const browserAuthLayer = BrowserAuthLive.pipe(Layer.provide(serverConfigLayer));
     const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
     const runtimeOverrides = Layer.mergeAll(
       options.gitManager ? Layer.succeed(GitManager, options.gitManager) : Layer.empty,
@@ -558,11 +641,21 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(openLayer),
       Layer.provideMerge(ServerSettingsService.layerTest(options.serverSettings)),
       Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(browserAuthLayer),
       Layer.provideMerge(AnalyticsService.layerTest),
       Layer.provideMerge(NodeServices.layer),
     );
     const runtimeServices = await Effect.runPromise(
       Layer.build(dependenciesLayer).pipe(Scope.provide(scope)),
+    );
+    currentBrowserCookie = null;
+    currentBootstrapToken = null;
+    currentBootstrapToken = await Effect.runPromise(
+      Effect.gen(function* () {
+        const browserAuth = yield* BrowserAuth;
+        const pairingUrl = yield* browserAuth.getPairingUrl("http://pair.test");
+        return new URL(pairingUrl).hash.replace(/^#t3_bootstrap=/, "");
+      }).pipe(Effect.provide(runtimeServices)),
     );
 
     try {
@@ -591,6 +684,8 @@ describe("WebSocket Server", () => {
     connections.length = 0;
     await closeTestServer();
     server = null;
+    currentBootstrapToken = null;
+    currentBrowserCookie = null;
     for (const dir of tempDirs.splice(0, tempDirs.length)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -1954,9 +2049,120 @@ describe("WebSocket Server", () => {
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
-    await expect(connectWs(port)).rejects.toThrow("WebSocket connection failed");
+    await expect(
+      connectWs(port, { headers: { Origin: `http://127.0.0.1:${port}` } }),
+    ).rejects.toThrow("WebSocket connection failed");
 
-    const [authorizedWs] = await connectAndAwaitWelcome(port, "secret-token");
+    const [authorizedWs] = await connectAndAwaitWelcome(port, { token: "secret-token" });
     connections.push(authorizedWs);
+  });
+
+  it("issues an auth cookie from a valid bootstrap token", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const response = await requestPath(port, "/api/auth/bootstrap", {
+      method: "POST",
+      headers: {
+        Origin: `http://127.0.0.1:${port}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ token: currentBootstrapToken }),
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(String(response.headers["set-cookie"])).toContain("t3_auth=");
+  });
+
+  it("rejects bootstrap requests from foreign origins", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const response = await requestPath(port, "/api/auth/bootstrap", {
+      method: "POST",
+      headers: {
+        Origin: "https://evil.example",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ token: currentBootstrapToken }),
+    });
+
+    expect(response.statusCode).toBe(403);
+  });
+
+  it("consumes bootstrap tokens exactly once", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const first = await requestPath(port, "/api/auth/bootstrap", {
+      method: "POST",
+      headers: {
+        Origin: `http://127.0.0.1:${port}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ token: currentBootstrapToken }),
+    });
+    const second = await requestPath(port, "/api/auth/bootstrap", {
+      method: "POST",
+      headers: {
+        Origin: `http://127.0.0.1:${port}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ token: currentBootstrapToken }),
+    });
+
+    expect(first.statusCode).toBe(204);
+    expect(second.statusCode).toBe(401);
+  });
+
+  it("reports auth session state from the browser cookie", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const unauthenticated = await requestPath(port, "/api/auth/session");
+    expect(unauthenticated.statusCode).toBe(200);
+    expect(JSON.parse(unauthenticated.body)).toEqual({ authenticated: false });
+
+    const cookie = await pairBrowserSession(port);
+    const authenticated = await requestPath(port, "/api/auth/session", {
+      headers: {
+        Origin: `http://127.0.0.1:${port}`,
+        Cookie: cookie,
+      },
+    });
+
+    expect(authenticated.statusCode).toBe(200);
+    expect(JSON.parse(authenticated.body)).toEqual({ authenticated: true });
+  });
+
+  it("rejects websocket connections without a browser origin", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const cookie = await pairBrowserSession(port);
+    await expect(connectWs(port, { headers: { Cookie: cookie } })).rejects.toThrow(
+      "WebSocket connection failed",
+    );
+  });
+
+  it("rejects websocket connections from a foreign origin even with a valid cookie", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const cookie = await pairBrowserSession(port);
+    await expect(
+      connectWs(port, {
+        headers: {
+          Origin: "https://evil.example",
+          Cookie: cookie,
+        },
+      }),
+    ).rejects.toThrow("WebSocket connection failed");
   });
 });

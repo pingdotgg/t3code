@@ -79,6 +79,7 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { BrowserAuth } from "./browserAuth";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -120,6 +121,27 @@ function rejectUpgrade(socket: Duplex, statusCode: number, message: string): voi
       "\r\n" +
       message,
   );
+}
+
+function readRequestBody(request: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer | string) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+    request.once("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    request.once("error", reject);
+  });
+}
+
+function corsHeaders(origin: string): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    Vary: "Origin",
+  };
 }
 
 function websocketRawToString(raw: unknown): string | null {
@@ -219,7 +241,8 @@ export type ServerRuntimeServices =
   | Keybindings
   | ServerSettingsService
   | Open
-  | AnalyticsService;
+  | AnalyticsService
+  | BrowserAuth;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -261,6 +284,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const serverSettingsManager = yield* ServerSettingsService;
+  const browserAuth = yield* BrowserAuth;
   const providerRegistry = yield* ProviderRegistry;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -427,7 +451,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const httpServer = http.createServer((req, res) => {
     const respond = (
       statusCode: number,
-      headers: Record<string, string>,
+      headers: http.OutgoingHttpHeaders,
       body?: string | Uint8Array,
     ) => {
       res.writeHead(statusCode, headers);
@@ -438,6 +462,134 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
         if (tryHandleProjectFaviconRequest(url, res)) {
+          return;
+        }
+
+        const requestOrigin = req.headers.origin;
+        const authEndpointHeaders =
+          typeof requestOrigin === "string" && (yield* browserAuth.isAllowedOrigin(requestOrigin))
+            ? corsHeaders(requestOrigin)
+            : {};
+
+        if (url.pathname === "/api/auth/bootstrap") {
+          if (req.method === "OPTIONS") {
+            if (typeof requestOrigin !== "string") {
+              respond(403, { "Content-Type": "text/plain" }, "Forbidden origin");
+              return;
+            }
+            if (!(yield* browserAuth.isAllowedOrigin(requestOrigin))) {
+              respond(403, { "Content-Type": "text/plain" }, "Forbidden origin");
+              return;
+            }
+            respond(204, authEndpointHeaders);
+            return;
+          }
+
+          if (req.method !== "POST") {
+            respond(405, { "Content-Type": "text/plain" }, "Method Not Allowed");
+            return;
+          }
+          if (typeof requestOrigin !== "string") {
+            respond(403, { "Content-Type": "text/plain" }, "Forbidden origin");
+            return;
+          }
+          if (!(yield* browserAuth.isAllowedOrigin(requestOrigin))) {
+            respond(
+              403,
+              { "Content-Type": "text/plain", ...authEndpointHeaders },
+              "Forbidden origin",
+            );
+            return;
+          }
+
+          const bodyText = yield* Effect.tryPromise({
+            try: () => readRequestBody(req),
+            catch: () =>
+              new RouteRequestError({ message: "Failed to read auth bootstrap request body." }),
+          });
+
+          let parsedBody: unknown;
+          try {
+            parsedBody = JSON.parse(bodyText);
+          } catch {
+            respond(
+              400,
+              { "Content-Type": "text/plain", ...authEndpointHeaders },
+              "Invalid JSON body",
+            );
+            return;
+          }
+
+          const token =
+            typeof parsedBody === "object" &&
+            parsedBody !== null &&
+            "token" in parsedBody &&
+            typeof (parsedBody as { token?: unknown }).token === "string"
+              ? (parsedBody as { token: string }).token
+              : null;
+          if (!token) {
+            respond(
+              400,
+              { "Content-Type": "text/plain", ...authEndpointHeaders },
+              "Missing bootstrap token",
+            );
+            return;
+          }
+
+          const consumed = yield* browserAuth.consumeBootstrapToken(token);
+          if (!consumed) {
+            respond(
+              401,
+              { "Content-Type": "text/plain", ...authEndpointHeaders },
+              "Invalid bootstrap token",
+            );
+            return;
+          }
+
+          const cookieHeader = yield* browserAuth.createAuthCookie(url.protocol === "https:");
+          respond(204, {
+            ...authEndpointHeaders,
+            "Set-Cookie": cookieHeader,
+          });
+          return;
+        }
+
+        if (url.pathname === "/api/auth/session") {
+          if (req.method === "OPTIONS") {
+            if (typeof requestOrigin !== "string") {
+              respond(204, {});
+              return;
+            }
+            if (!(yield* browserAuth.isAllowedOrigin(requestOrigin))) {
+              respond(403, { "Content-Type": "text/plain" }, "Forbidden origin");
+              return;
+            }
+            respond(204, authEndpointHeaders);
+            return;
+          }
+
+          if (req.method !== "GET") {
+            respond(405, { "Content-Type": "text/plain" }, "Method Not Allowed");
+            return;
+          }
+          if (
+            typeof requestOrigin === "string" &&
+            !(yield* browserAuth.isAllowedOrigin(requestOrigin))
+          ) {
+            respond(
+              403,
+              { "Content-Type": "text/plain", ...authEndpointHeaders },
+              "Forbidden origin",
+            );
+            return;
+          }
+
+          const authenticated = yield* browserAuth.isAuthenticatedRequest(req.headers);
+          respond(
+            200,
+            { "Content-Type": "application/json", ...authEndpointHeaders },
+            JSON.stringify({ authenticated }),
+          );
           return;
         }
 
@@ -986,25 +1138,45 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   httpServer.on("upgrade", (request, socket, head) => {
     socket.on("error", () => {}); // Prevent unhandled `EPIPE`/`ECONNRESET` from crashing the process if the client disconnects mid-handshake
 
-    if (authToken) {
-      let providedToken: string | null = null;
-      try {
-        const url = new URL(request.url ?? "/", `http://localhost:${port}`);
-        providedToken = url.searchParams.get("token");
-      } catch {
-        rejectUpgrade(socket, 400, "Invalid WebSocket URL");
-        return;
-      }
+    void runPromise(
+      Effect.gen(function* () {
+        let providedToken: string | null = null;
+        try {
+          const url = new URL(request.url ?? "/", `http://localhost:${port}`);
+          providedToken = url.searchParams.get("token");
+        } catch {
+          rejectUpgrade(socket, 400, "Invalid WebSocket URL");
+          return;
+        }
 
-      if (providedToken !== authToken) {
-        rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
-        return;
-      }
-    }
+        const requestOrigin = request.headers.origin;
+        const hasLegacyToken = Boolean(authToken && providedToken === authToken);
 
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request);
-    });
+        if (hasLegacyToken && !requestOrigin) {
+          wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit("connection", ws, request);
+          });
+          return;
+        }
+
+        if (typeof requestOrigin !== "string") {
+          rejectUpgrade(socket, 401, "Missing WebSocket origin");
+          return;
+        }
+        if (!(yield* browserAuth.isAllowedOrigin(requestOrigin))) {
+          rejectUpgrade(socket, 401, "Forbidden WebSocket origin");
+          return;
+        }
+        if (!(yield* browserAuth.isAuthenticatedRequest(request.headers))) {
+          rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
+          return;
+        }
+
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit("connection", ws, request);
+        });
+      }).pipe(Effect.ignoreCause({ log: true })),
+    );
   });
 
   wss.on("connection", (ws) => {

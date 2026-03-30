@@ -29,6 +29,7 @@ import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { readBootstrapEnvelope } from "./bootstrap";
 import { ServerSettingsLive } from "./serverSettings";
+import { BrowserAuth, BrowserAuthLive } from "./browserAuth";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -268,7 +269,7 @@ const ServerConfigLive = (input: CliInput) =>
           Option.fromUndefinedOr(env.host),
           Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.host)),
         ),
-        () => (mode === "desktop" ? "127.0.0.1" : undefined),
+        () => "127.0.0.1",
       );
 
       const config: ServerConfigShape = {
@@ -291,19 +292,27 @@ const ServerConfigLive = (input: CliInput) =>
   );
 
 const LayerLive = (input: CliInput) =>
-  Layer.empty.pipe(
-    Layer.provideMerge(makeServerRuntimeServicesLayer()),
-    Layer.provideMerge(makeServerProviderLayer()),
-    Layer.provideMerge(ProviderRegistryLive),
-    Layer.provideMerge(SqlitePersistence.layerConfig),
-    Layer.provideMerge(ServerLoggerLive),
-    Layer.provideMerge(AnalyticsServiceLayerLive),
-    Layer.provideMerge(ServerSettingsLive),
-    Layer.provideMerge(ServerConfigLive(input)),
-  );
+  (() => {
+    const serverConfigLayer = ServerConfigLive(input);
+    const browserAuthLayer = BrowserAuthLive.pipe(Layer.provide(serverConfigLayer));
+    return Layer.empty.pipe(
+      Layer.provideMerge(makeServerRuntimeServicesLayer()),
+      Layer.provideMerge(makeServerProviderLayer()),
+      Layer.provideMerge(ProviderRegistryLive),
+      Layer.provideMerge(SqlitePersistence.layerConfig),
+      Layer.provideMerge(ServerLoggerLive),
+      Layer.provideMerge(AnalyticsServiceLayerLive),
+      Layer.provideMerge(ServerSettingsLive),
+      Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(browserAuthLayer),
+    );
+  })();
 
 const isWildcardHost = (host: string | undefined): boolean =>
   host === "0.0.0.0" || host === "::" || host === "[::]";
+
+const isLoopbackHost = (host: string | undefined): boolean =>
+  host === "127.0.0.1" || host === "::1" || host === "[::1]" || host === "localhost";
 
 const formatHostForUrl = (host: string): string =>
   host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
@@ -337,6 +346,7 @@ const makeServerRuntimeProgram = (input: CliInput) =>
   Effect.gen(function* () {
     const { start, stopSignal } = yield* Server;
     const openDeps = yield* Open;
+    const browserAuth = yield* BrowserAuth;
 
     const config = yield* ServerConfig;
 
@@ -357,15 +367,29 @@ const makeServerRuntimeProgram = (input: CliInput) =>
       config.host && !isWildcardHost(config.host)
         ? `http://${formatHostForUrl(config.host)}:${config.port}`
         : localUrl;
+    const browserBaseUrl =
+      config.host && !isWildcardHost(config.host) && !isLoopbackHost(config.host)
+        ? bindUrl
+        : localUrl;
+    const pairingUrl = yield* browserAuth.getPairingUrl(browserBaseUrl);
     const { authToken, devUrl, ...safeConfig } = config;
     yield* Effect.logInfo("T3 Code running", {
       ...safeConfig,
       devUrl: devUrl?.toString(),
       authEnabled: Boolean(authToken),
+      localUrl,
+      pairingUrl,
     });
 
+    if (config.host && !isWildcardHost(config.host) && !isLoopbackHost(config.host)) {
+      yield* Effect.logWarning("server is exposed beyond loopback", {
+        host: config.host,
+        bindUrl,
+      });
+    }
+
     if (!config.noBrowser) {
-      const target = config.devUrl?.toString() ?? bindUrl;
+      const target = pairingUrl;
       yield* openDeps.openBrowser(target).pipe(
         Effect.catch(() =>
           Effect.logInfo("browser auto-open unavailable", {
@@ -416,7 +440,7 @@ const noBrowserFlag = Flag.boolean("no-browser").pipe(
   Flag.optional,
 );
 const authTokenFlag = Flag.string("auth-token").pipe(
-  Flag.withDescription("Auth token required for WebSocket connections."),
+  Flag.withDescription("Legacy auth token for non-browser WebSocket clients."),
   Flag.withAlias("token"),
   Flag.optional,
 );
