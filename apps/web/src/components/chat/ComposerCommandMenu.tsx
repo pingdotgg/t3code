@@ -1,5 +1,5 @@
 import { type ProjectEntry, type ProviderKind } from "@t3tools/contracts";
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { BotIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
@@ -41,6 +41,16 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!props.activeItemId || !listRef.current) return;
+    const el = listRef.current.querySelector<HTMLElement>(
+      `[data-composer-item-id="${CSS.escape(props.activeItemId)}"]`,
+    );
+    el?.scrollIntoView({ block: "nearest" });
+  }, [props.activeItemId]);
+
   return (
     <Command
       autoHighlight={false}
@@ -51,7 +61,10 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         );
       }}
     >
-      <div className="relative overflow-hidden rounded-xl border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs">
+      <div
+        ref={listRef}
+        className="relative overflow-hidden rounded-xl border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs"
+      >
         <CommandList className="max-h-64">
           {props.items.map((item) => (
             <ComposerCommandMenuItem
@@ -88,8 +101,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   return (
     <CommandItem
       value={props.item.id}
+      data-composer-item-id={props.item.id}
       className={cn(
-        "cursor-pointer select-none gap-2 data-highlighted:bg-transparent data-highlighted:text-inherit",
+        "cursor-pointer select-none gap-2 hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit",
         props.isActive && "bg-accent! text-accent-foreground!",
       )}
       onMouseMove={() => {
