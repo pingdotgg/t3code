@@ -21,7 +21,7 @@ import { Debouncer } from "@tanstack/react-pacer";
 export interface AppState {
   projects: Project[];
   threads: Thread[];
-  threadsHydrated: boolean;
+  bootstrapComplete: boolean;
 }
 
 const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
@@ -40,7 +40,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 const initialState: AppState = {
   projects: [],
   threads: [],
-  threadsHydrated: false,
+  bootstrapComplete: false,
 };
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
@@ -512,7 +512,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     ...state,
     projects,
     threads,
-    threadsHydrated: true,
+    bootstrapComplete: true,
   };
 }
 
@@ -543,7 +543,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
               index === existingIndex ? nextProject : project,
             )
           : [...state.projects, nextProject];
-      return { ...state, projects, threadsHydrated: true };
+      return { ...state, projects };
     }
 
     case "project.meta-updated": {
@@ -563,14 +563,12 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           : {}),
         updatedAt: event.payload.updatedAt,
       }));
-      return projects === state.projects ? state : { ...state, projects, threadsHydrated: true };
+      return projects === state.projects ? state : { ...state, projects };
     }
 
     case "project.deleted": {
       const projects = state.projects.filter((project) => project.id !== event.payload.projectId);
-      return projects.length === state.projects.length
-        ? state
-        : { ...state, projects, threadsHydrated: true };
+      return projects.length === state.projects.length ? state : { ...state, projects };
     }
 
     case "thread.created": {
@@ -601,14 +599,12 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       const threads = existing
         ? state.threads.map((thread) => (thread.id === nextThread.id ? nextThread : thread))
         : [...state.threads, nextThread];
-      return { ...state, threads, threadsHydrated: true };
+      return { ...state, threads };
     }
 
     case "thread.deleted": {
       const threads = state.threads.filter((thread) => thread.id !== event.payload.threadId);
-      return threads.length === state.threads.length
-        ? state
-        : { ...state, threads, threadsHydrated: true };
+      return threads.length === state.threads.length ? state : { ...state, threads };
     }
 
     case "thread.archived": {
@@ -617,7 +613,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         archivedAt: event.payload.archivedAt,
         updatedAt: event.payload.updatedAt,
       }));
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.unarchived": {
@@ -626,7 +622,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         archivedAt: null,
         updatedAt: event.payload.updatedAt,
       }));
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.meta-updated": {
@@ -642,7 +638,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           : {}),
         updatedAt: event.payload.updatedAt,
       }));
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.runtime-mode-set": {
@@ -651,7 +647,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         runtimeMode: event.payload.runtimeMode,
         updatedAt: event.payload.updatedAt,
       }));
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.interaction-mode-set": {
@@ -660,7 +656,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         interactionMode: event.payload.interactionMode,
         updatedAt: event.payload.updatedAt,
       }));
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.turn-start-requested": {
@@ -673,7 +669,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         interactionMode: event.payload.interactionMode,
         updatedAt: event.occurredAt,
       }));
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.turn-interrupt-requested": {
@@ -699,7 +695,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           updatedAt: event.occurredAt,
         };
       });
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.message-sent": {
@@ -779,7 +775,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           updatedAt: event.occurredAt,
         };
       });
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.session-set": {
@@ -810,7 +806,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
             : thread.latestTurn,
         updatedAt: event.occurredAt,
       }));
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.session-stop-requested": {
@@ -829,7 +825,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
               updatedAt: event.occurredAt,
             },
       );
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.proposed-plan-upserted": {
@@ -850,7 +846,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           updatedAt: event.occurredAt,
         };
       });
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.turn-diff-completed": {
@@ -899,7 +895,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           updatedAt: event.occurredAt,
         };
       });
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.reverted": {
@@ -951,7 +947,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           updatedAt: event.occurredAt,
         };
       });
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.activity-appended": {
@@ -968,7 +964,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           updatedAt: event.occurredAt,
         };
       });
-      return threads === state.threads ? state : { ...state, threads, threadsHydrated: true };
+      return threads === state.threads ? state : { ...state, threads };
     }
 
     case "thread.approval-response-requested":

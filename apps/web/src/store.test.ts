@@ -64,7 +64,7 @@ function makeState(thread: Thread): AppState {
       },
     ],
     threads: [thread],
-    threadsHydrated: true,
+    bootstrapComplete: true,
   };
 }
 
@@ -245,7 +245,7 @@ describe("store pure functions", () => {
         },
       ],
       threads: [],
-      threadsHydrated: true,
+      bootstrapComplete: true,
     };
 
     const next = reorderProjects(state, project1, project3);
@@ -255,6 +255,17 @@ describe("store pure functions", () => {
 });
 
 describe("store read model sync", () => {
+  it("marks bootstrap complete after snapshot sync", () => {
+    const initialState: AppState = {
+      ...makeState(makeThread()),
+      bootstrapComplete: false,
+    };
+
+    const next = syncServerReadModel(initialState, makeReadModel(makeReadModelThread({})));
+
+    expect(next.bootstrapComplete).toBe(true);
+  });
+
   it("preserves claude model slugs without an active session", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(
@@ -355,7 +366,7 @@ describe("store read model sync", () => {
         },
       ],
       threads: [],
-      threadsHydrated: true,
+      bootstrapComplete: true,
     };
     const readModel: OrchestrationReadModel = {
       snapshotSequence: 2,
@@ -387,6 +398,24 @@ describe("store read model sync", () => {
 });
 
 describe("incremental orchestration updates", () => {
+  it("does not mark bootstrap complete for incremental events", () => {
+    const state: AppState = {
+      ...makeState(makeThread()),
+      bootstrapComplete: false,
+    };
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.meta-updated", {
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        title: "Updated title",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+    );
+
+    expect(next.bootstrapComplete).toBe(false);
+  });
+
   it("preserves state identity for no-op project and thread deletes", () => {
     const thread = makeThread();
     const state = makeState(thread);

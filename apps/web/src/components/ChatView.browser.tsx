@@ -875,7 +875,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     useStore.setState({
       projects: [],
       threads: [],
-      threadsHydrated: false,
+      bootstrapComplete: false,
     });
   });
 
