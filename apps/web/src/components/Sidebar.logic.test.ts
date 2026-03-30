@@ -8,6 +8,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -96,6 +97,30 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("orderItemsByPreferredIds", () => {
+  it("keeps preferred ids first, skips stale ids, and preserves the relative order of remaining items", () => {
+    const ordered = orderItemsByPreferredIds({
+      items: [
+        { id: ProjectId.makeUnsafe("project-1"), name: "One" },
+        { id: ProjectId.makeUnsafe("project-2"), name: "Two" },
+        { id: ProjectId.makeUnsafe("project-3"), name: "Three" },
+      ],
+      preferredIds: [
+        ProjectId.makeUnsafe("project-3"),
+        ProjectId.makeUnsafe("project-missing"),
+        ProjectId.makeUnsafe("project-1"),
+      ],
+      getId: (project) => project.id,
+    });
+
+    expect(ordered.map((project) => project.id)).toEqual([
+      ProjectId.makeUnsafe("project-3"),
+      ProjectId.makeUnsafe("project-1"),
+      ProjectId.makeUnsafe("project-2"),
+    ]);
   });
 });
 

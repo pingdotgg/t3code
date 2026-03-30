@@ -115,6 +115,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
@@ -501,16 +502,11 @@ export default function Sidebar() {
   const shouldBrowseForProjectImmediately = isElectron && !isLinuxDesktop;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
   const orderedProjects = useMemo(() => {
-    if (projectOrder.length === 0) {
-      return projects;
-    }
-    const projectsById = new Map(projects.map((project) => [project.id, project] as const));
-    const ordered = projectOrder.flatMap((projectId) => {
-      const project = projectsById.get(projectId);
-      return project ? [project] : [];
+    return orderItemsByPreferredIds({
+      items: projects,
+      preferredIds: projectOrder,
+      getId: (project) => project.id,
     });
-    const remaining = projects.filter((project) => !projectOrder.includes(project.id));
-    return [...ordered, ...remaining];
   }, [projectOrder, projects]);
   const sidebarProjects = useMemo<SidebarProjectSnapshot[]>(
     () =>

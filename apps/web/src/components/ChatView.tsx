@@ -64,7 +64,8 @@ import {
   setPendingUserInputCustomAnswer,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { selectProjectById, selectThreadById, useStore } from "../store";
+import { useStore } from "../store";
+import { useProjectById, useThreadById } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
   buildPlanImplementationThreadTitle,
@@ -368,7 +369,7 @@ function useLocalDispatchState(input: {
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
-  const serverThread = useStore(selectThreadById(threadId));
+  const serverThread = useThreadById(threadId);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
@@ -587,7 +588,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [composerTerminalContexts, removeComposerDraftTerminalContext, setPrompt, threadId],
   );
 
-  const fallbackDraftProject = useStore(selectProjectById(draftThread?.projectId));
+  const fallbackDraftProject = useProjectById(draftThread?.projectId);
   const threadPlanCatalog = useStore(
     useShallow((store) => store.threads.map(toThreadPlanCatalogEntry)),
   );
@@ -623,7 +624,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread?.activities],
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
-  const activeProject = useStore(selectProjectById(activeThread?.projectId));
+  const activeProject = useProjectById(activeThread?.projectId);
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {

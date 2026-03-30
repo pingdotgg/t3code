@@ -170,7 +170,8 @@ export async function waitForStartedServerThread(
   threadId: ThreadId,
   timeoutMs = 1_000,
 ): Promise<boolean> {
-  const thread = useStore.getState().threads.find((thread) => thread.id === threadId);
+  const getThread = () => useStore.getState().threads.find((thread) => thread.id === threadId);
+  const thread = getThread();
 
   if (threadHasStarted(thread)) {
     return true;
@@ -178,19 +179,18 @@ export async function waitForStartedServerThread(
 
   return await new Promise<boolean>((resolve) => {
     let settled = false;
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
     const finish = (result: boolean) => {
       if (settled) {
         return;
       }
       settled = true;
-      globalThis.clearTimeout(timeoutId);
+      if (timeoutId !== null) {
+        globalThis.clearTimeout(timeoutId);
+      }
       unsubscribe();
       resolve(result);
     };
-
-    const timeoutId = globalThis.setTimeout(() => {
-      finish(false);
-    }, timeoutMs);
 
     const unsubscribe = useStore.subscribe((state) => {
       if (!threadHasStarted(state.threads.find((thread) => thread.id === threadId))) {
@@ -198,6 +198,15 @@ export async function waitForStartedServerThread(
       }
       finish(true);
     });
+
+    if (threadHasStarted(getThread())) {
+      finish(true);
+      return;
+    }
+
+    timeoutId = globalThis.setTimeout(() => {
+      finish(false);
+    }, timeoutMs);
   });
 }
 

@@ -8,7 +8,9 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newThreadId } from "../lib/utils";
-import { selectThreadById, useStore } from "../store";
+import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import { useStore } from "../store";
+import { useThreadById } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 
 export function useHandleNewThread() {
@@ -19,18 +21,16 @@ export function useHandleNewThread() {
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
-  const activeThread = useStore(selectThreadById(routeThreadId));
+  const activeThread = useThreadById(routeThreadId);
   const activeDraftThread = useComposerDraftStore((store) =>
     routeThreadId ? (store.draftThreadsByThreadId[routeThreadId] ?? null) : null,
   );
   const orderedProjects = useMemo(() => {
-    if (projectOrder.length === 0) {
-      return projectIds;
-    }
-    const projectIdsSet = new Set(projectIds);
-    const ordered = projectOrder.filter((projectId) => projectIdsSet.has(projectId));
-    const remaining = projectIds.filter((projectId) => !projectOrder.includes(projectId));
-    return [...ordered, ...remaining];
+    return orderItemsByPreferredIds({
+      items: projectIds,
+      preferredIds: projectOrder,
+      getId: (projectId) => projectId,
+    });
   }, [projectIds, projectOrder]);
 
   const handleNewThread = useCallback(

@@ -113,6 +113,7 @@ const makeThread = (input?: {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   useStore.setState((state) => ({
     ...state,
     projects: [],
@@ -169,6 +170,40 @@ describe("waitForStartedServerThread", () => {
     }));
 
     await expect(promise).resolves.toBe(true);
+  });
+
+  it("handles the thread starting between the initial read and subscription setup", async () => {
+    const threadId = ThreadId.makeUnsafe("thread-race");
+    useStore.setState((state) => ({
+      ...state,
+      threads: [makeThread({ id: threadId })],
+    }));
+
+    const originalSubscribe = useStore.subscribe.bind(useStore);
+    let raced = false;
+    vi.spyOn(useStore, "subscribe").mockImplementation((listener) => {
+      if (!raced) {
+        raced = true;
+        useStore.setState((state) => ({
+          ...state,
+          threads: [
+            makeThread({
+              id: threadId,
+              latestTurn: {
+                turnId: TurnId.makeUnsafe("turn-race"),
+                state: "running",
+                requestedAt: "2026-03-29T00:00:01.000Z",
+                startedAt: "2026-03-29T00:00:01.000Z",
+                completedAt: null,
+              },
+            }),
+          ],
+        }));
+      }
+      return originalSubscribe(listener);
+    });
+
+    await expect(waitForStartedServerThread(threadId, 500)).resolves.toBe(true);
   });
 
   it("returns false after the timeout when the thread never starts", async () => {
