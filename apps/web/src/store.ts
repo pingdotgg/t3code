@@ -232,6 +232,25 @@ function buildLatestTurn(params: {
   };
 }
 
+function rebindTurnDiffSummariesForAssistantMessage(
+  turnDiffSummaries: ReadonlyArray<Thread["turnDiffSummaries"][number]>,
+  turnId: Thread["turnDiffSummaries"][number]["turnId"],
+  assistantMessageId: NonNullable<Thread["latestTurn"]>["assistantMessageId"],
+): Thread["turnDiffSummaries"] {
+  let changed = false;
+  const nextSummaries = turnDiffSummaries.map((summary) => {
+    if (summary.turnId !== turnId || summary.assistantMessageId === assistantMessageId) {
+      return summary;
+    }
+    changed = true;
+    return {
+      ...summary,
+      assistantMessageId: assistantMessageId ?? undefined,
+    };
+  });
+  return changed ? nextSummaries : [...turnDiffSummaries];
+}
+
 function retainThreadMessagesAfterRevert(
   messages: ReadonlyArray<ChatMessage>,
   retainedTurnIds: ReadonlySet<string>,
@@ -612,6 +631,14 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
             )
           : [...thread.messages, message];
         const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
+        const turnDiffSummaries =
+          event.payload.role === "assistant" && event.payload.turnId !== null
+            ? rebindTurnDiffSummariesForAssistantMessage(
+                thread.turnDiffSummaries,
+                event.payload.turnId,
+                event.payload.messageId,
+              )
+            : thread.turnDiffSummaries;
         const latestTurn: Thread["latestTurn"] =
           event.payload.role === "assistant" &&
           event.payload.turnId !== null &&
@@ -646,6 +673,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         return {
           ...thread,
           messages: cappedMessages,
+          turnDiffSummaries,
           latestTurn,
           updatedAt: event.occurredAt,
         };

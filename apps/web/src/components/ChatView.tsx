@@ -43,6 +43,7 @@ import {
   replaceTextRange,
 } from "../composer-logic";
 import {
+  deriveCompletionDividerBeforeEntryId,
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
@@ -1151,35 +1152,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
   const completionDividerBeforeEntryId = useMemo(() => {
     if (!latestTurnSettled) return null;
-    if (!activeLatestTurn?.startedAt) return null;
-    if (!activeLatestTurn.completedAt) return null;
     if (!completionSummary) return null;
-
-    const turnStartedAt = Date.parse(activeLatestTurn.startedAt);
-    const turnCompletedAt = Date.parse(activeLatestTurn.completedAt);
-    if (Number.isNaN(turnStartedAt)) return null;
-    if (Number.isNaN(turnCompletedAt)) return null;
-
-    let inRangeMatch: string | null = null;
-    let fallbackMatch: string | null = null;
-    for (const timelineEntry of timelineEntries) {
-      if (timelineEntry.kind !== "message") continue;
-      if (timelineEntry.message.role !== "assistant") continue;
-      const messageAt = Date.parse(timelineEntry.message.createdAt);
-      if (Number.isNaN(messageAt) || messageAt < turnStartedAt) continue;
-      fallbackMatch = timelineEntry.id;
-      if (messageAt <= turnCompletedAt) {
-        inRangeMatch = timelineEntry.id;
-      }
-    }
-    return inRangeMatch ?? fallbackMatch;
-  }, [
-    activeLatestTurn?.completedAt,
-    activeLatestTurn?.startedAt,
-    completionSummary,
-    latestTurnSettled,
-    timelineEntries,
-  ]);
+    return deriveCompletionDividerBeforeEntryId(timelineEntries, activeLatestTurn);
+  }, [activeLatestTurn, completionSummary, latestTurnSettled, timelineEntries]);
   const gitCwd = activeProject
     ? projectScriptCwd({
         project: { cwd: activeProject.cwd },
