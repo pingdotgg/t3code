@@ -1,6 +1,6 @@
 import type {
   ServerProvider,
-  ServerProviderAuthStatus,
+  ServerProviderAuth,
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
@@ -21,7 +21,7 @@ export interface ProviderProbeResult {
   readonly installed: boolean;
   readonly version: string | null;
   readonly status: Exclude<ServerProviderState, "disabled">;
-  readonly authStatus: ServerProviderAuthStatus;
+  readonly auth: ServerProviderAuth;
   readonly message?: string;
 }
 
@@ -137,7 +137,7 @@ export function buildServerProvider(input: {
     installed: input.probe.installed,
     version: input.probe.version,
     status: input.enabled ? input.probe.status : "disabled",
-    authStatus: input.probe.authStatus,
+    auth: input.probe.auth,
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
     models: input.models,

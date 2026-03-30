@@ -173,7 +173,133 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "codex");
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.authStatus, "authenticated");
+          assert.strictEqual(status.auth.status, "authenticated");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("returns the codex plan type in auth and keeps spark for supported plans", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(() =>
+            Effect.succeed({
+              type: "chatgpt" as const,
+              planType: "pro" as const,
+              sparkEnabled: true,
+            }),
+          );
+
+          assert.strictEqual(status.provider, "codex");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "pro");
+          assert.strictEqual(status.auth.label, "ChatGPT Pro Subscription");
+          assert.deepStrictEqual(
+            status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
+            true,
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("hides spark from codex models for unsupported chatgpt plans", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(() =>
+            Effect.succeed({
+              type: "chatgpt" as const,
+              planType: "plus" as const,
+              sparkEnabled: false,
+            }),
+          );
+
+          assert.strictEqual(status.provider, "codex");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "plus");
+          assert.strictEqual(status.auth.label, "ChatGPT Plus Subscription");
+          assert.deepStrictEqual(
+            status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
+            false,
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("hides spark from codex models for non-pro chatgpt subscriptions", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(() =>
+            Effect.succeed({
+              type: "chatgpt" as const,
+              planType: "team" as const,
+              sparkEnabled: false,
+            }),
+          );
+
+          assert.strictEqual(status.provider, "codex");
+          assert.strictEqual(status.auth.type, "team");
+          assert.strictEqual(status.auth.label, "ChatGPT Team Subscription");
+          assert.deepStrictEqual(
+            status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
+            false,
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("returns an api key label for codex api key auth", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(() =>
+            Effect.succeed({
+              type: "apiKey" as const,
+              planType: null,
+              sparkEnabled: false,
+            }),
+          );
+
+          assert.strictEqual(status.provider, "codex");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "apiKey");
+          assert.strictEqual(status.auth.label, "OpenAI API Key");
+          assert.deepStrictEqual(
+            status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
+            false,
+          );
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -235,7 +361,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               assert.strictEqual(status.provider, "codex");
               assert.strictEqual(status.installed, true);
               assert.strictEqual(status.status, "ready");
-              assert.strictEqual(status.authStatus, "authenticated");
+              assert.strictEqual(status.auth.status, "authenticated");
             } finally {
               process.env.PATH = previousPath;
             }
@@ -249,7 +375,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "codex");
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, false);
-          assert.strictEqual(status.authStatus, "unknown");
+          assert.strictEqual(status.auth.status, "unknown");
           assert.strictEqual(
             status.message,
             "Codex CLI (`codex`) is not installed or not on PATH.",
@@ -264,7 +390,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "codex");
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.authStatus, "unknown");
+          assert.strictEqual(status.auth.status, "unknown");
           assert.strictEqual(
             status.message,
             "Codex CLI v0.36.0 is too old for T3 Code. Upgrade to v0.37.0 or newer and restart T3 Code.",
@@ -287,7 +413,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "codex");
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.authStatus, "unauthenticated");
+          assert.strictEqual(status.auth.status, "unauthenticated");
           assert.strictEqual(
             status.message,
             "Codex CLI is not authenticated. Run `codex login` and try again.",
@@ -313,7 +439,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "codex");
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.authStatus, "unauthenticated");
+          assert.strictEqual(status.auth.status, "unauthenticated");
           assert.strictEqual(
             status.message,
             "Codex CLI is not authenticated. Run `codex login` and try again.",
@@ -338,7 +464,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "codex");
           assert.strictEqual(status.status, "warning");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.authStatus, "unknown");
+          assert.strictEqual(status.auth.status, "unknown");
           assert.strictEqual(
             status.message,
             "Codex CLI authentication status command is unavailable in this Codex version.",
@@ -366,7 +492,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             status: "ready",
             enabled: true,
             installed: true,
-            authStatus: "authenticated",
+            auth: { status: "authenticated" },
             checkedAt: "2026-03-25T00:00:00.000Z",
             version: "1.0.0",
             models: [],
@@ -376,7 +502,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             status: "warning",
             enabled: true,
             installed: true,
-            authStatus: "unknown",
+            auth: { status: "unknown" },
             checkedAt: "2026-03-25T00:00:00.000Z",
             version: "1.0.0",
             models: [],
@@ -494,7 +620,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             assert.strictEqual(status.provider, "codex");
             assert.strictEqual(status.status, "ready");
             assert.strictEqual(status.installed, true);
-            assert.strictEqual(status.authStatus, "unknown");
+            assert.strictEqual(status.auth.status, "unknown");
             assert.strictEqual(
               status.message,
               "Using a custom Codex model provider; OpenAI login check skipped.",
@@ -537,7 +663,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           const status = yield* checkCodexProviderStatus();
           // The auth probe runs and sees "not logged in" → error
           assert.strictEqual(status.status, "error");
-          assert.strictEqual(status.authStatus, "unauthenticated");
+          assert.strictEqual(status.auth.status, "unauthenticated");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -558,7 +684,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
       it("exit code 0 with no auth markers is ready", () => {
         const parsed = parseAuthStatusFromOutput({ stdout: "OK\n", stderr: "", code: 0 });
         assert.strictEqual(parsed.status, "ready");
-        assert.strictEqual(parsed.authStatus, "authenticated");
+        assert.strictEqual(parsed.auth.status, "authenticated");
       });
 
       it("JSON with authenticated=false is unauthenticated", () => {
@@ -568,7 +694,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           code: 0,
         });
         assert.strictEqual(parsed.status, "error");
-        assert.strictEqual(parsed.authStatus, "unauthenticated");
+        assert.strictEqual(parsed.auth.status, "unauthenticated");
       });
 
       it("JSON without auth marker is warning", () => {
@@ -578,7 +704,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           code: 0,
         });
         assert.strictEqual(parsed.status, "warning");
-        assert.strictEqual(parsed.authStatus, "unknown");
+        assert.strictEqual(parsed.auth.status, "unknown");
       });
     });
 
@@ -715,7 +841,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "claudeAgent");
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.authStatus, "authenticated");
+          assert.strictEqual(status.auth.status, "authenticated");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -733,13 +859,63 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ),
       );
 
+      it.effect("returns a display label for claude subscription types", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(() => Effect.succeed("maxplan"));
+          assert.strictEqual(status.provider, "claudeAgent");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "maxplan");
+          assert.strictEqual(status.auth.label, "Claude Max Subscription");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("returns an api key label for claude api key auth", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus();
+          assert.strictEqual(status.provider, "claudeAgent");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "apiKey");
+          assert.strictEqual(status.auth.label, "Claude API Key");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"api-key"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("returns unavailable when claude is missing", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus();
           assert.strictEqual(status.provider, "claudeAgent");
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, false);
-          assert.strictEqual(status.authStatus, "unknown");
+          assert.strictEqual(status.auth.status, "unknown");
           assert.strictEqual(
             status.message,
             "Claude Agent CLI (`claude`) is not installed or not on PATH.",
@@ -771,7 +947,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "claudeAgent");
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.authStatus, "unauthenticated");
+          assert.strictEqual(status.auth.status, "unauthenticated");
           assert.strictEqual(
             status.message,
             "Claude is not authenticated. Run `claude auth login` and try again.",
@@ -799,7 +975,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "claudeAgent");
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.authStatus, "unauthenticated");
+          assert.strictEqual(status.auth.status, "unauthenticated");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -819,7 +995,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "claudeAgent");
           assert.strictEqual(status.status, "warning");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.authStatus, "unknown");
+          assert.strictEqual(status.auth.status, "unknown");
           assert.strictEqual(
             status.message,
             "Claude Agent authentication status command is unavailable in this version of Claude.",
@@ -844,7 +1020,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
       it("exit code 0 with no auth markers is ready", () => {
         const parsed = parseClaudeAuthStatusFromOutput({ stdout: "OK\n", stderr: "", code: 0 });
         assert.strictEqual(parsed.status, "ready");
-        assert.strictEqual(parsed.authStatus, "authenticated");
+        assert.strictEqual(parsed.auth.status, "authenticated");
       });
 
       it("JSON with loggedIn=true is authenticated", () => {
@@ -854,7 +1030,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           code: 0,
         });
         assert.strictEqual(parsed.status, "ready");
-        assert.strictEqual(parsed.authStatus, "authenticated");
+        assert.strictEqual(parsed.auth.status, "authenticated");
       });
 
       it("JSON with loggedIn=false is unauthenticated", () => {
@@ -864,7 +1040,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           code: 0,
         });
         assert.strictEqual(parsed.status, "error");
-        assert.strictEqual(parsed.authStatus, "unauthenticated");
+        assert.strictEqual(parsed.auth.status, "unauthenticated");
       });
 
       it("JSON without auth marker is warning", () => {
@@ -874,7 +1050,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           code: 0,
         });
         assert.strictEqual(parsed.status, "warning");
-        assert.strictEqual(parsed.authStatus, "unknown");
+        assert.strictEqual(parsed.auth.status, "unknown");
       });
     });
   },
