@@ -313,8 +313,14 @@ const CAPABILITIES_PROBE_TIMEOUT_MS = 8_000;
 const probeCodexCapabilities = (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
-}) =>
-  Effect.tryPromise(() => probeCodexAccount(input)).pipe(
+}) => {
+  const abort = new AbortController();
+  return Effect.tryPromise(() => probeCodexAccount({ ...input, signal: abort.signal })).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (!abort.signal.aborted) abort.abort();
+      }),
+    ),
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
     Effect.result,
     Effect.map((result) => {
@@ -322,6 +328,7 @@ const probeCodexCapabilities = (input: {
       return Option.isSome(result.success) ? result.success.value : undefined;
     }),
   );
+};
 
 const runCodexCommand = (args: ReadonlyArray<string>) =>
   Effect.gen(function* () {

@@ -43,6 +43,7 @@ export function killCodexChildProcess(child: ChildProcessWithoutNullStreams): vo
 export async function probeCodexAccount(input: {
   readonly binaryPath: string;
   readonly homePath?: string;
+  readonly signal?: AbortSignal;
 }): Promise<CodexAccountSnapshot> {
   return await new Promise((resolve, reject) => {
     const child = spawn(input.binaryPath, ["app-server"], {
@@ -81,6 +82,12 @@ export async function probeCodexAccount(input: {
             : new Error(`Codex account probe failed: ${String(error)}.`),
         ),
       );
+
+    if (input.signal?.aborted) {
+      fail(new Error("Codex account probe aborted."));
+      return;
+    }
+    input.signal?.addEventListener("abort", () => fail(new Error("Codex account probe aborted.")));
 
     const writeMessage = (message: unknown) => {
       if (!child.stdin.writable) {
