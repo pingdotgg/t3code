@@ -250,16 +250,107 @@ describe("when: branch is clean, ahead, and has no open PR", () => {
 });
 
 describe("when: branch is clean, up to date, and has no open PR", () => {
-  it("resolveQuickAction returns disabled no-action state", () => {
+  it("resolveQuickAction runs create PR", () => {
     const quick = resolveQuickAction(
       status({ aheadCount: 0, behindCount: 0, hasWorkingTreeChanges: false, pr: null }),
       false,
     );
-    assert.deepInclude(quick, { kind: "show_hint", label: "Commit", disabled: true });
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push_pr",
+      label: "Create PR",
+      disabled: false,
+    });
   });
 
-  it("buildMenuItems disables commit, push, and create PR", () => {
+  it("buildMenuItems disables commit/push and enables create PR", () => {
     const items = buildMenuItems(status({ aheadCount: 0, behindCount: 0, pr: null }), false);
+    assert.deepEqual(items, [
+      {
+        id: "commit",
+        label: "Commit",
+        disabled: true,
+        icon: "commit",
+        kind: "open_dialog",
+        dialogAction: "commit",
+      },
+      {
+        id: "push",
+        label: "Push",
+        disabled: true,
+        icon: "push",
+        kind: "open_dialog",
+        dialogAction: "push",
+      },
+      {
+        id: "pr",
+        label: "Create PR",
+        disabled: false,
+        icon: "pr",
+        kind: "open_dialog",
+        dialogAction: "create_pr",
+      },
+    ]);
+  });
+});
+
+describe("when: PR actions are unavailable because gh is not ready", () => {
+  it("resolveQuickAction avoids commit_push_pr when there are local changes", () => {
+    const quick = resolveQuickAction(
+      status({
+        hasWorkingTreeChanges: true,
+        prActionAvailability: {
+          available: false,
+          reason: "gh_unauthenticated",
+          message: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
+        },
+      }),
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push",
+      label: "Commit & push",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction disables create PR when branch is up to date", () => {
+    const quick = resolveQuickAction(
+      status({
+        aheadCount: 0,
+        behindCount: 0,
+        pr: null,
+        prActionAvailability: {
+          available: false,
+          reason: "gh_missing",
+          message: "GitHub CLI (`gh`) is required but not available on PATH.",
+        },
+      }),
+      false,
+    );
+    assert.deepEqual(quick, {
+      label: "Create PR",
+      disabled: true,
+      kind: "show_hint",
+      hint: "GitHub CLI (`gh`) is required but not available on PATH.",
+    });
+  });
+
+  it("buildMenuItems disables create PR when gh is unavailable", () => {
+    const items = buildMenuItems(
+      status({
+        aheadCount: 0,
+        behindCount: 0,
+        pr: null,
+        prActionAvailability: {
+          available: false,
+          reason: "gh_missing",
+          message: "GitHub CLI (`gh`) is required but not available on PATH.",
+        },
+      }),
+      false,
+    );
     assert.deepEqual(items, [
       {
         id: "commit",
@@ -442,6 +533,33 @@ describe("when: on default branch without open PR", () => {
       action: "commit_push",
       label: "Push",
       disabled: false,
+    });
+  });
+
+  it("resolveQuickAction does not suggest create PR when branch is up to date", () => {
+    const quick = resolveQuickAction(
+      status({ branch: "main", aheadCount: 0, pr: null }),
+      false,
+      true,
+    );
+    assert.deepInclude(quick, { kind: "show_hint", label: "Commit", disabled: true });
+  });
+
+  it("buildMenuItems disables create PR on default branch", () => {
+    const items = buildMenuItems(
+      status({ branch: "main", aheadCount: 0, pr: null }),
+      false,
+      true,
+      true,
+    );
+    const prItem = items.find((item) => item.id === "pr");
+    assert.deepEqual(prItem, {
+      id: "pr",
+      label: "Create PR",
+      disabled: true,
+      icon: "pr",
+      kind: "open_dialog",
+      dialogAction: "create_pr",
     });
   });
 });

@@ -718,7 +718,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("status is resilient to gh lookup failures and returns pr null", () =>
+  it.effect("status is resilient to gh lookup failures and returns pr null with gh_missing", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -739,6 +739,40 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.branch).toBe("feature/status-no-gh");
       expect(status.pr).toBeNull();
+      expect(status.prActionAvailability).toEqual({
+        available: false,
+        reason: "gh_missing",
+        message: "GitHub CLI (`gh`) is required but not available on PATH.",
+      });
+    }),
+  );
+
+  it.effect("status reports gh_unauthenticated when gh auth is missing", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-gh-auth"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-gh-auth"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          failWith: new GitHubCliError({
+            operation: "execute",
+            detail: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
+          }),
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.branch).toBe("feature/status-gh-auth");
+      expect(status.pr).toBeNull();
+      expect(status.prActionAvailability).toEqual({
+        available: false,
+        reason: "gh_unauthenticated",
+        message: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
+      });
     }),
   );
 

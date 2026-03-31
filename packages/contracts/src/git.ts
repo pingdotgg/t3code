@@ -30,6 +30,11 @@ const GitPushStepStatus = Schema.Literals([
 const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
 const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_not_requested"]);
 const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
+const GitPrActionUnavailableReason = Schema.Literals([
+  "gh_missing",
+  "gh_unauthenticated",
+  "unknown",
+]);
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
@@ -143,6 +148,12 @@ const GitStatusPr = Schema.Struct({
   state: GitStatusPrState,
 });
 
+const GitPrActionAvailability = Schema.Struct({
+  available: Schema.Boolean,
+  reason: Schema.optional(GitPrActionUnavailableReason),
+  message: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
 export const GitStatusResult = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   hasWorkingTreeChanges: Schema.Boolean,
@@ -161,6 +172,7 @@ export const GitStatusResult = Schema.Struct({
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
   pr: Schema.NullOr(GitStatusPr),
+  prActionAvailability: Schema.optional(GitPrActionAvailability),
 });
 export type GitStatusResult = typeof GitStatusResult.Type;
 

@@ -14,7 +14,7 @@ import {
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 
-import { GitManagerError } from "../Errors.ts";
+import { GitHubCliError, GitManagerError } from "../Errors.ts";
 import {
   GitManager,
   type GitActionProgressReporter,
@@ -69,6 +69,12 @@ interface BranchHeadContext {
   headRepositoryNameWithOwner: string | null;
   headRepositoryOwnerLogin: string | null;
   isCrossRepository: boolean;
+}
+
+interface PrActionAvailability {
+  available: boolean;
+  reason?: "gh_missing" | "gh_unauthenticated" | "unknown";
+  message?: string;
 }
 
 function parseRepositoryNameFromPullRequestUrl(url: string): string | null {
@@ -192,6 +198,46 @@ function gitManagerError(operation: string, detail: string, cause?: unknown): Gi
     detail,
     ...(cause !== undefined ? { cause } : {}),
   });
+}
+
+function isGitHubCliError(error: unknown): error is GitHubCliError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    (error as { _tag?: unknown })._tag === "GitHubCliError"
+  );
+}
+
+function resolvePrActionAvailabilityFromError(error: unknown): PrActionAvailability {
+  if (isGitHubCliError(error)) {
+    const detail = error.detail.toLowerCase();
+    if (detail.includes("not available on path") || detail.includes("command not found: gh")) {
+      return {
+        available: false,
+        reason: "gh_missing",
+        message: error.detail,
+      };
+    }
+    if (detail.includes("not authenticated") || detail.includes("gh auth login")) {
+      return {
+        available: false,
+        reason: "gh_unauthenticated",
+        message: error.detail,
+      };
+    }
+    return {
+      available: false,
+      reason: "unknown",
+      message: error.detail,
+    };
+  }
+
+  return {
+    available: false,
+    reason: "unknown",
+    message: "Create PR is currently unavailable.",
+  };
 }
 
 function limitContext(value: string, maxChars: number): string {
@@ -955,16 +1001,31 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   const status: GitManagerShape["status"] = Effect.fn("status")(function* (input) {
     const details = yield* gitCore.statusDetails(input.cwd);
 
-    const pr =
+    const prStatus =
       details.branch !== null
         ? yield* findLatestPr(input.cwd, {
             branch: details.branch,
             upstreamRef: details.upstreamRef,
           }).pipe(
-            Effect.map((latest) => (latest ? toStatusPr(latest) : null)),
-            Effect.catch(() => Effect.succeed(null)),
+            Effect.map((latest) => ({
+              pr: latest ? toStatusPr(latest) : null,
+              prActionAvailability: { available: true } satisfies PrActionAvailability,
+            })),
+            Effect.catch((error) =>
+              Effect.succeed({
+                pr: null,
+                prActionAvailability: resolvePrActionAvailabilityFromError(error),
+              }),
+            ),
           )
-        : null;
+        : {
+            pr: null,
+            prActionAvailability: {
+              available: false,
+              reason: "unknown",
+              message: "Detached HEAD: checkout a branch before creating a PR.",
+            } satisfies PrActionAvailability,
+          };
 
     return {
       branch: details.branch,
@@ -973,7 +1034,8 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       hasUpstream: details.hasUpstream,
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
-      pr,
+      pr: prStatus.pr,
+      prActionAvailability: prStatus.prActionAvailability,
     };
   });
 

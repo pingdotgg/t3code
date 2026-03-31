@@ -17,6 +17,7 @@ import {
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
+  resolvePrActionUnavailableHint,
   resolveQuickAction,
   summarizeGitResult,
 } from "./GitActionsControl.logic";
@@ -117,11 +118,13 @@ function getMenuActionDisabledReason({
   gitStatus,
   isBusy,
   hasOriginRemote,
+  isDefaultBranch,
 }: {
   item: GitActionMenuItem;
   gitStatus: GitStatusResult | null;
   isBusy: boolean;
   hasOriginRemote: boolean;
+  isDefaultBranch: boolean;
 }): string | null {
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
@@ -168,10 +171,17 @@ function getMenuActionDisabledReason({
   if (hasChanges) {
     return "Commit local changes before creating a PR.";
   }
+  if (isDefaultBranch) {
+    return "Default branch: create a feature branch before creating a PR.";
+  }
   if (!gitStatus.hasUpstream && !hasOriginRemote) {
     return 'Add an "origin" remote before creating a PR.';
   }
-  if (!isAhead) {
+  const prUnavailableHint = resolvePrActionUnavailableHint(gitStatus);
+  if (prUnavailableHint) {
+    return prUnavailableHint;
+  }
+  if (!isAhead && !gitStatus.hasUpstream) {
     return "No local commits to include in a PR.";
   }
   if (isBehind) {
@@ -275,8 +285,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   }, [branchList?.branches, gitStatusForActions?.branch]);
 
   const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasOriginRemote),
-    [gitStatusForActions, hasOriginRemote, isGitActionRunning],
+    () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasOriginRemote, isDefaultBranch),
+    [gitStatusForActions, hasOriginRemote, isDefaultBranch, isGitActionRunning],
   );
   const quickAction = useMemo(
     () =>
@@ -805,6 +815,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                   gitStatus: gitStatusForActions,
                   isBusy: isGitActionRunning,
                   hasOriginRemote,
+                  isDefaultBranch,
                 });
                 if (item.disabled && disabledReason) {
                   return (
