@@ -78,10 +78,7 @@ function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
     .join("; ");
 }
 
-function extractEnvironmentValue(
-  output: string,
-  name: string,
-): string | undefined {
+function extractEnvironmentValue(output: string, name: string): string | undefined {
   const startMarker = envCaptureStart(name);
   const endMarker = envCaptureEnd(name);
   const startIndex = output.indexOf(startMarker);
@@ -117,14 +114,10 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
     return {};
   }
 
-  const output = execFile(
-    shell,
-    ["-ilc", buildEnvironmentCaptureCommand(names)],
-    {
-      encoding: "utf8",
-      timeout: 5000,
-    },
-  );
+  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
+    encoding: "utf8",
+    timeout: 5000,
+  });
 
   const environment: Partial<Record<string, string>> = {};
   for (const name of names) {
