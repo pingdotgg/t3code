@@ -13,4 +13,8 @@ describe("buildLegacyClientSettingsMigrationPatch", () => {
       confirmThreadDelete: false,
     });
   });
+
+  it("does not migrate colorblindMode since it never existed in legacy settings", () => {
+    expect(buildLegacyClientSettingsMigrationPatch({ colorblindMode: true })).toEqual({});
+  });
 });

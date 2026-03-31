@@ -120,6 +120,34 @@
   }
 }
 
+/* Colorblind mode: blue/orange for addition/deletion comparative contexts.
+   Colors from GitHub Primer @primer/primitives diffBlob tokens. */
+:root.colorblind-mode {
+  --cb-addition: #0969da;
+  --cb-deletion: #bc4c00;
+}
+
+:root.colorblind-mode.dark {
+  --cb-addition: #388bfd;
+  --cb-deletion: #db6d28;
+}
+
+.diff-stat-addition {
+  color: var(--color-success);
+}
+
+.diff-stat-deletion {
+  color: var(--color-destructive);
+}
+
+:root.colorblind-mode .diff-stat-addition {
+  color: var(--cb-addition);
+}
+
+:root.colorblind-mode .diff-stat-deletion {
+  color: var(--cb-deletion);
+}
+
 body {
   font-family:
     "DM Sans",

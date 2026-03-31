@@ -31,7 +31,7 @@ import {
 } from "@t3tools/contracts/settings";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { ensureNativeApi } from "~/nativeApi";
-import { useLocalStorage } from "./useLocalStorage";
+import { getLocalStorageItem, useLocalStorage } from "./useLocalStorage";
 import { normalizeCustomModelSlugs } from "~/modelSelection";
 import { Predicate, Schema, Struct } from "effect";
 import { DeepMutable } from "effect/Types";
@@ -266,5 +266,21 @@ export function migrateLocalSettingsToServer(): void {
   } finally {
     // Remove the legacy key regardless to keep migration one-shot behavior.
     localStorage.removeItem(OLD_SETTINGS_KEY);
+  }
+}
+
+// ── Colorblind mode root class ──────────────────────────────────
+
+export function applyColorblindMode(enabled: boolean): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle("colorblind-mode", enabled);
+}
+
+export function getStoredColorblindMode(): boolean {
+  try {
+    const stored = getLocalStorageItem(CLIENT_SETTINGS_STORAGE_KEY, ClientSettingsSchema);
+    return stored?.colorblindMode ?? false;
+  } catch {
+    return false;
   }
 }

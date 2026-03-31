@@ -457,6 +457,9 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(settings.colorblindMode !== DEFAULT_UNIFIED_SETTINGS.colorblindMode
+        ? ["Colorblind mode"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -481,6 +484,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       areProviderSettingsDirty,
       isGitWritingModelDirty,
+      settings.colorblindMode,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.defaultThreadEnvMode,
@@ -811,6 +815,30 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Colorblind mode"
+          description="Replace red/green with blue/orange across diffs and stats."
+          resetAction={
+            settings.colorblindMode !== DEFAULT_UNIFIED_SETTINGS.colorblindMode ? (
+              <SettingResetButton
+                label="colorblind mode"
+                onClick={() =>
+                  updateSettings({
+                    colorblindMode: DEFAULT_UNIFIED_SETTINGS.colorblindMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.colorblindMode}
+              onCheckedChange={(checked) => updateSettings({ colorblindMode: Boolean(checked) })}
+              aria-label="Enable colorblind mode"
+            />
           }
         />
 

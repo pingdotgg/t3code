@@ -27,7 +27,11 @@ import { useUiStateStore } from "../uiStateStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerProvidersUpdated, onServerWelcome } from "../wsNativeApi";
-import { migrateLocalSettingsToServer } from "../hooks/useSettings";
+import {
+  applyColorblindMode,
+  migrateLocalSettingsToServer,
+  useSettings,
+} from "../hooks/useSettings";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
@@ -60,6 +64,7 @@ function RootRouteView() {
   return (
     <ToastProvider>
       <AnchoredToastProvider>
+        <ColorblindModeSync />
         <EventRouter />
         <DesktopProjectBootstrap />
         <AppSidebarLayout>
@@ -68,6 +73,14 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function ColorblindModeSync() {
+  const settings = useSettings();
+  useEffect(() => {
+    applyColorblindMode(settings.colorblindMode);
+  }, [settings.colorblindMode]);
+  return null;
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
