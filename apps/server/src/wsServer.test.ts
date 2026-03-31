@@ -1297,7 +1297,7 @@ describe("WebSocket Server", () => {
     });
 
     expect(response.result).toBeUndefined();
-    expect(response.error?.message).toContain("Project directory does not exist:");
+    expect(response.error?.message).toContain("Workspace root does not exist:");
   });
 
   it("keeps orchestration domain push behavior for provider runtime events", async () => {
@@ -1766,7 +1766,7 @@ describe("WebSocket Server", () => {
 
     expect(response.result).toBeUndefined();
     expect(response.error?.message).toContain(
-      "Workspace file path must stay within the project root.",
+      "Workspace file path must be relative to the project root: ../escape.md",
     );
     expect(fs.existsSync(path.join(workspace, "..", "escape.md"))).toBe(false);
   });

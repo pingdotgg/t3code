@@ -3,7 +3,9 @@ import { Effect, FileSystem, Layer, Path } from "effect";
 
 import {
   WorkspacePaths,
-  WorkspacePathsError,
+  WorkspacePathOutsideRootError,
+  WorkspaceRootNotDirectoryError,
+  WorkspaceRootNotExistsError,
   type WorkspacePathsShape,
 } from "../Services/WorkspacePaths.ts";
 
@@ -33,17 +35,15 @@ export const makeWorkspacePaths = Effect.gen(function* () {
       .stat(normalizedWorkspaceRoot)
       .pipe(Effect.catch(() => Effect.succeed(null)));
     if (!workspaceStat) {
-      return yield* new WorkspacePathsError({
+      return yield* new WorkspaceRootNotExistsError({
         workspaceRoot,
-        operation: "workspacePaths.normalizeWorkspaceRoot",
-        detail: `Project directory does not exist: ${normalizedWorkspaceRoot}`,
+        normalizedWorkspaceRoot,
       });
     }
     if (workspaceStat.type !== "Directory") {
-      return yield* new WorkspacePathsError({
+      return yield* new WorkspaceRootNotDirectoryError({
         workspaceRoot,
-        operation: "workspacePaths.normalizeWorkspaceRoot",
-        detail: `Project path is not a directory: ${normalizedWorkspaceRoot}`,
+        normalizedWorkspaceRoot,
       });
     }
     return normalizedWorkspaceRoot;
@@ -53,11 +53,9 @@ export const makeWorkspacePaths = Effect.gen(function* () {
     Effect.fn("WorkspacePaths.resolveRelativePathWithinRoot")(function* (input) {
       const normalizedInputPath = input.relativePath.trim();
       if (path.isAbsolute(normalizedInputPath)) {
-        return yield* new WorkspacePathsError({
+        return yield* new WorkspacePathOutsideRootError({
           workspaceRoot: input.workspaceRoot,
           relativePath: input.relativePath,
-          operation: "workspacePaths.resolveRelativePathWithinRoot",
-          detail: "Workspace file path must be relative to the project root.",
         });
       }
 
@@ -70,11 +68,9 @@ export const makeWorkspacePaths = Effect.gen(function* () {
         relativeToRoot === ".." ||
         path.isAbsolute(relativeToRoot)
       ) {
-        return yield* new WorkspacePathsError({
+        return yield* new WorkspacePathOutsideRootError({
           workspaceRoot: input.workspaceRoot,
           relativePath: input.relativePath,
-          operation: "workspacePaths.resolveRelativePathWithinRoot",
-          detail: "Workspace file path must stay within the project root.",
         });
       }
 

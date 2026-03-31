@@ -120,7 +120,9 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
           })
           .pipe(Effect.flip);
 
-        expect(error.detail).toContain("Workspace file path must stay within the project root.");
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: ../escape.md",
+        );
 
         const escapedPath = path.resolve(cwd, "..", "escape.md");
         const escapedStat = yield* fileSystem

@@ -54,7 +54,7 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
           .normalizeWorkspaceRoot(path.join(cwd, "missing"))
           .pipe(Effect.flip);
 
-        expect(error.detail).toContain("Project directory does not exist:");
+        expect(error.message).toContain("Workspace root does not exist:");
       }),
     );
 
@@ -68,7 +68,7 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
 
         const error = yield* workspacePaths.normalizeWorkspaceRoot(filePath).pipe(Effect.flip);
 
-        expect(error.detail).toContain("Project path is not a directory:");
+        expect(error.message).toContain("Workspace root is not a directory:");
       }),
     );
   });
@@ -104,7 +104,9 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
           })
           .pipe(Effect.flip);
 
-        expect(error.detail).toContain("Workspace file path must stay within the project root.");
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: ../escape.md",
+        );
       }),
     );
   });

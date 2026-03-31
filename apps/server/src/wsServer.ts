@@ -284,7 +284,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         ...input.command,
         workspaceRoot: yield* workspacePaths
           .normalizeWorkspaceRoot(input.command.workspaceRoot)
-          .pipe(Effect.mapError((cause) => new RouteRequestError({ message: cause.detail }))),
+          .pipe(Effect.mapError((cause) => new RouteRequestError({ message: cause.message }))),
       } satisfies OrchestrationCommand;
     }
 
@@ -293,7 +293,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         ...input.command,
         workspaceRoot: yield* workspacePaths
           .normalizeWorkspaceRoot(input.command.workspaceRoot)
-          .pipe(Effect.mapError((cause) => new RouteRequestError({ message: cause.detail }))),
+          .pipe(Effect.mapError((cause) => new RouteRequestError({ message: cause.message }))),
       } satisfies OrchestrationCommand;
     }
 
@@ -737,7 +737,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           Effect.mapError(
             (cause) =>
               new RouteRequestError({
-                message: `Failed to write workspace file: ${cause.detail}`,
+                message: `Failed to write workspace file: ${cause.message}`,
               }),
           ),
         );
