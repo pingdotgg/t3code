@@ -46,14 +46,19 @@ export function requireWorkspaceRootUnique(input: {
   readonly workspaceRoot: string;
   readonly excludeProjectId?: ProjectId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
-  const existing = findProjectByWorkspaceRoot(input.readModel, input.workspaceRoot);
-  if (!existing || existing.id === input.excludeProjectId) {
+  const conflict = input.readModel.projects.find(
+    (project) =>
+      project.workspaceRoot === input.workspaceRoot &&
+      project.deletedAt === null &&
+      project.id !== input.excludeProjectId,
+  );
+  if (!conflict) {
     return Effect.void;
   }
   return Effect.fail(
     invariantError(
       input.command.type,
-      `Workspace root '${input.workspaceRoot}' is already used by project '${existing.id}'.`,
+      `Workspace root '${input.workspaceRoot}' is already used by project '${conflict.id}'.`,
     ),
   );
 }

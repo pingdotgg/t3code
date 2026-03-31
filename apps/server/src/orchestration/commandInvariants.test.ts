@@ -313,4 +313,63 @@ describe("commandInvariants", () => {
       }),
     );
   });
+
+  it("allows self-update when pre-existing duplicates place excluded project later in array", async () => {
+    const duplicateReadModel: OrchestrationReadModel = {
+      ...readModel,
+      projects: [
+        {
+          id: ProjectId.makeUnsafe("project-dup-1"),
+          title: "Dup 1",
+          workspaceRoot: "/tmp/shared-root",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        },
+        {
+          id: ProjectId.makeUnsafe("project-dup-2"),
+          title: "Dup 2",
+          workspaceRoot: "/tmp/shared-root",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        },
+      ],
+    };
+
+    const updateCommand: OrchestrationCommand = {
+      type: "project.meta.update",
+      commandId: CommandId.makeUnsafe("cmd-update-dup"),
+      projectId: ProjectId.makeUnsafe("project-dup-2"),
+      title: "Renamed",
+    };
+
+    // project-dup-2 updates its own workspaceRoot - should detect project-dup-1 as a conflict
+    await expect(
+      Effect.runPromise(
+        requireWorkspaceRootUnique({
+          readModel: duplicateReadModel,
+          command: updateCommand,
+          workspaceRoot: "/tmp/shared-root",
+          excludeProjectId: ProjectId.makeUnsafe("project-dup-2"),
+        }),
+      ),
+    ).rejects.toThrow("already used by project");
+
+    // project-dup-1 updates its own workspaceRoot - should detect project-dup-2 as a conflict
+    await expect(
+      Effect.runPromise(
+        requireWorkspaceRootUnique({
+          readModel: duplicateReadModel,
+          command: updateCommand,
+          workspaceRoot: "/tmp/shared-root",
+          excludeProjectId: ProjectId.makeUnsafe("project-dup-1"),
+        }),
+      ),
+    ).rejects.toThrow("already used by project");
+  });
 });
