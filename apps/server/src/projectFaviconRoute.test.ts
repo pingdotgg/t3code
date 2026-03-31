@@ -3,7 +3,11 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 
 interface HttpResponse {
@@ -23,11 +27,25 @@ function makeTempDir(prefix: string): string {
 async function withRouteServer(run: (baseUrl: string) => Promise<void>): Promise<void> {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    if (tryHandleProjectFaviconRequest(url, res)) {
-      return;
-    }
-    res.writeHead(404, { "Content-Type": "text/plain" });
-    res.end("Not Found");
+    void Effect.runPromise(
+      tryHandleProjectFaviconRequest(url, res).pipe(
+        Effect.provide(ProjectFaviconResolverLive),
+        Effect.provide(NodeServices.layer),
+        Effect.flatMap((handled) =>
+          handled
+            ? Effect.void
+            : Effect.sync(() => {
+                res.writeHead(404, { "Content-Type": "text/plain" });
+                res.end("Not Found");
+              }),
+        ),
+      ),
+    ).catch(() => {
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("Internal Server Error");
+      }
+    });
   });
 
   await new Promise<void>((resolve, reject) => {
