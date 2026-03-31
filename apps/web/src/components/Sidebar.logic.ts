@@ -4,9 +4,9 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 
-export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
+const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
-export type SidebarNewThreadEnvMode = "local" | "worktree";
+type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
   name: string;
@@ -18,9 +18,9 @@ type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
   messages?: Pick<Thread["messages"][number], "createdAt" | "role">[];
 };
 
-export type ThreadTraversalDirection = "previous" | "next";
+type ThreadTraversalDirection = "previous" | "next";
 
-export interface ThreadStatusPill {
+interface ThreadStatusPill {
   label:
     | "Working"
     | "Connecting"
@@ -54,7 +54,7 @@ type ThreadStatusInput = Pick<
   lastVisitedAt?: string | undefined;
 };
 
-export interface ThreadJumpHintVisibilityController {
+interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
   dispose: () => void;
 }

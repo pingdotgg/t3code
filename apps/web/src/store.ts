@@ -1104,24 +1104,25 @@ export const selectThreadById =
   (state: AppState): Thread | undefined =>
     threadId ? state.threads.find((thread) => thread.id === threadId) : undefined;
 
+<<<<<<< HEAD
 export const selectSidebarThreadSummaryById =
   (threadId: ThreadId | null | undefined) =>
   (state: AppState): SidebarThreadSummary | undefined =>
     threadId ? state.sidebarThreadsById[threadId] : undefined;
 
-export const selectThreadIdsByProjectId =
+const selectThreadIdsByProjectId =
   (projectId: ProjectId | null | undefined) =>
   (state: AppState): ThreadId[] =>
     projectId ? (state.threadIdsByProjectId[projectId] ?? EMPTY_THREAD_IDS) : EMPTY_THREAD_IDS;
 
-export function setError(state: AppState, threadId: ThreadId, error: string | null): AppState {
+function setError(state: AppState, threadId: ThreadId, error: string | null): AppState {
   return updateThreadState(state, threadId, (t) => {
     if (t.error === error) return t;
     return { ...t, error };
   });
 }
 
-export function setThreadBranch(
+function setThreadBranch(
   state: AppState,
   threadId: ThreadId,
   branch: string | null,

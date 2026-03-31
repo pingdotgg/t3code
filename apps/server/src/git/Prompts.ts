@@ -15,7 +15,7 @@ import { limitSection } from "./Utils.ts";
 // Commit message
 // ---------------------------------------------------------------------------
 
-export interface CommitMessagePromptInput {
+interface CommitMessagePromptInput {
   branch: string | null;
   stagedSummary: string;
   stagedPatch: string;
@@ -71,7 +71,7 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
 // PR content
 // ---------------------------------------------------------------------------
 
-export interface PrContentPromptInput {
+interface PrContentPromptInput {
   baseBranch: string;
   headBranch: string;
   commitSummary: string;
@@ -114,7 +114,7 @@ export function buildPrContentPrompt(input: PrContentPromptInput) {
 // Branch name
 // ---------------------------------------------------------------------------
 
-export interface BranchNamePromptInput {
+interface BranchNamePromptInput {
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
@@ -176,7 +176,7 @@ export function buildBranchNamePrompt(input: BranchNamePromptInput) {
 // Thread title
 // ---------------------------------------------------------------------------
 
-export interface ThreadTitlePromptInput {
+interface ThreadTitlePromptInput {
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }

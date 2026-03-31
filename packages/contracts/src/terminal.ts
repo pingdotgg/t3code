@@ -32,7 +32,7 @@ const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: TerminalIdWithDefaultSchema,
 });
-export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
+type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
 
 export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,

@@ -1,11 +1,11 @@
-export type OrchestrationRecoveryReason = "bootstrap" | "sequence-gap" | "replay-failed";
+type OrchestrationRecoveryReason = "bootstrap" | "sequence-gap" | "replay-failed";
 
-export interface OrchestrationRecoveryPhase {
+interface OrchestrationRecoveryPhase {
   kind: "snapshot" | "replay";
   reason: OrchestrationRecoveryReason;
 }
 
-export interface OrchestrationRecoveryState {
+interface OrchestrationRecoveryState {
   latestSequence: number;
   highestObservedSequence: number;
   bootstrapped: boolean;

@@ -127,12 +127,12 @@ export interface CodexAppServerStartSessionInput {
   readonly runtimeMode: RuntimeMode;
 }
 
-export interface CodexThreadTurnSnapshot {
+interface CodexThreadTurnSnapshot {
   id: TurnId;
   items: unknown[];
 }
 
-export interface CodexThreadSnapshot {
+interface CodexThreadSnapshot {
   threadId: string;
   turns: CodexThreadTurnSnapshot[];
 }
@@ -425,7 +425,7 @@ export function isRecoverableThreadResumeError(error: unknown): boolean {
   return RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS.some((snippet) => message.includes(snippet));
 }
 
-export interface CodexAppServerManagerEvents {
+interface CodexAppServerManagerEvents {
   event: [event: ProviderEvent];
 }
 

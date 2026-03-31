@@ -17,8 +17,8 @@ export interface CodexAccountSnapshot {
   readonly sparkEnabled: boolean;
 }
 
-export const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
-export const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
+const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
+const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
 const CODEX_SPARK_ENABLED_PLAN_TYPES = new Set<CodexPlanType>(["pro"]);
 
 function asObject(value: unknown): Record<string, unknown> | undefined {

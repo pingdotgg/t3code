@@ -43,16 +43,7 @@ export class WorkspacePathOutsideRootError extends Schema.TaggedErrorClass<Works
   override get message(): string {
     return `Workspace file path must be relative to the project root: ${this.relativePath}`;
   }
-}
-
-export const WorkspacePathsError = Schema.Union([
-  WorkspaceRootNotExistsError,
-  WorkspaceRootNotDirectoryError,
-  WorkspacePathOutsideRootError,
-]);
-export type WorkspacePathsError = typeof WorkspacePathsError.Type;
-
-/**
+} /**
  * WorkspacePathsShape - Service API for workspace path normalization and guards.
  */
 export interface WorkspacePathsShape {

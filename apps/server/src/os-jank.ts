@@ -26,7 +26,7 @@ export function fixPath(
   }
 }
 
-export const expandHomePath = Effect.fn(function* (input: string) {
+const expandHomePath = Effect.fn(function* (input: string) {
   const { join } = yield* Path.Path;
   if (input === "~") {
     return OS.homedir();

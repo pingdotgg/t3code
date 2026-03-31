@@ -129,24 +129,6 @@ export function gitInitMutationOptions(input: { cwd: string | null; queryClient:
     },
   });
 }
-
-export function gitCheckoutMutationOptions(input: {
-  cwd: string | null;
-  queryClient: QueryClient;
-}) {
-  return mutationOptions({
-    mutationKey: gitMutationKeys.checkout(input.cwd),
-    mutationFn: async (branch: string) => {
-      const api = ensureNativeApi();
-      if (!input.cwd) throw new Error("Git checkout is unavailable.");
-      return api.git.checkout({ cwd: input.cwd, branch });
-    },
-    onSuccess: async () => {
-      await invalidateGitQueries(input.queryClient);
-    },
-  });
-}
-
 export function gitRunStackedActionMutationOptions(input: {
   cwd: string | null;
   queryClient: QueryClient;

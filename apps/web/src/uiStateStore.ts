@@ -32,12 +32,12 @@ export interface UiThreadState {
 
 export interface UiState extends UiProjectState, UiThreadState {}
 
-export interface SyncProjectInput {
+interface SyncProjectInput {
   id: ProjectId;
   cwd: string;
 }
 
-export interface SyncThreadInput {
+interface SyncThreadInput {
   id: ThreadId;
   seedVisitedAt?: string | undefined;
 }
@@ -270,7 +270,7 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
   };
 }
 
-export function markThreadVisited(state: UiState, threadId: ThreadId, visitedAt?: string): UiState {
+function markThreadVisited(state: UiState, threadId: ThreadId, visitedAt?: string): UiState {
   const at = visitedAt ?? new Date().toISOString();
   const visitedAtMs = Date.parse(at);
   const previousVisitedAt = state.threadLastVisitedAtById[threadId];
@@ -328,7 +328,7 @@ export function clearThreadUi(state: UiState, threadId: ThreadId): UiState {
   };
 }
 
-export function toggleProject(state: UiState, projectId: ProjectId): UiState {
+function toggleProject(state: UiState, projectId: ProjectId): UiState {
   const expanded = state.projectExpandedById[projectId] ?? true;
   return {
     ...state,

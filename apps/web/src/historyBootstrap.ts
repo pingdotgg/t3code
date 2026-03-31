@@ -1,6 +1,6 @@
 import type { ChatMessage } from "./types";
 
-export interface BootstrapInputResult {
+interface BootstrapInputResult {
   text: string;
   includedCount: number;
   omittedCount: number;

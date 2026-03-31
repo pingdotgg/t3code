@@ -1,6 +1,6 @@
 import { type ChildProcess as ChildProcessHandle, spawn, spawnSync } from "node:child_process";
 
-export interface ProcessRunOptions {
+interface ProcessRunOptions {
   cwd?: string | undefined;
   timeoutMs?: number | undefined;
   env?: NodeJS.ProcessEnv | undefined;

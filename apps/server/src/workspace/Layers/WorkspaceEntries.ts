@@ -217,7 +217,7 @@ function directoryAncestorsOf(relativePath: string): string[] {
 const processErrorDetail = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-export const makeWorkspaceEntries = Effect.gen(function* () {
+const makeWorkspaceEntries = Effect.gen(function* () {
   const path = yield* Path.Path;
   const gitOption = yield* Effect.serviceOption(GitCore);
   const workspacePaths = yield* WorkspacePaths;

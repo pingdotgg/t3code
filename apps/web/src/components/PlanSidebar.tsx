@@ -263,4 +263,3 @@ const PlanSidebar = memo(function PlanSidebar({
 });
 
 export default PlanSidebar;
-export type { PlanSidebarProps };

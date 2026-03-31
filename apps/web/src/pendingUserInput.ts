@@ -5,7 +5,7 @@ export interface PendingUserInputDraftAnswer {
   customAnswer?: string;
 }
 
-export interface PendingUserInputProgress {
+interface PendingUserInputProgress {
   questionIndex: number;
   activeQuestion: UserInputQuestion | null;
   activeDraft: PendingUserInputDraftAnswer | undefined;

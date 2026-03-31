@@ -32,7 +32,7 @@ export const PROVIDER_OPTIONS: Array<{
   { value: "cursor", label: "Cursor", available: false },
 ];
 
-export interface WorkLogEntry {
+interface WorkLogEntry {
   id: string;
   createdAt: string;
   label: string;
@@ -83,7 +83,7 @@ export interface LatestProposedPlanState {
   implementationThreadId: ThreadId | null;
 }
 
-export type TimelineEntry =
+type TimelineEntry =
   | {
       id: string;
       kind: "message";
@@ -103,7 +103,7 @@ export type TimelineEntry =
       entry: WorkLogEntry;
     };
 
-export function formatDuration(durationMs: number): string {
+function formatDuration(durationMs: number): string {
   if (!Number.isFinite(durationMs) || durationMs < 0) return "0ms";
   if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`;
   if (durationMs < 10_000) return `${(durationMs / 1_000).toFixed(1)}s`;

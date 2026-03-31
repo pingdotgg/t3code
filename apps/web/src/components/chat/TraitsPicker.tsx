@@ -138,7 +138,7 @@ function getSelectedTraits(
   };
 }
 
-export interface TraitsMenuContentProps {
+interface TraitsMenuContentProps {
   provider: ProviderKind;
   models: ReadonlyArray<ServerProviderModel>;
   model: string | null | undefined;

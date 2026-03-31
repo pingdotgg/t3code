@@ -13,7 +13,7 @@ import {
   normalizeCodexModelOptionsWithCapabilities,
 } from "@t3tools/shared/model";
 
-export type ComposerProviderStateInput = {
+type ComposerProviderStateInput = {
   provider: ProviderKind;
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
@@ -21,7 +21,7 @@ export type ComposerProviderStateInput = {
   modelOptions: ProviderModelOptions | null | undefined;
 };
 
-export type ComposerProviderState = {
+type ComposerProviderState = {
   provider: ProviderKind;
   promptEffort: string | null;
   modelOptionsForDispatch: ProviderModelOptions[ProviderKind] | undefined;

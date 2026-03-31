@@ -47,55 +47,10 @@ export function toPersistenceDecodeError(operation: string) {
       cause: error,
     });
 }
-
-export function toPersistenceDecodeCauseError(operation: string) {
-  return (cause: unknown): PersistenceDecodeError =>
-    new PersistenceDecodeError({
-      operation,
-      issue: `Failed to execute ${operation}`,
-      cause,
-    });
-}
-
 export const isPersistenceError = (u: unknown) =>
   Schema.is(PersistenceSqlError)(u) || Schema.is(PersistenceDecodeError)(u);
 
-// ===============================
-// Provider Session Repository Errors
-// ===============================
-
-export class ProviderSessionRepositoryValidationError extends Schema.TaggedErrorClass<ProviderSessionRepositoryValidationError>()(
-  "ProviderSessionRepositoryValidationError",
-  {
-    operation: Schema.String,
-    issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Provider session repository validation failed in ${this.operation}: ${this.issue}`;
-  }
-}
-
-export class ProviderSessionRepositoryPersistenceError extends Schema.TaggedErrorClass<ProviderSessionRepositoryPersistenceError>()(
-  "ProviderSessionRepositoryPersistenceError",
-  {
-    operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Provider session repository persistence error in ${this.operation}: ${this.detail}`;
-  }
-}
-
 export type OrchestrationEventStoreError = PersistenceSqlError | PersistenceDecodeError;
-
-export type ProviderSessionRepositoryError =
-  | ProviderSessionRepositoryValidationError
-  | ProviderSessionRepositoryPersistenceError;
-
 export type OrchestrationCommandReceiptRepositoryError =
   | PersistenceSqlError
   | PersistenceDecodeError;

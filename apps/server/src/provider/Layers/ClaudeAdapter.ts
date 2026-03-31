@@ -3057,9 +3057,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     streamEvents: Stream.fromQueue(runtimeEventQueue),
   } satisfies ClaudeAdapterShape;
 });
-
-export const ClaudeAdapterLive = Layer.effect(ClaudeAdapter, makeClaudeAdapter());
-
 export function makeClaudeAdapterLive(options?: ClaudeAdapterLiveOptions) {
   return Layer.effect(ClaudeAdapter, makeClaudeAdapter(options));
 }

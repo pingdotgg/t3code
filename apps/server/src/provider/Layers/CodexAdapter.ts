@@ -44,7 +44,7 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 
 const PROVIDER = "codex" as const;
 
-export interface CodexAdapterLiveOptions {
+interface CodexAdapterLiveOptions {
   readonly manager?: CodexAppServerManager;
   readonly makeManager?: (services?: ServiceMap.ServiceMap<never>) => CodexAppServerManager;
   readonly nativeEventLogPath?: string;
@@ -1634,9 +1634,6 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     streamEvents: Stream.fromQueue(runtimeEventQueue),
   } satisfies CodexAdapterShape;
 });
-
-export const CodexAdapterLive = Layer.effect(CodexAdapter, makeCodexAdapter());
-
 export function makeCodexAdapterLive(options?: CodexAdapterLiveOptions) {
   return Layer.effect(CodexAdapter, makeCodexAdapter(options));
 }

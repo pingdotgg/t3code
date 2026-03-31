@@ -14,14 +14,14 @@ export interface TerminalContextDraft extends TerminalContextSelection {
   createdAt: string;
 }
 
-export interface ExtractedTerminalContexts {
+interface ExtractedTerminalContexts {
   promptText: string;
   contextCount: number;
   previewTitle: string | null;
   contexts: ParsedTerminalContextEntry[];
 }
 
-export interface DisplayedUserMessageState {
+interface DisplayedUserMessageState {
   visibleText: string;
   copyText: string;
   contextCount: number;
@@ -71,7 +71,7 @@ function previewTerminalContextText(text: string): string {
   return preview.length > 180 ? `${preview.slice(0, 177)}...` : preview;
 }
 
-export function normalizeTerminalContextSelection(
+function normalizeTerminalContextSelection(
   selection: TerminalContextSelection,
 ): TerminalContextSelection | null {
   const text = normalizeTerminalContextText(selection.text);
@@ -91,10 +91,7 @@ export function normalizeTerminalContextSelection(
   };
 }
 
-export function formatTerminalContextRange(selection: {
-  lineStart: number;
-  lineEnd: number;
-}): string {
+function formatTerminalContextRange(selection: { lineStart: number; lineEnd: number }): string {
   return selection.lineStart === selection.lineEnd
     ? `line ${selection.lineStart}`
     : `lines ${selection.lineStart}-${selection.lineEnd}`;
