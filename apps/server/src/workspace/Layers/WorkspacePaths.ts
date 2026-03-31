@@ -23,7 +23,7 @@ function expandHomePath(input: string, path: Path.Path): string {
   return input;
 }
 
-export const makeWorkspacePaths = Effect.gen(function* () {
+const makeWorkspacePaths = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 

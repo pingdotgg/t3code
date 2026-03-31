@@ -141,7 +141,7 @@ export function useUpdateSettings() {
 
 // ── One-time migration from localStorage ─────────────────────────────
 
-export function buildLegacyServerSettingsMigrationPatch(legacySettings: Record<string, unknown>) {
+function buildLegacyServerSettingsMigrationPatch(legacySettings: Record<string, unknown>) {
   const patch: DeepMutable<ServerSettingsPatch> = {};
 
   if (Predicate.isBoolean(legacySettings.enableAssistantStreaming)) {

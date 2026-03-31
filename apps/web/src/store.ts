@@ -901,7 +901,7 @@ export const selectThreadById =
   (state: AppState): Thread | undefined =>
     threadId ? state.threads.find((thread) => thread.id === threadId) : undefined;
 
-export function setError(state: AppState, threadId: ThreadId, error: string | null): AppState {
+function setError(state: AppState, threadId: ThreadId, error: string | null): AppState {
   const threads = updateThread(state.threads, threadId, (t) => {
     if (t.error === error) return t;
     return { ...t, error };
@@ -909,7 +909,7 @@ export function setError(state: AppState, threadId: ThreadId, error: string | nu
   return threads === state.threads ? state : { ...state, threads };
 }
 
-export function setThreadBranch(
+function setThreadBranch(
   state: AppState,
   threadId: ThreadId,
   branch: string | null,

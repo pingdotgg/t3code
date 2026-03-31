@@ -17,7 +17,7 @@ export interface CommandResult {
   readonly code: number;
 }
 
-export interface ProviderProbeResult {
+interface ProviderProbeResult {
   readonly installed: boolean;
   readonly version: string | null;
   readonly status: Exclude<ServerProviderState, "disabled">;
@@ -25,7 +25,7 @@ export interface ProviderProbeResult {
   readonly message?: string;
 }
 
-export function nonEmptyTrimmed(value: string | undefined): string | undefined {
+function nonEmptyTrimmed(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -144,9 +144,7 @@ export function buildServerProvider(input: {
   };
 }
 
-export const collectStreamAsString = <E>(
-  stream: Stream.Stream<Uint8Array, E>,
-): Effect.Effect<string, E> =>
+const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(
     Stream.decodeText(),
     Stream.runFold(

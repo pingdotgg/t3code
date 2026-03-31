@@ -9,7 +9,6 @@
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
-import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 
 // Import all migrations statically
@@ -42,7 +41,7 @@ import Migration0018 from "./Migrations/018_ProjectionThreadsArchivedAtIndex.ts"
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
-export const migrationEntries = [
+const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
   [3, "CheckpointDiffBlobs", Migration0003],
@@ -63,7 +62,7 @@ export const migrationEntries = [
   [18, "ProjectionThreadsArchivedAtIndex", Migration0018],
 ] as const;
 
-export const makeMigrationLoader = (throughId?: number) =>
+const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
     Object.fromEntries(
       migrationEntries
@@ -78,7 +77,7 @@ export const makeMigrationLoader = (throughId?: number) =>
  */
 const run = Migrator.make({});
 
-export interface RunMigrationsOptions {
+interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
 
@@ -105,22 +104,3 @@ export const runMigrations = ({ toMigrationInclusive }: RunMigrationsOptions = {
     );
     return executedMigrations;
   });
-
-/**
- * Layer that runs migrations when the layer is built.
- *
- * Use this to ensure migrations run before your application starts.
- * Migrations are run automatically - no separate script is needed.
- *
- * @example
- * ```typescript
- * import { MigrationsLive } from "@acme/db/Migrations"
- * import * as SqliteClient from "@acme/db/SqliteClient"
- *
- * // Migrations run automatically when SqliteClient is provided
- * const AppLayer = MigrationsLive.pipe(
- *   Layer.provideMerge(SqliteClient.layer({ filename: "database.sqlite" }))
- * )
- * ```
- */
-export const MigrationsLive = Layer.effectDiscard(runMigrations());

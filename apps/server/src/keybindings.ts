@@ -361,11 +361,6 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
     }),
   ),
 );
-
-export const ResolvedKeybindingsFromConfig = Schema.Array(ResolvedKeybindingFromConfig).check(
-  Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
-);
-
 function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): boolean {
   return (
     left.command === right.command &&
@@ -429,12 +424,12 @@ const KeybindingsConfigPrettyJson = KeybindingsConfigJson.pipe(
   }),
 );
 
-export interface KeybindingsConfigState {
+interface KeybindingsConfigState {
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly issues: readonly ServerConfigIssue[];
 }
 
-export interface KeybindingsChangeEvent {
+interface KeybindingsChangeEvent {
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly issues: readonly ServerConfigIssue[];
 }
@@ -481,7 +476,7 @@ function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): Resolve
 /**
  * KeybindingsShape - Service API for keybinding configuration operations.
  */
-export interface KeybindingsShape {
+interface KeybindingsShape {
   /**
    * Start the keybindings runtime and attach file watching.
    *

@@ -1,7 +1,5 @@
 "use client";
 
-import { mergeProps } from "@base-ui/react/merge-props";
-import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import type * as React from "react";
 
@@ -47,22 +45,6 @@ function Group({
     </div>
   );
 }
-
-function GroupText({ className, render, ...props }: useRender.ComponentProps<"div">) {
-  const defaultProps = {
-    className: cn(
-      "relative inline-flex items-center whitespace-nowrap gap-2 rounded-lg border border-input bg-muted not-dark:bg-clip-padding px-[calc(--spacing(3)-1px)] text-muted-foreground text-base sm:text-sm shadow-xs/5 outline-none transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/6%)] dark:bg-input/64 dark:before:shadow-[0_-1px_--theme(--color-white/6%)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 [&_svg]:-mx-0.5",
-      className,
-    ),
-    "data-slot": "group-text",
-  };
-  return useRender({
-    defaultTagName: "div",
-    props: mergeProps(defaultProps, props),
-    render,
-  });
-}
-
 function GroupSeparator({
   className,
   orientation = "vertical",
@@ -82,12 +64,4 @@ function GroupSeparator({
   );
 }
 
-export {
-  Group,
-  Group as ButtonGroup,
-  GroupText,
-  GroupText as ButtonGroupText,
-  GroupSeparator,
-  GroupSeparator as ButtonGroupSeparator,
-  groupVariants,
-};
+export { Group, GroupSeparator };

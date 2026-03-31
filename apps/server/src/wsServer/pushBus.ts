@@ -19,7 +19,7 @@ interface PushJob<C extends WsPushChannel = WsPushChannel> {
   readonly delivered: Deferred.Deferred<boolean> | null;
 }
 
-export interface ServerPushBus {
+interface ServerPushBus {
   readonly publishAll: <C extends WsPushChannel>(
     channel: C,
     data: WsPushData<C>,

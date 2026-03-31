@@ -944,6 +944,7 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
   }),
   { unsafePreserveChecks: true },
 );
+export type ThreadTurnDiff = typeof ThreadTurnDiff.Type;
 
 export const ProviderSessionRuntimeStatus = Schema.Literals([
   "starting",

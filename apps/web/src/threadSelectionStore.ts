@@ -8,7 +8,7 @@
 import type { ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 
-export interface ThreadSelectionState {
+interface ThreadSelectionState {
   /** Currently selected thread IDs. */
   selectedThreadIds: ReadonlySet<ThreadId>;
   /** The thread ID that anchors shift-click range selection. */

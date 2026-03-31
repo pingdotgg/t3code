@@ -262,7 +262,7 @@ interface ComposerDraftStoreState {
   clearComposerContent: (threadId: ThreadId) => void;
 }
 
-export interface EffectiveComposerModelState {
+interface EffectiveComposerModelState {
   selectedModel: string;
   modelOptions: ProviderModelOptions | null;
 }
@@ -615,7 +615,7 @@ function legacyToModelSelectionByProvider(
   return result;
 }
 
-export function deriveEffectiveComposerModelState(input: {
+function deriveEffectiveComposerModelState(input: {
   draft:
     | Pick<ComposerThreadDraftState, "modelSelectionByProvider" | "activeProvider">
     | null

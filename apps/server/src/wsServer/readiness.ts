@@ -1,6 +1,6 @@
 import { Deferred, Effect } from "effect";
 
-export interface ServerReadiness {
+interface ServerReadiness {
   readonly awaitServerReady: Effect.Effect<void>;
   readonly markHttpListening: Effect.Effect<void>;
   readonly markPushBusReady: Effect.Effect<void>;

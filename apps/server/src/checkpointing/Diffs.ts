@@ -1,6 +1,6 @@
 import { parsePatchFiles } from "@pierre/diffs";
 
-export interface TurnDiffFileSummary {
+interface TurnDiffFileSummary {
   readonly path: string;
   readonly additions: number;
   readonly deletions: number;

@@ -21,7 +21,6 @@ import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
-
 export const ProjectionTurnState = Schema.Literals([
   "pending",
   "running",

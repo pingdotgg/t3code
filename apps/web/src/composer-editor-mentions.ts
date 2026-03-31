@@ -3,7 +3,7 @@ import {
   type TerminalContextDraft,
 } from "./lib/terminalContext";
 
-export type ComposerPromptSegment =
+type ComposerPromptSegment =
   | {
       type: "text";
       text: string;

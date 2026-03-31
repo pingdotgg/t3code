@@ -18,7 +18,7 @@ export interface ShortcutEventLike {
   altKey: boolean;
 }
 
-export interface ShortcutMatchContext {
+interface ShortcutMatchContext {
   terminalFocus: boolean;
   terminalOpen: boolean;
   [key: string]: boolean;

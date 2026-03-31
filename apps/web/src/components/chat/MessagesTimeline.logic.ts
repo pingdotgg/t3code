@@ -1,4 +1,4 @@
-export interface TimelineDurationMessage {
+interface TimelineDurationMessage {
   id: string;
   role: "user" | "assistant" | "system";
   createdAt: string;

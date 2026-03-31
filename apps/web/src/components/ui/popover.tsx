@@ -3,9 +3,6 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
 import { cn } from "~/lib/utils";
-
-const PopoverCreateHandle = PopoverPrimitive.createHandle;
-
 const Popover = PopoverPrimitive.Root;
 
 function PopoverTrigger({ className, children, ...props }: PopoverPrimitive.Trigger.Props) {
@@ -72,37 +69,4 @@ function PopoverPopup({
   );
 }
 
-function PopoverClose({ ...props }: PopoverPrimitive.Close.Props) {
-  return <PopoverPrimitive.Close data-slot="popover-close" {...props} />;
-}
-
-function PopoverTitle({ className, ...props }: PopoverPrimitive.Title.Props) {
-  return (
-    <PopoverPrimitive.Title
-      className={cn("font-semibold text-lg leading-none", className)}
-      data-slot="popover-title"
-      {...props}
-    />
-  );
-}
-
-function PopoverDescription({ className, ...props }: PopoverPrimitive.Description.Props) {
-  return (
-    <PopoverPrimitive.Description
-      className={cn("text-muted-foreground text-sm", className)}
-      data-slot="popover-description"
-      {...props}
-    />
-  );
-}
-
-export {
-  PopoverCreateHandle,
-  Popover,
-  PopoverTrigger,
-  PopoverPopup,
-  PopoverPopup as PopoverContent,
-  PopoverTitle,
-  PopoverDescription,
-  PopoverClose,
-};
+export { Popover, PopoverTrigger, PopoverPopup };

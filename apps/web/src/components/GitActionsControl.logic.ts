@@ -25,7 +25,7 @@ export interface GitQuickAction {
   hint?: string;
 }
 
-export interface DefaultBranchActionDialogCopy {
+interface DefaultBranchActionDialogCopy {
   title: string;
   description: string;
   continueLabel: string;

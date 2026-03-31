@@ -351,7 +351,7 @@ function claudeAuthMetadata(input: {
  * - Other tiers (Pro, free, unknown): 200k context stays the default;
  *   1M remains available as a manual option so users can still enable it.
  */
-export function adjustModelsForSubscription(
+function adjustModelsForSubscription(
   baseModels: ReadonlyArray<ServerProviderModel>,
   subscriptionType: string | undefined,
 ): ReadonlyArray<ServerProviderModel> {

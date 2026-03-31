@@ -1,6 +1,6 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
-export type DesktopUpdateButtonAction = "download" | "install" | "none";
+type DesktopUpdateButtonAction = "download" | "install" | "none";
 
 export function resolveDesktopUpdateButtonAction(
   state: DesktopUpdateState,
@@ -93,12 +93,6 @@ export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): 
 export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateActionResult): boolean {
   return getDesktopUpdateActionError(result) !== null;
 }
-
-export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | null): boolean {
-  if (!state || state.status !== "error") return false;
-  return state.errorContext === "download" || state.errorContext === "install";
-}
-
 export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
   if (!state || !state.enabled) return false;
   return (

@@ -8,7 +8,7 @@ import {
 import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
 import { WorkspacePaths } from "../Services/WorkspacePaths.ts";
 
-export const makeWorkspaceFileSystem = Effect.gen(function* () {
+const makeWorkspaceFileSystem = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths;

@@ -12,9 +12,9 @@ import {
   SidebarSeparator,
 } from "../ui/sidebar";
 
-export type SettingsSectionPath = "/settings/general" | "/settings/archived";
+type SettingsSectionPath = "/settings/general" | "/settings/archived";
 
-export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
+const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
   to: SettingsSectionPath;
   icon: ComponentType<{ className?: string }>;

@@ -29,7 +29,7 @@ export function getProviderSnapshot(
   return providers.find((candidate) => candidate.provider === provider);
 }
 
-export function isProviderEnabled(
+function isProviderEnabled(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderKind,
 ): boolean {

@@ -7,17 +7,6 @@ import { cn } from "~/lib/utils";
 function Collapsible({ ...props }: CollapsiblePrimitive.Root.Props) {
   return <CollapsiblePrimitive.Root data-slot="collapsible" {...props} />;
 }
-
-function CollapsibleTrigger({ className, ...props }: CollapsiblePrimitive.Trigger.Props) {
-  return (
-    <CollapsiblePrimitive.Trigger
-      className={cn("cursor-pointer", className)}
-      data-slot="collapsible-trigger"
-      {...props}
-    />
-  );
-}
-
 function CollapsiblePanel({ className, ...props }: CollapsiblePrimitive.Panel.Props) {
   return (
     <CollapsiblePrimitive.Panel
@@ -31,9 +20,4 @@ function CollapsiblePanel({ className, ...props }: CollapsiblePrimitive.Panel.Pr
   );
 }
 
-export {
-  Collapsible,
-  CollapsibleTrigger,
-  CollapsiblePanel,
-  CollapsiblePanel as CollapsibleContent,
-};
+export { Collapsible, CollapsiblePanel as CollapsibleContent };

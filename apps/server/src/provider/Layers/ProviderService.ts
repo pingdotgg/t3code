@@ -35,7 +35,7 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
-export interface ProviderServiceLiveOptions {
+interface ProviderServiceLiveOptions {
   readonly canonicalEventLogPath?: string;
   readonly canonicalEventLogger?: EventNdjsonLogger;
 }
@@ -596,9 +596,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       },
     } satisfies ProviderServiceShape;
   });
-
-export const ProviderServiceLive = Layer.effect(ProviderService, makeProviderService());
-
 export function makeProviderServiceLive(options?: ProviderServiceLiveOptions) {
   return Layer.effect(ProviderService, makeProviderService(options));
 }

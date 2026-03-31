@@ -66,7 +66,7 @@ const RuntimeThreadState = Schema.Literals([
 export type RuntimeThreadState = typeof RuntimeThreadState.Type;
 
 const RuntimeTurnState = Schema.Literals(["completed", "failed", "interrupted", "cancelled"]);
-export type RuntimeTurnState = typeof RuntimeTurnState.Type;
+type RuntimeTurnState = typeof RuntimeTurnState.Type;
 
 const RuntimePlanStepStatus = Schema.Literals(["pending", "inProgress", "completed"]);
 export type RuntimePlanStepStatus = typeof RuntimePlanStepStatus.Type;
@@ -940,7 +940,7 @@ const ProviderRuntimeErrorEvent = Schema.Struct({
 });
 export type ProviderRuntimeErrorEvent = typeof ProviderRuntimeErrorEvent.Type;
 
-export const ProviderRuntimeEventV2 = Schema.Union([
+const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeSessionStartedEvent,
   ProviderRuntimeSessionConfiguredEvent,
   ProviderRuntimeSessionStateChangedEvent,
@@ -989,7 +989,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeWarningEvent,
   ProviderRuntimeErrorEvent,
 ]);
-export type ProviderRuntimeEventV2 = typeof ProviderRuntimeEventV2.Type;
+type ProviderRuntimeEventV2 = typeof ProviderRuntimeEventV2.Type;
 
 export const ProviderRuntimeEvent = ProviderRuntimeEventV2;
 export type ProviderRuntimeEvent = ProviderRuntimeEventV2;

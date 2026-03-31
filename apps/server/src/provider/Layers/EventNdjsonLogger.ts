@@ -20,7 +20,7 @@ const DEFAULT_BATCH_WINDOW_MS = 200;
 const GLOBAL_THREAD_SEGMENT = "_global";
 const LOG_SCOPE = "provider-observability";
 
-export type EventNdjsonStream = "native" | "canonical" | "orchestration";
+type EventNdjsonStream = "native" | "canonical" | "orchestration";
 
 export interface EventNdjsonLogger {
   readonly filePath: string;
@@ -28,7 +28,7 @@ export interface EventNdjsonLogger {
   close: () => Effect.Effect<void>;
 }
 
-export interface EventNdjsonLoggerOptions {
+interface EventNdjsonLoggerOptions {
   readonly stream: EventNdjsonStream;
   readonly maxBytes?: number;
   readonly maxFiles?: number;
