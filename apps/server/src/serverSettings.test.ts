@@ -104,6 +104,43 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("preserves model when switching providers via textGenerationModelSelection", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+
+      // Start with Claude text generation selection
+      yield* serverSettings.updateSettings({
+        textGenerationModelSelection: {
+          provider: "claudeAgent",
+          model: "claude-sonnet-4-6",
+          options: {
+            effort: "high",
+          },
+        },
+      });
+
+      // Switch to Codex — the stale Claude "effort" in options must not
+      // cause the update to lose the selected model.
+      const next = yield* serverSettings.updateSettings({
+        textGenerationModelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+          options: {
+            reasoningEffort: "high",
+          },
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        provider: "codex",
+        model: "gpt-5.4",
+        options: {
+          reasoningEffort: "high",
+        },
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("trims provider path settings when updates are applied", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;

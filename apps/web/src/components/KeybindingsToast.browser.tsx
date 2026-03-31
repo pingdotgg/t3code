@@ -50,7 +50,7 @@ function createBaseServerConfig(): ServerConfig {
         installed: true,
         version: "0.116.0",
         status: "ready",
-        authStatus: "authenticated",
+        auth: { status: "authenticated" },
         checkedAt: NOW_ISO,
         models: [],
       },
@@ -323,7 +323,7 @@ describe("Keybindings update toast", () => {
     useStore.setState({
       projects: [],
       threads: [],
-      threadsHydrated: false,
+      bootstrapComplete: false,
     });
   });
 

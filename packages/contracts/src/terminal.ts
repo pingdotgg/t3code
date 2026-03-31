@@ -26,7 +26,7 @@ const TerminalIdWithDefaultSchema = TerminalIdSchema.pipe(
 export const TerminalThreadInput = Schema.Struct({
   threadId: TrimmedNonEmptyStringSchema,
 });
-export type TerminalThreadInput = Schema.Codec.Encoded<typeof TerminalThreadInput>;
+export type TerminalThreadInput = typeof TerminalThreadInput.Type;
 
 const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
@@ -73,7 +73,7 @@ export const TerminalCloseInput = Schema.Struct({
   terminalId: Schema.optional(TerminalIdSchema),
   deleteHistory: Schema.optional(Schema.Boolean),
 });
-export type TerminalCloseInput = Schema.Codec.Encoded<typeof TerminalCloseInput>;
+export type TerminalCloseInput = typeof TerminalCloseInput.Type;
 
 export const TerminalSessionStatus = Schema.Literals(["starting", "running", "exited", "error"]);
 export type TerminalSessionStatus = typeof TerminalSessionStatus.Type;
