@@ -11,11 +11,13 @@ import {
 import { Effect } from "effect";
 
 import {
+  findProjectByWorkspaceRoot,
   findThreadById,
   listThreadsByProjectId,
   requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
+  requireWorkspaceRootUnique,
 } from "./commandInvariants.ts";
 
 const now = new Date().toISOString();
@@ -49,6 +51,19 @@ const readModel: OrchestrationReadModel = {
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
+    },
+    {
+      id: ProjectId.makeUnsafe("project-deleted"),
+      title: "Deleted Project",
+      workspaceRoot: "/tmp/project-deleted",
+      defaultModelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
+      scripts: [],
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: now,
     },
   ],
   threads: [
@@ -216,5 +231,86 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("greater than or equal to 0");
+  });
+
+  it("finds non-deleted project by workspaceRoot", () => {
+    expect(findProjectByWorkspaceRoot(readModel, "/tmp/project-a")?.id).toBe("project-a");
+    expect(findProjectByWorkspaceRoot(readModel, "/tmp/missing")).toBeUndefined();
+    expect(findProjectByWorkspaceRoot(readModel, "/tmp/project-deleted")).toBeUndefined();
+  });
+
+  it("requires unique workspaceRoot for project creation", async () => {
+    const createCommand: OrchestrationCommand = {
+      type: "project.create",
+      commandId: CommandId.makeUnsafe("cmd-create"),
+      projectId: ProjectId.makeUnsafe("project-new"),
+      title: "New Project",
+      workspaceRoot: "/tmp/project-new",
+      createdAt: now,
+    };
+
+    await Effect.runPromise(
+      requireWorkspaceRootUnique({
+        readModel,
+        command: createCommand,
+        workspaceRoot: "/tmp/project-new",
+      }),
+    );
+
+    await expect(
+      Effect.runPromise(
+        requireWorkspaceRootUnique({
+          readModel,
+          command: createCommand,
+          workspaceRoot: "/tmp/project-a",
+        }),
+      ),
+    ).rejects.toThrow("already used by project");
+
+    await Effect.runPromise(
+      requireWorkspaceRootUnique({
+        readModel,
+        command: createCommand,
+        workspaceRoot: "/tmp/project-deleted",
+      }),
+    );
+  });
+
+  it("requires unique workspaceRoot for project update, excluding self", async () => {
+    const updateCommand: OrchestrationCommand = {
+      type: "project.meta.update",
+      commandId: CommandId.makeUnsafe("cmd-update"),
+      projectId: ProjectId.makeUnsafe("project-a"),
+      workspaceRoot: "/tmp/project-a",
+    };
+
+    await Effect.runPromise(
+      requireWorkspaceRootUnique({
+        readModel,
+        command: updateCommand,
+        workspaceRoot: "/tmp/project-a",
+        excludeProjectId: ProjectId.makeUnsafe("project-a"),
+      }),
+    );
+
+    await expect(
+      Effect.runPromise(
+        requireWorkspaceRootUnique({
+          readModel,
+          command: updateCommand,
+          workspaceRoot: "/tmp/project-b",
+          excludeProjectId: ProjectId.makeUnsafe("project-a"),
+        }),
+      ),
+    ).rejects.toThrow("already used by project");
+
+    await Effect.runPromise(
+      requireWorkspaceRootUnique({
+        readModel,
+        command: updateCommand,
+        workspaceRoot: "/tmp/project-new-path",
+        excludeProjectId: ProjectId.makeUnsafe("project-a"),
+      }),
+    );
   });
 });

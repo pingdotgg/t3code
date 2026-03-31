@@ -31,6 +31,33 @@ export function findProjectById(
   return readModel.projects.find((project) => project.id === projectId);
 }
 
+export function findProjectByWorkspaceRoot(
+  readModel: OrchestrationReadModel,
+  workspaceRoot: string,
+): OrchestrationProject | undefined {
+  return readModel.projects.find(
+    (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
+  );
+}
+
+export function requireWorkspaceRootUnique(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly workspaceRoot: string;
+  readonly excludeProjectId?: ProjectId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const existing = findProjectByWorkspaceRoot(input.readModel, input.workspaceRoot);
+  if (!existing || existing.id === input.excludeProjectId) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Workspace root '${input.workspaceRoot}' is already used by project '${existing.id}'.`,
+    ),
+  );
+}
+
 export function listThreadsByProjectId(
   readModel: OrchestrationReadModel,
   projectId: ProjectId,

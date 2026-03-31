@@ -804,4 +804,47 @@ describe("OrchestrationEngine", () => {
 
     await system.dispose();
   });
+
+  it("rejects project creation with duplicate workspaceRoot", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-ws-first"),
+        projectId: asProjectId("project-ws-first"),
+        title: "First Project",
+        workspaceRoot: "/tmp/project-same-workspace",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-ws-second"),
+          projectId: asProjectId("project-ws-second"),
+          title: "Second Project",
+          workspaceRoot: "/tmp/project-same-workspace",
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("already used by project");
+
+    const readModel = await system.run(engine.getReadModel());
+    expect(readModel.projects.map((p) => p.id)).toEqual([asProjectId("project-ws-first")]);
+
+    await system.dispose();
+  });
 });
