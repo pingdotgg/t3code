@@ -95,6 +95,7 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
     assert.strictEqual(parsed.projectId, "project-1");
     assert.strictEqual(parsed.title, "Project Title");
     assert.strictEqual(parsed.workspaceRoot, "/tmp/workspace");
+    assert.strictEqual(parsed.pinned, false);
     assert.deepStrictEqual(parsed.defaultModelSelection, {
       provider: "codex",
       model: "gpt-5.2",
@@ -117,6 +118,7 @@ it.effect("decodes historical project.created payloads with a default provider",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.defaultModelSelection?.provider, "codex");
+    assert.strictEqual(parsed.pinnedAt, null);
   }),
 );
 
@@ -214,6 +216,7 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.modelSelection.provider, "codex");
+    assert.strictEqual(parsed.pinnedAt, null);
   }),
 );
 

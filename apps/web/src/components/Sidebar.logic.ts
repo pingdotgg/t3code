@@ -16,10 +16,12 @@ type SidebarProject = {
   name: string;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
+  pinnedAt?: string | null | undefined;
 };
 type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
   latestUserMessageAt?: string | null;
   messages?: Pick<Thread["messages"][number], "createdAt" | "role">[];
+  pinnedAt?: string | null | undefined;
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
@@ -448,10 +450,24 @@ function getThreadSortTimestamp(
   return getLatestUserMessageTimestamp(thread);
 }
 
+function getPinnedSortTimestamp(input: { pinnedAt?: string | null | undefined }): number | null {
+  return toSortableTimestamp(input.pinnedAt ?? undefined);
+}
+
 export function sortThreadsForSidebar<
   T extends Pick<Thread, "id" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
 >(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
   return threads.toSorted((left, right) => {
+    const leftPinnedAt = getPinnedSortTimestamp(left);
+    const rightPinnedAt = getPinnedSortTimestamp(right);
+    const leftPinned = leftPinnedAt !== null;
+    const rightPinned = rightPinnedAt !== null;
+    if (leftPinned !== rightPinned) {
+      return rightPinned ? 1 : -1;
+    }
+    if (leftPinnedAt !== null && rightPinnedAt !== null && leftPinnedAt !== rightPinnedAt) {
+      return rightPinnedAt > leftPinnedAt ? 1 : -1;
+    }
     const rightTimestamp = getThreadSortTimestamp(right, sortOrder);
     const leftTimestamp = getThreadSortTimestamp(left, sortOrder);
     const byTimestamp =
@@ -526,6 +542,16 @@ export function sortProjectsForSidebar<
   }
 
   return [...projects].toSorted((left, right) => {
+    const leftPinnedAt = getPinnedSortTimestamp(left);
+    const rightPinnedAt = getPinnedSortTimestamp(right);
+    const leftPinned = leftPinnedAt !== null;
+    const rightPinned = rightPinnedAt !== null;
+    if (leftPinned !== rightPinned) {
+      return rightPinned ? 1 : -1;
+    }
+    if (leftPinnedAt !== null && rightPinnedAt !== null && leftPinnedAt !== rightPinnedAt) {
+      return rightPinnedAt > leftPinnedAt ? 1 : -1;
+    }
     const rightTimestamp = getProjectSortTimestamp(
       right,
       threadsByProjectId.get(right.id) ?? [],

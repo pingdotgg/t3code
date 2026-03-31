@@ -592,6 +592,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     id: ProjectId.makeUnsafe("project-1"),
     name: "Project",
     cwd: "/tmp/project",
+    pinnedAt: null,
     defaultModelSelection: {
       provider: "codex",
       model: "gpt-5.4",
@@ -610,6 +611,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
+    pinnedAt: null,
     modelSelection: {
       provider: "codex",
       model: "gpt-5.4",
@@ -758,6 +760,73 @@ describe("sortThreadsForSidebar", () => {
       ThreadId.makeUnsafe("thread-2"),
     ]);
   });
+
+  it("puts pinned threads ahead of unpinned threads in auto-sort modes", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        {
+          ...makeThread({
+            id: ThreadId.makeUnsafe("thread-1"),
+            createdAt: "2026-03-09T10:00:00.000Z",
+            updatedAt: "2026-03-09T10:01:00.000Z",
+          }),
+          pinnedAt: "2026-03-09T10:20:00.000Z",
+        },
+        {
+          ...makeThread({
+            id: ThreadId.makeUnsafe("thread-2"),
+            createdAt: "2026-03-09T10:05:00.000Z",
+            updatedAt: "2026-03-09T10:05:00.000Z",
+          }),
+          pinnedAt: null,
+        },
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-2"),
+    ]);
+  });
+
+  it("sorts pinned threads by latest pin timestamp before activity recency", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        {
+          ...makeThread({
+            id: ThreadId.makeUnsafe("thread-1"),
+            createdAt: "2026-03-09T10:01:00.000Z",
+            updatedAt: "2026-03-09T10:01:00.000Z",
+          }),
+          pinnedAt: "2026-03-09T10:10:00.000Z",
+        },
+        {
+          ...makeThread({
+            id: ThreadId.makeUnsafe("thread-2"),
+            createdAt: "2026-03-09T10:05:00.000Z",
+            updatedAt: "2026-03-09T10:05:00.000Z",
+          }),
+          pinnedAt: "2026-03-09T10:20:00.000Z",
+        },
+        {
+          ...makeThread({
+            id: ThreadId.makeUnsafe("thread-3"),
+            createdAt: "2026-03-09T10:10:00.000Z",
+            updatedAt: "2026-03-09T10:10:00.000Z",
+          }),
+          pinnedAt: null,
+        },
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-3"),
+    ]);
+  });
 });
 
 describe("getFallbackThreadIdAfterDelete", () => {
@@ -794,6 +863,41 @@ describe("getFallbackThreadIdAfterDelete", () => {
     });
 
     expect(fallbackThreadId).toBe(ThreadId.makeUnsafe("thread-newest"));
+  });
+
+  it("respects pinning when choosing the fallback thread after delete", () => {
+    const fallbackThreadId = getFallbackThreadIdAfterDelete({
+      threads: [
+        {
+          ...makeThread({
+            id: ThreadId.makeUnsafe("thread-active"),
+            projectId: ProjectId.makeUnsafe("project-1"),
+            updatedAt: "2026-03-09T10:05:00.000Z",
+          }),
+          pinnedAt: null,
+        },
+        {
+          ...makeThread({
+            id: ThreadId.makeUnsafe("thread-pinned"),
+            projectId: ProjectId.makeUnsafe("project-1"),
+            updatedAt: "2026-03-09T10:03:00.000Z",
+          }),
+          pinnedAt: "2026-03-09T10:20:00.000Z",
+        },
+        {
+          ...makeThread({
+            id: ThreadId.makeUnsafe("thread-newer"),
+            projectId: ProjectId.makeUnsafe("project-1"),
+            updatedAt: "2026-03-09T10:10:00.000Z",
+          }),
+          pinnedAt: null,
+        },
+      ],
+      deletedThreadId: ThreadId.makeUnsafe("thread-active"),
+      sortOrder: "updated_at",
+    });
+
+    expect(fallbackThreadId).toBe(ThreadId.makeUnsafe("thread-pinned"));
   });
 
   it("skips other threads being deleted in the same action", () => {
@@ -897,6 +1001,65 @@ describe("sortProjectsForSidebar", () => {
     expect(sorted.map((project) => project.id)).toEqual([
       ProjectId.makeUnsafe("project-2"),
       ProjectId.makeUnsafe("project-1"),
+    ]);
+  });
+
+  it("puts pinned projects ahead of unpinned projects in auto-sort modes", () => {
+    const sorted = sortProjectsForSidebar(
+      [
+        makeProject({
+          id: ProjectId.makeUnsafe("project-1"),
+          name: "Pinned older project",
+          pinnedAt: "2026-03-09T10:20:00.000Z",
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        makeProject({
+          id: ProjectId.makeUnsafe("project-2"),
+          name: "Unpinned newer project",
+          pinnedAt: null,
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        }),
+      ],
+      [],
+      "updated_at",
+    );
+
+    expect(sorted.map((project) => project.id)).toEqual([
+      ProjectId.makeUnsafe("project-1"),
+      ProjectId.makeUnsafe("project-2"),
+    ]);
+  });
+
+  it("sorts pinned projects by latest pin timestamp before project recency", () => {
+    const sorted = sortProjectsForSidebar(
+      [
+        makeProject({
+          id: ProjectId.makeUnsafe("project-1"),
+          name: "Pinned older project",
+          pinnedAt: "2026-03-09T10:10:00.000Z",
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        makeProject({
+          id: ProjectId.makeUnsafe("project-2"),
+          name: "Pinned newer project",
+          pinnedAt: "2026-03-09T10:20:00.000Z",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        }),
+        makeProject({
+          id: ProjectId.makeUnsafe("project-3"),
+          name: "Unpinned project",
+          pinnedAt: null,
+          updatedAt: "2026-03-09T10:10:00.000Z",
+        }),
+      ],
+      [],
+      "updated_at",
+    );
+
+    expect(sorted.map((project) => project.id)).toEqual([
+      ProjectId.makeUnsafe("project-2"),
+      ProjectId.makeUnsafe("project-1"),
+      ProjectId.makeUnsafe("project-3"),
     ]);
   });
 

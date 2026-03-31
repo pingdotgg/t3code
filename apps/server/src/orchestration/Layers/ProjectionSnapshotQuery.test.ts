@@ -234,6 +234,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
+          pinnedAt: null,
           defaultModelSelection: {
             provider: "codex",
             model: "gpt-5-codex",
@@ -257,6 +258,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
+          pinnedAt: null,
           modelSelection: {
             provider: "codex",
             model: "gpt-5-codex",

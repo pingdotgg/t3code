@@ -25,6 +25,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
+    pinnedAt: null,
     modelSelection: {
       provider: "codex",
       model: "gpt-5-codex",
@@ -53,6 +54,7 @@ function makeState(thread: Thread): AppState {
         id: ProjectId.makeUnsafe("project-1"),
         name: "Project",
         cwd: "/tmp/project",
+        pinnedAt: null,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -97,6 +99,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     id: ThreadId.makeUnsafe("thread-1"),
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
+    pinnedAt: null,
     modelSelection: {
       provider: "codex",
       model: "gpt-5.3-codex",
@@ -128,6 +131,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         id: ProjectId.makeUnsafe("project-1"),
         title: "Project",
         workspaceRoot: "/tmp/project",
+        pinnedAt: null,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5.3-codex",
@@ -149,6 +153,7 @@ function makeReadModelProject(
     id: ProjectId.makeUnsafe("project-1"),
     title: "Project",
     workspaceRoot: "/tmp/project",
+    pinnedAt: null,
     defaultModelSelection: {
       provider: "codex",
       model: "gpt-5.3-codex",
@@ -253,6 +258,7 @@ describe("store read model sync", () => {
           id: project2,
           name: "Project 2",
           cwd: "/tmp/project-2",
+          pinnedAt: null,
           defaultModelSelection: {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
@@ -263,6 +269,7 @@ describe("store read model sync", () => {
           id: project1,
           name: "Project 1",
           cwd: "/tmp/project-1",
+          pinnedAt: null,
           defaultModelSelection: {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
@@ -353,6 +360,7 @@ describe("incremental orchestration updates", () => {
           id: originalProjectId,
           name: "Project",
           cwd: "/tmp/project",
+          pinnedAt: null,
           defaultModelSelection: {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
@@ -370,6 +378,7 @@ describe("incremental orchestration updates", () => {
         projectId: recreatedProjectId,
         title: "Project Recreated",
         workspaceRoot: "/tmp/project",
+        pinnedAt: null,
         defaultModelSelection: {
           provider: "codex",
           model: DEFAULT_MODEL_BY_PROVIDER.codex,

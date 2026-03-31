@@ -28,6 +28,7 @@ const readModel: OrchestrationReadModel = {
       id: ProjectId.makeUnsafe("project-a"),
       title: "Project A",
       workspaceRoot: "/tmp/project-a",
+      pinnedAt: null,
       defaultModelSelection: {
         provider: "codex",
         model: "gpt-5-codex",
@@ -41,6 +42,7 @@ const readModel: OrchestrationReadModel = {
       id: ProjectId.makeUnsafe("project-b"),
       title: "Project B",
       workspaceRoot: "/tmp/project-b",
+      pinnedAt: null,
       defaultModelSelection: {
         provider: "codex",
         model: "gpt-5-codex",
@@ -56,6 +58,7 @@ const readModel: OrchestrationReadModel = {
       id: ThreadId.makeUnsafe("thread-1"),
       projectId: ProjectId.makeUnsafe("project-a"),
       title: "Thread A",
+      pinnedAt: null,
       modelSelection: {
         provider: "codex",
         model: "gpt-5-codex",
@@ -79,6 +82,7 @@ const readModel: OrchestrationReadModel = {
       id: ThreadId.makeUnsafe("thread-2"),
       projectId: ProjectId.makeUnsafe("project-b"),
       title: "Thread B",
+      pinnedAt: null,
       modelSelection: {
         provider: "codex",
         model: "gpt-5-codex",
@@ -158,6 +162,7 @@ describe("commandInvariants", () => {
           threadId: ThreadId.makeUnsafe("thread-3"),
           projectId: ProjectId.makeUnsafe("project-a"),
           title: "new",
+          pinned: false,
           modelSelection: {
             provider: "codex",
             model: "gpt-5-codex",
@@ -182,6 +187,7 @@ describe("commandInvariants", () => {
             threadId: ThreadId.makeUnsafe("thread-1"),
             projectId: ProjectId.makeUnsafe("project-a"),
             title: "dup",
+            pinned: false,
             modelSelection: {
               provider: "codex",
               model: "gpt-5-codex",

@@ -1867,6 +1867,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         projectId: ProjectId.makeUnsafe("project-live"),
         title: "Live Project",
         workspaceRoot: "/tmp/project-live",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -1905,6 +1906,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         projectId: ProjectId.makeUnsafe("project-scripts"),
         title: "Scripts Project",
         workspaceRoot: "/tmp/project-scripts",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",

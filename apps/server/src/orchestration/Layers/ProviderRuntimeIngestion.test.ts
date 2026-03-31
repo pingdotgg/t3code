@@ -225,6 +225,7 @@ describe("ProviderRuntimeIngestion", () => {
         projectId: asProjectId("project-1"),
         title: "Provider Project",
         workspaceRoot,
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -239,6 +240,7 @@ describe("ProviderRuntimeIngestion", () => {
         threadId: ThreadId.makeUnsafe("thread-1"),
         projectId: asProjectId("project-1"),
         title: "Thread",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -768,6 +770,7 @@ describe("ProviderRuntimeIngestion", () => {
         threadId: sourceThreadId,
         projectId: asProjectId("project-1"),
         title: "Plan Source",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -803,6 +806,7 @@ describe("ProviderRuntimeIngestion", () => {
         threadId: targetThreadId,
         projectId: asProjectId("project-1"),
         title: "Plan Target",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -955,6 +959,7 @@ describe("ProviderRuntimeIngestion", () => {
         threadId: sourceThreadId,
         projectId: asProjectId("project-1"),
         title: "Plan Source",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -1108,6 +1113,7 @@ describe("ProviderRuntimeIngestion", () => {
         threadId: sourceThreadId,
         projectId: asProjectId("project-1"),
         title: "Plan Source",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -1143,6 +1149,7 @@ describe("ProviderRuntimeIngestion", () => {
         threadId: targetThreadId,
         projectId: asProjectId("project-1"),
         title: "Plan Target",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",

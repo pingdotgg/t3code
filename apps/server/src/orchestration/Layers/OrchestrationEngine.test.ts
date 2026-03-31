@@ -72,6 +72,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-1"),
         title: "Project 1",
         workspaceRoot: "/tmp/project-1",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -86,6 +87,7 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-1"),
         projectId: asProjectId("project-1"),
         title: "Thread",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -132,6 +134,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-archive"),
         title: "Project Archive",
         workspaceRoot: "/tmp/project-archive",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -146,6 +149,7 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-archive"),
         projectId: asProjectId("project-archive"),
         title: "Archive me",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -199,6 +203,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-replay"),
         title: "Replay Project",
         workspaceRoot: "/tmp/project-replay",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -213,6 +218,7 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-replay"),
         projectId: asProjectId("project-replay"),
         title: "replay",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -257,6 +263,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-stream"),
         title: "Stream Project",
         workspaceRoot: "/tmp/project-stream",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -281,6 +288,7 @@ describe("OrchestrationEngine", () => {
           threadId: ThreadId.makeUnsafe("thread-stream"),
           projectId: asProjectId("project-stream"),
           title: "domain-stream",
+          pinned: false,
           modelSelection: {
             provider: "codex",
             model: "gpt-5-codex",
@@ -318,6 +326,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-turn-diff"),
         title: "Turn Diff Project",
         workspaceRoot: "/tmp/project-turn-diff",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -332,6 +341,7 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-turn-diff"),
         projectId: asProjectId("project-turn-diff"),
         title: "Turn diff thread",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -435,6 +445,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-flaky"),
         title: "Flaky Project",
         workspaceRoot: "/tmp/project-flaky",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -451,6 +462,7 @@ describe("OrchestrationEngine", () => {
           threadId: ThreadId.makeUnsafe("thread-flaky-fail"),
           projectId: asProjectId("project-flaky"),
           title: "flaky-fail",
+          pinned: false,
           modelSelection: {
             provider: "codex",
             model: "gpt-5-codex",
@@ -471,6 +483,7 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-flaky-ok"),
         projectId: asProjectId("project-flaky"),
         title: "flaky-ok",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -528,6 +541,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-atomic"),
         title: "Atomic Project",
         workspaceRoot: "/tmp/project-atomic",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -542,6 +556,7 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-atomic"),
         projectId: asProjectId("project-atomic"),
         title: "atomic",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -669,6 +684,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-sync"),
         title: "Sync Project",
         workspaceRoot: "/tmp/project-sync",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -683,6 +699,7 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-sync"),
         projectId: asProjectId("project-sync"),
         title: "sync-before",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -754,6 +771,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-duplicate"),
         title: "Duplicate Project",
         workspaceRoot: "/tmp/project-duplicate",
+        pinned: false,
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -769,6 +787,7 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-duplicate"),
         projectId: asProjectId("project-duplicate"),
         title: "duplicate",
+        pinned: false,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -789,6 +808,7 @@ describe("OrchestrationEngine", () => {
           threadId: ThreadId.makeUnsafe("thread-duplicate"),
           projectId: asProjectId("project-duplicate"),
           title: "duplicate",
+          pinned: false,
           modelSelection: {
             provider: "codex",
             model: "gpt-5-codex",

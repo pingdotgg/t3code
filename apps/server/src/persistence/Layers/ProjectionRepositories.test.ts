@@ -27,6 +27,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         projectId: ProjectId.makeUnsafe("project-null-options"),
         title: "Null options project",
         workspaceRoot: "/tmp/project-null-options",
+        pinnedAt: "2026-03-24T00:00:00.000Z",
         defaultModelSelection: {
           provider: "codex",
           model: "gpt-5.4",
@@ -60,6 +61,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       const persisted = yield* projects.getById({
         projectId: ProjectId.makeUnsafe("project-null-options"),
       });
+      assert.strictEqual(Option.getOrNull(persisted)?.pinnedAt, "2026-03-24T00:00:00.000Z");
       assert.deepStrictEqual(Option.getOrNull(persisted)?.defaultModelSelection, {
         provider: "codex",
         model: "gpt-5.4",
@@ -76,6 +78,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         threadId: ThreadId.makeUnsafe("thread-null-options"),
         projectId: ProjectId.makeUnsafe("project-null-options"),
         title: "Null options thread",
+        pinnedAt: "2026-03-24T00:00:00.000Z",
         modelSelection: {
           provider: "claudeAgent",
           model: "claude-opus-4-6",
@@ -114,6 +117,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       const persisted = yield* threads.getById({
         threadId: ThreadId.makeUnsafe("thread-null-options"),
       });
+      assert.strictEqual(Option.getOrNull(persisted)?.pinnedAt, "2026-03-24T00:00:00.000Z");
       assert.deepStrictEqual(Option.getOrNull(persisted)?.modelSelection, {
         provider: "claudeAgent",
         model: "claude-opus-4-6",

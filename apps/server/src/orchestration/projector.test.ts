@@ -76,6 +76,7 @@ describe("orchestration projector", () => {
         id: "thread-1",
         projectId: "project-1",
         title: "demo",
+        pinnedAt: null,
         modelSelection: {
           provider: "codex",
           model: "gpt-5-codex",
@@ -96,6 +97,99 @@ describe("orchestration projector", () => {
         session: null,
       },
     ]);
+  });
+
+  it("applies pin updates for projects and threads", async () => {
+    const now = new Date().toISOString();
+    const later = new Date(Date.parse(now) + 1_000).toISOString();
+    const withProject = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "project.created",
+          aggregateKind: "project",
+          aggregateId: "project-1",
+          occurredAt: now,
+          commandId: "cmd-project-create",
+          payload: {
+            projectId: "project-1",
+            title: "demo",
+            workspaceRoot: "/tmp/project-1",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+    const withPinnedProject = await Effect.runPromise(
+      projectEvent(
+        withProject,
+        makeEvent({
+          sequence: 2,
+          type: "project.meta-updated",
+          aggregateKind: "project",
+          aggregateId: "project-1",
+          occurredAt: later,
+          commandId: "cmd-project-pin",
+          payload: {
+            projectId: "project-1",
+            pinnedAt: later,
+            updatedAt: later,
+          },
+        }),
+      ),
+    );
+    expect(withPinnedProject.projects[0]?.pinnedAt).toBe(later);
+
+    const withThread = await Effect.runPromise(
+      projectEvent(
+        withPinnedProject,
+        makeEvent({
+          sequence: 3,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-thread-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+    const withPinnedThread = await Effect.runPromise(
+      projectEvent(
+        withThread,
+        makeEvent({
+          sequence: 4,
+          type: "thread.meta-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: later,
+          commandId: "cmd-thread-pin",
+          payload: {
+            threadId: "thread-1",
+            pinnedAt: later,
+            updatedAt: later,
+          },
+        }),
+      ),
+    );
+    expect(withPinnedThread.threads[0]?.pinnedAt).toBe(later);
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {

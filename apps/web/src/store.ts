@@ -147,6 +147,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     codexThreadId: null,
     projectId: thread.projectId,
     title: thread.title,
+    pinnedAt: thread.pinnedAt,
     modelSelection: normalizeModelSelection(thread.modelSelection),
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
@@ -171,6 +172,7 @@ function mapProject(project: OrchestrationReadModel["projects"][number]): Projec
     id: project.id,
     name: project.title,
     cwd: project.workspaceRoot,
+    pinnedAt: project.pinnedAt,
     defaultModelSelection: project.defaultModelSelection
       ? normalizeModelSelection(project.defaultModelSelection)
       : null,
@@ -424,6 +426,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         id: event.payload.projectId,
         title: event.payload.title,
         workspaceRoot: event.payload.workspaceRoot,
+        pinnedAt: event.payload.pinnedAt,
         defaultModelSelection: event.payload.defaultModelSelection,
         scripts: event.payload.scripts,
         createdAt: event.payload.createdAt,
@@ -444,6 +447,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         ...project,
         ...(event.payload.title !== undefined ? { name: event.payload.title } : {}),
         ...(event.payload.workspaceRoot !== undefined ? { cwd: event.payload.workspaceRoot } : {}),
+        ...(event.payload.pinnedAt !== undefined ? { pinnedAt: event.payload.pinnedAt } : {}),
         ...(event.payload.defaultModelSelection !== undefined
           ? {
               defaultModelSelection: event.payload.defaultModelSelection
@@ -470,6 +474,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         id: event.payload.threadId,
         projectId: event.payload.projectId,
         title: event.payload.title,
+        pinnedAt: event.payload.pinnedAt,
         modelSelection: event.payload.modelSelection,
         runtimeMode: event.payload.runtimeMode,
         interactionMode: event.payload.interactionMode,
@@ -519,6 +524,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       const threads = updateThread(state.threads, event.payload.threadId, (thread) => ({
         ...thread,
         ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+        ...(event.payload.pinnedAt !== undefined ? { pinnedAt: event.payload.pinnedAt } : {}),
         ...(event.payload.modelSelection !== undefined
           ? { modelSelection: normalizeModelSelection(event.payload.modelSelection) }
           : {}),

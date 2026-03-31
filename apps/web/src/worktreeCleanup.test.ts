@@ -10,6 +10,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
+    pinnedAt: null,
     modelSelection: {
       provider: "codex",
       model: "gpt-5.3-codex",

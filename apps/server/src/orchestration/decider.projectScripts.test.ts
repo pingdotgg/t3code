@@ -29,6 +29,7 @@ describe("decider project scripts", () => {
           projectId: asProjectId("project-scripts"),
           title: "Scripts",
           workspaceRoot: "/tmp/scripts",
+          pinned: false,
           createdAt: now,
         },
         readModel,
@@ -37,7 +38,10 @@ describe("decider project scripts", () => {
 
     const event = Array.isArray(result) ? result[0] : result;
     expect(event.type).toBe("project.created");
-    expect((event.payload as { scripts: unknown[] }).scripts).toEqual([]);
+    expect(event.payload).toMatchObject({
+      pinnedAt: null,
+      scripts: [],
+    });
   });
 
   it("propagates scripts in project.meta.update payload", async () => {
@@ -59,6 +63,7 @@ describe("decider project scripts", () => {
           projectId: asProjectId("project-scripts"),
           title: "Scripts",
           workspaceRoot: "/tmp/scripts",
+          pinnedAt: null,
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -94,6 +99,82 @@ describe("decider project scripts", () => {
     expect((event.payload as { scripts?: unknown[] }).scripts).toEqual(scripts);
   });
 
+  it("propagates pin state through thread create and meta update", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-pin"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-pin"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-pin"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-pin"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-pin"),
+          title: "Project",
+          workspaceRoot: "/tmp/project-pin",
+          pinnedAt: null,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const created = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-create-pin"),
+          threadId: ThreadId.makeUnsafe("thread-pin"),
+          projectId: asProjectId("project-pin"),
+          title: "Pinned thread",
+          pinned: true,
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        },
+        readModel: withProject,
+      }),
+    );
+    const createdEvent = Array.isArray(created) ? created[0] : created;
+    expect(createdEvent.type).toBe("thread.created");
+    expect(createdEvent.payload).toMatchObject({ pinnedAt: now });
+
+    const withThread = await Effect.runPromise(
+      projectEvent(withProject, {
+        ...createdEvent,
+        sequence: 2,
+      }),
+    );
+    const updated = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-thread-update-pin"),
+          threadId: ThreadId.makeUnsafe("thread-pin"),
+          pinned: false,
+        },
+        readModel: withThread,
+      }),
+    );
+    const updatedEvent = Array.isArray(updated) ? updated[0] : updated;
+    expect(updatedEvent.type).toBe("thread.meta-updated");
+    expect(updatedEvent.payload).toMatchObject({ pinnedAt: null });
+  });
+
   it("emits user message and turn-start-requested events for thread.turn.start", async () => {
     const now = new Date().toISOString();
     const initial = createEmptyReadModel(now);
@@ -113,6 +194,7 @@ describe("decider project scripts", () => {
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          pinnedAt: null,
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -136,6 +218,7 @@ describe("decider project scripts", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread",
+          pinnedAt: null,
           modelSelection: {
             provider: "codex",
             model: "gpt-5-codex",
@@ -222,6 +305,7 @@ describe("decider project scripts", () => {
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          pinnedAt: null,
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -245,6 +329,7 @@ describe("decider project scripts", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread",
+          pinnedAt: null,
           modelSelection: {
             provider: "codex",
             model: "gpt-5-codex",
@@ -304,6 +389,7 @@ describe("decider project scripts", () => {
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          pinnedAt: null,
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -327,6 +413,7 @@ describe("decider project scripts", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread",
+          pinnedAt: null,
           modelSelection: {
             provider: "codex",
             model: "gpt-5-codex",
