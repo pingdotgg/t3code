@@ -16,7 +16,6 @@ import {
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
-import { clearWorkspaceIndexCache } from "../../workspaceEntries.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
@@ -25,6 +24,7 @@ import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
+import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
 
 type ReactorInput =
   | {
@@ -68,6 +68,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
+  const workspaceEntries = yield* WorkspaceEntries;
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -226,7 +227,7 @@ const make = Effect.gen(function* () {
 
     // Invalidate the workspace entry cache so the @-mention file picker
     // reflects files created or deleted during this turn.
-    clearWorkspaceIndexCache(input.cwd);
+    yield* workspaceEntries.invalidate(input.cwd);
 
     const files = yield* checkpointStore
       .diffCheckpoints({
@@ -642,7 +643,7 @@ const make = Effect.gen(function* () {
 
     // Invalidate the workspace entry cache so the @-mention file picker
     // reflects the reverted filesystem state.
-    clearWorkspaceIndexCache(sessionRuntime.value.cwd);
+    yield* workspaceEntries.invalidate(sessionRuntime.value.cwd);
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {

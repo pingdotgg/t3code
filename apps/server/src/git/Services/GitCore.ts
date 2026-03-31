@@ -28,6 +28,7 @@ export interface ExecuteGitInput {
   readonly operation: string;
   readonly cwd: string;
   readonly args: ReadonlyArray<string>;
+  readonly stdin?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
@@ -40,6 +41,8 @@ export interface ExecuteGitResult {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
+  readonly stdoutTruncated: boolean;
+  readonly stderrTruncated: boolean;
 }
 
 export interface GitStatusDetails extends Omit<GitStatusResult, "pr"> {
@@ -91,6 +94,11 @@ export interface GitRangeContext {
   commitSummary: string;
   diffSummary: string;
   diffPatch: string;
+}
+
+export interface GitListWorkspaceFilesResult {
+  readonly paths: ReadonlyArray<string>;
+  readonly truncated: boolean;
 }
 
 export interface GitRenameBranchInput {
@@ -189,6 +197,26 @@ export interface GitCoreShape {
     cwd: string,
     key: string,
   ) => Effect.Effect<string | null, GitCommandError>;
+
+  /**
+   * Determine whether the provided cwd is inside a git work tree.
+   */
+  readonly isInsideWorkTree: (cwd: string) => Effect.Effect<boolean, GitCommandError>;
+
+  /**
+   * List tracked and untracked workspace file paths relative to cwd.
+   */
+  readonly listWorkspaceFiles: (
+    cwd: string,
+  ) => Effect.Effect<GitListWorkspaceFilesResult, GitCommandError>;
+
+  /**
+   * Remove gitignored paths from a relative path list.
+   */
+  readonly filterIgnoredPaths: (
+    cwd: string,
+    relativePaths: ReadonlyArray<string>,
+  ) => Effect.Effect<ReadonlyArray<string>, GitCommandError>;
 
   /**
    * List local + remote branches and branch metadata.

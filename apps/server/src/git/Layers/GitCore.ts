@@ -37,6 +37,8 @@ const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
+const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
@@ -55,6 +57,7 @@ class StatusUpstreamRefreshCacheKey extends Data.Class<{
 }> {}
 
 interface ExecuteGitOptions {
+  stdin?: string | undefined;
   timeoutMs?: number | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorMessage?: string | undefined;
@@ -94,6 +97,47 @@ function parseNumstatEntries(
     });
   }
   return entries;
+}
+
+function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
+  const parts = input.split("\0");
+  if (parts.length === 0) return [];
+
+  if (truncated && parts[parts.length - 1]?.length) {
+    parts.pop();
+  }
+
+  return parts.filter((value) => value.length > 0);
+}
+
+function chunkPathsForGitCheckIgnore(relativePaths: readonly string[]): string[][] {
+  const chunks: string[][] = [];
+  let chunk: string[] = [];
+  let chunkBytes = 0;
+
+  for (const relativePath of relativePaths) {
+    const relativePathBytes = Buffer.byteLength(relativePath) + 1;
+    if (chunk.length > 0 && chunkBytes + relativePathBytes > GIT_CHECK_IGNORE_MAX_STDIN_BYTES) {
+      chunks.push(chunk);
+      chunk = [];
+      chunkBytes = 0;
+    }
+
+    chunk.push(relativePath);
+    chunkBytes += relativePathBytes;
+
+    if (chunkBytes >= GIT_CHECK_IGNORE_MAX_STDIN_BYTES) {
+      chunks.push(chunk);
+      chunk = [];
+      chunkBytes = 0;
+    }
+  }
+
+  if (chunk.length > 0) {
+    chunks.push(chunk);
+  }
+
+  return chunks;
 }
 
 function parsePorcelainPath(line: string): string | null {
@@ -445,7 +489,7 @@ const collectOutput = Effect.fn("collectOutput")(function* <E>(
   maxOutputBytes: number,
   truncateOutputAtMaxBytes: boolean,
   onLine: ((line: string) => Effect.Effect<void, never>) | undefined,
-): Effect.fn.Return<string, GitCommandError> {
+): Effect.fn.Return<{ readonly text: string; readonly truncated: boolean }, GitCommandError> {
   const decoder = new TextDecoder();
   let bytes = 0;
   let text = "";
@@ -507,7 +551,10 @@ const collectOutput = Effect.fn("collectOutput")(function* <E>(
   text += remainder;
   lineBuffer += remainder;
   yield* emitCompleteLines(true);
-  return truncated ? `${text}${OUTPUT_TRUNCATED_MARKER}` : text;
+  return {
+    text,
+    truncated,
+  };
 });
 
 export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
@@ -571,13 +618,18 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
               Effect.map((value) => Number(value)),
               Effect.mapError(toGitCommandError(commandInput, "failed to report exit code.")),
             ),
+            input.stdin === undefined
+              ? Effect.void
+              : Stream.run(Stream.encodeText(Stream.make(input.stdin)), child.stdin).pipe(
+                  Effect.mapError(toGitCommandError(commandInput, "failed to write stdin.")),
+                ),
           ],
           { concurrency: "unbounded" },
-        );
+        ).pipe(Effect.map(([stdout, stderr, exitCode]) => [stdout, stderr, exitCode] as const));
         yield* trace2Monitor.flush;
 
         if (!input.allowNonZeroExit && exitCode !== 0) {
-          const trimmedStderr = stderr.trim();
+          const trimmedStderr = stderr.text.trim();
           return yield* new GitCommandError({
             operation: commandInput.operation,
             command: quoteGitCommand(commandInput.args),
@@ -589,7 +641,13 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
           });
         }
 
-        return { code: exitCode, stdout, stderr } satisfies ExecuteGitResult;
+        return {
+          code: exitCode,
+          stdout: stdout.text,
+          stderr: stderr.text,
+          stdoutTruncated: stdout.truncated,
+          stderrTruncated: stderr.truncated,
+        } satisfies ExecuteGitResult;
       });
 
       return yield* runGitCommand().pipe(
@@ -618,11 +676,12 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     cwd: string,
     args: readonly string[],
     options: ExecuteGitOptions = {},
-  ): Effect.Effect<{ code: number; stdout: string; stderr: string }, GitCommandError> =>
+  ): Effect.Effect<ExecuteGitResult, GitCommandError> =>
     execute({
       operation,
       cwd,
       args,
+      ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
       allowNonZeroExit: true,
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
@@ -679,7 +738,11 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     args: readonly string[],
     options: ExecuteGitOptions = {},
   ): Effect.Effect<string, GitCommandError> =>
-    executeGit(operation, cwd, args, options).pipe(Effect.map((result) => result.stdout));
+    executeGit(operation, cwd, args, options).pipe(
+      Effect.map((result) =>
+        result.stdoutTruncated ? `${result.stdout}${OUTPUT_TRUNCATED_MARKER}` : result.stdout,
+      ),
+    );
 
   const branchExists = (cwd: string, branch: string): Effect.Effect<boolean, GitCommandError> =>
     executeGit(
@@ -1416,6 +1479,86 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
+  const isInsideWorkTree: GitCoreShape["isInsideWorkTree"] = (cwd) =>
+    executeGit("GitCore.isInsideWorkTree", cwd, ["rev-parse", "--is-inside-work-tree"], {
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+      maxOutputBytes: 4_096,
+    }).pipe(Effect.map((result) => result.code === 0 && result.stdout.trim() === "true"));
+
+  const listWorkspaceFiles: GitCoreShape["listWorkspaceFiles"] = (cwd) =>
+    executeGit(
+      "GitCore.listWorkspaceFiles",
+      cwd,
+      ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+      {
+        allowNonZeroExit: true,
+        timeoutMs: 20_000,
+        maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+        truncateOutputAtMaxBytes: true,
+      },
+    ).pipe(
+      Effect.flatMap((result) =>
+        result.code === 0
+          ? Effect.succeed({
+              paths: splitNullSeparatedPaths(result.stdout, result.stdoutTruncated),
+              truncated: result.stdoutTruncated,
+            })
+          : Effect.fail(
+              createGitCommandError(
+                "GitCore.listWorkspaceFiles",
+                cwd,
+                ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+                result.stderr.trim().length > 0 ? result.stderr.trim() : "git ls-files failed",
+              ),
+            ),
+      ),
+    );
+
+  const filterIgnoredPaths: GitCoreShape["filterIgnoredPaths"] = (cwd, relativePaths) =>
+    Effect.gen(function* () {
+      if (relativePaths.length === 0) {
+        return relativePaths;
+      }
+
+      const ignoredPaths = new Set<string>();
+      const chunks = chunkPathsForGitCheckIgnore(relativePaths);
+
+      for (const chunk of chunks) {
+        const result = yield* executeGit(
+          "GitCore.filterIgnoredPaths",
+          cwd,
+          ["check-ignore", "--no-index", "-z", "--stdin"],
+          {
+            stdin: `${chunk.join("\0")}\0`,
+            allowNonZeroExit: true,
+            timeoutMs: 20_000,
+            maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+            truncateOutputAtMaxBytes: true,
+          },
+        );
+
+        if (result.code !== 0 && result.code !== 1) {
+          return yield* createGitCommandError(
+            "GitCore.filterIgnoredPaths",
+            cwd,
+            ["check-ignore", "--no-index", "-z", "--stdin"],
+            result.stderr.trim().length > 0 ? result.stderr.trim() : "git check-ignore failed",
+          );
+        }
+
+        for (const ignoredPath of splitNullSeparatedPaths(result.stdout, result.stdoutTruncated)) {
+          ignoredPaths.add(ignoredPath);
+        }
+      }
+
+      if (ignoredPaths.size === 0) {
+        return relativePaths;
+      }
+
+      return relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
+    });
+
   const listBranches: GitCoreShape["listBranches"] = Effect.fn("listBranches")(function* (input) {
     const branchRecencyPromise = readBranchRecency(input.cwd).pipe(
       Effect.catch(() => Effect.succeed(new Map<string, number>())),
@@ -1834,6 +1977,9 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     pullCurrentBranch,
     readRangeContext,
     readConfigValue,
+    isInsideWorkTree,
+    listWorkspaceFiles,
+    filterIgnoredPaths,
     listBranches,
     createWorktree,
     fetchPullRequestBranch,

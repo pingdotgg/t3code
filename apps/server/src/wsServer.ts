@@ -50,7 +50,6 @@ import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
 import { ServerSettingsService } from "./serverSettings";
-import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
@@ -75,10 +74,13 @@ import {
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver.ts";
+import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
+import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
+import { WorkspacePaths } from "./workspace/Services/WorkspacePaths.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -154,48 +156,6 @@ function websocketRawToString(raw: unknown): string | null {
   return null;
 }
 
-function toPosixRelativePath(input: string): string {
-  return input.replaceAll("\\", "/");
-}
-
-function resolveWorkspaceWritePath(params: {
-  workspaceRoot: string;
-  relativePath: string;
-  path: Path.Path;
-}): Effect.Effect<{ absolutePath: string; relativePath: string }, RouteRequestError> {
-  const normalizedInputPath = params.relativePath.trim();
-  if (params.path.isAbsolute(normalizedInputPath)) {
-    return Effect.fail(
-      new RouteRequestError({
-        message: "Workspace file path must be relative to the project root.",
-      }),
-    );
-  }
-
-  const absolutePath = params.path.resolve(params.workspaceRoot, normalizedInputPath);
-  const relativeToRoot = toPosixRelativePath(
-    params.path.relative(params.workspaceRoot, absolutePath),
-  );
-  if (
-    relativeToRoot.length === 0 ||
-    relativeToRoot === "." ||
-    relativeToRoot.startsWith("../") ||
-    relativeToRoot === ".." ||
-    params.path.isAbsolute(relativeToRoot)
-  ) {
-    return Effect.fail(
-      new RouteRequestError({
-        message: "Workspace file path must stay within the project root.",
-      }),
-    );
-  }
-
-  return Effect.succeed({
-    absolutePath,
-    relativePath: relativeToRoot,
-  });
-}
-
 function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
@@ -218,6 +178,10 @@ export type ServerRuntimeServices =
   | TerminalManager
   | Keybindings
   | ServerSettingsService
+  | ProjectFaviconResolver
+  | WorkspaceEntries
+  | WorkspaceFileSystem
+  | WorkspacePaths
   | Open
   | AnalyticsService;
 
@@ -263,6 +227,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const serverSettingsManager = yield* ServerSettingsService;
   const providerRegistry = yield* ProviderRegistry;
   const git = yield* GitCore;
+  const workspaceEntries = yield* WorkspaceEntries;
+  const workspaceFileSystem = yield* WorkspaceFileSystem;
+  const workspacePaths = yield* WorkspacePaths;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -312,35 +279,21 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
     readonly command: ClientOrchestrationCommand;
   }) {
-    const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
-      const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
-      const workspaceStat = yield* fileSystem
-        .stat(normalizedWorkspaceRoot)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (!workspaceStat) {
-        return yield* new RouteRequestError({
-          message: `Project directory does not exist: ${normalizedWorkspaceRoot}`,
-        });
-      }
-      if (workspaceStat.type !== "Directory") {
-        return yield* new RouteRequestError({
-          message: `Project path is not a directory: ${normalizedWorkspaceRoot}`,
-        });
-      }
-      return normalizedWorkspaceRoot;
-    });
-
     if (input.command.type === "project.create") {
       return {
         ...input.command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+        workspaceRoot: yield* workspacePaths
+          .normalizeWorkspaceRoot(input.command.workspaceRoot)
+          .pipe(Effect.mapError((cause) => new RouteRequestError({ message: cause.message }))),
       } satisfies OrchestrationCommand;
     }
 
     if (input.command.type === "project.meta.update" && input.command.workspaceRoot !== undefined) {
       return {
         ...input.command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+        workspaceRoot: yield* workspacePaths
+          .normalizeWorkspaceRoot(input.command.workspaceRoot)
+          .pipe(Effect.mapError((cause) => new RouteRequestError({ message: cause.message }))),
       } satisfies OrchestrationCommand;
     }
 
@@ -437,7 +390,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     void runPromise(
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
-        if (tryHandleProjectFaviconRequest(url, res)) {
+        if (yield* tryHandleProjectFaviconRequest(url, res)) {
           return;
         }
 
@@ -768,41 +721,26 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.projectsSearchEntries: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.tryPromise({
-          try: () => searchWorkspaceEntries(body),
-          catch: (cause) =>
-            new RouteRequestError({
-              message: `Failed to search workspace entries: ${String(cause)}`,
-            }),
-        });
+        return yield* workspaceEntries.search(body).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to search workspace entries: ${cause.detail}`,
+              }),
+          ),
+        );
       }
 
       case WS_METHODS.projectsWriteFile: {
         const body = stripRequestTag(request.body);
-        const target = yield* resolveWorkspaceWritePath({
-          workspaceRoot: body.cwd,
-          relativePath: body.relativePath,
-          path,
-        });
-        yield* fileSystem
-          .makeDirectory(path.dirname(target.absolutePath), { recursive: true })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new RouteRequestError({
-                  message: `Failed to prepare workspace path: ${String(cause)}`,
-                }),
-            ),
-          );
-        yield* fileSystem.writeFileString(target.absolutePath, body.contents).pipe(
+        return yield* workspaceFileSystem.writeFile(body).pipe(
           Effect.mapError(
             (cause) =>
               new RouteRequestError({
-                message: `Failed to write workspace file: ${String(cause)}`,
+                message: `Failed to write workspace file: ${cause.message}`,
               }),
           ),
         );
-        return { relativePath: target.relativePath };
       }
 
       case WS_METHODS.shellOpenInEditor: {
