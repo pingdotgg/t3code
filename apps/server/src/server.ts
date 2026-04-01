@@ -99,12 +99,24 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
 
-const OrchestrationLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
-  Layer.provideMerge(OrchestrationEngineLive),
-  Layer.provideMerge(OrchestrationProjectionPipelineLive),
-  Layer.provideMerge(OrchestrationEventStoreLive),
-  Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
+const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
+  OrchestrationEventStoreLive,
+  OrchestrationCommandReceiptRepositoryLive,
+);
+
+const OrchestrationProjectionPipelineLayerLive = OrchestrationProjectionPipelineLive.pipe(
+  Layer.provide(OrchestrationEventStoreLive),
+);
+
+const OrchestrationInfrastructureLayerLive = Layer.mergeAll(
+  OrchestrationProjectionSnapshotQueryLive,
+  OrchestrationEventInfrastructureLayerLive,
+  OrchestrationProjectionPipelineLayerLive,
+);
+
+const OrchestrationLayerLive = Layer.mergeAll(
+  OrchestrationInfrastructureLayerLive,
+  OrchestrationEngineLive.pipe(Layer.provide(OrchestrationInfrastructureLayerLive)),
 );
 
 const CheckpointingLayerLive = Layer.empty.pipe(

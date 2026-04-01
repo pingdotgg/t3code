@@ -55,6 +55,13 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.text, "updated");
       assert.deepEqual(rows[0]?.attachments, persistedAttachments);
+
+      const rowById = yield* repository.getByMessageId({ messageId });
+      assert.equal(rowById._tag, "Some");
+      if (rowById._tag === "Some") {
+        assert.equal(rowById.value.text, "updated");
+        assert.deepEqual(rowById.value.attachments, persistedAttachments);
+      }
     }),
   );
 
