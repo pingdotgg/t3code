@@ -4,7 +4,7 @@
  * @module ProviderRegistryLive
  */
 import type { ProviderKind, ServerProvider } from "@t3tools/contracts";
-import { Effect, Equal, Layer, PubSub, Ref, Stream } from "effect";
+import { Effect, Layer, PubSub, Ref, Stream } from "effect";
 
 import { ClaudeProviderLive } from "./ClaudeProvider";
 import { CodexProviderLive } from "./CodexProvider";
@@ -13,6 +13,7 @@ import { ClaudeProvider } from "../Services/ClaudeProvider";
 import type { CodexProviderShape } from "../Services/CodexProvider";
 import { CodexProvider } from "../Services/CodexProvider";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry";
+import { haveProvidersChanged } from "./ProviderRegistry.shared";
 
 const loadProviders = (
   codexProvider: CodexProviderShape,
@@ -21,11 +22,6 @@ const loadProviders = (
   Effect.all([codexProvider.getSnapshot, claudeProvider.getSnapshot], {
     concurrency: "unbounded",
   });
-
-export const haveProvidersChanged = (
-  previousProviders: ReadonlyArray<ServerProvider>,
-  nextProviders: ReadonlyArray<ServerProvider>,
-): boolean => !Equal.equals(previousProviders, nextProviders);
 
 export const ProviderRegistryLive = Layer.effect(
   ProviderRegistry,

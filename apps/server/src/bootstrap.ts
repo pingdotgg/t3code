@@ -5,6 +5,7 @@ import type { Readable } from "node:stream";
 
 import { Data, Effect, Option, Predicate, Result, Schema } from "effect";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { resolveFdPath } from "./bootstrap.shared";
 
 class BootstrapError extends Data.TaggedError("BootstrapError")<{
   readonly message: string;
@@ -158,16 +159,3 @@ const isBootstrapFdPathDuplicationError = Predicate.compose(
   Predicate.hasProperty("code"),
   (_) => _.code === "ENXIO" || _.code === "EINVAL" || _.code === "EPERM",
 );
-
-export function resolveFdPath(
-  fd: number,
-  platform: NodeJS.Platform = process.platform,
-): string | undefined {
-  if (platform === "linux") {
-    return `/proc/self/fd/${fd}`;
-  }
-  if (platform === "win32") {
-    return undefined;
-  }
-  return `/dev/fd/${fd}`;
-}

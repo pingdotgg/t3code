@@ -30,8 +30,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
-
-export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+import { COMPOSER_DRAFT_STORAGE_KEY } from "./composerDraftStore.shared";
 const COMPOSER_DRAFT_STORAGE_VERSION = 3;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;

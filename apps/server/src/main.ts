@@ -21,14 +21,13 @@ import { fixPath, resolveBaseDir } from "./os-jank";
 import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry";
 import { Server } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { readBootstrapEnvelope } from "./bootstrap";
 import { ServerSettingsLive } from "./serverSettings";
+import { recordStartupHeartbeat, type CliConfigShape } from "./main.logic";
 
 class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -60,26 +59,6 @@ interface CliInput {
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
-}
-
-/**
- * CliConfigShape - Startup helpers required while building server layers.
- */
-export interface CliConfigShape {
-  /**
-   * Current process working directory.
-   */
-  readonly cwd: string;
-
-  /**
-   * Apply OS-specific PATH normalization.
-   */
-  readonly fixPath: Effect.Effect<void>;
-
-  /**
-   * Resolve static web asset directory for server mode.
-   */
-  readonly resolveStaticDir: Effect.Effect<string | undefined>;
 }
 
 /**
@@ -307,31 +286,6 @@ const isWildcardHost = (host: string | undefined): boolean =>
 
 const formatHostForUrl = (host: string): string =>
   host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-
-export const recordStartupHeartbeat = Effect.gen(function* () {
-  const analytics = yield* AnalyticsService;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-
-  const { threadCount, projectCount } = yield* projectionSnapshotQuery.getSnapshot().pipe(
-    Effect.map((snapshot) => ({
-      threadCount: snapshot.threads.length,
-      projectCount: snapshot.projects.length,
-    })),
-    Effect.catch((cause) =>
-      Effect.logWarning("failed to gather startup snapshot for telemetry", { cause }).pipe(
-        Effect.as({
-          threadCount: 0,
-          projectCount: 0,
-        }),
-      ),
-    ),
-  );
-
-  yield* analytics.record("server.boot.heartbeat", {
-    threadCount,
-    projectCount,
-  });
-});
 
 const makeServerRuntimeProgram = (input: CliInput) =>
   Effect.gen(function* () {

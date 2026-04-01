@@ -10,8 +10,19 @@
       "project": ["src/**/*.{astro,mdx,ts,tsx,js,jsx}!"]
     },
     "apps/server": {
-      "entry": ["src/**/*.test.ts", "integration/**/*.integration.ts", "scripts/**/*.ts"],
-      "project": ["src/**/*.ts!", "!src/**/*.test.ts!", "integration/**/*.ts", "scripts/**/*.ts"]
+      "entry": [
+        "src/**/*.test.ts",
+        "src/**/*.testing.ts",
+        "integration/**/*.integration.ts",
+        "scripts/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts!",
+        "!src/**/*.test.ts!",
+        "!src/**/*.testing.ts!",
+        "integration/**/*.ts",
+        "scripts/**/*.ts"
+      ]
     },
     "apps/web": {
       "entry": [
@@ -20,7 +31,12 @@
         "src/**/*.browser.tsx",
         "public/mockServiceWorker.js"
       ],
-      "project": ["src/**/*.{ts,tsx}!", "!src/**/*.test.{ts,tsx}!", "!src/**/*.browser.tsx!"]
+      "project": [
+        "src/**/*.{ts,tsx}!",
+        "!src/**/*.test.{ts,tsx}!",
+        "!src/**/*.testing.{ts,tsx}!",
+        "!src/**/*.browser.tsx!"
+      ]
     },
     "packages/contracts": {
       "entry": ["src/**/*.test.ts"],

@@ -11,9 +11,11 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { beforeEach } from "vitest";
 import { NetService } from "@t3tools/shared/Net";
 
-import { CliConfig, recordStartupHeartbeat, t3Cli, type CliConfigShape } from "./main";
+import { CliConfig, t3Cli } from "./main";
+import { recordStartupHeartbeat, type CliConfigShape } from "./main.logic";
 import { ServerConfig, type ServerConfigShape } from "./config";
-import { Open, type OpenShape } from "./open";
+import { Open } from "./open";
+import type { OpenShape } from "./open.logic";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { Server, type ServerShape } from "./wsServer";

@@ -43,7 +43,7 @@ import {
   type WsPushMessage,
   type WsPush,
 } from "@t3tools/contracts";
-import { compileResolvedKeybindingRule, DEFAULT_KEYBINDINGS } from "./keybindings";
+import { compileResolvedKeybindingRule, DEFAULT_KEYBINDINGS } from "./keybindings.logic";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -58,7 +58,8 @@ import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistenc
 import { SqlClient, SqlError } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { ProviderRegistry, type ProviderRegistryShape } from "./provider/Services/ProviderRegistry";
-import { Open, type OpenShape } from "./open";
+import { Open } from "./open";
+import type { OpenShape } from "./open.logic";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitCore } from "./git/Services/GitCore.ts";

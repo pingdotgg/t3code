@@ -8,13 +8,14 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  COMPOSER_DRAFT_STORAGE_KEY,
   clearPromotedDraftThread,
   clearPromotedDraftThreads,
   type ComposerImageAttachment,
   useComposerDraftStore,
 } from "./composerDraftStore";
-import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
+import { COMPOSER_DRAFT_STORAGE_KEY } from "./composerDraftStore.shared";
+import { setLocalStorageItem } from "./hooks/useLocalStorage";
+import { removeLocalStorageItem } from "./hooks/useLocalStorage.shared";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   insertInlineTerminalContextPlaceholder,
