@@ -47,6 +47,7 @@ import {
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
   gitStatusQueryOptions,
+  invalidateGitStatusQuery,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
 import { newCommandId, randomUUID } from "~/lib/utils";
@@ -286,8 +287,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   useEffect(() => {
     if (!isGitStatusOutOfSync) return;
-    void invalidateGitQueries(queryClient);
-  }, [isGitStatusOutOfSync, queryClient]);
+    void invalidateGitQueries(queryClient, { cwd: gitCwd });
+  }, [gitCwd, isGitStatusOutOfSync, queryClient]);
 
   const gitStatusForActions = isGitStatusOutOfSync ? null : gitStatus;
 
@@ -814,7 +815,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu
             onOpenChange={(open) => {
-              if (open) void invalidateGitQueries(queryClient);
+              if (open) void invalidateGitStatusQuery(queryClient, gitCwd);
             }}
           >
             <MenuTrigger
