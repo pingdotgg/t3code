@@ -6,8 +6,6 @@ import {
   ProjectId,
   type OrchestrationEvent,
   type ServerConfig,
-  type ServerConfigStreamEvent,
-  type ServerLifecycleStreamEvent,
   type ServerProvider,
   type TerminalEvent,
   ThreadId,
@@ -31,8 +29,6 @@ function registerListener<T>(listeners: Set<(event: T) => void>, listener: (even
   };
 }
 
-const lifecycleListeners = new Set<(event: ServerLifecycleStreamEvent) => void>();
-const configListeners = new Set<(event: ServerConfigStreamEvent) => void>();
 const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
 const orchestrationEventListeners = new Set<(event: OrchestrationEvent) => void>();
 
@@ -75,12 +71,8 @@ const rpcClientMock = {
     upsertKeybinding: vi.fn(),
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
-    subscribeConfig: vi.fn((listener: (event: ServerConfigStreamEvent) => void) =>
-      registerListener(configListeners, listener),
-    ),
-    subscribeLifecycle: vi.fn((listener: (event: ServerLifecycleStreamEvent) => void) =>
-      registerListener(lifecycleListeners, listener),
-    ),
+    subscribeConfig: vi.fn(),
+    subscribeLifecycle: vi.fn(),
   },
   orchestration: {
     getSnapshot: vi.fn(),
@@ -109,14 +101,6 @@ function emitEvent<T>(listeners: Set<(event: T) => void>, event: T) {
   for (const listener of listeners) {
     listener(event);
   }
-}
-
-function emitLifecycleEvent(event: ServerLifecycleStreamEvent) {
-  emitEvent(lifecycleListeners, event);
-}
-
-function emitServerConfigEvent(event: ServerConfigStreamEvent) {
-  emitEvent(configListeners, event);
 }
 
 function getWindowForTest(): Window & typeof globalThis & { desktopBridge?: unknown } {
@@ -182,8 +166,6 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   showContextMenuFallbackMock.mockReset();
-  lifecycleListeners.clear();
-  configListeners.clear();
   terminalEventListeners.clear();
   orchestrationEventListeners.clear();
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
@@ -194,220 +176,16 @@ afterEach(() => {
 });
 
 describe("wsNativeApi", () => {
-  it("delivers and caches welcome lifecycle events", async () => {
-    const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
-    const { wsWelcomeAtom } = await import("./wsNativeApiState");
-    const { appAtomRegistry } = await import("./rpc/atomRegistry");
-
-    createWsNativeApi();
-    const listener = vi.fn();
-    onServerWelcome(listener);
-
-    emitLifecycleEvent({
-      version: 1,
-      sequence: 1,
-      type: "welcome",
-      payload: { cwd: "/tmp/workspace", projectName: "t3-code" },
-    });
-
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith({
-      cwd: "/tmp/workspace",
-      projectName: "t3-code",
-    });
-
-    const lateListener = vi.fn();
-    onServerWelcome(lateListener);
-
-    expect(lateListener).toHaveBeenCalledTimes(1);
-    expect(lateListener).toHaveBeenCalledWith({
-      cwd: "/tmp/workspace",
-      projectName: "t3-code",
-    });
-    expect(appAtomRegistry.get(wsWelcomeAtom)).toEqual({
-      cwd: "/tmp/workspace",
-      projectName: "t3-code",
-    });
-  });
-
-  it("preserves bootstrap ids from welcome lifecycle events", async () => {
-    const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
-
-    createWsNativeApi();
-    const listener = vi.fn();
-    onServerWelcome(listener);
-
-    emitLifecycleEvent({
-      version: 1,
-      sequence: 1,
-      type: "welcome",
-      payload: {
-        cwd: "/tmp/workspace",
-        projectName: "t3-code",
-        bootstrapProjectId: ProjectId.makeUnsafe("project-1"),
-        bootstrapThreadId: ThreadId.makeUnsafe("thread-1"),
-      },
-    });
-
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cwd: "/tmp/workspace",
-        projectName: "t3-code",
-        bootstrapProjectId: "project-1",
-        bootstrapThreadId: "thread-1",
-      }),
-    );
-  });
-
-  it("delivers and caches current server config from the config stream snapshot", async () => {
-    const { createWsNativeApi, onServerConfigUpdated } = await import("./wsNativeApi");
-    const { serverConfigAtom } = await import("./wsNativeApiState");
-    const { appAtomRegistry } = await import("./rpc/atomRegistry");
+  it("forwards server config fetches directly to the RPC client", async () => {
+    rpcClientMock.server.getConfig.mockResolvedValue(baseServerConfig);
+    const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
-    const listener = vi.fn();
-    onServerConfigUpdated(listener);
-
-    emitServerConfigEvent({
-      version: 1,
-      type: "snapshot",
-      config: baseServerConfig,
-    });
-
-    await expect(api.server.getConfig()).resolves.toEqual(baseServerConfig);
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(
-      {
-        issues: [],
-        providers: defaultProviders,
-        settings: DEFAULT_SERVER_SETTINGS,
-      },
-      "snapshot",
-    );
-    expect(appAtomRegistry.get(serverConfigAtom)).toEqual(baseServerConfig);
-  });
-
-  it("falls back to server.getConfig before the stream cache is populated", async () => {
-    rpcClientMock.server.getConfig.mockResolvedValueOnce(baseServerConfig);
-    const { createWsNativeApi, onServerConfigUpdated } = await import("./wsNativeApi");
-
-    const api = createWsNativeApi();
-    const listener = vi.fn();
-    onServerConfigUpdated(listener);
 
     await expect(api.server.getConfig()).resolves.toEqual(baseServerConfig);
     expect(rpcClientMock.server.getConfig).toHaveBeenCalledWith();
-    expect(listener).toHaveBeenCalledWith(
-      {
-        issues: [],
-        providers: defaultProviders,
-        settings: DEFAULT_SERVER_SETTINGS,
-      },
-      "snapshot",
-    );
-  });
-
-  it("merges config stream updates into the cached server config", async () => {
-    const { createWsNativeApi, onServerConfigUpdated, onServerProvidersUpdated } =
-      await import("./wsNativeApi");
-    const { providersUpdatedAtom } = await import("./wsNativeApiState");
-    const { appAtomRegistry } = await import("./rpc/atomRegistry");
-
-    const api = createWsNativeApi();
-    const configListener = vi.fn();
-    const providersListener = vi.fn();
-    onServerConfigUpdated(configListener);
-    onServerProvidersUpdated(providersListener);
-
-    emitServerConfigEvent({
-      version: 1,
-      type: "snapshot",
-      config: baseServerConfig,
-    });
-    emitServerConfigEvent({
-      version: 1,
-      type: "keybindingsUpdated",
-      payload: {
-        issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
-      },
-    });
-
-    const nextProviders: ReadonlyArray<ServerProvider> = [
-      {
-        ...defaultProviders[0]!,
-        status: "warning",
-        checkedAt: "2026-01-02T00:00:00.000Z",
-        message: "rate limited",
-      },
-    ];
-    emitServerConfigEvent({
-      version: 1,
-      type: "providerStatuses",
-      payload: {
-        providers: nextProviders,
-      },
-    });
-    emitServerConfigEvent({
-      version: 1,
-      type: "settingsUpdated",
-      payload: {
-        settings: {
-          ...DEFAULT_SERVER_SETTINGS,
-          enableAssistantStreaming: true,
-        },
-      },
-    });
-
-    await expect(api.server.getConfig()).resolves.toEqual({
-      ...baseServerConfig,
-      issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
-      providers: nextProviders,
-      settings: {
-        ...DEFAULT_SERVER_SETTINGS,
-        enableAssistantStreaming: true,
-      },
-    });
-    expect(configListener).toHaveBeenNthCalledWith(
-      1,
-      {
-        issues: [],
-        providers: defaultProviders,
-        settings: DEFAULT_SERVER_SETTINGS,
-      },
-      "snapshot",
-    );
-    expect(configListener).toHaveBeenNthCalledWith(
-      2,
-      {
-        issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
-        providers: defaultProviders,
-        settings: DEFAULT_SERVER_SETTINGS,
-      },
-      "keybindingsUpdated",
-    );
-    expect(configListener).toHaveBeenNthCalledWith(
-      3,
-      {
-        issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
-        providers: nextProviders,
-        settings: DEFAULT_SERVER_SETTINGS,
-      },
-      "providerStatuses",
-    );
-    expect(configListener).toHaveBeenLastCalledWith(
-      {
-        issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
-        providers: nextProviders,
-        settings: {
-          ...DEFAULT_SERVER_SETTINGS,
-          enableAssistantStreaming: true,
-        },
-      },
-      "settingsUpdated",
-    );
-    expect(providersListener).toHaveBeenLastCalledWith({ providers: nextProviders });
-    expect(appAtomRegistry.get(providersUpdatedAtom)).toEqual({ providers: nextProviders });
+    expect(rpcClientMock.server.subscribeConfig).not.toHaveBeenCalled();
+    expect(rpcClientMock.server.subscribeLifecycle).not.toHaveBeenCalled();
   });
 
   it("forwards terminal and orchestration stream events", async () => {
@@ -515,7 +293,7 @@ describe("wsNativeApi", () => {
     });
   });
 
-  it("refreshes providers and updates cached listeners", async () => {
+  it("forwards provider refreshes directly to the RPC client", async () => {
     const nextProviders: ReadonlyArray<ServerProvider> = [
       {
         ...defaultProviders[0]!,
@@ -523,44 +301,23 @@ describe("wsNativeApi", () => {
       },
     ];
     rpcClientMock.server.refreshProviders.mockResolvedValue({ providers: nextProviders });
-    const { createWsNativeApi, onServerProvidersUpdated } = await import("./wsNativeApi");
+    const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
-    emitServerConfigEvent({
-      version: 1,
-      type: "snapshot",
-      config: baseServerConfig,
-    });
-
-    const listener = vi.fn();
-    onServerProvidersUpdated(listener);
 
     await expect(api.server.refreshProviders()).resolves.toEqual({ providers: nextProviders });
     expect(rpcClientMock.server.refreshProviders).toHaveBeenCalledWith();
-    expect(listener).toHaveBeenLastCalledWith({ providers: nextProviders });
-    await expect(api.server.getConfig()).resolves.toEqual({
-      ...baseServerConfig,
-      providers: nextProviders,
-    });
   });
 
-  it("updates cached config when server settings are changed", async () => {
+  it("forwards server settings updates directly to the RPC client", async () => {
     const nextSettings = {
       ...DEFAULT_SERVER_SETTINGS,
       enableAssistantStreaming: true,
     };
     rpcClientMock.server.updateSettings.mockResolvedValue(nextSettings);
-    const { createWsNativeApi, onServerConfigUpdated } = await import("./wsNativeApi");
+    const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
-    emitServerConfigEvent({
-      version: 1,
-      type: "snapshot",
-      config: baseServerConfig,
-    });
-
-    const listener = vi.fn();
-    onServerConfigUpdated(listener);
 
     await expect(api.server.updateSettings({ enableAssistantStreaming: true })).resolves.toEqual(
       nextSettings,
@@ -568,18 +325,6 @@ describe("wsNativeApi", () => {
     expect(rpcClientMock.server.updateSettings).toHaveBeenCalledWith({
       enableAssistantStreaming: true,
     });
-    await expect(api.server.getConfig()).resolves.toEqual({
-      ...baseServerConfig,
-      settings: nextSettings,
-    });
-    expect(listener).toHaveBeenLastCalledWith(
-      {
-        issues: [],
-        providers: defaultProviders,
-        settings: nextSettings,
-      },
-      "settingsUpdated",
-    );
   });
 
   it("forwards context menu metadata to the desktop bridge", async () => {

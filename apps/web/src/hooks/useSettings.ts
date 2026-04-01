@@ -32,8 +32,7 @@ import { normalizeCustomModelSlugs } from "~/modelSelection";
 import { Predicate, Schema, Struct } from "effect";
 import { DeepMutable } from "effect/Types";
 import { deepMerge } from "@t3tools/shared/Struct";
-import { useServerSettings } from "~/wsNativeApiAtoms";
-import { applySettingsUpdated, getServerConfig } from "~/wsNativeApiState";
+import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
 
 const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 const OLD_SETTINGS_KEY = "t3code:app-settings:v1";
@@ -92,7 +91,7 @@ export function useSettings<T extends UnifiedSettings = UnifiedSettings>(
 /**
  * Returns an updater that routes each key to the correct backing store.
  *
- * Server keys are optimistically patched in the React Query cache, then
+ * Server keys are optimistically patched in atom-backed server state, then
  * persisted via RPC. Client keys go straight to localStorage.
  */
 export function useUpdateSettings() {

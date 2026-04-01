@@ -191,7 +191,7 @@ import {
   useServerAvailableEditors,
   useServerConfig,
   useServerKeybindings,
-} from "~/wsNativeApiAtoms";
+} from "~/rpc/serverState";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;

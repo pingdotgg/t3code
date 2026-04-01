@@ -62,7 +62,7 @@ import {
   useServerAvailableEditors,
   useServerKeybindingsConfigPath,
   useServerProviders,
-} from "../../wsNativeApiAtoms";
+} from "../../rpc/serverState";
 
 const THEME_OPTIONS = [
   {

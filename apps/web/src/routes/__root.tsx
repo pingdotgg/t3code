@@ -21,6 +21,13 @@ import { AnchoredToastProvider, ToastProvider, toastManager } from "../component
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { readNativeApi } from "../nativeApi";
 import {
+  type ServerConfigUpdateSource,
+  useServerConfig,
+  useServerConfigUpdatedSubscription,
+  useServerWelcomeSubscription,
+} from "../rpc/serverState";
+import { ServerStateBootstrap } from "../rpc/serverStateBootstrap";
+import {
   clearPromotedDraftThread,
   clearPromotedDraftThreads,
   useComposerDraftStore,
@@ -35,12 +42,6 @@ import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
-import {
-  useServerConfig,
-  useServerConfigUpdatedSubscription,
-  useServerWelcomeSubscription,
-  WsNativeApiAtomsBootstrap,
-} from "../wsNativeApiAtoms";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -67,7 +68,7 @@ function RootRouteView() {
 
   return (
     <>
-      <WsNativeApiAtomsBootstrap />
+      <ServerStateBootstrap />
       <ToastProvider>
         <AnchoredToastProvider>
           <EventRouter />
@@ -209,7 +210,7 @@ function EventRouter() {
       source,
     }: {
       readonly payload: import("@t3tools/contracts").ServerConfigUpdatedPayload;
-      readonly source: import("../wsNativeApiState").ServerConfigUpdateSource;
+      readonly source: ServerConfigUpdateSource;
     }) => {
       const isReplay = !handledConfigReplayRef.current;
       handledConfigReplayRef.current = true;

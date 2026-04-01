@@ -1,77 +1,15 @@
-import {
-  type ContextMenuItem,
-  type NativeApi,
-  type ServerLifecycleWelcomePayload,
-  type ServerProviderUpdatedPayload,
-} from "@t3tools/contracts";
+import { type ContextMenuItem, type NativeApi } from "@t3tools/contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
-import { __resetWsRpcClientForTests, getWsRpcClient, type WsRpcClient } from "./wsRpcClient";
-import {
-  applyProvidersUpdated,
-  applyServerConfigEvent,
-  applySettingsUpdated,
-  emitWelcome,
-  getServerConfig,
-  onProvidersUpdated,
-  onServerConfigUpdated as onServerConfigUpdatedState,
-  onWelcome,
-  resetWsNativeApiStateForTests,
-  ServerConfigUpdateSource,
-  setServerConfigSnapshot,
-} from "./wsNativeApiState";
+import { resetServerStateForTests } from "./rpc/serverState";
+import { __resetWsRpcClientForTests, getWsRpcClient } from "./wsRpcClient";
 
-let instance: { api: NativeApi; cleanups: Array<() => void> } | null = null;
+let instance: { api: NativeApi } | null = null;
 
 export function __resetWsNativeApiForTests() {
-  if (instance) {
-    for (const cleanup of instance.cleanups) {
-      cleanup();
-    }
-    instance = null;
-  }
+  instance = null;
   __resetWsRpcClientForTests();
-  resetWsNativeApiStateForTests();
-}
-
-async function getServerConfigSnapshot(rpcClient: WsRpcClient) {
-  const latestServerConfig = getServerConfig();
-  if (latestServerConfig) {
-    return latestServerConfig;
-  }
-
-  const config = await rpcClient.server.getConfig();
-  setServerConfigSnapshot(config);
-  return getServerConfig() ?? config;
-}
-
-/**
- * Subscribe to the server welcome message. If a welcome was already received
- * before this call, the listener fires synchronously with the cached payload.
- */
-export function onServerWelcome(
-  listener: (payload: ServerLifecycleWelcomePayload) => void,
-): () => void {
-  return onWelcome(listener);
-}
-
-/**
- * Subscribe to server config update events. Replays the latest update for
- * late subscribers to avoid missing config validation feedback.
- */
-export function onServerConfigUpdated(
-  listener: (
-    payload: import("@t3tools/contracts").ServerConfigUpdatedPayload,
-    source: ServerConfigUpdateSource,
-  ) => void,
-): () => void {
-  return onServerConfigUpdatedState(listener);
-}
-
-export function onServerProvidersUpdated(
-  listener: (payload: ServerProviderUpdatedPayload) => void,
-): () => void {
-  return onProvidersUpdated(listener);
+  resetServerStateForTests();
 }
 
 export function createWsNativeApi(): NativeApi {
@@ -80,16 +18,6 @@ export function createWsNativeApi(): NativeApi {
   }
 
   const rpcClient = getWsRpcClient();
-  const cleanups = [
-    rpcClient.server.subscribeLifecycle((event) => {
-      if (event.type === "welcome") {
-        emitWelcome(event.payload);
-      }
-    }),
-    rpcClient.server.subscribeConfig((event) => {
-      applyServerConfigEvent(event);
-    }),
-  ];
 
   const api: NativeApi = {
     dialogs: {
@@ -155,19 +83,11 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     server: {
-      getConfig: () => getServerConfigSnapshot(rpcClient),
-      refreshProviders: () =>
-        rpcClient.server.refreshProviders().then((payload) => {
-          applyProvidersUpdated(payload);
-          return payload;
-        }),
+      getConfig: rpcClient.server.getConfig,
+      refreshProviders: rpcClient.server.refreshProviders,
       upsertKeybinding: rpcClient.server.upsertKeybinding,
       getSettings: rpcClient.server.getSettings,
-      updateSettings: (patch) =>
-        rpcClient.server.updateSettings(patch).then((settings) => {
-          applySettingsUpdated(settings);
-          return settings;
-        }),
+      updateSettings: rpcClient.server.updateSettings,
     },
     orchestration: {
       getSnapshot: rpcClient.orchestration.getSnapshot,
@@ -182,6 +102,6 @@ export function createWsNativeApi(): NativeApi {
     },
   };
 
-  instance = { api, cleanups };
+  instance = { api };
   return api;
 }
