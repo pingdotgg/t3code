@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option, SchemaIssue } from "effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas";
@@ -22,6 +22,35 @@ export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "upda
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
+export const DEFAULT_WORKTREE_BRANCH_PREFIX = "t3code";
+export const WORKTREE_BRANCH_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+export const WorktreeBranchPrefix = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transformOrFail({
+      decode: (value) => {
+        const normalized = value.trim();
+        return Effect.succeed(
+          WORKTREE_BRANCH_PREFIX_PATTERN.test(normalized)
+            ? normalized
+            : DEFAULT_WORKTREE_BRANCH_PREFIX,
+        );
+      },
+      encode: (value) => {
+        const normalized = value.trim();
+        return WORKTREE_BRANCH_PREFIX_PATTERN.test(normalized)
+          ? Effect.succeed(normalized)
+          : Effect.fail(
+              new SchemaIssue.InvalidValue(Option.some(value), {
+                title: "Invalid worktree branch prefix",
+                message: "Use 1-64 letters, numbers, dots, hyphens, or underscores.",
+              }),
+            );
+      },
+    }),
+  ),
+);
 
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
@@ -34,6 +63,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_THREAD_SORT_ORDER),
   ),
   timestampFormat: TimestampFormat.pipe(Schema.withDecodingDefault(() => DEFAULT_TIMESTAMP_FORMAT)),
+  worktreeBranchPrefix: WorktreeBranchPrefix.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_WORKTREE_BRANCH_PREFIX),
+  ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 

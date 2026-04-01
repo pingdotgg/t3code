@@ -11,6 +11,10 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
+import {
+  DEFAULT_WORKTREE_BRANCH_PREFIX,
+  WORKTREE_BRANCH_PREFIX_PATTERN,
+} from "@t3tools/contracts/settings";
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -71,8 +75,11 @@ const serverCommandId = (tag: string): CommandId =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-const WORKTREE_BRANCH_PREFIX = "t3code";
-const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
+const TEMP_WORKTREE_BRANCH_MARKER = "worktree";
+const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
+  `^${WORKTREE_BRANCH_PREFIX_PATTERN.source.slice(1, -1)}\\/${TEMP_WORKTREE_BRANCH_MARKER}-[0-9a-f]{8}$`,
+  "i",
+);
 const DEFAULT_THREAD_TITLE = "New thread";
 
 function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
@@ -122,15 +129,21 @@ function isTemporaryWorktreeBranch(branch: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(branch.trim().toLowerCase());
 }
 
-function buildGeneratedWorktreeBranchName(raw: string): string {
+function extractWorktreeBranchPrefix(branch: string): string {
+  const slashIdx = branch.indexOf("/");
+  return slashIdx > 0 ? branch.slice(0, slashIdx) : DEFAULT_WORKTREE_BRANCH_PREFIX;
+}
+
+function buildGeneratedWorktreeBranchName(raw: string, prefix: string): string {
+  const normalizedPrefix = prefix.trim().toLowerCase().replace(/['"`]/g, "");
   const normalized = raw
     .trim()
     .toLowerCase()
     .replace(/^refs\/heads\//, "")
     .replace(/['"`]/g, "");
 
-  const withoutPrefix = normalized.startsWith(`${WORKTREE_BRANCH_PREFIX}/`)
-    ? normalized.slice(`${WORKTREE_BRANCH_PREFIX}/`.length)
+  const withoutPrefix = normalized.startsWith(`${normalizedPrefix}/`)
+    ? normalized.slice(`${normalizedPrefix}/`.length)
     : normalized;
 
   const branchFragment = withoutPrefix
@@ -142,7 +155,7 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
     .replace(/[./_-]+$/g, "");
 
   const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
-  return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
+  return `${prefix}/${safeFragment}`;
 }
 
 const make = Effect.gen(function* () {
@@ -424,6 +437,7 @@ const make = Effect.gen(function* () {
     }
 
     const oldBranch = input.branch;
+    const branchPrefix = extractWorktreeBranchPrefix(oldBranch);
     const cwd = input.worktreePath;
     const attachments = input.attachments ?? [];
     yield* Effect.gen(function* () {
@@ -438,7 +452,7 @@ const make = Effect.gen(function* () {
       });
       if (!generated) return;
 
-      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
+      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch, branchPrefix);
       if (targetBranch === oldBranch) return;
 
       const renamed = yield* git.renameBranch({ cwd, oldBranch, newBranch: targetBranch });

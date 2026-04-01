@@ -1,4 +1,5 @@
 import { ProjectId, type ModelSelection, type ThreadId, type TurnId } from "@t3tools/contracts";
+import { WorktreeBranchPrefix } from "@t3tools/contracts/settings";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -11,7 +12,6 @@ import {
 } from "../lib/terminalContext";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
-const WORKTREE_BRANCH_PREFIX = "t3code";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -97,10 +97,11 @@ export function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export function buildTemporaryWorktreeBranchName(): string {
-  // Keep the 8-hex suffix shape for backend temporary-branch detection.
+export function buildTemporaryWorktreeBranchName(prefix: string): string {
+  // Use an explicit temporary marker so backend rename logic does not match user branches.
+  const resolvedPrefix = Schema.decodeUnknownSync(WorktreeBranchPrefix)(prefix);
   const token = randomUUID().slice(0, 8).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+  return `${resolvedPrefix}/worktree-${token}`;
 }
 
 export function cloneComposerImageForRetry(

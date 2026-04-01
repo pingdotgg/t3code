@@ -25,6 +25,7 @@ import {
   SidebarThreadSortOrder,
   TimestampFormat,
   UnifiedSettings,
+  WorktreeBranchPrefix,
 } from "@t3tools/contracts/settings";
 import { ensureNativeApi } from "~/nativeApi";
 import { useLocalStorage } from "./useLocalStorage";
@@ -216,6 +217,12 @@ export function buildLegacyClientSettingsMigrationPatch(
 
   if (Schema.is(TimestampFormat)(legacySettings.timestampFormat)) {
     patch.timestampFormat = legacySettings.timestampFormat;
+  }
+
+  if (typeof legacySettings.worktreeBranchPrefix === "string") {
+    patch.worktreeBranchPrefix = Schema.decodeUnknownSync(WorktreeBranchPrefix)(
+      legacySettings.worktreeBranchPrefix,
+    );
   }
 
   return patch;
