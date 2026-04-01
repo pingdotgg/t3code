@@ -2,6 +2,7 @@ import {
   CheckpointRef,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EventId,
   MessageId,
   ProjectId,
   ThreadId,
@@ -358,6 +359,133 @@ describe("OrchestrationEngine", () => {
     expect(snapshotReadModel).toEqual(replayedReadModel);
     expect(engineReadModel).toEqual(replayedReadModelWithoutActivities);
     await system.dispose();
+  });
+
+  it("strips historical thread activities when bootstrap falls back to replay", async () => {
+    const createdAt = now();
+    const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
+      prefix: "t3-orchestration-engine-test-",
+    });
+    const envLayer = Layer.merge(
+      ServerConfigLayer,
+      Layer.merge(NodeServices.layer, Layer.merge(NodeFileSystem.layer, NodePath.layer)),
+    );
+    const sqlLayer = SqlitePersistenceMemory.pipe(Layer.provideMerge(envLayer));
+    const eventStoreLayer = OrchestrationEventStoreLive.pipe(Layer.provideMerge(sqlLayer));
+    const commandReceiptLayer = OrchestrationCommandReceiptRepositoryLive.pipe(
+      Layer.provideMerge(sqlLayer),
+    );
+    const runtimeDependencies = Layer.merge(envLayer, sqlLayer);
+    const noBootstrapProjectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectEvent: () => Effect.void,
+    };
+    const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, noBootstrapProjectionPipeline)),
+      Layer.provideMerge(eventStoreLayer),
+      Layer.provideMerge(commandReceiptLayer),
+      Layer.provideMerge(sqlLayer),
+    );
+
+    const runtimeLayer = Layer.merge(orchestrationLayer, eventStoreLayer).pipe(
+      Layer.provideMerge(runtimeDependencies),
+    );
+    const runtime = ManagedRuntime.make(
+      runtimeLayer as Layer.Layer<
+        Layer.Success<typeof runtimeLayer>,
+        Layer.Error<typeof runtimeLayer>,
+        never
+      >,
+    );
+
+    const eventStore = await runtime.runPromise(Effect.service(OrchestrationEventStore));
+    await runtime.runPromise(
+      eventStore.append({
+        type: "project.created",
+        eventId: EventId.makeUnsafe("evt-replay-bootstrap-project-created"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-replay-bootstrap"),
+        occurredAt: createdAt,
+        commandId: CommandId.makeUnsafe("cmd-replay-bootstrap-project-created"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-replay-bootstrap-project-created"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-replay-bootstrap"),
+          title: "Replay bootstrap project",
+          workspaceRoot: "/tmp/project-replay-bootstrap",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt,
+          updatedAt: createdAt,
+        },
+      }),
+    );
+    await runtime.runPromise(
+      eventStore.append({
+        type: "thread.created",
+        eventId: EventId.makeUnsafe("evt-replay-bootstrap-thread-created"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-replay-bootstrap"),
+        occurredAt: createdAt,
+        commandId: CommandId.makeUnsafe("cmd-replay-bootstrap-thread-created"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-replay-bootstrap-thread-created"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-replay-bootstrap"),
+          projectId: asProjectId("project-replay-bootstrap"),
+          title: "Replay bootstrap thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      }),
+    );
+    await runtime.runPromise(
+      eventStore.append({
+        type: "thread.activity-appended",
+        eventId: EventId.makeUnsafe("evt-replay-bootstrap-activity-appended"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-replay-bootstrap"),
+        occurredAt: createdAt,
+        commandId: CommandId.makeUnsafe("cmd-replay-bootstrap-activity-appended"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-replay-bootstrap-activity-appended"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-replay-bootstrap"),
+          activity: {
+            id: EventId.makeUnsafe("activity-replay-bootstrap"),
+            tone: "info",
+            kind: "runtime.warning",
+            summary: "Replay bootstrap activity",
+            payload: {
+              message: "should be stripped from engine bootstrap",
+            },
+            turnId: null,
+            createdAt,
+          },
+        },
+      }),
+    );
+
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const readModel = await runtime.runPromise(engine.getReadModel());
+
+    expect(readModel.snapshotSequence).toBe(3);
+    expect(
+      readModel.threads.find((thread) => thread.id === "thread-replay-bootstrap")?.activities,
+    ).toEqual([]);
+
+    await runtime.dispose();
   });
 
   it("streams persisted domain events in order", async () => {

@@ -50,6 +50,16 @@ function commandToAggregateRef(command: OrchestrationCommand): {
   }
 }
 
+function stripHistoricalActivities(snapshot: OrchestrationReadModel): OrchestrationReadModel {
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) => ({
+      ...thread,
+      activities: [],
+    })),
+  };
+}
+
 const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const eventStore = yield* OrchestrationEventStore;
@@ -205,7 +215,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         replayedReadModel = yield* projectEvent(replayedReadModel, event);
       }),
     );
-    return replayedReadModel;
+    return stripHistoricalActivities(replayedReadModel);
   });
 
   const bootstrapReadModelFromProjectionSnapshot = Effect.gen(function* () {
@@ -218,7 +228,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         );
       }
     }
-    return snapshot;
+    return stripHistoricalActivities(snapshot);
   });
 
   yield* projectionPipeline.bootstrap;
