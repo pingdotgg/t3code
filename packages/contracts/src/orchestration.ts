@@ -16,10 +16,11 @@ import {
 } from "./baseSchemas";
 
 export const ORCHESTRATION_WS_METHODS = {
-  getSnapshot: "orchestration.getSnapshot",
+  getActiveSnapshot: "orchestration.getActiveSnapshot",
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  listArchivedThreads: "orchestration.listArchivedThreads",
   replayEvents: "orchestration.replayEvents",
 } as const;
 
@@ -980,10 +981,30 @@ export const DispatchResult = Schema.Struct({
 });
 export type DispatchResult = typeof DispatchResult.Type;
 
-export const OrchestrationGetSnapshotInput = Schema.Struct({});
-export type OrchestrationGetSnapshotInput = typeof OrchestrationGetSnapshotInput.Type;
-const OrchestrationGetSnapshotResult = OrchestrationReadModel;
-export type OrchestrationGetSnapshotResult = typeof OrchestrationGetSnapshotResult.Type;
+export const OrchestrationGetActiveSnapshotInput = Schema.Struct({});
+export type OrchestrationGetActiveSnapshotInput = typeof OrchestrationGetActiveSnapshotInput.Type;
+const OrchestrationGetActiveSnapshotResult = OrchestrationReadModel;
+export type OrchestrationGetActiveSnapshotResult = typeof OrchestrationGetActiveSnapshotResult.Type;
+
+export const OrchestrationArchivedThreadSummary = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  projectTitle: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  archivedAt: IsoDateTime,
+});
+export type OrchestrationArchivedThreadSummary = typeof OrchestrationArchivedThreadSummary.Type;
+
+export const OrchestrationListArchivedThreadsInput = Schema.Struct({});
+export type OrchestrationListArchivedThreadsInput =
+  typeof OrchestrationListArchivedThreadsInput.Type;
+const OrchestrationListArchivedThreadsResult = Schema.Array(OrchestrationArchivedThreadSummary);
+export type OrchestrationListArchivedThreadsResult =
+  typeof OrchestrationListArchivedThreadsResult.Type;
 
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({ threadId: ThreadId }),
@@ -1012,9 +1033,9 @@ const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
 
 export const OrchestrationRpcSchemas = {
-  getSnapshot: {
-    input: OrchestrationGetSnapshotInput,
-    output: OrchestrationGetSnapshotResult,
+  getActiveSnapshot: {
+    input: OrchestrationGetActiveSnapshotInput,
+    output: OrchestrationGetActiveSnapshotResult,
   },
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1028,14 +1049,18 @@ export const OrchestrationRpcSchemas = {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
   },
+  listArchivedThreads: {
+    input: OrchestrationListArchivedThreadsInput,
+    output: OrchestrationListArchivedThreadsResult,
+  },
   replayEvents: {
     input: OrchestrationReplayEventsInput,
     output: OrchestrationReplayEventsResult,
   },
 } as const;
 
-export class OrchestrationGetSnapshotError extends Schema.TaggedErrorClass<OrchestrationGetSnapshotError>()(
-  "OrchestrationGetSnapshotError",
+export class OrchestrationGetActiveSnapshotError extends Schema.TaggedErrorClass<OrchestrationGetActiveSnapshotError>()(
+  "OrchestrationGetActiveSnapshotError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),
@@ -1060,6 +1085,14 @@ export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<Orche
 
 export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffError>()(
   "OrchestrationGetFullThreadDiffError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class OrchestrationListArchivedThreadsError extends Schema.TaggedErrorClass<OrchestrationListArchivedThreadsError>()(
+  "OrchestrationListArchivedThreadsError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

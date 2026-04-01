@@ -39,6 +39,7 @@ import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { migrateLocalSettingsToServer } from "../hooks/useSettings";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
+import { orchestrationQueryKeys } from "../lib/orchestrationReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
@@ -309,10 +310,21 @@ function EventRouter() {
       },
     );
 
-    const applyEventBatch = (events: ReadonlyArray<OrchestrationEvent>) => {
+    const applyEventBatch = (
+      events: ReadonlyArray<OrchestrationEvent>,
+    ): "applied" | "snapshot-recovery-needed" => {
       const nextEvents = recovery.markEventBatchApplied(events);
       if (nextEvents.length === 0) {
-        return;
+        return "applied";
+      }
+
+      const knownThreadIds = new Set(useStore.getState().threads.map((thread) => thread.id));
+      const needsActiveSnapshotRecovery = nextEvents.some(
+        (event) =>
+          event.type === "thread.unarchived" && !knownThreadIds.has(event.payload.threadId),
+      );
+      if (needsActiveSnapshotRecovery) {
+        return "snapshot-recovery-needed";
       }
 
       const batchEffects = deriveOrchestrationBatchEffects(nextEvents);
@@ -326,6 +338,16 @@ function EventRouter() {
       if (batchEffects.needsProviderInvalidation) {
         needsProviderInvalidation = true;
         void queryInvalidationThrottler.maybeExecute();
+      }
+      if (
+        nextEvents.some(
+          (event) =>
+            event.type === "thread.archived" ||
+            event.type === "thread.unarchived" ||
+            event.type === "thread.deleted",
+        )
+      ) {
+        void queryClient.invalidateQueries({ queryKey: orchestrationQueryKeys.archivedThreads() });
       }
 
       applyOrchestrationEvents(nextEvents);
@@ -356,6 +378,7 @@ function EventRouter() {
       for (const threadId of batchEffects.removeTerminalStateThreadIds) {
         removeTerminalState(threadId);
       }
+      return "applied";
     };
 
     const recoverFromSequenceGap = async (): Promise<void> => {
@@ -366,7 +389,12 @@ function EventRouter() {
       try {
         const events = await api.orchestration.replayEvents(recovery.getState().latestSequence);
         if (!disposed) {
-          applyEventBatch(events);
+          const result = applyEventBatch(events);
+          if (result === "snapshot-recovery-needed") {
+            recovery.failReplayRecovery();
+            void fallbackToSnapshotRecovery();
+            return;
+          }
         }
       } catch {
         recovery.failReplayRecovery();
@@ -385,7 +413,7 @@ function EventRouter() {
       }
 
       try {
-        const snapshot = await api.orchestration.getSnapshot();
+        const snapshot = await api.orchestration.getActiveSnapshot();
         if (!disposed) {
           syncServerReadModel(snapshot);
           reconcileSnapshotDerivedState();
@@ -410,7 +438,10 @@ function EventRouter() {
     const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
       const action = recovery.classifyDomainEvent(event.sequence);
       if (action === "apply") {
-        applyEventBatch([event]);
+        const result = applyEventBatch([event]);
+        if (result === "snapshot-recovery-needed") {
+          void fallbackToSnapshotRecovery();
+        }
         return;
       }
       if (action === "recover") {

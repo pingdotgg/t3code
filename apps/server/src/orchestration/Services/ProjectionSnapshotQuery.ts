@@ -7,6 +7,7 @@
  * @module ProjectionSnapshotQuery
  */
 import type {
+  OrchestrationArchivedThreadSummary,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationReadModel,
@@ -45,9 +46,26 @@ export interface ProjectionSnapshotQueryShape {
   readonly getSnapshot: () => Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>;
 
   /**
+   * Read the latest UI-facing orchestration snapshot, omitting archived and
+   * deleted threads plus their related child rows.
+   */
+  readonly getActiveSnapshot: () => Effect.Effect<
+    OrchestrationReadModel,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * Read aggregate projection counts without hydrating the full read model.
    */
   readonly getCounts: () => Effect.Effect<ProjectionSnapshotCounts, ProjectionRepositoryError>;
+
+  /**
+   * Read archived thread summaries for the archive settings page.
+   */
+  readonly listArchivedThreads: () => Effect.Effect<
+    ReadonlyArray<OrchestrationArchivedThreadSummary>,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Read the active project for an exact workspace root match.

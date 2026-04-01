@@ -82,7 +82,10 @@ describe("CheckpointDiffQueryLive", () => {
         Layer.succeed(ProjectionSnapshotQuery, {
           getSnapshot: () =>
             Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+          getActiveSnapshot: () =>
+            Effect.die("CheckpointDiffQuery should not request the active orchestration snapshot"),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          listArchivedThreads: () => Effect.succeed([]),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
@@ -136,7 +139,10 @@ describe("CheckpointDiffQueryLive", () => {
         Layer.succeed(ProjectionSnapshotQuery, {
           getSnapshot: () =>
             Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+          getActiveSnapshot: () =>
+            Effect.die("CheckpointDiffQuery should not request the active orchestration snapshot"),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          listArchivedThreads: () => Effect.succeed([]),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),

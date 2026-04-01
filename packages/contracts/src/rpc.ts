@@ -31,12 +31,14 @@ import {
   OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
+  OrchestrationGetActiveSnapshotError,
+  OrchestrationGetActiveSnapshotInput,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
-  OrchestrationGetSnapshotError,
-  OrchestrationGetSnapshotInput,
   OrchestrationGetTurnDiffError,
   OrchestrationGetTurnDiffInput,
+  OrchestrationListArchivedThreadsError,
+  OrchestrationListArchivedThreadsInput,
   OrchestrationReplayEventsError,
   OrchestrationReplayEventsInput,
   OrchestrationRpcSchemas,
@@ -257,11 +259,14 @@ export const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
   error: TerminalError,
 });
 
-export const WsOrchestrationGetSnapshotRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getSnapshot, {
-  payload: OrchestrationGetSnapshotInput,
-  success: OrchestrationRpcSchemas.getSnapshot.output,
-  error: OrchestrationGetSnapshotError,
-});
+export const WsOrchestrationGetActiveSnapshotRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getActiveSnapshot,
+  {
+    payload: OrchestrationGetActiveSnapshotInput,
+    success: OrchestrationRpcSchemas.getActiveSnapshot.output,
+    error: OrchestrationGetActiveSnapshotError,
+  },
+);
 
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -284,6 +289,15 @@ export const WsOrchestrationGetFullThreadDiffRpc = Rpc.make(
     payload: OrchestrationGetFullThreadDiffInput,
     success: OrchestrationRpcSchemas.getFullThreadDiff.output,
     error: OrchestrationGetFullThreadDiffError,
+  },
+);
+
+export const WsOrchestrationListArchivedThreadsRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.listArchivedThreads,
+  {
+    payload: OrchestrationListArchivedThreadsInput,
+    success: OrchestrationRpcSchemas.listArchivedThreads.output,
+    error: OrchestrationListArchivedThreadsError,
   },
 );
 
@@ -347,13 +361,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsTerminalClearRpc,
   WsTerminalRestartRpc,
   WsTerminalCloseRpc,
+  WsOrchestrationGetActiveSnapshotRpc,
+  WsOrchestrationDispatchCommandRpc,
+  WsOrchestrationGetTurnDiffRpc,
+  WsOrchestrationGetFullThreadDiffRpc,
+  WsOrchestrationListArchivedThreadsRpc,
+  WsOrchestrationReplayEventsRpc,
   WsSubscribeOrchestrationDomainEventsRpc,
   WsSubscribeTerminalEventsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
-  WsOrchestrationGetSnapshotRpc,
-  WsOrchestrationDispatchCommandRpc,
-  WsOrchestrationGetTurnDiffRpc,
-  WsOrchestrationGetFullThreadDiffRpc,
-  WsOrchestrationReplayEventsRpc,
 );

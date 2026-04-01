@@ -4,8 +4,9 @@ import {
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
+  OrchestrationGetActiveSnapshotError,
   OrchestrationGetFullThreadDiffError,
-  OrchestrationGetSnapshotError,
+  OrchestrationListArchivedThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   ProjectSearchEntriesError,
@@ -72,12 +73,12 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     });
 
     return WsRpcGroup.of({
-      [ORCHESTRATION_WS_METHODS.getSnapshot]: (_input) =>
-        projectionSnapshotQuery.getSnapshot().pipe(
+      [ORCHESTRATION_WS_METHODS.getActiveSnapshot]: (_input) =>
+        projectionSnapshotQuery.getActiveSnapshot().pipe(
           Effect.mapError(
             (cause) =>
-              new OrchestrationGetSnapshotError({
-                message: "Failed to load orchestration snapshot",
+              new OrchestrationGetActiveSnapshotError({
+                message: "Failed to load active orchestration snapshot",
                 cause,
               }),
           ),
@@ -112,6 +113,16 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             (cause) =>
               new OrchestrationGetFullThreadDiffError({
                 message: "Failed to load full thread diff",
+                cause,
+              }),
+          ),
+        ),
+      [ORCHESTRATION_WS_METHODS.listArchivedThreads]: (_input) =>
+        projectionSnapshotQuery.listArchivedThreads().pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationListArchivedThreadsError({
+                message: "Failed to load archived threads",
                 cause,
               }),
           ),
