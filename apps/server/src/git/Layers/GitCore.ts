@@ -1566,7 +1566,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     const localBranchResult = yield* executeGit(
       "GitCore.listBranches.branchNoColor",
       input.cwd,
-      ["branch", "--no-color"],
+      ["branch", "--no-color", "--no-column"],
       {
         timeoutMs: 10_000,
         allowNonZeroExit: true,
@@ -1581,7 +1581,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       return yield* createGitCommandError(
         "GitCore.listBranches",
         input.cwd,
-        ["branch", "--no-color"],
+        ["branch", "--no-color", "--no-column"],
         stderr || "git branch failed",
       );
     }
@@ -1589,7 +1589,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     const remoteBranchResultEffect = executeGit(
       "GitCore.listBranches.remoteBranches",
       input.cwd,
-      ["branch", "--no-color", "--remotes"],
+      ["branch", "--no-color", "--no-column", "--remotes"],
       {
         timeoutMs: 10_000,
         allowNonZeroExit: true,
@@ -1957,6 +1957,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     runGitStdout("GitCore.listLocalBranchNames", cwd, [
       "branch",
       "--list",
+      "--no-column",
       "--format=%(refname:short)",
     ]).pipe(
       Effect.map((stdout) =>
