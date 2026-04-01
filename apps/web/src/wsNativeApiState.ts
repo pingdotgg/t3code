@@ -6,7 +6,9 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerSettings,
 } from "@t3tools/contracts";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom } from "effect/unstable/reactivity";
+
+import { appAtomRegistry, resetAppAtomRegistryForTests } from "./rpc/atomRegistry";
 
 export type ServerConfigUpdateSource = ServerConfigStreamEvent["type"];
 
@@ -27,8 +29,6 @@ function toServerConfigUpdatedPayload(config: ServerConfig): ServerConfigUpdated
   };
 }
 
-export let wsNativeApiRegistry = AtomRegistry.make();
-
 export const wsWelcomeAtom = makeStateAtom<ServerLifecycleWelcomePayload | null>(
   "ws-server-welcome",
   null,
@@ -44,7 +44,7 @@ export const providersUpdatedAtom = makeStateAtom<ServerProviderUpdatedPayload |
 );
 
 export function getServerConfig(): ServerConfig | null {
-  return wsNativeApiRegistry.get(serverConfigAtom);
+  return appAtomRegistry.get(serverConfigAtom);
 }
 
 export function setServerConfigSnapshot(config: ServerConfig): void {
@@ -114,7 +114,7 @@ export function applySettingsUpdated(settings: ServerSettings): void {
 }
 
 export function emitWelcome(payload: ServerLifecycleWelcomePayload): void {
-  wsNativeApiRegistry.set(wsWelcomeAtom, payload);
+  appAtomRegistry.set(wsWelcomeAtom, payload);
 }
 
 export function onWelcome(listener: (payload: ServerLifecycleWelcomePayload) => void): () => void {
@@ -136,30 +136,29 @@ export function onProvidersUpdated(
 }
 
 export function resetWsNativeApiStateForTests() {
-  wsNativeApiRegistry.dispose();
-  wsNativeApiRegistry = AtomRegistry.make();
+  resetAppAtomRegistryForTests();
 }
 
 function resolveServerConfig(config: ServerConfig): void {
-  wsNativeApiRegistry.set(serverConfigAtom, config);
+  appAtomRegistry.set(serverConfigAtom, config);
 }
 
 function emitProvidersUpdated(payload: ServerProviderUpdatedPayload): void {
-  wsNativeApiRegistry.set(providersUpdatedAtom, payload);
+  appAtomRegistry.set(providersUpdatedAtom, payload);
 }
 
 function emitServerConfigUpdated(
   payload: ServerConfigUpdatedPayload,
   source: ServerConfigUpdateSource,
 ): void {
-  wsNativeApiRegistry.set(serverConfigUpdatedAtom, { payload, source });
+  appAtomRegistry.set(serverConfigUpdatedAtom, { payload, source });
 }
 
 function subscribeLatest<A>(
   atom: Atom.Atom<A | null>,
   listener: (value: NonNullable<A>) => void,
 ): () => void {
-  return wsNativeApiRegistry.subscribe(
+  return appAtomRegistry.subscribe(
     atom,
     (value) => {
       if (value === null) {

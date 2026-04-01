@@ -1,14 +1,11 @@
-import { Duration, Effect, Exit, Layer, ManagedRuntime, Option, Scope, Stream } from "effect";
-import { WsRpcGroup } from "@t3tools/contracts";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
-import * as Socket from "effect/unstable/socket/Socket";
-import { resolveServerUrl } from "./lib/utils";
+import { Duration, Effect, Exit, ManagedRuntime, Option, Scope, Stream } from "effect";
 
-const makeWsRpcClient = RpcClient.make(WsRpcGroup);
-
-type RpcClientFactory = typeof makeWsRpcClient;
-export type WsRpcProtocolClient =
-  RpcClientFactory extends Effect.Effect<infer Client, any, any> ? Client : never;
+import {
+  createWsRpcProtocolLayer,
+  makeWsRpcProtocolClient,
+  type WsRpcProtocolClient,
+} from "./rpc/protocol";
+import { RpcClient } from "effect/unstable/rpc";
 
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
@@ -34,21 +31,11 @@ export class WsTransport {
   private disposed = false;
 
   constructor(url?: string) {
-    const resolvedUrl = resolveServerUrl({
-      url,
-      protocol: "ws",
-      pathname: "/ws",
-    });
-    const SocketLayer = Socket.layerWebSocket(resolvedUrl).pipe(
-      Layer.provide(Socket.layerWebSocketConstructorGlobal),
-    );
-    const ProtocolLayer = RpcClient.layerProtocolSocket({ retryTransientErrors: true }).pipe(
-      Layer.provide(Layer.mergeAll(SocketLayer, RpcSerialization.layerJson)),
-    );
-
-    this.runtime = ManagedRuntime.make(ProtocolLayer);
+    this.runtime = ManagedRuntime.make(createWsRpcProtocolLayer(url));
     this.clientScope = this.runtime.runSync(Scope.make());
-    this.clientPromise = this.runtime.runPromise(Scope.provide(this.clientScope)(makeWsRpcClient));
+    this.clientPromise = this.runtime.runPromise(
+      Scope.provide(this.clientScope)(makeWsRpcProtocolClient),
+    );
   }
 
   async request<TSuccess>(

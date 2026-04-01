@@ -1,4 +1,4 @@
-import { RegistryContext, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
+import { useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_SERVER_SETTINGS,
   type EditorId,
@@ -8,14 +8,13 @@ import {
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
-import { type ReactNode, useEffect } from "react";
+import { useEffect } from "react";
 
 import { readNativeApi } from "./nativeApi";
 import {
   serverConfigAtom,
   serverConfigUpdatedAtom,
   type ServerConfigUpdatedNotification,
-  wsNativeApiRegistry,
   wsWelcomeAtom,
 } from "./wsNativeApiState";
 
@@ -49,7 +48,7 @@ function useLatestAtomSubscription<A>(
   );
 }
 
-function WsNativeApiAtomsBootstrap() {
+export function WsNativeApiAtomsBootstrap() {
   const serverConfig = useServerConfig();
 
   useEffect(() => {
@@ -66,15 +65,6 @@ function WsNativeApiAtomsBootstrap() {
   }, [serverConfig]);
 
   return null;
-}
-
-export function WsNativeApiAtomsProvider({ children }: { readonly children: ReactNode }) {
-  return (
-    <RegistryContext.Provider value={wsNativeApiRegistry}>
-      <WsNativeApiAtomsBootstrap />
-      {children}
-    </RegistryContext.Provider>
-  );
 }
 
 export function useServerConfig(): ServerConfig | null {

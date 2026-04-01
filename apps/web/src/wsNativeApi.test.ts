@@ -196,7 +196,8 @@ afterEach(() => {
 describe("wsNativeApi", () => {
   it("delivers and caches welcome lifecycle events", async () => {
     const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
-    const { wsNativeApiRegistry, wsWelcomeAtom } = await import("./wsNativeApiState");
+    const { wsWelcomeAtom } = await import("./wsNativeApiState");
+    const { appAtomRegistry } = await import("./rpc/atomRegistry");
 
     createWsNativeApi();
     const listener = vi.fn();
@@ -223,7 +224,7 @@ describe("wsNativeApi", () => {
       cwd: "/tmp/workspace",
       projectName: "t3-code",
     });
-    expect(wsNativeApiRegistry.get(wsWelcomeAtom)).toEqual({
+    expect(appAtomRegistry.get(wsWelcomeAtom)).toEqual({
       cwd: "/tmp/workspace",
       projectName: "t3-code",
     });
@@ -261,7 +262,8 @@ describe("wsNativeApi", () => {
 
   it("delivers and caches current server config from the config stream snapshot", async () => {
     const { createWsNativeApi, onServerConfigUpdated } = await import("./wsNativeApi");
-    const { serverConfigAtom, wsNativeApiRegistry } = await import("./wsNativeApiState");
+    const { serverConfigAtom } = await import("./wsNativeApiState");
+    const { appAtomRegistry } = await import("./rpc/atomRegistry");
 
     const api = createWsNativeApi();
     const listener = vi.fn();
@@ -283,7 +285,7 @@ describe("wsNativeApi", () => {
       },
       "snapshot",
     );
-    expect(wsNativeApiRegistry.get(serverConfigAtom)).toEqual(baseServerConfig);
+    expect(appAtomRegistry.get(serverConfigAtom)).toEqual(baseServerConfig);
   });
 
   it("falls back to server.getConfig before the stream cache is populated", async () => {
@@ -309,7 +311,8 @@ describe("wsNativeApi", () => {
   it("merges config stream updates into the cached server config", async () => {
     const { createWsNativeApi, onServerConfigUpdated, onServerProvidersUpdated } =
       await import("./wsNativeApi");
-    const { providersUpdatedAtom, wsNativeApiRegistry } = await import("./wsNativeApiState");
+    const { providersUpdatedAtom } = await import("./wsNativeApiState");
+    const { appAtomRegistry } = await import("./rpc/atomRegistry");
 
     const api = createWsNativeApi();
     const configListener = vi.fn();
@@ -404,7 +407,7 @@ describe("wsNativeApi", () => {
       "settingsUpdated",
     );
     expect(providersListener).toHaveBeenLastCalledWith({ providers: nextProviders });
-    expect(wsNativeApiRegistry.get(providersUpdatedAtom)).toEqual({ providers: nextProviders });
+    expect(appAtomRegistry.get(providersUpdatedAtom)).toEqual({ providers: nextProviders });
   });
 
   it("forwards terminal and orchestration stream events", async () => {

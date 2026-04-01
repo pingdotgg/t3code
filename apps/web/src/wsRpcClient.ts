@@ -9,7 +9,8 @@ import {
 } from "@t3tools/contracts";
 import { Effect, Stream } from "effect";
 
-import { type WsRpcProtocolClient, WsTransport } from "./wsTransport";
+import { type WsRpcProtocolClient } from "./rpc/protocol";
+import { WsTransport } from "./wsTransport";
 
 type RpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends RpcTag> = WsRpcProtocolClient[TTag];

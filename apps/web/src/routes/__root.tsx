@@ -39,7 +39,7 @@ import {
   useServerConfig,
   useServerConfigUpdatedSubscription,
   useServerWelcomeSubscription,
-  WsNativeApiAtomsProvider,
+  WsNativeApiAtomsBootstrap,
 } from "../wsNativeApiAtoms";
 
 export const Route = createRootRouteWithContext<{
@@ -66,7 +66,8 @@ function RootRouteView() {
   }
 
   return (
-    <WsNativeApiAtomsProvider>
+    <>
+      <WsNativeApiAtomsBootstrap />
       <ToastProvider>
         <AnchoredToastProvider>
           <EventRouter />
@@ -76,7 +77,7 @@ function RootRouteView() {
           </AppSidebarLayout>
         </AnchoredToastProvider>
       </ToastProvider>
-    </WsNativeApiAtomsProvider>
+    </>
   );
 }
 
