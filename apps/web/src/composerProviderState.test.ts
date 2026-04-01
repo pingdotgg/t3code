@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ServerProviderModel } from "@t3tools/contracts";
-import { getComposerProviderState } from "./composerProviderRegistry";
+import { getComposerProviderState } from "./composerProviderState";
 
 const CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
   {

@@ -5,8 +5,8 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { normalizeModelSlug, resolveSelectableModel } from "@t3tools/shared/model";
-import { getComposerProviderState } from "./components/chat/composerProviderRegistry";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
+import { getComposerProviderState } from "./composerProviderState";
 import {
   getDefaultServerModel,
   getProviderModels,
