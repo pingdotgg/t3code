@@ -85,44 +85,43 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const safeUnlink = (filePath: string): Effect.Effect<void, never> =>
     fileSystem.remove(filePath).pipe(Effect.catch(() => Effect.void));
 
-  const materializeImageAttachments = (
+  const materializeImageAttachments = Effect.fn("materializeImageAttachments")(function* (
     _operation:
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle",
     attachments: BranchNameGenerationInput["attachments"],
-  ): Effect.Effect<MaterializedImageAttachments, TextGenerationError> =>
-    Effect.gen(function* () {
-      if (!attachments || attachments.length === 0) {
-        return { imagePaths: [] };
+  ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
+    if (!attachments || attachments.length === 0) {
+      return { imagePaths: [] };
+    }
+
+    const imagePaths: string[] = [];
+    for (const attachment of attachments) {
+      if (attachment.type !== "image") {
+        continue;
       }
 
-      const imagePaths: string[] = [];
-      for (const attachment of attachments) {
-        if (attachment.type !== "image") {
-          continue;
-        }
-
-        const resolvedPath = resolveAttachmentPath({
-          attachmentsDir: serverConfig.attachmentsDir,
-          attachment,
-        });
-        if (!resolvedPath || !path.isAbsolute(resolvedPath)) {
-          continue;
-        }
-        const fileInfo = yield* fileSystem
-          .stat(resolvedPath)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
-        if (!fileInfo || fileInfo.type !== "File") {
-          continue;
-        }
-        imagePaths.push(resolvedPath);
+      const resolvedPath = resolveAttachmentPath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachment,
+      });
+      if (!resolvedPath || !path.isAbsolute(resolvedPath)) {
+        continue;
       }
-      return { imagePaths };
-    });
+      const fileInfo = yield* fileSystem
+        .stat(resolvedPath)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      if (!fileInfo || fileInfo.type !== "File") {
+        continue;
+      }
+      imagePaths.push(resolvedPath);
+    }
+    return { imagePaths };
+  });
 
-  const runCodexJson = <S extends Schema.Top>({
+  const runCodexJson = Effect.fn("runCodexJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
     prompt,
@@ -142,138 +141,137 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     imagePaths?: ReadonlyArray<string>;
     cleanupPaths?: ReadonlyArray<string>;
     modelSelection: CodexModelSelection;
-  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
-    Effect.gen(function* () {
-      const schemaPath = yield* writeTempFile(
-        operation,
-        "codex-schema",
-        JSON.stringify(toJsonSchemaObject(outputSchemaJson)),
+  }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
+    const schemaPath = yield* writeTempFile(
+      operation,
+      "codex-schema",
+      JSON.stringify(toJsonSchemaObject(outputSchemaJson)),
+    );
+    const outputPath = yield* writeTempFile(operation, "codex-output", "");
+
+    const codexSettings = yield* Effect.map(
+      serverSettingsService.getSettings,
+      (settings) => settings.providers.codex,
+    ).pipe(Effect.catch(() => Effect.undefined));
+
+    const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
+      const normalizedOptions = normalizeCodexModelOptionsWithCapabilities(
+        getCodexModelCapabilities(modelSelection.model),
+        modelSelection.options,
       );
-      const outputPath = yield* writeTempFile(operation, "codex-output", "");
-
-      const codexSettings = yield* Effect.map(
-        serverSettingsService.getSettings,
-        (settings) => settings.providers.codex,
-      ).pipe(Effect.catch(() => Effect.undefined));
-
-      const runCodexCommand = Effect.gen(function* () {
-        const normalizedOptions = normalizeCodexModelOptionsWithCapabilities(
-          getCodexModelCapabilities(modelSelection.model),
-          modelSelection.options,
-        );
-        const reasoningEffort =
-          modelSelection.options?.reasoningEffort ?? CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
-        const command = ChildProcess.make(
-          codexSettings?.binaryPath || "codex",
-          [
-            "exec",
-            "--ephemeral",
-            "-s",
-            "read-only",
-            "--model",
-            modelSelection.model,
-            "--config",
-            `model_reasoning_effort="${reasoningEffort}"`,
-            ...(normalizedOptions?.fastMode ? ["--config", `service_tier="fast"`] : []),
-            "--output-schema",
-            schemaPath,
-            "--output-last-message",
-            outputPath,
-            ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
-            "-",
-          ],
-          {
-            env: {
-              ...process.env,
-              ...(codexSettings?.homePath ? { CODEX_HOME: codexSettings.homePath } : {}),
-            },
-            cwd,
-            shell: process.platform === "win32",
-            stdin: {
-              stream: Stream.encodeText(Stream.make(prompt)),
-            },
-          },
-        );
-
-        const child = yield* commandSpawner
-          .spawn(command)
-          .pipe(
-            Effect.mapError((cause) =>
-              normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
-            ),
-          );
-
-        const [stdout, stderr, exitCode] = yield* Effect.all(
-          [
-            readStreamAsString(operation, child.stdout),
-            readStreamAsString(operation, child.stderr),
-            child.exitCode.pipe(
-              Effect.mapError((cause) =>
-                normalizeCliError("codex", operation, cause, "Failed to read Codex CLI exit code"),
-              ),
-            ),
-          ],
-          { concurrency: "unbounded" },
-        );
-
-        if (exitCode !== 0) {
-          const stderrDetail = stderr.trim();
-          const stdoutDetail = stdout.trim();
-          const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
-          return yield* new TextGenerationError({
-            operation,
-            detail:
-              detail.length > 0
-                ? `Codex CLI command failed: ${detail}`
-                : `Codex CLI command failed with code ${exitCode}.`,
-          });
-        }
-      });
-
-      const cleanup = Effect.all(
-        [schemaPath, outputPath, ...cleanupPaths].map((filePath) => safeUnlink(filePath)),
+      const reasoningEffort =
+        modelSelection.options?.reasoningEffort ?? CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
+      const command = ChildProcess.make(
+        codexSettings?.binaryPath || "codex",
+        [
+          "exec",
+          "--ephemeral",
+          "-s",
+          "read-only",
+          "--model",
+          modelSelection.model,
+          "--config",
+          `model_reasoning_effort="${reasoningEffort}"`,
+          ...(normalizedOptions?.fastMode ? ["--config", `service_tier="fast"`] : []),
+          "--output-schema",
+          schemaPath,
+          "--output-last-message",
+          outputPath,
+          ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
+          "-",
+        ],
         {
-          concurrency: "unbounded",
+          env: {
+            ...process.env,
+            ...(codexSettings?.homePath ? { CODEX_HOME: codexSettings.homePath } : {}),
+          },
+          cwd,
+          shell: process.platform === "win32",
+          stdin: {
+            stream: Stream.encodeText(Stream.make(prompt)),
+          },
         },
-      ).pipe(Effect.asVoid);
+      );
 
-      return yield* Effect.gen(function* () {
-        yield* runCodexCommand.pipe(
-          Effect.scoped,
-          Effect.timeoutOption(CODEX_TIMEOUT_MS),
-          Effect.flatMap(
-            Option.match({
-              onNone: () =>
-                Effect.fail(
-                  new TextGenerationError({ operation, detail: "Codex CLI request timed out." }),
-                ),
-              onSome: () => Effect.void,
+      const child = yield* commandSpawner
+        .spawn(command)
+        .pipe(
+          Effect.mapError((cause) =>
+            normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
+          ),
+        );
+
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          readStreamAsString(operation, child.stdout),
+          readStreamAsString(operation, child.stderr),
+          child.exitCode.pipe(
+            Effect.mapError((cause) =>
+              normalizeCliError("codex", operation, cause, "Failed to read Codex CLI exit code"),
+            ),
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      if (exitCode !== 0) {
+        const stderrDetail = stderr.trim();
+        const stdoutDetail = stdout.trim();
+        const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
+        return yield* new TextGenerationError({
+          operation,
+          detail:
+            detail.length > 0
+              ? `Codex CLI command failed: ${detail}`
+              : `Codex CLI command failed with code ${exitCode}.`,
+        });
+      }
+    });
+
+    const cleanup = Effect.all(
+      [schemaPath, outputPath, ...cleanupPaths].map((filePath) => safeUnlink(filePath)),
+      {
+        concurrency: "unbounded",
+      },
+    ).pipe(Effect.asVoid);
+
+    return yield* Effect.gen(function* () {
+      yield* runCodexCommand().pipe(
+        Effect.scoped,
+        Effect.timeoutOption(CODEX_TIMEOUT_MS),
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(
+                new TextGenerationError({ operation, detail: "Codex CLI request timed out." }),
+              ),
+            onSome: () => Effect.void,
+          }),
+        ),
+      );
+
+      return yield* fileSystem.readFileString(outputPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: "Failed to read Codex output file.",
+              cause,
+            }),
+        ),
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson))),
+        Effect.catchTag("SchemaError", (cause) =>
+          Effect.fail(
+            new TextGenerationError({
+              operation,
+              detail: "Codex returned invalid structured output.",
+              cause,
             }),
           ),
-        );
-
-        return yield* fileSystem.readFileString(outputPath).pipe(
-          Effect.mapError(
-            (cause) =>
-              new TextGenerationError({
-                operation,
-                detail: "Failed to read Codex output file.",
-                cause,
-              }),
-          ),
-          Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson))),
-          Effect.catchTag("SchemaError", (cause) =>
-            Effect.fail(
-              new TextGenerationError({
-                operation,
-                detail: "Codex returned invalid structured output.",
-                cause,
-              }),
-            ),
-          ),
-        );
-      }).pipe(Effect.ensuring(cleanup));
-    });
+        ),
+      );
+    }).pipe(Effect.ensuring(cleanup));
+  });
 
   const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = Effect.fn(
     "CodexTextGeneration.generateCommitMessage",

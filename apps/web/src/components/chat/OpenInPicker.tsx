@@ -6,7 +6,7 @@ import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
-import { AntigravityIcon, CursorIcon, Icon, VisualStudioCode, Zed } from "../Icons";
+import { AntigravityIcon, CursorIcon, Icon, TraeIcon, VisualStudioCode, Zed } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 
@@ -16,6 +16,11 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       label: "Cursor",
       Icon: CursorIcon,
       value: "cursor",
+    },
+    {
+      label: "Trae",
+      Icon: TraeIcon,
+      value: "trae",
     },
     {
       label: "VS Code",
