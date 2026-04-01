@@ -46,10 +46,12 @@ describe("hasUnseenCompletion", () => {
   it("returns true when a thread completed after its last visit", () => {
     expect(
       hasUnseenCompletion({
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
         interactionMode: "default",
         latestTurn: makeLatestTurn(),
         lastVisitedAt: "2026-03-09T10:04:00.000Z",
-        proposedPlans: [],
         session: null,
       }),
     ).toBe(true);
@@ -322,17 +324,14 @@ describe("getVisibleSidebarThreadIds", () => {
     expect(
       getVisibleSidebarThreadIds([
         {
-          renderedThreads: [
-            { id: ThreadId.makeUnsafe("thread-12") },
-            { id: ThreadId.makeUnsafe("thread-11") },
-            { id: ThreadId.makeUnsafe("thread-10") },
+          renderedThreadIds: [
+            ThreadId.makeUnsafe("thread-12"),
+            ThreadId.makeUnsafe("thread-11"),
+            ThreadId.makeUnsafe("thread-10"),
           ],
         },
         {
-          renderedThreads: [
-            { id: ThreadId.makeUnsafe("thread-8") },
-            { id: ThreadId.makeUnsafe("thread-6") },
-          ],
+          renderedThreadIds: [ThreadId.makeUnsafe("thread-8"), ThreadId.makeUnsafe("thread-6")],
         },
       ]),
     ).toEqual([
@@ -349,17 +348,14 @@ describe("getVisibleSidebarThreadIds", () => {
       getVisibleSidebarThreadIds([
         {
           shouldShowThreadPanel: false,
-          renderedThreads: [
-            { id: ThreadId.makeUnsafe("thread-hidden-2") },
-            { id: ThreadId.makeUnsafe("thread-hidden-1") },
+          renderedThreadIds: [
+            ThreadId.makeUnsafe("thread-hidden-2"),
+            ThreadId.makeUnsafe("thread-hidden-1"),
           ],
         },
         {
           shouldShowThreadPanel: true,
-          renderedThreads: [
-            { id: ThreadId.makeUnsafe("thread-12") },
-            { id: ThreadId.makeUnsafe("thread-11") },
-          ],
+          renderedThreadIds: [ThreadId.makeUnsafe("thread-12"), ThreadId.makeUnsafe("thread-11")],
         },
       ]),
     ).toEqual([ThreadId.makeUnsafe("thread-12"), ThreadId.makeUnsafe("thread-11")]);
@@ -400,10 +396,12 @@ describe("isContextMenuPointerDown", () => {
 
 describe("resolveThreadStatusPill", () => {
   const baseThread = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
     interactionMode: "plan" as const,
     latestTurn: null,
     lastVisitedAt: undefined,
-    proposedPlans: [],
     session: {
       provider: "codex" as const,
       status: "running" as const,
@@ -416,9 +414,11 @@ describe("resolveThreadStatusPill", () => {
   it("shows pending approval before all other statuses", () => {
     expect(
       resolveThreadStatusPill({
-        thread: baseThread,
-        hasPendingApprovals: true,
-        hasPendingUserInput: true,
+        thread: {
+          ...baseThread,
+          hasPendingApprovals: true,
+          hasPendingUserInput: true,
+        },
       }),
     ).toMatchObject({ label: "Pending Approval", pulse: false });
   });
@@ -426,9 +426,10 @@ describe("resolveThreadStatusPill", () => {
   it("shows awaiting input when plan mode is blocked on user answers", () => {
     expect(
       resolveThreadStatusPill({
-        thread: baseThread,
-        hasPendingApprovals: false,
-        hasPendingUserInput: true,
+        thread: {
+          ...baseThread,
+          hasPendingUserInput: true,
+        },
       }),
     ).toMatchObject({ label: "Awaiting Input", pulse: false });
   });
@@ -437,8 +438,6 @@ describe("resolveThreadStatusPill", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
-        hasPendingApprovals: false,
-        hasPendingUserInput: false,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });
@@ -448,26 +447,14 @@ describe("resolveThreadStatusPill", () => {
       resolveThreadStatusPill({
         thread: {
           ...baseThread,
+          hasActionableProposedPlan: true,
           latestTurn: makeLatestTurn(),
-          proposedPlans: [
-            {
-              id: "plan-1" as never,
-              turnId: "turn-1" as never,
-              createdAt: "2026-03-09T10:00:00.000Z",
-              updatedAt: "2026-03-09T10:05:00.000Z",
-              planMarkdown: "# Plan",
-              implementedAt: null,
-              implementationThreadId: null,
-            },
-          ],
           session: {
             ...baseThread.session,
             status: "ready",
             orchestrationStatus: "ready",
           },
         },
-        hasPendingApprovals: false,
-        hasPendingUserInput: false,
       }),
     ).toMatchObject({ label: "Plan Ready", pulse: false });
   });
@@ -478,25 +465,12 @@ describe("resolveThreadStatusPill", () => {
         thread: {
           ...baseThread,
           latestTurn: makeLatestTurn(),
-          proposedPlans: [
-            {
-              id: "plan-1" as never,
-              turnId: "turn-1" as never,
-              createdAt: "2026-03-09T10:00:00.000Z",
-              updatedAt: "2026-03-09T10:05:00.000Z",
-              planMarkdown: "# Plan",
-              implementedAt: "2026-03-09T10:06:00.000Z",
-              implementationThreadId: "thread-implement" as never,
-            },
-          ],
           session: {
             ...baseThread.session,
             status: "ready",
             orchestrationStatus: "ready",
           },
         },
-        hasPendingApprovals: false,
-        hasPendingUserInput: false,
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
   });
@@ -515,8 +489,6 @@ describe("resolveThreadStatusPill", () => {
             orchestrationStatus: "ready",
           },
         },
-        hasPendingApprovals: false,
-        hasPendingUserInput: false,
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
   });
