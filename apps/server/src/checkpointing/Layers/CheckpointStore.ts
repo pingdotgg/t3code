@@ -10,6 +10,7 @@
  * @module CheckpointStoreLive
  */
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 
 import { Effect, Layer, FileSystem, Path } from "effect";
 
@@ -89,6 +90,19 @@ const makeCheckpointStore = Effect.gen(function* () {
   const captureCheckpoint: CheckpointStoreShape["captureCheckpoint"] = (input) =>
     Effect.gen(function* () {
       const operation = "CheckpointStore.captureCheckpoint";
+
+      // Skip checkpointing for the home directory — git add -A on ~/ scans
+      // thousands of unrelated files and will time out.
+      const resolvedCwd = yield* Effect.try(() => path.resolve(input.cwd));
+      const home = yield* Effect.try(() => homedir());
+      if (resolvedCwd === home) {
+        return yield* new CheckpointInvariantError({
+          operation,
+          detail:
+            "Skipping checkpoint: working directory is the home directory. " +
+            "Please open a specific project folder instead.",
+        });
+      }
 
       yield* Effect.acquireUseRelease(
         fs.makeTempDirectory({ prefix: "t3-fs-checkpoint-" }),
