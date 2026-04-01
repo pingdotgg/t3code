@@ -4,11 +4,11 @@ import {
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
 } from "@t3tools/contracts";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { CheckpointInvariantError, CheckpointUnavailableError } from "../Errors.ts";
-import { checkpointRefForThreadTurn, resolveThreadWorkspaceCwd } from "../Utils.ts";
+import { checkpointRefForThreadTurn } from "../Utils.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
 import {
   CheckpointDiffQuery,
@@ -41,16 +41,17 @@ const make = Effect.gen(function* () {
         return emptyDiff;
       }
 
-      const snapshot = yield* projectionSnapshotQuery.getSnapshot();
-      const thread = snapshot.threads.find((entry) => entry.id === input.threadId);
-      if (!thread) {
+      const threadContext = yield* projectionSnapshotQuery.getThreadCheckpointContext(
+        input.threadId,
+      );
+      if (Option.isNone(threadContext)) {
         return yield* new CheckpointInvariantError({
           operation,
           detail: `Thread '${input.threadId}' not found.`,
         });
       }
 
-      const maxTurnCount = thread.checkpoints.reduce(
+      const maxTurnCount = threadContext.value.checkpoints.reduce(
         (max, checkpoint) => Math.max(max, checkpoint.checkpointTurnCount),
         0,
       );
@@ -62,10 +63,7 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const workspaceCwd = resolveThreadWorkspaceCwd({
-        thread,
-        projects: snapshot.projects,
-      });
+      const workspaceCwd = threadContext.value.worktreePath ?? threadContext.value.workspaceRoot;
       if (!workspaceCwd) {
         return yield* new CheckpointInvariantError({
           operation,
@@ -76,7 +74,7 @@ const make = Effect.gen(function* () {
       const fromCheckpointRef =
         input.fromTurnCount === 0
           ? checkpointRefForThreadTurn(input.threadId, 0)
-          : thread.checkpoints.find(
+          : threadContext.value.checkpoints.find(
               (checkpoint) => checkpoint.checkpointTurnCount === input.fromTurnCount,
             )?.checkpointRef;
       if (!fromCheckpointRef) {
@@ -87,7 +85,7 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const toCheckpointRef = thread.checkpoints.find(
+      const toCheckpointRef = threadContext.value.checkpoints.find(
         (checkpoint) => checkpoint.checkpointTurnCount === input.toTurnCount,
       )?.checkpointRef;
       if (!toCheckpointRef) {
