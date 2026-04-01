@@ -9,7 +9,7 @@ import {
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { Effect, Layer, ManagedRuntime, Queue, Stream } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";

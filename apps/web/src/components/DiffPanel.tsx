@@ -597,7 +597,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       data-diff-file-path={filePath}
                       className="diff-render-file mb-2 rounded-md first:mt-2 last:mb-0"
                       onClickCapture={(event) => {
-                        const nativeEvent = event.nativeEvent as MouseEvent;
+                        const nativeEvent = event.nativeEvent;
                         const composedPath = nativeEvent.composedPath?.() ?? [];
                         const clickedHeader = composedPath.some((node) => {
                           if (!(node instanceof Element)) return false;

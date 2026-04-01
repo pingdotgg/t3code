@@ -1042,7 +1042,7 @@ export function GeneralSettingsPanel() {
                     variant="ghost"
                     className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
                     disabled={isRefreshingProviders}
-                    onClick={() => void refreshProviders()}
+                    onClick={() => refreshProviders()}
                     aria-label="Refresh provider status"
                   >
                     {isRefreshingProviders ? (

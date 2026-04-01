@@ -324,7 +324,7 @@ function toGitCommandError(
 
 interface Trace2Monitor {
   readonly env: NodeJS.ProcessEnv;
-  readonly flush: Effect.Effect<void, never>;
+  readonly flush: Effect.Effect<void>;
 }
 
 function trace2ChildKey(record: Record<string, unknown>): string | null {
@@ -488,7 +488,7 @@ const collectOutput = Effect.fn("collectOutput")(function* <E>(
   stream: Stream.Stream<Uint8Array, E>,
   maxOutputBytes: number,
   truncateOutputAtMaxBytes: boolean,
-  onLine: ((line: string) => Effect.Effect<void, never>) | undefined,
+  onLine: ((line: string) => Effect.Effect<void>) | undefined,
 ): Effect.fn.Return<{ readonly text: string; readonly truncated: boolean }, GitCommandError> {
   const decoder = new TextDecoder();
   let bytes = 0;

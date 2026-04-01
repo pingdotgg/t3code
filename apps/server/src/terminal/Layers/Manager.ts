@@ -130,7 +130,7 @@ type DrainProcessEventAction =
 
 interface TerminalManagerState {
   sessions: Map<string, TerminalSessionState>;
-  killFibers: Map<PtyProcess, Fiber.Fiber<void, never>>;
+  killFibers: Map<PtyProcess, Fiber.Fiber<void>>;
 }
 
 function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
@@ -742,14 +742,14 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       process: PtyProcess | null,
     ) {
       if (!process) return;
-      const fiber: Option.Option<Fiber.Fiber<void, never>> = yield* modifyManagerState<
-        Option.Option<Fiber.Fiber<void, never>>
+      const fiber: Option.Option<Fiber.Fiber<void>> = yield* modifyManagerState<
+        Option.Option<Fiber.Fiber<void>>
       >((state) => {
-        const existing: Option.Option<Fiber.Fiber<void, never>> = Option.fromNullishOr(
+        const existing: Option.Option<Fiber.Fiber<void>> = Option.fromNullishOr(
           state.killFibers.get(process),
         );
         if (Option.isNone(existing)) {
-          return [Option.none<Fiber.Fiber<void, never>>(), state] as const;
+          return [Option.none<Fiber.Fiber<void>>(), state] as const;
         }
         const killFibers = new Map(state.killFibers);
         killFibers.delete(process);
@@ -762,7 +762,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
 
     const registerKillFiber = Effect.fn("terminal.registerKillFiber")(function* (
       process: PtyProcess,
-      fiber: Fiber.Fiber<void, never>,
+      fiber: Fiber.Fiber<void>,
     ) {
       yield* modifyManagerState((state) => {
         const killFibers = new Map(state.killFibers);

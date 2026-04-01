@@ -58,7 +58,7 @@ function waitForSync<A>(
   predicate: (value: A) => boolean,
   description: string,
   timeoutMs = 10_000,
-): Effect.Effect<A, never> {
+): Effect.Effect<A> {
   return Effect.gen(function* () {
     const deadline = Date.now() + timeoutMs;
 
@@ -226,9 +226,7 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
         THREAD_ID,
         (entry) =>
           entry.session?.status === "ready" &&
-          entry.messages.some(
-            (message) => message.role === "assistant" && message.streaming === false,
-          ) &&
+          entry.messages.some((message) => message.role === "assistant" && !message.streaming) &&
           entry.checkpoints.length === 1,
       );
       assert.equal(thread.checkpoints[0]?.status, "ready");
@@ -309,9 +307,7 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
           (entry) =>
             entry.session?.status === "ready" &&
             entry.session.providerName === "codex" &&
-            entry.messages.some(
-              (message) => message.role === "assistant" && message.streaming === false,
-            ),
+            entry.messages.some((message) => message.role === "assistant" && !message.streaming),
           180_000,
         );
         assert.equal(firstThread.session?.threadId, "thread-1");

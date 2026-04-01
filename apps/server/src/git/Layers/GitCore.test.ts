@@ -4,7 +4,7 @@ import path from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
-import { describe, expect, vi } from "vitest";
+import { describe, expect, vi } from "vite-plus/test";
 
 import { GitCoreLive, makeGitCore } from "./GitCore.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
@@ -432,7 +432,7 @@ it.layer(TestLayer)("git integration", (it) => {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
         const result = yield* (yield* GitCore).listBranches({ cwd: tmp });
-        expect(result.branches.every((b) => b.isDefault === false)).toBe(true);
+        expect(result.branches.every((b) => !b.isDefault)).toBe(true);
       }),
     );
 

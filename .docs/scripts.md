@@ -1,13 +1,13 @@
 # Scripts
 
-- `bun run dev` — Starts contracts, server, and web in `turbo watch` mode.
+- `bun run dev` — Starts contracts, server, and web in workspace dev mode.
 - `bun run dev:server` — Starts just the WebSocket server (uses Bun TypeScript execution).
 - `bun run dev:web` — Starts just the Vite dev server for the web app.
 - Dev commands default `T3CODE_STATE_DIR` to `~/.t3/dev` to keep dev state isolated from desktop/prod state.
 - Override server CLI-equivalent flags from root dev commands with `--`, for example:
   `bun run dev -- --base-dir ~/.t3-2`
 - `bun run start` — Runs the production server (serves built web app as static files).
-- `bun run build` — Builds contracts, web app, and server through Turbo.
+- `bun run build` — Builds workspace packages and apps through Vite+ task running.
 - `bun run typecheck` — Strict TypeScript checks for all packages.
 - `bun run test` — Runs workspace tests.
 - `bun run dist:desktop:artifact -- --platform <mac|linux|win> --target <target> --arch <arch>` — Builds a desktop artifact for a specific platform/target/arch.

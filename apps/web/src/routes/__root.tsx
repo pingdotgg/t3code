@@ -325,7 +325,7 @@ function EventRouter() {
 
       if (batchEffects.needsProviderInvalidation) {
         needsProviderInvalidation = true;
-        void queryInvalidationThrottler.maybeExecute();
+        queryInvalidationThrottler.maybeExecute();
       }
 
       applyOrchestrationEvents(nextEvents);

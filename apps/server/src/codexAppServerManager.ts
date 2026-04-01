@@ -432,7 +432,7 @@ export interface CodexAppServerManagerEvents {
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
 
-  private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
+  private runPromise: (effect: Effect.Effect<unknown>) => Promise<unknown>;
   constructor(services?: ServiceMap.ServiceMap<never>) {
     super();
     this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;

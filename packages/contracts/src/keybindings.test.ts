@@ -12,11 +12,10 @@ import {
 const decode = <S extends Schema.Top>(
   schema: S,
   input: unknown,
-): Effect.Effect<Schema.Schema.Type<S>, Schema.SchemaError, never> =>
+): Effect.Effect<Schema.Schema.Type<S>, Schema.SchemaError> =>
   Schema.decodeUnknownEffect(schema as never)(input) as Effect.Effect<
     Schema.Schema.Type<S>,
-    Schema.SchemaError,
-    never
+    Schema.SchemaError
   >;
 
 const decodeResolvedRule = Schema.decodeUnknownEffect(ResolvedKeybindingRule as never);

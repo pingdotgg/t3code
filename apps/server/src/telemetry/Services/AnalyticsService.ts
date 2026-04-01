@@ -15,12 +15,12 @@ export interface AnalyticsServiceShape {
   readonly record: (
     event: string,
     properties?: Readonly<Record<string, unknown>>,
-  ) => Effect.Effect<void, never>;
+  ) => Effect.Effect<void>;
 
   /**
    * Flush queued telemetry.
    */
-  readonly flush: Effect.Effect<void, never>;
+  readonly flush: Effect.Effect<void>;
 }
 
 export class AnalyticsService extends ServiceMap.Service<AnalyticsService, AnalyticsServiceShape>()(

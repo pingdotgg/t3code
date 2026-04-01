@@ -19,8 +19,17 @@ import {
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
-import { page } from "vitest/browser";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { page } from "vite-plus/test/browser";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -905,12 +914,30 @@ async function triggerChatNewShortcutUntilPath(
 
 async function waitForNewThreadShortcutLabel(): Promise<void> {
   const newThreadButton = page.getByTestId("new-thread-button");
-  await expect.element(newThreadButton).toBeInTheDocument();
+  await waitForLocatorVisible(newThreadButton);
   await newThreadButton.hover();
   const shortcutLabel = isMacPlatform(navigator.platform)
     ? "New thread (⇧⌘O)"
     : "New thread (Ctrl+Shift+O)";
-  await expect.element(page.getByText(shortcutLabel)).toBeInTheDocument();
+  await waitForLocatorVisible(page.getByText(shortcutLabel));
+}
+
+async function waitForLocatorVisible(locator: {
+  query: () => HTMLElement | SVGElement | null;
+}): Promise<void> {
+  await vi.waitFor(
+    () => {
+      const element = locator.query();
+      expect(element).not.toBeNull();
+      if (!element) {
+        return;
+      }
+      const style = getComputedStyle(element);
+      expect(style.display).not.toBe("none");
+      expect(style.visibility).not.toBe("hidden");
+    },
+    { timeout: 4_000, interval: 16 },
+  );
 }
 
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
@@ -1309,7 +1336,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await expect.element(page.getByText("No threads yet")).toBeInTheDocument();
+      await waitForLocatorVisible(page.getByText("No threads yet"));
     } finally {
       await mounted.cleanup();
     }
@@ -2059,7 +2086,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       const threadRow = page.getByTestId(`thread-row-${THREAD_ID}`);
 
-      await expect.element(threadRow).toBeInTheDocument();
+      await waitForLocatorVisible(threadRow);
       const archiveButton = await waitForElement(
         () =>
           document.querySelector<HTMLButtonElement>(`[data-testid="thread-archive-${THREAD_ID}"]`),
@@ -2112,16 +2139,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       const threadRow = page.getByTestId(`thread-row-${THREAD_ID}`);
 
-      await expect.element(threadRow).toBeInTheDocument();
+      await waitForLocatorVisible(threadRow);
       await threadRow.hover();
 
       const archiveButton = page.getByTestId(`thread-archive-${THREAD_ID}`);
-      await expect.element(archiveButton).toBeInTheDocument();
+      await waitForLocatorVisible(archiveButton);
       await archiveButton.click();
 
       const confirmButton = page.getByTestId(`thread-archive-confirm-${THREAD_ID}`);
-      await expect.element(confirmButton).toBeInTheDocument();
-      await expect.element(confirmButton).toBeVisible();
+      await waitForLocatorVisible(confirmButton);
     } finally {
       localStorage.removeItem("t3code:client-settings:v1");
       await mounted.cleanup();
@@ -2140,7 +2166,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       // Wait for the sidebar to render with the project.
       const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
+      await waitForLocatorVisible(newThreadButton);
 
       await newThreadButton.click();
 
@@ -2168,10 +2194,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       // The empty thread view and composer should still be visible.
-      await expect
-        .element(page.getByText("Send a message to start the conversation."))
-        .toBeInTheDocument();
-      await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+      await waitForLocatorVisible(page.getByText("Send a message to start the conversation."));
+      await waitForLocatorVisible(page.getByTestId("composer-editor"));
     } finally {
       await mounted.cleanup();
     }
@@ -2202,7 +2226,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
+      await waitForLocatorVisible(newThreadButton);
 
       await newThreadButton.click();
 
@@ -2255,7 +2279,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
+      await waitForLocatorVisible(newThreadButton);
 
       await newThreadButton.click();
 
@@ -2295,7 +2319,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
+      await waitForLocatorVisible(newThreadButton);
 
       await newThreadButton.click();
 
@@ -2337,7 +2361,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
+      await waitForLocatorVisible(newThreadButton);
 
       await newThreadButton.click();
 
@@ -2474,7 +2498,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
+      await waitForLocatorVisible(newThreadButton);
       await waitForNewThreadShortcutLabel();
       await waitForServerConfigToApply();
       await newThreadButton.click();

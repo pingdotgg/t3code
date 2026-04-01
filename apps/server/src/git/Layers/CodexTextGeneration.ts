@@ -82,7 +82,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       );
   };
 
-  const safeUnlink = (filePath: string): Effect.Effect<void, never> =>
+  const safeUnlink = (filePath: string): Effect.Effect<void> =>
     fileSystem.remove(filePath).pipe(Effect.catch(() => Effect.void));
 
   const materializeImageAttachments = (

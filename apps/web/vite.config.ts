@@ -1,8 +1,11 @@
+import * as path from "node:path";
+
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
+import { playwright } from "vite-plus/test/browser-playwright";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import { defineConfig } from "vite";
+import { defineConfig } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
@@ -39,6 +42,12 @@ export default defineConfig({
   },
   resolve: {
     tsconfigPaths: true,
+    alias: [
+      {
+        find: /^~\/(.*)$/,
+        replacement: path.resolve(import.meta.dirname, "./src/$1"),
+      },
+    ],
   },
   server: {
     port,
@@ -55,5 +64,30 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: buildSourcemap,
+  },
+  test: {
+    projects: [
+      {
+        extends: true,
+        test: {
+          include: ["**/*.test.ts", "**/*.test.tsx"],
+          name: "unit",
+          environment: "node",
+        },
+      },
+      {
+        extends: true,
+        test: {
+          include: ["**/*.browser.tsx"],
+          name: "browser",
+          browser: {
+            enabled: true,
+            provider: playwright(),
+            instances: [{ browser: "chromium" }],
+            headless: true,
+          },
+        },
+      },
+    ],
   },
 });

@@ -30,7 +30,7 @@ export interface TestTurnResponse {
   readonly mutateWorkspace?: (input: {
     readonly cwd: string;
     readonly turnCount: number;
-  }) => Effect.Effect<void, never>;
+  }) => Effect.Effect<void>;
 }
 
 export type FixtureProviderRuntimeEvent = {
@@ -183,9 +183,7 @@ export interface TestProviderAdapterHarness {
     threadId: ThreadId,
     response: TestTurnResponse,
   ) => Effect.Effect<void, ProviderAdapterSessionNotFoundError>;
-  readonly queueTurnResponseForNextSession: (
-    response: TestTurnResponse,
-  ) => Effect.Effect<void, never>;
+  readonly queueTurnResponseForNextSession: (response: TestTurnResponse) => Effect.Effect<void>;
   readonly getStartCount: () => number;
   readonly getRollbackCalls: (threadId: ThreadId) => ReadonlyArray<number>;
   readonly getInterruptCalls: (threadId: ThreadId) => ReadonlyArray<TurnId | undefined>;
@@ -337,7 +335,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         }
 
         if (response.mutateWorkspace && state.session.cwd) {
-          yield* response.mutateWorkspace({ cwd: state.session.cwd!, turnCount });
+          yield* response.mutateWorkspace({ cwd: state.session.cwd, turnCount });
         }
 
         const userItem = {
@@ -505,9 +503,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         ),
       );
 
-    const queueTurnResponseForNextSession = (
-      response: TestTurnResponse,
-    ): Effect.Effect<void, never> =>
+    const queueTurnResponseForNextSession = (response: TestTurnResponse): Effect.Effect<void> =>
       Effect.sync(() => {
         queuedResponsesForNextSession.push(response);
       });

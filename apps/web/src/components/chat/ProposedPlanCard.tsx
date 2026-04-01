@@ -198,7 +198,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             </Button>
             <Button
               size="sm"
-              onClick={() => void handleSaveToWorkspace()}
+              onClick={() => handleSaveToWorkspace()}
               disabled={isSavingToWorkspace}
             >
               {isSavingToWorkspace ? "Saving..." : "Save"}

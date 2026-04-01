@@ -104,7 +104,7 @@ let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
   platform: process.platform,
   processArch: process.arch,
-  runningUnderArm64Translation: app.runningUnderARM64Translation === true,
+  runningUnderArm64Translation: app.runningUnderARM64Translation,
 });
 const initialUpdateState = (): DesktopUpdateState =>
   createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);

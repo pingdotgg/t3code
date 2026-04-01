@@ -261,7 +261,7 @@ function isInterruptedResult(result: SDKResultMessage): boolean {
 
   return (
     result.subtype === "error_during_execution" &&
-    result.is_error === false &&
+    !result.is_error &&
     (errors.includes("request was aborted") ||
       errors.includes("interrupted by user") ||
       errors.includes("aborted"))
@@ -2817,7 +2817,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         providerRefs: {},
       });
 
-      let streamFiber: Fiber.Fiber<void, never>;
+      let streamFiber: Fiber.Fiber<void>;
       streamFiber = runFork(
         Effect.exit(runSdkStream(context)).pipe(
           Effect.flatMap((exit) => {

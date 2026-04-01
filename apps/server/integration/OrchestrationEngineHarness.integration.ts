@@ -115,19 +115,19 @@ function waitFor<A, E>(
   predicate: (value: A) => boolean,
   description: string,
   timeoutMs?: number,
-): Effect.Effect<A, never>;
+): Effect.Effect<A>;
 function waitFor<A, B extends A, E>(
   read: Effect.Effect<A, E>,
   predicate: (value: A) => value is B,
   description: string,
   timeoutMs?: number,
-): Effect.Effect<B, never>;
+): Effect.Effect<B>;
 function waitFor<A, E>(
   read: Effect.Effect<A, E>,
   predicate: (value: A) => boolean,
   description: string,
   timeoutMs = 40_000,
-): Effect.Effect<A, never> {
+): Effect.Effect<A> {
   const RETRY_SIGNAL = "wait_for_retry";
   const retryIntervalMs = 10;
   const maxRetries = Math.max(0, Math.floor(timeoutMs / retryIntervalMs));
@@ -176,11 +176,11 @@ export interface OrchestrationIntegrationHarness {
     threadId: string,
     predicate: (thread: OrchestrationThread) => boolean,
     timeoutMs?: number,
-  ) => Effect.Effect<OrchestrationThread, never>;
+  ) => Effect.Effect<OrchestrationThread>;
   readonly waitForDomainEvent: (
     predicate: (event: OrchestrationEvent) => boolean,
     timeoutMs?: number,
-  ) => Effect.Effect<ReadonlyArray<OrchestrationEvent>, never>;
+  ) => Effect.Effect<ReadonlyArray<OrchestrationEvent>>;
   readonly waitForPendingApproval: (
     requestId: string,
     predicate: (row: {
@@ -189,25 +189,22 @@ export interface OrchestrationIntegrationHarness {
       readonly resolvedAt: string | null;
     }) => boolean,
     timeoutMs?: number,
-  ) => Effect.Effect<
-    {
-      readonly status: "pending" | "resolved";
-      readonly decision: "accept" | "acceptForSession" | "decline" | "cancel" | null;
-      readonly resolvedAt: string | null;
-    },
-    never
-  >;
+  ) => Effect.Effect<{
+    readonly status: "pending" | "resolved";
+    readonly decision: "accept" | "acceptForSession" | "decline" | "cancel" | null;
+    readonly resolvedAt: string | null;
+  }>;
   readonly waitForReceipt: {
     (
       predicate: (receipt: OrchestrationRuntimeReceipt) => boolean,
       timeoutMs?: number,
-    ): Effect.Effect<OrchestrationRuntimeReceipt, never>;
+    ): Effect.Effect<OrchestrationRuntimeReceipt>;
     <Receipt extends OrchestrationRuntimeReceipt>(
       predicate: (receipt: OrchestrationRuntimeReceipt) => receipt is Receipt,
       timeoutMs?: number,
-    ): Effect.Effect<Receipt, never>;
+    ): Effect.Effect<Receipt>;
   };
-  readonly dispose: Effect.Effect<void, never>;
+  readonly dispose: Effect.Effect<void>;
 }
 
 interface MakeOrchestrationIntegrationHarnessOptions {
@@ -394,7 +391,7 @@ export const makeOrchestrationIntegrationHarness = (
         (thread): thread is OrchestrationThread => thread !== null && predicate(thread),
         `projected thread '${threadId}'`,
         timeoutMs,
-      ) as Effect.Effect<OrchestrationThread, never>;
+      ) as Effect.Effect<OrchestrationThread>;
 
     const waitForDomainEvent: OrchestrationIntegrationHarness["waitForDomainEvent"] = (
       predicate,
@@ -438,23 +435,20 @@ export const makeOrchestrationIntegrationHarness = (
         } => row !== null && predicate(row),
         `pending approval '${requestId}'`,
         timeoutMs,
-      ) as Effect.Effect<
-        {
-          readonly status: "pending" | "resolved";
-          readonly decision: "accept" | "acceptForSession" | "decline" | "cancel" | null;
-          readonly resolvedAt: string | null;
-        },
-        never
-      >;
+      ) as Effect.Effect<{
+        readonly status: "pending" | "resolved";
+        readonly decision: "accept" | "acceptForSession" | "decline" | "cancel" | null;
+        readonly resolvedAt: string | null;
+      }>;
 
     function waitForReceipt(
       predicate: (receipt: OrchestrationRuntimeReceipt) => boolean,
       timeoutMs?: number,
-    ): Effect.Effect<OrchestrationRuntimeReceipt, never>;
+    ): Effect.Effect<OrchestrationRuntimeReceipt>;
     function waitForReceipt<Receipt extends OrchestrationRuntimeReceipt>(
       predicate: (receipt: OrchestrationRuntimeReceipt) => receipt is Receipt,
       timeoutMs?: number,
-    ): Effect.Effect<Receipt, never>;
+    ): Effect.Effect<Receipt>;
     function waitForReceipt(
       predicate: (receipt: OrchestrationRuntimeReceipt) => boolean,
       timeoutMs?: number,

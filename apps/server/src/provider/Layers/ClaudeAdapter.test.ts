@@ -2137,7 +2137,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const permissionResult = yield* Effect.promise(() => permissionPromise);
-      assert.equal((permissionResult as PermissionResult).behavior, "allow");
+      assert.equal(permissionResult.behavior, "allow");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -2626,7 +2626,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const permissionResult = yield* Effect.promise(() => permissionPromise);
-      assert.equal((permissionResult as PermissionResult).behavior, "deny");
+      assert.equal(permissionResult.behavior, "deny");
       const deniedResult = permissionResult as PermissionResult & {
         message?: string;
       };
@@ -2820,7 +2820,7 @@ describe("ClaudeAdapterLive", () => {
 
       // The canUseTool promise should resolve with the answers in SDK format.
       const permissionResult = yield* Effect.promise(() => permissionPromise);
-      assert.equal((permissionResult as PermissionResult).behavior, "allow");
+      assert.equal(permissionResult.behavior, "allow");
       const updatedInput = (permissionResult as { updatedInput: Record<string, unknown> })
         .updatedInput;
       assert.deepEqual(updatedInput.answers, { "Which framework?": "React" });
@@ -2892,7 +2892,7 @@ describe("ClaudeAdapterLive", () => {
       yield* Stream.runHead(adapter.streamEvents);
 
       const permissionResult = yield* Effect.promise(() => permissionPromise);
-      assert.equal((permissionResult as PermissionResult).behavior, "allow");
+      assert.equal(permissionResult.behavior, "allow");
       const updatedInput = (permissionResult as { updatedInput: Record<string, unknown> })
         .updatedInput;
       assert.deepEqual(updatedInput.answers, { "Deploy to which env?": "Staging" });

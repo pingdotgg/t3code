@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import type { ServerProviderModel } from "@t3tools/contracts";
 import { getComposerProviderState } from "./composerProviderRegistry";
 

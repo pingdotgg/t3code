@@ -22,7 +22,7 @@ import type { Effect } from "effect";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
-  readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
+  readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void>;
 }
 
 export interface GitRunStackedActionOptions {

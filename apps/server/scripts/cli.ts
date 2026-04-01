@@ -129,7 +129,7 @@ const buildCmd = Command.make(
       const repoRoot = yield* RepoRoot;
       const serverDir = path.join(repoRoot, "apps/server");
 
-      yield* Effect.log("[cli] Running tsdown...");
+      yield* Effect.log("[cli] Running vp pack...");
       yield* runCommand(
         ChildProcess.make({
           cwd: serverDir,
@@ -137,7 +137,7 @@ const buildCmd = Command.make(
           stderr: "inherit",
           // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
           shell: process.platform === "win32",
-        })`bun tsdown`,
+        })`vp pack`,
       );
 
       const webDist = path.join(repoRoot, "apps/web/dist");
@@ -151,7 +151,7 @@ const buildCmd = Command.make(
         yield* Effect.logWarning("[cli] Web dist not found — skipping client bundle.");
       }
     }),
-).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));
+).pipe(Command.withDescription("Build the server package (vp pack + bundle web client)."));
 
 // ---------------------------------------------------------------------------
 // publish subcommand
@@ -205,7 +205,7 @@ const publishCmd = Command.make(
 
           pkg.dependencies = resolveCatalogDependencies(
             pkg.dependencies,
-            rootPackageJson.workspaces.catalog,
+            rootPackageJson.catalog,
             "apps/server dependencies",
           );
 

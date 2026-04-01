@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { RotatingFileSink } from "@t3tools/shared/logging";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 const tempRoots: string[] = [];
 

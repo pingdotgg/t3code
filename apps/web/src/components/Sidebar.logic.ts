@@ -440,7 +440,7 @@ function getLatestUserMessageTimestamp(thread: SidebarThreadSortInput): number {
 
 function getThreadSortTimestamp(
   thread: SidebarThreadSortInput,
-  sortOrder: SidebarThreadSortOrder | Exclude<SidebarProjectSortOrder, "manual">,
+  sortOrder: SidebarThreadSortOrder,
 ): number {
   if (sortOrder === "created_at") {
     return toSortableTimestamp(thread.createdAt) ?? Number.NEGATIVE_INFINITY;

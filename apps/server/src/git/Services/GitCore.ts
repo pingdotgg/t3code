@@ -55,27 +55,27 @@ export interface GitPreparedCommitContext {
 }
 
 export interface ExecuteGitProgress {
-  readonly onStdoutLine?: (line: string) => Effect.Effect<void, never>;
-  readonly onStderrLine?: (line: string) => Effect.Effect<void, never>;
-  readonly onHookStarted?: (hookName: string) => Effect.Effect<void, never>;
+  readonly onStdoutLine?: (line: string) => Effect.Effect<void>;
+  readonly onStderrLine?: (line: string) => Effect.Effect<void>;
+  readonly onHookStarted?: (hookName: string) => Effect.Effect<void>;
   readonly onHookFinished?: (input: {
     hookName: string;
     exitCode: number | null;
     durationMs: number | null;
-  }) => Effect.Effect<void, never>;
+  }) => Effect.Effect<void>;
 }
 
 export interface GitCommitProgress {
   readonly onOutputLine?: (input: {
     stream: "stdout" | "stderr";
     text: string;
-  }) => Effect.Effect<void, never>;
-  readonly onHookStarted?: (hookName: string) => Effect.Effect<void, never>;
+  }) => Effect.Effect<void>;
+  readonly onHookStarted?: (hookName: string) => Effect.Effect<void>;
   readonly onHookFinished?: (input: {
     hookName: string;
     exitCode: number | null;
     durationMs: number | null;
-  }) => Effect.Effect<void, never>;
+  }) => Effect.Effect<void>;
 }
 
 export interface GitCommitOptions {

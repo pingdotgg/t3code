@@ -30,7 +30,7 @@ export interface OrchestrationEngineShape {
    *
    * @returns Effect containing the latest read model.
    */
-  readonly getReadModel: () => Effect.Effect<OrchestrationReadModel, never, never>;
+  readonly getReadModel: () => Effect.Effect<OrchestrationReadModel, never>;
 
   /**
    * Replay persisted orchestration events from an exclusive sequence cursor.
@@ -40,7 +40,7 @@ export interface OrchestrationEngineShape {
    */
   readonly readEvents: (
     fromSequenceExclusive: number,
-  ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError, never>;
+  ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
 
   /**
    * Dispatch a validated orchestration command.
@@ -53,7 +53,7 @@ export interface OrchestrationEngineShape {
    */
   readonly dispatch: (
     command: OrchestrationCommand,
-  ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
+  ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError>;
 
   /**
    * Stream persisted domain events in dispatch order.

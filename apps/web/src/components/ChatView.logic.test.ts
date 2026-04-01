@@ -1,5 +1,5 @@
 import { ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { useStore } from "../store";
 
 import {

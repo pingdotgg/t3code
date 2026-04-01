@@ -228,10 +228,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       onNone: () => Effect.succeed(false),
     });
 
-  const filterGitIgnoredPaths = (
-    cwd: string,
-    relativePaths: string[],
-  ): Effect.Effect<string[], never> =>
+  const filterGitIgnoredPaths = (cwd: string, relativePaths: string[]): Effect.Effect<string[]> =>
     Option.match(gitOption, {
       onSome: (git) =>
         git.filterIgnoredPaths(cwd, relativePaths).pipe(

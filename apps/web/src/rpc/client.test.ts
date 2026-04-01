@@ -1,5 +1,5 @@
 import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
 
 import { __resetWsRpcAtomClientForTests, runRpc, WsRpcAtomClient } from "./client";

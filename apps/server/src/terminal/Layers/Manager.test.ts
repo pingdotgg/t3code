@@ -22,7 +22,7 @@ import {
   Scope,
 } from "effect";
 import { TestClock } from "effect/testing";
-import { expect } from "vitest";
+import { expect } from "vite-plus/test";
 
 import type { TerminalManagerShape } from "../Services/Manager";
 import {
@@ -483,7 +483,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       hasRunningSubprocess = true;
       yield* waitFor(
         Effect.map(getEvents, (events) =>
-          events.some((event) => event.type === "activity" && event.hasRunningSubprocess === true),
+          events.some((event) => event.type === "activity" && event.hasRunningSubprocess),
         ),
         "1200 millis",
       );
@@ -491,7 +491,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       hasRunningSubprocess = false;
       yield* waitFor(
         Effect.map(getEvents, (events) =>
-          events.some((event) => event.type === "activity" && event.hasRunningSubprocess === false),
+          events.some((event) => event.type === "activity" && !event.hasRunningSubprocess),
         ),
         "1200 millis",
       );

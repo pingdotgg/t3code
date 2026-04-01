@@ -8,7 +8,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { TestClock } from "effect/testing";
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 
 import { readBootstrapEnvelope, resolveFdPath } from "./bootstrap";
 import { assertNone, assertSome } from "@effect/vitest/utils";

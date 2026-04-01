@@ -10,9 +10,9 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import { page } from "vitest/browser";
+import { page } from "vite-plus/test/browser";
 import { useCallback } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 import { TraitsPicker } from "./TraitsPicker";

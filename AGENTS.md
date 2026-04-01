@@ -2,8 +2,8 @@
 
 ## Task Completion Requirements
 
-- All of `bun fmt`, `bun lint`, and `bun typecheck` must pass before considering tasks completed.
-- NEVER run `bun test`. Always use `bun run test` (runs Vitest).
+- `vp check` & `vp run typecheck` must pass before considering tasks completed.
+- NEVER run `bun test`. Always use `vp test` (runs Vitest).
 
 ## Project Snapshot
 

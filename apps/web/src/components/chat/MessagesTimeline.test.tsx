@@ -1,6 +1,6 @@
 import { MessageId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 function matchMedia() {
   return {

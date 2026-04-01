@@ -679,7 +679,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
 
     default: {
       command satisfies never;
-      const fallback = command as never as { type: string };
+      const fallback = command as { type: string };
       return yield* new OrchestrationCommandInvariantError({
         commandType: fallback.type,
         detail: `Unknown command type: ${fallback.type}`,

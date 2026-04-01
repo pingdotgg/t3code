@@ -181,6 +181,7 @@ interface StagePackageJson {
   readonly dependencies: Record<string, unknown>;
   readonly devDependencies: {
     readonly electron: string;
+    readonly "electron-builder": string;
   };
 }
 
@@ -562,6 +563,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   const electronVersion = desktopPackageJson.dependencies.electron;
+  const electronBuilderVersion = desktopPackageJson.devDependencies["electron-builder"];
 
   const serverDependencies = serverPackageJson.dependencies;
   if (!serverDependencies || Object.keys(serverDependencies).length === 0) {
@@ -572,11 +574,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const resolvedServerDependencies = yield* Effect.try({
     try: () =>
-      resolveCatalogDependencies(
-        serverDependencies,
-        rootPackageJson.workspaces.catalog,
-        "apps/server",
-      ),
+      resolveCatalogDependencies(serverDependencies, rootPackageJson.catalog, "apps/server"),
     catch: (cause) =>
       new BuildScriptError({
         message: "Could not resolve production dependencies from apps/server/package.json.",
@@ -585,10 +583,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   });
   const resolvedDesktopRuntimeDependencies = yield* Effect.try({
     try: () =>
-      resolveDesktopRuntimeDependencies(
-        desktopPackageJson.dependencies,
-        rootPackageJson.workspaces.catalog,
-      ),
+      resolveDesktopRuntimeDependencies(desktopPackageJson.dependencies, rootPackageJson.catalog),
     catch: (cause) =>
       new BuildScriptError({
         message: "Could not resolve desktop runtime dependencies from apps/desktop/package.json.",
@@ -676,20 +671,21 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     },
     devDependencies: {
       electron: electronVersion,
+      "electron-builder": electronBuilderVersion,
     },
   };
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
-  yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
+  yield* Effect.log("[desktop-artifact] Installing staged build dependencies...");
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
       ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
       shell: process.platform === "win32",
-    })`bun install --production`,
+    })`vp install`,
   );
 
   const buildEnv: NodeJS.ProcessEnv = {

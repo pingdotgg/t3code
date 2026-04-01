@@ -5,12 +5,12 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "bun run --parallel dev:bundle dev:electron",
-    "dev:bundle": "tsdown --watch",
+    "dev:bundle": "vp pack --watch",
     "dev:electron": "bun run scripts/dev-electron.mjs",
-    "build": "tsdown",
+    "build": "vp pack",
     "start": "bun run scripts/start-electron.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vp test run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
@@ -22,9 +22,9 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@types/node": "catalog:",
-    "tsdown": "catalog:",
+    "electron-builder": "26.8.1",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   },
   "productName": "T3 Code (Alpha)"
 }
