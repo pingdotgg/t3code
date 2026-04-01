@@ -5,7 +5,7 @@ import { expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
 import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
-import { TextGenerationError } from "../Errors.ts";
+import { TextGenerationError } from "@t3tools/contracts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 

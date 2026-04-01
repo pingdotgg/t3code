@@ -85,24 +85,27 @@ export const KeybindingShortcut = Schema.Struct({
 });
 export type KeybindingShortcut = typeof KeybindingShortcut.Type;
 
-export const KeybindingWhenNode: Schema.Schema<KeybindingWhenNode> = Schema.Union([
+const KeybindingWhenNodeRef = Schema.suspend(
+  (): Schema.Codec<KeybindingWhenNode> => KeybindingWhenNode,
+);
+export const KeybindingWhenNode = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("identifier"),
     name: Schema.NonEmptyString,
   }),
   Schema.Struct({
     type: Schema.Literal("not"),
-    node: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+    node: KeybindingWhenNodeRef,
   }),
   Schema.Struct({
     type: Schema.Literal("and"),
-    left: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
-    right: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+    left: KeybindingWhenNodeRef,
+    right: KeybindingWhenNodeRef,
   }),
   Schema.Struct({
     type: Schema.Literal("or"),
-    left: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
-    right: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+    left: KeybindingWhenNodeRef,
+    right: KeybindingWhenNodeRef,
   }),
 ]);
 export type KeybindingWhenNode =
@@ -122,3 +125,16 @@ export const ResolvedKeybindingsConfig = Schema.Array(ResolvedKeybindingRule).ch
   Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
 );
 export type ResolvedKeybindingsConfig = typeof ResolvedKeybindingsConfig.Type;
+
+export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
+  "KeybindingsConfigParseError",
+  {
+    configPath: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Unable to parse keybindings config at ${this.configPath}: ${this.detail}`;
+  }
+}

@@ -5,7 +5,7 @@
  */
 import { Schema } from "effect";
 
-import { TextGenerationError } from "./Errors.ts";
+import { TextGenerationError } from "@t3tools/contracts";
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";

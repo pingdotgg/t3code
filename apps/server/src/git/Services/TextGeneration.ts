@@ -10,7 +10,7 @@ import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 import type { ChatAttachment, ModelSelection } from "@t3tools/contracts";
 
-import type { TextGenerationError } from "../Errors.ts";
+import type { TextGenerationError } from "@t3tools/contracts";
 
 /** Providers that support git text generation (commit messages, PR content, branch names). */
 export type TextGenerationProvider = "codex" | "claudeAgent";

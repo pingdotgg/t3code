@@ -1,5 +1,11 @@
 import { Schema } from "effect";
-import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
 import { ModelCapabilities } from "./model";
@@ -63,7 +69,8 @@ export const ServerProvider = Schema.Struct({
 });
 export type ServerProvider = typeof ServerProvider.Type;
 
-const ServerProviders = Schema.Array(ServerProvider);
+export const ServerProviders = Schema.Array(ServerProvider);
+export type ServerProviders = typeof ServerProviders.Type;
 
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,
@@ -87,9 +94,100 @@ export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.T
 
 export const ServerConfigUpdatedPayload = Schema.Struct({
   issues: ServerConfigIssues,
+  providers: ServerProviders,
   settings: Schema.optional(ServerSettings),
 });
 export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
+
+export const ServerConfigKeybindingsUpdatedPayload = Schema.Struct({
+  issues: ServerConfigIssues,
+});
+export type ServerConfigKeybindingsUpdatedPayload =
+  typeof ServerConfigKeybindingsUpdatedPayload.Type;
+
+export const ServerConfigProviderStatusesPayload = Schema.Struct({
+  providers: ServerProviders,
+});
+export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderStatusesPayload.Type;
+
+export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
+  settings: ServerSettings,
+});
+export type ServerConfigSettingsUpdatedPayload = typeof ServerConfigSettingsUpdatedPayload.Type;
+
+export const ServerConfigStreamSnapshotEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("snapshot"),
+  config: ServerConfig,
+});
+export type ServerConfigStreamSnapshotEvent = typeof ServerConfigStreamSnapshotEvent.Type;
+
+export const ServerConfigStreamKeybindingsUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("keybindingsUpdated"),
+  payload: ServerConfigKeybindingsUpdatedPayload,
+});
+export type ServerConfigStreamKeybindingsUpdatedEvent =
+  typeof ServerConfigStreamKeybindingsUpdatedEvent.Type;
+
+export const ServerConfigStreamProviderStatusesEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("providerStatuses"),
+  payload: ServerConfigProviderStatusesPayload,
+});
+export type ServerConfigStreamProviderStatusesEvent =
+  typeof ServerConfigStreamProviderStatusesEvent.Type;
+
+export const ServerConfigStreamSettingsUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("settingsUpdated"),
+  payload: ServerConfigSettingsUpdatedPayload,
+});
+export type ServerConfigStreamSettingsUpdatedEvent =
+  typeof ServerConfigStreamSettingsUpdatedEvent.Type;
+
+export const ServerConfigStreamEvent = Schema.Union([
+  ServerConfigStreamSnapshotEvent,
+  ServerConfigStreamKeybindingsUpdatedEvent,
+  ServerConfigStreamProviderStatusesEvent,
+  ServerConfigStreamSettingsUpdatedEvent,
+]);
+export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
+
+export const ServerLifecycleReadyPayload = Schema.Struct({
+  at: IsoDateTime,
+});
+export type ServerLifecycleReadyPayload = typeof ServerLifecycleReadyPayload.Type;
+
+export const ServerLifecycleWelcomePayload = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  projectName: TrimmedNonEmptyString,
+  bootstrapProjectId: Schema.optional(ProjectId),
+  bootstrapThreadId: Schema.optional(ThreadId),
+});
+export type ServerLifecycleWelcomePayload = typeof ServerLifecycleWelcomePayload.Type;
+
+export const ServerLifecycleStreamWelcomeEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  sequence: NonNegativeInt,
+  type: Schema.Literal("welcome"),
+  payload: ServerLifecycleWelcomePayload,
+});
+export type ServerLifecycleStreamWelcomeEvent = typeof ServerLifecycleStreamWelcomeEvent.Type;
+
+export const ServerLifecycleStreamReadyEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  sequence: NonNegativeInt,
+  type: Schema.Literal("ready"),
+  payload: ServerLifecycleReadyPayload,
+});
+export type ServerLifecycleStreamReadyEvent = typeof ServerLifecycleStreamReadyEvent.Type;
+
+export const ServerLifecycleStreamEvent = Schema.Union([
+  ServerLifecycleStreamWelcomeEvent,
+  ServerLifecycleStreamReadyEvent,
+]);
+export type ServerLifecycleStreamEvent = typeof ServerLifecycleStreamEvent.Type;
 
 export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,

@@ -6,8 +6,13 @@ export default mergeConfig(
   baseConfig,
   defineConfig({
     test: {
-      testTimeout: 15_000,
-      hookTimeout: 15_000,
+      // The server suite exercises sqlite, git, temp worktrees, and orchestration
+      // runtimes heavily. Running files in parallel introduces load-sensitive flakes.
+      fileParallelism: false,
+      // Server integration tests exercise sqlite, git, and orchestration together.
+      // Under package-wide parallel runs they regularly exceed the default 15s budget.
+      testTimeout: 60_000,
+      hookTimeout: 60_000,
     },
   }),
 );

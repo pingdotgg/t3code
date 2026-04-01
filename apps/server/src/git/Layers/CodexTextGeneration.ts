@@ -8,7 +8,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { TextGenerationError } from "../Errors.ts";
+import { TextGenerationError } from "@t3tools/contracts";
 import {
   type BranchNameGenerationInput,
   type ThreadTitleGenerationResult,

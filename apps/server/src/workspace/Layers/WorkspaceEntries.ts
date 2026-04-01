@@ -11,6 +11,7 @@ import {
   WorkspaceEntriesError,
   type WorkspaceEntriesShape,
 } from "../Services/WorkspaceEntries.ts";
+import { WorkspacePaths } from "../Services/WorkspacePaths.ts";
 
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
@@ -219,6 +220,7 @@ const processErrorDetail = (cause: unknown): string =>
 export const makeWorkspaceEntries = Effect.gen(function* () {
   const path = yield* Path.Path;
   const gitOption = yield* Effect.serviceOption(GitCore);
+  const workspacePaths = yield* WorkspacePaths;
 
   const isInsideGitWorkTree = (cwd: string): Effect.Effect<boolean> =>
     Option.match(gitOption, {
@@ -435,15 +437,38 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       Exit.isSuccess(exit) ? Duration.millis(WORKSPACE_CACHE_TTL_MS) : Duration.zero,
   });
 
+  const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
+    cwd: string,
+  ): Effect.fn.Return<string, WorkspaceEntriesError> {
+    return yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceEntriesError({
+            cwd,
+            operation: "workspaceEntries.normalizeWorkspaceRoot",
+            detail: cause.message,
+            cause,
+          }),
+      ),
+    );
+  });
+
   const invalidate: WorkspaceEntriesShape["invalidate"] = Effect.fn("WorkspaceEntries.invalidate")(
     function* (cwd) {
-      return yield* Cache.invalidate(workspaceIndexCache, cwd);
+      const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
+        Effect.catch(() => Effect.succeed(cwd)),
+      );
+      yield* Cache.invalidate(workspaceIndexCache, cwd);
+      if (normalizedCwd !== cwd) {
+        yield* Cache.invalidate(workspaceIndexCache, normalizedCwd);
+      }
     },
   );
 
   const search: WorkspaceEntriesShape["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
-      return yield* Cache.get(workspaceIndexCache, input.cwd).pipe(
+      const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      return yield* Cache.get(workspaceIndexCache, normalizedCwd).pipe(
         Effect.map((index) => {
           const normalizedQuery = normalizeQuery(input.query);
           const limit = Math.max(0, Math.floor(input.limit));

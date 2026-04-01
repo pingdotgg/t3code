@@ -6,11 +6,12 @@
  *
  * @module ServerConfig
  */
-import { Effect, FileSystem, Layer, Path, ServiceMap } from "effect";
+import { Effect, FileSystem, Layer, LogLevel, Path, Schema, ServiceMap } from "effect";
 
 export const DEFAULT_PORT = 3773;
 
-export type RuntimeMode = "web" | "desktop";
+export const RuntimeMode = Schema.Literals(["web", "desktop"]);
+export type RuntimeMode = typeof RuntimeMode.Type;
 
 /**
  * ServerDerivedPaths - Derived paths from the base directory.
@@ -34,6 +35,7 @@ export interface ServerDerivedPaths {
  * ServerConfigShape - Process/runtime configuration required by the server.
  */
 export interface ServerConfigShape extends ServerDerivedPaths {
+  readonly logLevel: LogLevel.LogLevel;
   readonly mode: RuntimeMode;
   readonly port: number;
   readonly host: string | undefined;
@@ -73,6 +75,26 @@ export const deriveServerPaths = Effect.fn(function* (
   };
 });
 
+export const ensureServerDirectories = Effect.fn(function* (derivedPaths: ServerDerivedPaths) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  yield* Effect.all(
+    [
+      fs.makeDirectory(derivedPaths.stateDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.logsDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.attachmentsDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.worktreesDir, { recursive: true }),
+      fs.makeDirectory(path.dirname(derivedPaths.keybindingsConfigPath), { recursive: true }),
+      fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true }),
+      fs.makeDirectory(path.dirname(derivedPaths.anonymousIdPath), { recursive: true }),
+    ],
+    { concurrency: "unbounded" },
+  );
+});
+
 /**
  * ServerConfig - Service tag for server runtime configuration.
  */
@@ -91,12 +113,10 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
             ? baseDirOrPrefix
             : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
         const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
-
-        yield* fs.makeDirectory(derivedPaths.stateDir, { recursive: true });
-        yield* fs.makeDirectory(derivedPaths.logsDir, { recursive: true });
-        yield* fs.makeDirectory(derivedPaths.attachmentsDir, { recursive: true });
+        yield* ensureServerDirectories(derivedPaths);
 
         return {
+          logLevel: "Error",
           cwd,
           baseDir,
           ...derivedPaths,

@@ -4,16 +4,14 @@ import "../index.css";
 import {
   EventId,
   ORCHESTRATION_WS_METHODS,
-  ORCHESTRATION_WS_CHANNELS,
   type MessageId,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type ProjectId,
   type ServerConfig,
+  type ServerLifecycleWelcomePayload,
   type ThreadId,
   type TurnId,
-  type WsWelcomePayload,
-  WS_CHANNELS,
   WS_METHODS,
   OrchestrationSessionStatus,
   DEFAULT_SERVER_SETTINGS,
@@ -32,8 +30,10 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
+import { __resetNativeApiForTests } from "../nativeApi";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
@@ -44,25 +44,16 @@ const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
 
-interface WsRequestEnvelope {
-  id: string;
-  body: {
-    _tag: string;
-    [key: string]: unknown;
-  };
-}
-
 interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
-  welcome: WsWelcomePayload;
+  welcome: ServerLifecycleWelcomePayload;
 }
 
 let fixture: TestFixture;
-const wsRequests: WsRequestEnvelope["body"][] = [];
-let customWsRpcResolver: ((body: WsRequestEnvelope["body"]) => unknown | undefined) | null = null;
-let wsClient: { send: (message: string) => void } | null = null;
-let pushSequence = 1;
+const rpcHarness = new BrowserWsRpcHarness();
+const wsRequests = rpcHarness.requests;
+let customWsRpcResolver: ((body: NormalizedWsRpcRequestBody) => unknown | undefined) | null = null;
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
 interface ViewportSpec {
@@ -388,32 +379,20 @@ function createThreadCreatedEvent(threadId: ThreadId, sequence: number): Orchest
 }
 
 function sendOrchestrationDomainEvent(event: OrchestrationEvent): void {
-  if (!wsClient) {
-    throw new Error("WebSocket client not connected");
-  }
-  wsClient.send(
-    JSON.stringify({
-      type: "push",
-      sequence: pushSequence++,
-      channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-      data: event,
-    }),
-  );
+  rpcHarness.emitStreamValue(WS_METHODS.subscribeOrchestrationDomainEvents, event);
 }
 
-async function waitForWsClient(): Promise<{ send: (message: string) => void }> {
-  let client: { send: (message: string) => void } | null = null;
+async function waitForWsClient(): Promise<void> {
   await vi.waitFor(
     () => {
-      client = wsClient;
-      expect(client).toBeTruthy();
+      expect(
+        wsRequests.some(
+          (request) => request._tag === WS_METHODS.subscribeOrchestrationDomainEvents,
+        ),
+      ).toBe(true);
     },
     { timeout: 8_000, interval: 16 },
   );
-  if (!client) {
-    throw new Error("WebSocket client not connected");
-  }
-  return client;
 }
 
 async function promoteDraftThreadViaDomainEvent(threadId: ThreadId): Promise<void> {
@@ -637,7 +616,7 @@ function createSnapshotWithPlanFollowUpPrompt(): OrchestrationReadModel {
   };
 }
 
-function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
+function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
   const customResult = customWsRpcResolver?.(body);
   if (customResult !== undefined) {
     return customResult;
@@ -684,6 +663,9 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
       truncated: false,
     };
   }
+  if (tag === WS_METHODS.shellOpenInEditor) {
+    return null;
+  }
   if (tag === WS_METHODS.terminalOpen) {
     return {
       threadId: typeof body.threadId === "string" ? body.threadId : THREAD_ID,
@@ -702,34 +684,11 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
 
 const worker = setupWorker(
   wsLink.addEventListener("connection", ({ client }) => {
-    wsClient = client;
-    pushSequence = 1;
-    client.send(
-      JSON.stringify({
-        type: "push",
-        sequence: pushSequence++,
-        channel: WS_CHANNELS.serverWelcome,
-        data: fixture.welcome,
-      }),
-    );
+    void rpcHarness.connect(client);
     client.addEventListener("message", (event) => {
       const rawData = event.data;
       if (typeof rawData !== "string") return;
-      let request: WsRequestEnvelope;
-      try {
-        request = JSON.parse(rawData) as WsRequestEnvelope;
-      } catch {
-        return;
-      }
-      const method = request.body?._tag;
-      if (typeof method !== "string") return;
-      wsRequests.push(request.body);
-      client.send(
-        JSON.stringify({
-          id: request.id,
-          result: resolveWsRpc(request.body),
-        }),
-      );
+      void rpcHarness.onMessage(rawData);
     });
   }),
   http.get("*/attachments/:attachmentId", () =>
@@ -903,7 +862,9 @@ async function waitForInteractionModeButton(
 async function waitForServerConfigToApply(): Promise<void> {
   await vi.waitFor(
     () => {
-      expect(wsRequests.some((request) => request._tag === WS_METHODS.serverGetConfig)).toBe(true);
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.subscribeServerConfig)).toBe(
+        true,
+      );
     },
     { timeout: 8_000, interval: 16 },
   );
@@ -1041,7 +1002,7 @@ async function mountChatView(options: {
   viewport: ViewportSpec;
   snapshot: OrchestrationReadModel;
   configureFixture?: (fixture: TestFixture) => void;
-  resolveRpc?: (body: WsRequestEnvelope["body"]) => unknown | undefined;
+  resolveRpc?: (body: NormalizedWsRpcRequestBody) => unknown | undefined;
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
   options.configureFixture?.(fixture);
@@ -1129,10 +1090,37 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   afterAll(async () => {
+    await rpcHarness.disconnect();
     await worker.stop();
   });
 
   beforeEach(async () => {
+    await rpcHarness.reset({
+      resolveUnary: resolveWsRpc,
+      getInitialStreamValues: (request) => {
+        if (request._tag === WS_METHODS.subscribeServerLifecycle) {
+          return [
+            {
+              version: 1,
+              sequence: 1,
+              type: "welcome",
+              payload: fixture.welcome,
+            },
+          ];
+        }
+        if (request._tag === WS_METHODS.subscribeServerConfig) {
+          return [
+            {
+              version: 1,
+              type: "snapshot",
+              config: fixture.serverConfig,
+            },
+          ];
+        }
+        return [];
+      },
+    });
+    __resetNativeApiForTests();
     await setViewport(DEFAULT_VIEWPORT);
     localStorage.clear();
     document.body.innerHTML = "";
@@ -1342,6 +1330,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
+      await waitForServerConfigToApply();
       const openButton = await waitForElement(
         () =>
           Array.from(document.querySelectorAll("button")).find(
@@ -1349,6 +1338,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ) as HTMLButtonElement | null,
         "Unable to find Open button.",
       );
+      await vi.waitFor(() => {
+        expect(openButton.disabled).toBe(false);
+      });
       openButton.click();
 
       await vi.waitFor(
@@ -1384,6 +1376,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
+      await waitForServerConfigToApply();
       const openButton = await waitForElement(
         () =>
           Array.from(document.querySelectorAll("button")).find(
@@ -1391,6 +1384,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ) as HTMLButtonElement | null,
         "Unable to find Open button.",
       );
+      await vi.waitFor(() => {
+        expect(openButton.disabled).toBe(false);
+      });
       openButton.click();
 
       await vi.waitFor(
@@ -1426,6 +1422,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
+      await waitForServerConfigToApply();
       const menuButton = await waitForElement(
         () => document.querySelector('button[aria-label="Copy options"]'),
         "Unable to find Open picker button.",
@@ -1474,7 +1471,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("falls back to the first installed editor when the stored favorite is unavailable", async () => {
-    localStorage.setItem("t3code:last-editor", "vscodium");
+    localStorage.setItem("t3code:last-editor", JSON.stringify("vscodium"));
     setDraftThreadWithoutWorktree();
 
     const mounted = await mountChatView({
@@ -1489,6 +1486,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
+      await waitForServerConfigToApply();
       const openButton = await waitForElement(
         () =>
           Array.from(document.querySelectorAll("button")).find(
@@ -1496,6 +1494,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ) as HTMLButtonElement | null,
         "Unable to find Open button.",
       );
+      await vi.waitFor(() => {
+        expect(openButton.disabled).toBe(false);
+      });
       openButton.click();
 
       await vi.waitFor(

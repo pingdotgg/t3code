@@ -19,6 +19,7 @@
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@effect/atom-react": "catalog:",
     "@formkit/auto-animate": "^0.9.0",
     "@lexical/react": "^0.41.0",
     "@pierre/diffs": "^1.1.0-beta.16",

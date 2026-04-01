@@ -9,9 +9,11 @@ import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
 import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
+import { WorkspacePathsLive } from "./WorkspacePaths.ts";
 
 const TestLayer = Layer.empty.pipe(
-  Layer.provideMerge(WorkspaceEntriesLive),
+  Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
+  Layer.provideMerge(WorkspacePathsLive),
   Layer.provideMerge(GitCoreLive),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), {

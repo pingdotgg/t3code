@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { Effect, Layer, FileSystem, Path } from "effect";
 
 import { CheckpointInvariantError } from "../Errors.ts";
-import { GitCommandError } from "../../git/Errors.ts";
+import { GitCommandError } from "@t3tools/contracts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointRef } from "@t3tools/contracts";

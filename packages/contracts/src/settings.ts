@@ -93,6 +93,19 @@ export type ServerSettings = typeof ServerSettings.Type;
 
 export const DEFAULT_SERVER_SETTINGS: ServerSettings = Schema.decodeSync(ServerSettings)({});
 
+export class ServerSettingsError extends Schema.TaggedErrorClass<ServerSettingsError>()(
+  "ServerSettingsError",
+  {
+    settingsPath: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Server settings error at ${this.settingsPath}: ${this.detail}`;
+  }
+}
+
 // ── Unified type ─────────────────────────────────────────────────────
 
 export type UnifiedSettings = ServerSettings & ClientSettings;

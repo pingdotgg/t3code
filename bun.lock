@@ -44,17 +44,17 @@
       "name": "t3",
       "version": "0.0.15",
       "bin": {
-        "t3": "./dist/index.mjs",
+        "t3": "./dist/bin.mjs",
       },
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.2.77",
+        "@effect/platform-bun": "catalog:",
         "@effect/platform-node": "catalog:",
         "@effect/sql-sqlite-bun": "catalog:",
         "@pierre/diffs": "^1.1.0-beta.16",
         "effect": "catalog:",
         "node-pty": "^1.1.0",
         "open": "^10.1.0",
-        "ws": "^8.18.0",
       },
       "devDependencies": {
         "@effect/language-service": "catalog:",
@@ -64,7 +64,6 @@
         "@t3tools/web": "workspace:*",
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
-        "@types/ws": "^8.5.13",
         "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
@@ -79,6 +78,7 @@
         "@dnd-kit/modifiers": "^9.0.0",
         "@dnd-kit/sortable": "^10.0.0",
         "@dnd-kit/utilities": "^3.2.2",
+        "@effect/atom-react": "catalog:",
         "@formkit/auto-animate": "^0.9.0",
         "@lexical/react": "^0.41.0",
         "@pierre/diffs": "^1.1.0-beta.16",
@@ -175,7 +175,9 @@
     "vite": "^8.0.0",
   },
   "catalog": {
+    "@effect/atom-react": "4.0.0-beta.43",
     "@effect/language-service": "0.84.2",
+    "@effect/platform-bun": "4.0.0-beta.43",
     "@effect/platform-node": "4.0.0-beta.43",
     "@effect/sql-sqlite-bun": "4.0.0-beta.43",
     "@effect/vitest": "4.0.0-beta.43",
@@ -267,7 +269,11 @@
 
     "@dnd-kit/utilities": ["@dnd-kit/utilities@3.2.2", "", { "dependencies": { "tslib": "^2.0.0" }, "peerDependencies": { "react": ">=16.8.0" } }, "sha512-+MKAJEOfaBe5SmV6t34p80MMKhjvUz0vRrvVJbPT0WElzaOJ/1xs+D+KDv+tD/NE5ujfrChEcshd4fLn0wpiqg=="],
 
+    "@effect/atom-react": ["@effect/atom-react@4.0.0-beta.43", "", { "peerDependencies": { "effect": "^4.0.0-beta.43", "react": "^19.2.4", "scheduler": "*" } }, "sha512-xSrRbGXuo4d0g4ph66TQST1GNSjtQZrZj8V7OiAQFuzMYcZ0kwRIPUUFwOBtbWHK43/zNENdNWOnlXh/iYM1dw=="],
+
     "@effect/language-service": ["@effect/language-service@0.84.2", "", { "bin": { "effect-language-service": "cli.js" } }, "sha512-l04qNxpiA8rY5yXWckRPJ7Mk5MNerXuNymSFf+IdflfI5i8jgL1bpBNLuP6ijg7wgjdHc/KmTnCj2kT0SCntuA=="],
+
+    "@effect/platform-bun": ["@effect/platform-bun@4.0.0-beta.43", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.43" }, "peerDependencies": { "effect": "^4.0.0-beta.43" } }, "sha512-nMZ9JsD6CzJNQ+5pDUFbPw7PSZdQdTQ092MbYrocVtvlf6qEFU/hji3ITvRIOX7eabyQ8AUyp55qFPQUeq+GIA=="],
 
     "@effect/platform-node": ["@effect/platform-node@4.0.0-beta.43", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.43", "mime": "^4.1.0", "undici": "^7.24.0" }, "peerDependencies": { "effect": "^4.0.0-beta.43", "ioredis": "^5.7.0" } }, "sha512-Uq6E1rjaIpjHauzjwoB2HzAg3battYt2Boy8XO50GoHiWCXKE6WapYZ0/AnaBx5v5qg2sOfqpuiLsUf9ZgxOkA=="],
 

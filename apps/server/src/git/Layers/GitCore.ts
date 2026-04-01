@@ -18,7 +18,7 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { GitCommandError } from "../Errors.ts";
+import { GitCommandError } from "@t3tools/contracts";
 import {
   GitCore,
   type ExecuteGitProgress,
@@ -1941,8 +1941,9 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       });
 
       // Refresh upstream refs in the background so checkout remains responsive.
-      yield* Effect.forkScoped(
-        refreshCheckedOutBranchUpstream(input.cwd).pipe(Effect.ignoreCause({ log: true })),
+      yield* refreshCheckedOutBranchUpstream(input.cwd).pipe(
+        Effect.ignoreCause({ log: true }),
+        Effect.forkDetach({ startImmediately: true }),
       );
     },
   );

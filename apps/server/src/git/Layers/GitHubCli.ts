@@ -2,7 +2,7 @@ import { Effect, Layer, Schema } from "effect";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
 
 import { runProcess } from "../../processRunner";
-import { GitHubCliError } from "../Errors.ts";
+import { GitHubCliError } from "@t3tools/contracts";
 import {
   GitHubCli,
   type GitHubRepositoryCloneUrls,

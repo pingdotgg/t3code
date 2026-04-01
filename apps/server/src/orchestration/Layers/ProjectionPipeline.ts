@@ -3,7 +3,6 @@ import {
   type ChatAttachment,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -1271,7 +1270,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       Effect.provideService(ServerConfig, serverConfig),
       Effect.asVoid,
       Effect.tap(() =>
-        Effect.log("orchestration projection pipeline bootstrapped").pipe(
+        Effect.logDebug("orchestration projection pipeline bootstrapped").pipe(
           Effect.annotateLogs({ projectors: projectors.length }),
         ),
       ),
@@ -1291,7 +1290,6 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   OrchestrationProjectionPipeline,
   makeOrchestrationProjectionPipeline(),
 ).pipe(
-  Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(ProjectionProjectRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),

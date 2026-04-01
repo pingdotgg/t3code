@@ -1,12 +1,16 @@
-import { OrchestrationEvent, ThreadId } from "@t3tools/contracts";
+import {
+  OrchestrationEvent,
+  ThreadId,
+  type ServerLifecycleWelcomePayload,
+} from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
   useNavigate,
-  useRouterState,
+  useLocation,
 } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
@@ -15,8 +19,14 @@ import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
+import {
+  type ServerConfigUpdateSource,
+  useServerConfig,
+  useServerConfigUpdatedSubscription,
+  useServerWelcomeSubscription,
+} from "../rpc/serverState";
+import { ServerStateBootstrap } from "../rpc/serverStateBootstrap";
 import {
   clearPromotedDraftThread,
   clearPromotedDraftThreads,
@@ -26,7 +36,6 @@ import { useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
-import { onServerConfigUpdated, onServerProvidersUpdated, onServerWelcome } from "../wsNativeApi";
 import { migrateLocalSettingsToServer } from "../hooks/useSettings";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
@@ -58,15 +67,18 @@ function RootRouteView() {
   }
 
   return (
-    <ToastProvider>
-      <AnchoredToastProvider>
-        <EventRouter />
-        <DesktopProjectBootstrap />
-        <AppSidebarLayout>
-          <Outlet />
-        </AppSidebarLayout>
-      </AnchoredToastProvider>
-    </ToastProvider>
+    <>
+      <ServerStateBootstrap />
+      <ToastProvider>
+        <AnchoredToastProvider>
+          <EventRouter />
+          <DesktopProjectBootstrap />
+          <AppSidebarLayout>
+            <Outlet />
+          </AppSidebarLayout>
+        </AnchoredToastProvider>
+      </ToastProvider>
+    </>
   );
 }
 
@@ -154,16 +166,107 @@ function EventRouter() {
   );
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pathname = useLocation({ select: (loc) => loc.pathname });
   const pathnameRef = useRef(pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
+  const handledConfigReplayRef = useRef(false);
+  const disposedRef = useRef(false);
+  const bootstrapFromSnapshotRef = useRef<() => Promise<void>>(async () => undefined);
+  const serverConfig = useServerConfig();
 
   pathnameRef.current = pathname;
+
+  const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload) => {
+    migrateLocalSettingsToServer();
+    void (async () => {
+      await bootstrapFromSnapshotRef.current();
+      if (disposedRef.current) {
+        return;
+      }
+
+      if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
+        return;
+      }
+      setProjectExpanded(payload.bootstrapProjectId, true);
+
+      if (pathnameRef.current !== "/") {
+        return;
+      }
+      if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
+        return;
+      }
+      await navigate({
+        to: "/$threadId",
+        params: { threadId: payload.bootstrapThreadId },
+        replace: true,
+      });
+      handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
+    })().catch(() => undefined);
+  });
+
+  const handleServerConfigUpdated = useEffectEvent(
+    ({
+      payload,
+      source,
+    }: {
+      readonly payload: import("@t3tools/contracts").ServerConfigUpdatedPayload;
+      readonly source: ServerConfigUpdateSource;
+    }) => {
+      const isReplay = !handledConfigReplayRef.current;
+      handledConfigReplayRef.current = true;
+      if (isReplay || source !== "keybindingsUpdated") {
+        return;
+      }
+
+      const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
+      if (!issue) {
+        toastManager.add({
+          type: "success",
+          title: "Keybindings updated",
+          description: "Keybindings configuration reloaded successfully.",
+        });
+        return;
+      }
+
+      toastManager.add({
+        type: "warning",
+        title: "Invalid keybindings configuration",
+        description: issue.message,
+        actionProps: {
+          children: "Open keybindings.json",
+          onClick: () => {
+            const api = readNativeApi();
+            if (!api) {
+              return;
+            }
+
+            void Promise.resolve(serverConfig ?? api.server.getConfig())
+              .then((config) => {
+                const editor = resolveAndPersistPreferredEditor(config.availableEditors);
+                if (!editor) {
+                  throw new Error("No available editors found.");
+                }
+                return api.shell.openInEditor(config.keybindingsConfigPath, editor);
+              })
+              .catch((error) => {
+                toastManager.add({
+                  type: "error",
+                  title: "Unable to open keybindings file",
+                  description:
+                    error instanceof Error ? error.message : "Unknown error opening file.",
+                });
+              });
+          },
+        },
+      });
+    },
+  );
 
   useEffect(() => {
     const api = readNativeApi();
     if (!api) return;
     let disposed = false;
+    disposedRef.current = false;
     const recovery = createOrchestrationRecoveryCoordinator();
     let needsProviderInvalidation = false;
 
@@ -299,11 +402,11 @@ function EventRouter() {
     const bootstrapFromSnapshot = async (): Promise<void> => {
       await runSnapshotRecovery("bootstrap");
     };
+    bootstrapFromSnapshotRef.current = bootstrapFromSnapshot;
 
     const fallbackToSnapshotRecovery = async (): Promise<void> => {
       await runSnapshotRecovery("replay-failed");
     };
-
     const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
       const action = recovery.classifyDomainEvent(event.sequence);
       if (action === "apply") {
@@ -327,98 +430,13 @@ function EventRouter() {
           hasRunningSubprocess,
         );
     });
-    const unsubWelcome = onServerWelcome((payload) => {
-      // Migrate old localStorage settings to server on first connect
-      migrateLocalSettingsToServer();
-      void (async () => {
-        await bootstrapFromSnapshot();
-        if (disposed) {
-          return;
-        }
-
-        if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
-          return;
-        }
-        setProjectExpanded(payload.bootstrapProjectId, true);
-
-        if (pathnameRef.current !== "/") {
-          return;
-        }
-        if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
-          return;
-        }
-        await navigate({
-          to: "/$threadId",
-          params: { threadId: payload.bootstrapThreadId },
-          replace: true,
-        });
-        handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
-      })().catch(() => undefined);
-    });
-    // onServerConfigUpdated replays the latest cached value synchronously
-    // during subscribe. Skip the toast for that replay so effect re-runs
-    // don't produce duplicate toasts.
-    let subscribed = false;
-    const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
-      // Invalidate the config query so active observers refetch fresh data.
-      void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
-
-      if (!subscribed) return;
-
-      // Only show keybindings toasts for keybindings changes (no settings in payload)
-      if (payload.settings) return;
-
-      const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
-      if (!issue) {
-        toastManager.add({
-          type: "success",
-          title: "Keybindings updated",
-          description: "Keybindings configuration reloaded successfully.",
-        });
-        return;
-      }
-
-      toastManager.add({
-        type: "warning",
-        title: "Invalid keybindings configuration",
-        description: issue.message,
-        actionProps: {
-          children: "Open keybindings.json",
-          onClick: () => {
-            void queryClient
-              .ensureQueryData(serverConfigQueryOptions())
-              .then((config) => {
-                const editor = resolveAndPersistPreferredEditor(config.availableEditors);
-                if (!editor) {
-                  throw new Error("No available editors found.");
-                }
-                return api.shell.openInEditor(config.keybindingsConfigPath, editor);
-              })
-              .catch((error) => {
-                toastManager.add({
-                  type: "error",
-                  title: "Unable to open keybindings file",
-                  description:
-                    error instanceof Error ? error.message : "Unknown error opening file.",
-                });
-              });
-          },
-        },
-      });
-    });
-    const unsubProvidersUpdated = onServerProvidersUpdated(() => {
-      void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
-    });
-    subscribed = true;
     return () => {
       disposed = true;
+      disposedRef.current = true;
       needsProviderInvalidation = false;
       queryInvalidationThrottler.cancel();
       unsubDomainEvent();
       unsubTerminalEvent();
-      unsubWelcome();
-      unsubServerConfigUpdated();
-      unsubProvidersUpdated();
     };
   }, [
     applyOrchestrationEvents,
@@ -432,6 +450,9 @@ function EventRouter() {
     syncServerReadModel,
     syncThreads,
   ]);
+
+  useServerWelcomeSubscription(handleWelcome);
+  useServerConfigUpdatedSubscription(handleServerConfigUpdated);
 
   return null;
 }

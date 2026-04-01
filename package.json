@@ -9,6 +9,8 @@
     ],
     "catalog": {
       "effect": "4.0.0-beta.43",
+      "@effect/atom-react": "4.0.0-beta.43",
+      "@effect/platform-bun": "4.0.0-beta.43",
       "@effect/platform-node": "4.0.0-beta.43",
       "@effect/sql-sqlite-bun": "4.0.0-beta.43",
       "@effect/vitest": "4.0.0-beta.43",

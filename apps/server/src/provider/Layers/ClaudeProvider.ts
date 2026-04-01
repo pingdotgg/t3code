@@ -24,7 +24,8 @@ import {
 } from "../providerSnapshot";
 import { makeManagedServerProvider } from "../makeManagedServerProvider";
 import { ClaudeProvider } from "../Services/ClaudeProvider";
-import { ServerSettingsError, ServerSettingsService } from "../../serverSettings";
+import { ServerSettingsService } from "../../serverSettings";
+import { ServerSettingsError } from "@t3tools/contracts";
 
 const PROVIDER = "claudeAgent" as const;
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [

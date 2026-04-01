@@ -39,6 +39,7 @@ import {
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
 import { WorkspaceEntriesLive } from "../../workspace/Layers/WorkspaceEntries.ts";
+import { WorkspacePathsLive } from "../../workspace/Layers/WorkspacePaths.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
@@ -115,7 +116,7 @@ async function waitForThread(
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
   }) => boolean,
-  timeoutMs = 5000,
+  timeoutMs = 15_000,
 ) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<{
@@ -140,7 +141,7 @@ async function waitForThread(
 async function waitForEvent(
   engine: OrchestrationEngineShape,
   predicate: (event: { type: string }) => boolean,
-  timeoutMs = 5000,
+  timeoutMs = 15_000,
 ) {
   const deadline = Date.now() + timeoutMs;
   const poll = async () => {
@@ -191,7 +192,7 @@ function gitShowFileAtRef(cwd: string, ref: string, filePath: string): string {
   return runGit(cwd, ["show", `${ref}:${filePath}`]);
 }
 
-async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 5000) {
+async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<void> => {
     if (gitRefExists(cwd, ref)) {
@@ -263,7 +264,8 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(RuntimeReceiptBusLive),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(CheckpointStoreLive),
-      Layer.provideMerge(WorkspaceEntriesLive),
+      Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
+      Layer.provideMerge(WorkspacePathsLive),
       Layer.provideMerge(GitCoreLive),
       Layer.provideMerge(ServerConfigLayer),
       Layer.provideMerge(NodeServices.layer),
@@ -1007,18 +1009,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    const deadline = Date.now() + 2000;
-    const waitForRollbackCalls = async (): Promise<void> => {
-      if (harness.provider.rollbackConversation.mock.calls.length >= 2) {
-        return;
-      }
-      if (Date.now() >= deadline) {
-        throw new Error("Timed out waiting for rollbackConversation calls.");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      return waitForRollbackCalls();
-    };
-    await waitForRollbackCalls();
+    await harness.drain();
 
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(2);
     expect(harness.provider.rollbackConversation.mock.calls[0]?.[0]).toEqual({

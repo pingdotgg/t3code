@@ -14,7 +14,7 @@ import {
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 
-import { GitManagerError } from "../Errors.ts";
+import { GitManagerError } from "@t3tools/contracts";
 import {
   GitManager,
   type GitActionProgressReporter,
@@ -25,7 +25,7 @@ import { GitCore } from "../Services/GitCore.ts";
 import { GitHubCli } from "../Services/GitHubCli.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import type { GitManagerServiceError } from "../Errors.ts";
+import type { GitManagerServiceError } from "@t3tools/contracts";
 
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;

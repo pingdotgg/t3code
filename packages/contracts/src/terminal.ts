@@ -149,3 +149,74 @@ export const TerminalEvent = Schema.Union([
   TerminalActivityEvent,
 ]);
 export type TerminalEvent = typeof TerminalEvent.Type;
+
+export class TerminalCwdError extends Schema.TaggedErrorClass<TerminalCwdError>()(
+  "TerminalCwdError",
+  {
+    cwd: Schema.String,
+    reason: Schema.Literals(["notFound", "notDirectory", "statFailed"]),
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message() {
+    if (this.reason === "notDirectory") {
+      return `Terminal cwd is not a directory: ${this.cwd}`;
+    }
+    if (this.reason === "notFound") {
+      return `Terminal cwd does not exist: ${this.cwd}`;
+    }
+    const causeMessage =
+      this.cause && typeof this.cause === "object" && "message" in this.cause
+        ? this.cause.message
+        : undefined;
+    return causeMessage
+      ? `Failed to access terminal cwd: ${this.cwd} (${causeMessage})`
+      : `Failed to access terminal cwd: ${this.cwd}`;
+  }
+}
+
+export class TerminalHistoryError extends Schema.TaggedErrorClass<TerminalHistoryError>()(
+  "TerminalHistoryError",
+  {
+    operation: Schema.Literals(["read", "truncate", "migrate"]),
+    threadId: Schema.String,
+    terminalId: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message() {
+    return `Failed to ${this.operation} terminal history for thread: ${this.threadId}, terminal: ${this.terminalId}`;
+  }
+}
+
+export class TerminalSessionLookupError extends Schema.TaggedErrorClass<TerminalSessionLookupError>()(
+  "TerminalSessionLookupError",
+  {
+    threadId: Schema.String,
+    terminalId: Schema.String,
+  },
+) {
+  override get message() {
+    return `Unknown terminal thread: ${this.threadId}, terminal: ${this.terminalId}`;
+  }
+}
+
+export class TerminalNotRunningError extends Schema.TaggedErrorClass<TerminalNotRunningError>()(
+  "TerminalNotRunningError",
+  {
+    threadId: Schema.String,
+    terminalId: Schema.String,
+  },
+) {
+  override get message() {
+    return `Terminal is not running for thread: ${this.threadId}, terminal: ${this.terminalId}`;
+  }
+}
+
+export const TerminalError = Schema.Union([
+  TerminalCwdError,
+  TerminalHistoryError,
+  TerminalSessionLookupError,
+  TerminalNotRunningError,
+]);
+export type TerminalError = typeof TerminalError.Type;

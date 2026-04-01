@@ -1,6 +1,5 @@
 import type {
   GitCheckoutInput,
-  GitActionProgressEvent,
   GitCreateBranchInput,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -14,8 +13,6 @@ import type {
   GitPullResult,
   GitRemoveWorktreeInput,
   GitResolvePullRequestResult,
-  GitRunStackedActionInput,
-  GitRunStackedActionResult,
   GitStatusInput,
   GitStatusResult,
 } from "./git";
@@ -161,8 +158,6 @@ export interface NativeApi {
     // Stacked action API
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
-    runStackedAction: (input: GitRunStackedActionInput) => Promise<GitRunStackedActionResult>;
-    onActionProgress: (callback: (event: GitActionProgressEvent) => void) => () => void;
   };
   contextMenu: {
     show: <T extends string>(

@@ -14,7 +14,7 @@ import { ClaudeModelSelection } from "@t3tools/contracts";
 import { resolveApiModelId } from "@t3tools/shared/model";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
-import { TextGenerationError } from "../Errors.ts";
+import { TextGenerationError } from "@t3tools/contracts";
 import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
 import {
   buildBranchNamePrompt,

@@ -1,26 +1,21 @@
-import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { useQuery } from "@tanstack/react-query";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useSettings } from "~/hooks/useSettings";
-
-const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
+import { useServerKeybindings } from "~/rpc/serverState";
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadIdsSize = useThreadSelectionStore((state) => state.selectedThreadIds.size);
   const { activeDraftThread, activeThread, defaultProjectId, handleNewThread, routeThreadId } =
     useHandleNewThread();
-  const serverConfigQuery = useQuery(serverConfigQueryOptions());
-  const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
+  const keybindings = useServerKeybindings();
   const terminalOpen = useTerminalStateStore((state) =>
     routeThreadId
       ? selectThreadTerminalState(state.terminalStateByThreadId, routeThreadId).terminalOpen

@@ -6,9 +6,8 @@ import {
   type OrchestrationReadModel,
   type ProjectId,
   type ServerConfig,
+  type ServerLifecycleWelcomePayload,
   type ThreadId,
-  type WsWelcomePayload,
-  WS_CHANNELS,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
@@ -18,8 +17,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { __resetNativeApiForTests } from "../nativeApi";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
 
 const THREAD_ID = "thread-kb-toast-test" as ThreadId;
 const PROJECT_ID = "project-1" as ProjectId;
@@ -28,12 +29,11 @@ const NOW_ISO = "2026-03-04T12:00:00.000Z";
 interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
-  welcome: WsWelcomePayload;
+  welcome: ServerLifecycleWelcomePayload;
 }
 
 let fixture: TestFixture;
-let wsClient: { send: (data: string) => void } | null = null;
-let pushSequence = 1;
+const rpcHarness = new BrowserWsRpcHarness();
 
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
@@ -179,52 +179,23 @@ function resolveWsRpc(tag: string): unknown {
 
 const worker = setupWorker(
   wsLink.addEventListener("connection", ({ client }) => {
-    wsClient = client;
-    pushSequence = 1;
-    client.send(
-      JSON.stringify({
-        type: "push",
-        sequence: pushSequence++,
-        channel: WS_CHANNELS.serverWelcome,
-        data: fixture.welcome,
-      }),
-    );
+    void rpcHarness.connect(client);
     client.addEventListener("message", (event) => {
       const rawData = event.data;
       if (typeof rawData !== "string") return;
-      let request: { id: string; body: { _tag: string; [key: string]: unknown } };
-      try {
-        request = JSON.parse(rawData);
-      } catch {
-        return;
-      }
-      const method = request.body?._tag;
-      if (typeof method !== "string") return;
-      client.send(
-        JSON.stringify({
-          id: request.id,
-          result: resolveWsRpc(method),
-        }),
-      );
+      void rpcHarness.onMessage(rawData);
     });
   }),
   http.get("*/attachments/:attachmentId", () => new HttpResponse(null, { status: 204 })),
   http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
 );
 
-function sendServerConfigUpdatedPush(issues: Array<{ kind: string; message: string }>) {
-  if (!wsClient) throw new Error("WebSocket client not connected");
-  wsClient.send(
-    JSON.stringify({
-      type: "push",
-      sequence: pushSequence++,
-      channel: WS_CHANNELS.serverConfigUpdated,
-      data: {
-        issues,
-        providers: fixture.serverConfig.providers,
-      },
-    }),
-  );
+function sendServerConfigUpdatedPush(issues: ServerConfig["issues"]) {
+  rpcHarness.emitStreamValue(WS_METHODS.subscribeServerConfig, {
+    version: 1,
+    type: "keybindingsUpdated",
+    payload: { issues },
+  });
 }
 
 function queryToastTitles(): string[] {
@@ -308,13 +279,39 @@ describe("Keybindings update toast", () => {
   });
 
   afterAll(async () => {
+    await rpcHarness.disconnect();
     await worker.stop();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await rpcHarness.reset({
+      resolveUnary: (request) => resolveWsRpc(request._tag),
+      getInitialStreamValues: (request) => {
+        if (request._tag === WS_METHODS.subscribeServerLifecycle) {
+          return [
+            {
+              version: 1,
+              sequence: 1,
+              type: "welcome",
+              payload: fixture.welcome,
+            },
+          ];
+        }
+        if (request._tag === WS_METHODS.subscribeServerConfig) {
+          return [
+            {
+              version: 1,
+              type: "snapshot",
+              config: fixture.serverConfig,
+            },
+          ];
+        }
+        return [];
+      },
+    });
+    __resetNativeApiForTests();
     localStorage.clear();
     document.body.innerHTML = "";
-    pushSequence = 1;
     useComposerDraftStore.setState({
       draftsByThreadId: {},
       draftThreadsByThreadId: {},

@@ -46,7 +46,8 @@ import {
 } from "../codexAccount";
 import { probeCodexAccount } from "../codexAppServer";
 import { CodexProvider } from "../Services/CodexProvider";
-import { ServerSettingsError, ServerSettingsService } from "../../serverSettings";
+import { ServerSettingsService } from "../../serverSettings";
+import { ServerSettingsError } from "@t3tools/contracts";
 
 const PROVIDER = "codex" as const;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);

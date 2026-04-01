@@ -1,309 +1,131 @@
+import { Duration, Effect, Exit, ManagedRuntime, Option, Scope, Stream } from "effect";
+
 import {
-  type WsPush,
-  type WsPushChannel,
-  type WsPushMessage,
-  WebSocketResponse,
-  type WsResponse as WsResponseMessage,
-  WsResponse as WsResponseSchema,
-} from "@t3tools/contracts";
-import { decodeUnknownJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
-import { Result, Schema } from "effect";
-
-type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
-
-interface PendingRequest {
-  resolve: (result: unknown) => void;
-  reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout> | null;
-}
+  createWsRpcProtocolLayer,
+  makeWsRpcProtocolClient,
+  type WsRpcProtocolClient,
+} from "./rpc/protocol";
+import { RpcClient } from "effect/unstable/rpc";
 
 interface SubscribeOptions {
-  readonly replayLatest?: boolean;
+  readonly retryDelay?: Duration.Input;
 }
 
 interface RequestOptions {
-  readonly timeoutMs?: number | null;
+  readonly timeout?: Option.Option<Duration.Input>;
 }
 
-type TransportState = "connecting" | "open" | "reconnecting" | "closed" | "disposed";
+const DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS = Duration.millis(250);
 
-const REQUEST_TIMEOUT_MS = 60_000;
-const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
-const decodeWsResponse = decodeUnknownJsonResult(WsResponseSchema);
-const isWebSocketResponseEnvelope = Schema.is(WebSocketResponse);
-
-const isWsPushMessage = (value: WsResponseMessage): value is WsPush =>
-  "type" in value && value.type === "push";
-
-interface WsRequestEnvelope {
-  id: string;
-  body: {
-    _tag: string;
-    [key: string]: unknown;
-  };
-}
-
-function asError(value: unknown, fallback: string): Error {
-  if (value instanceof Error) {
-    return value;
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
   }
-  return new Error(fallback);
+  return String(error);
 }
 
 export class WsTransport {
-  private ws: WebSocket | null = null;
-  private nextId = 1;
-  private readonly pending = new Map<string, PendingRequest>();
-  private readonly listeners = new Map<string, Set<(message: WsPush) => void>>();
-  private readonly latestPushByChannel = new Map<string, WsPush>();
-  private readonly outboundQueue: string[] = [];
-  private reconnectAttempt = 0;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly runtime: ManagedRuntime.ManagedRuntime<RpcClient.Protocol, never>;
+  private readonly clientScope: Scope.Closeable;
+  private readonly clientPromise: Promise<WsRpcProtocolClient>;
   private disposed = false;
-  private state: TransportState = "connecting";
-  private readonly url: string;
 
   constructor(url?: string) {
-    const bridgeUrl = window.desktopBridge?.getWsUrl();
-    const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-    this.url =
-      url ??
-      (bridgeUrl && bridgeUrl.length > 0
-        ? bridgeUrl
-        : envUrl && envUrl.length > 0
-          ? envUrl
-          : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`);
-    this.connect();
+    this.runtime = ManagedRuntime.make(createWsRpcProtocolLayer(url));
+    this.clientScope = this.runtime.runSync(Scope.make());
+    this.clientPromise = this.runtime.runPromise(
+      Scope.provide(this.clientScope)(makeWsRpcProtocolClient),
+    );
   }
 
-  async request<T = unknown>(
-    method: string,
-    params?: unknown,
-    options?: RequestOptions,
-  ): Promise<T> {
-    if (typeof method !== "string" || method.length === 0) {
-      throw new Error("Request method is required");
+  async request<TSuccess>(
+    execute: (client: WsRpcProtocolClient) => Effect.Effect<TSuccess, Error, never>,
+    _options?: RequestOptions,
+  ): Promise<TSuccess> {
+    if (this.disposed) {
+      throw new Error("Transport disposed");
     }
 
-    const id = String(this.nextId++);
-    const body = params != null ? { ...params, _tag: method } : { _tag: method };
-    const message: WsRequestEnvelope = { id, body };
-    const encoded = JSON.stringify(message);
-
-    return new Promise<T>((resolve, reject) => {
-      const timeoutMs = options?.timeoutMs === undefined ? REQUEST_TIMEOUT_MS : options.timeoutMs;
-      const timeout =
-        timeoutMs === null
-          ? null
-          : setTimeout(() => {
-              this.pending.delete(id);
-              reject(new Error(`Request timed out: ${method}`));
-            }, timeoutMs);
-
-      this.pending.set(id, {
-        resolve: resolve as (result: unknown) => void,
-        reject,
-        timeout,
-      });
-
-      this.send(encoded);
-    });
+    const client = await this.clientPromise;
+    return await this.runtime.runPromise(Effect.suspend(() => execute(client)));
   }
 
-  subscribe<C extends WsPushChannel>(
-    channel: C,
-    listener: PushListener<C>,
+  async requestStream<TValue>(
+    connect: (client: WsRpcProtocolClient) => Stream.Stream<TValue, Error, never>,
+    listener: (value: TValue) => void,
+  ): Promise<void> {
+    if (this.disposed) {
+      throw new Error("Transport disposed");
+    }
+
+    const client = await this.clientPromise;
+    await this.runtime.runPromise(
+      Stream.runForEach(connect(client), (value) =>
+        Effect.sync(() => {
+          try {
+            listener(value);
+          } catch {
+            // Swallow listener errors so the stream can finish cleanly.
+          }
+        }),
+      ),
+    );
+  }
+
+  subscribe<TValue>(
+    connect: (client: WsRpcProtocolClient) => Stream.Stream<TValue, Error, never>,
+    listener: (value: TValue) => void,
     options?: SubscribeOptions,
   ): () => void {
-    let channelListeners = this.listeners.get(channel);
-    if (!channelListeners) {
-      channelListeners = new Set<(message: WsPush) => void>();
-      this.listeners.set(channel, channelListeners);
+    if (this.disposed) {
+      return () => undefined;
     }
 
-    const wrappedListener = (message: WsPush) => {
-      listener(message as WsPushMessage<C>);
-    };
-    channelListeners.add(wrappedListener);
-
-    if (options?.replayLatest) {
-      const latest = this.latestPushByChannel.get(channel);
-      if (latest) {
-        wrappedListener(latest);
-      }
-    }
+    let active = true;
+    const retryDelayMs = options?.retryDelay ?? DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS;
+    const cancel = this.runtime.runCallback(
+      Effect.promise(() => this.clientPromise).pipe(
+        Effect.flatMap((client) =>
+          Stream.runForEach(connect(client), (value) =>
+            Effect.sync(() => {
+              if (!active) {
+                return;
+              }
+              try {
+                listener(value);
+              } catch {
+                // Swallow listener errors so the stream stays live.
+              }
+            }),
+          ),
+        ),
+        Effect.catch((error) => {
+          if (!active || this.disposed) {
+            return Effect.interrupt;
+          }
+          return Effect.sync(() => {
+            console.warn("WebSocket RPC subscription disconnected", {
+              error: formatErrorMessage(error),
+            });
+          }).pipe(Effect.andThen(Effect.sleep(retryDelayMs)));
+        }),
+        Effect.forever,
+      ),
+    );
 
     return () => {
-      channelListeners?.delete(wrappedListener);
-      if (channelListeners?.size === 0) {
-        this.listeners.delete(channel);
-      }
+      active = false;
+      cancel();
     };
   }
 
-  getLatestPush<C extends WsPushChannel>(channel: C): WsPushMessage<C> | null {
-    const latest = this.latestPushByChannel.get(channel);
-    return latest ? (latest as WsPushMessage<C>) : null;
-  }
-
-  getState(): TransportState {
-    return this.state;
-  }
-
-  dispose() {
+  async dispose() {
+    if (this.disposed) {
+      return;
+    }
     this.disposed = true;
-    this.state = "disposed";
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    for (const pending of this.pending.values()) {
-      if (pending.timeout !== null) {
-        clearTimeout(pending.timeout);
-      }
-      pending.reject(new Error("Transport disposed"));
-    }
-    this.pending.clear();
-    this.outboundQueue.length = 0;
-    this.ws?.close();
-    this.ws = null;
-  }
-
-  private connect() {
-    if (this.disposed) {
-      return;
-    }
-
-    this.state = this.reconnectAttempt > 0 ? "reconnecting" : "connecting";
-    const ws = new WebSocket(this.url);
-
-    ws.addEventListener("open", () => {
-      this.ws = ws;
-      this.state = "open";
-      this.reconnectAttempt = 0;
-      this.flushQueue();
+    await this.runtime.runPromise(Scope.close(this.clientScope, Exit.void)).finally(() => {
+      this.runtime.dispose();
     });
-
-    ws.addEventListener("message", (event) => {
-      this.handleMessage(event.data);
-    });
-
-    ws.addEventListener("close", () => {
-      if (this.ws === ws) {
-        this.ws = null;
-        this.outboundQueue.length = 0;
-        for (const [id, pending] of this.pending.entries()) {
-          if (pending.timeout !== null) {
-            clearTimeout(pending.timeout);
-          }
-          this.pending.delete(id);
-          pending.reject(new Error("WebSocket connection closed."));
-        }
-      }
-      if (this.disposed) {
-        this.state = "disposed";
-        return;
-      }
-      this.state = "closed";
-      this.scheduleReconnect();
-    });
-
-    ws.addEventListener("error", (event) => {
-      // Log WebSocket errors for debugging (close event will follow)
-      console.warn("WebSocket connection error", { type: event.type, url: this.url });
-    });
-  }
-
-  private handleMessage(raw: unknown) {
-    const result = decodeWsResponse(raw);
-    if (Result.isFailure(result)) {
-      console.warn("Dropped inbound WebSocket envelope", formatSchemaError(result.failure));
-      return;
-    }
-
-    const message = result.success;
-    if (isWsPushMessage(message)) {
-      this.latestPushByChannel.set(message.channel, message);
-      const channelListeners = this.listeners.get(message.channel);
-      if (channelListeners) {
-        for (const listener of channelListeners) {
-          try {
-            listener(message);
-          } catch {
-            // Swallow listener errors
-          }
-        }
-      }
-      return;
-    }
-
-    if (!isWebSocketResponseEnvelope(message)) {
-      return;
-    }
-
-    const pending = this.pending.get(message.id);
-    if (!pending) {
-      return;
-    }
-
-    if (pending.timeout !== null) {
-      clearTimeout(pending.timeout);
-    }
-    this.pending.delete(message.id);
-
-    if (message.error) {
-      pending.reject(new Error(message.error.message));
-      return;
-    }
-
-    pending.resolve(message.result);
-  }
-
-  private send(encodedMessage: string) {
-    if (this.disposed) {
-      return;
-    }
-
-    this.outboundQueue.push(encodedMessage);
-    try {
-      this.flushQueue();
-    } catch {
-      // Swallow: flushQueue has queued the message for retry on reconnect
-    }
-  }
-
-  private flushQueue() {
-    if (this.ws?.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    while (this.outboundQueue.length > 0) {
-      const message = this.outboundQueue.shift();
-      if (!message) {
-        continue;
-      }
-      try {
-        this.ws.send(message);
-      } catch (error) {
-        this.outboundQueue.unshift(message);
-        throw asError(error, "Failed to send WebSocket request.");
-      }
-    }
-  }
-
-  private scheduleReconnect() {
-    if (this.disposed || this.reconnectTimer !== null) {
-      return;
-    }
-
-    const delay =
-      RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)] ??
-      RECONNECT_DELAYS_MS[0]!;
-
-    this.reconnectAttempt += 1;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect();
-    }, delay);
   }
 }

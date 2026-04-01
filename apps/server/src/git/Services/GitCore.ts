@@ -22,7 +22,7 @@ import type {
   GitStatusResult,
 } from "@t3tools/contracts";
 
-import type { GitCommandError } from "../Errors.ts";
+import type { GitCommandError } from "@t3tools/contracts";
 
 export interface ExecuteGitInput {
   readonly operation: string;

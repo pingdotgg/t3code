@@ -1,30 +1,15 @@
 import { FolderIcon } from "lucide-react";
 import { useState } from "react";
-
-function getServerHttpOrigin(): string {
-  const bridgeUrl = window.desktopBridge?.getWsUrl();
-  const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-  const wsUrl =
-    bridgeUrl && bridgeUrl.length > 0
-      ? bridgeUrl
-      : envUrl && envUrl.length > 0
-        ? envUrl
-        : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`;
-  // Parse to extract just the origin, dropping path/query (e.g. ?token=…)
-  const httpUrl = wsUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
-  try {
-    return new URL(httpUrl).origin;
-  } catch {
-    return httpUrl;
-  }
-}
-
-const serverHttpOrigin = getServerHttpOrigin();
+import { resolveServerUrl } from "~/lib/utils";
 
 const loadedProjectFaviconSrcs = new Set<string>();
 
 export function ProjectFavicon({ cwd, className }: { cwd: string; className?: string }) {
-  const src = `${serverHttpOrigin}/api/project-favicon?cwd=${encodeURIComponent(cwd)}`;
+  const src = resolveServerUrl({
+    protocol: "http",
+    pathname: "/api/project-favicon",
+    searchParams: { cwd },
+  });
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
     loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading",
   );

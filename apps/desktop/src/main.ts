@@ -399,7 +399,7 @@ function resolveAboutCommitHash(): string | null {
 }
 
 function resolveBackendEntry(): string {
-  return Path.join(resolveAppRoot(), "apps/server/dist/index.mjs");
+  return Path.join(resolveAppRoot(), "apps/server/dist/bin.mjs");
 }
 
 function resolveBackendCwd(): string {

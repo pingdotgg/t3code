@@ -3,7 +3,7 @@ import { Duration, Effect, PubSub, Ref, Scope, Stream } from "effect";
 import * as Semaphore from "effect/Semaphore";
 
 import type { ServerProviderShape } from "./Services/ServerProvider";
-import { ServerSettingsError } from "../serverSettings";
+import { ServerSettingsError } from "@t3tools/contracts";
 
 export function makeManagedServerProvider<Settings>(input: {
   readonly getSettings: Effect.Effect<Settings>;

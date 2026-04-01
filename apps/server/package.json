@@ -8,29 +8,29 @@
     "directory": "apps/server"
   },
   "bin": {
-    "t3": "./dist/index.mjs"
+    "t3": "./dist/bin.mjs"
   },
   "files": [
     "dist"
   ],
   "type": "module",
   "scripts": {
-    "dev": "bun run src/index.ts",
+    "dev": "bun run src/bin.ts",
     "build": "node scripts/cli.ts build",
-    "start": "node dist/index.mjs",
+    "start": "node dist/bin.mjs",
     "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.77",
+    "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
     "@pierre/diffs": "^1.1.0-beta.16",
     "effect": "catalog:",
     "node-pty": "^1.1.0",
-    "open": "^10.1.0",
-    "ws": "^8.18.0"
+    "open": "^10.1.0"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",
@@ -40,7 +40,6 @@
     "@t3tools/web": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
-    "@types/ws": "^8.5.13",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

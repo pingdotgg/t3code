@@ -10,84 +10,58 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalCwdError,
+  TerminalError,
+  TerminalHistoryError,
+  TerminalNotRunningError,
   TerminalOpenInput,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalSessionSnapshot,
+  TerminalSessionLookupError,
+  TerminalSessionStatus,
   TerminalWriteInput,
 } from "@t3tools/contracts";
-import { Effect, Schema, ServiceMap } from "effect";
+import { PtyProcess } from "./PTY";
+import { Effect, ServiceMap } from "effect";
 
-export class TerminalCwdError extends Schema.TaggedErrorClass<TerminalCwdError>()(
-  "TerminalCwdError",
-  {
-    cwd: Schema.String,
-    reason: Schema.Literals(["notFound", "notDirectory", "statFailed"]),
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message() {
-    if (this.reason === "notDirectory") {
-      return `Terminal cwd is not a directory: ${this.cwd}`;
-    }
-    if (this.reason === "notFound") {
-      return `Terminal cwd does not exist: ${this.cwd}`;
-    }
-    const causeMessage =
-      this.cause && typeof this.cause === "object" && "message" in this.cause
-        ? this.cause.message
-        : undefined;
-    return causeMessage
-      ? `Failed to access terminal cwd: ${this.cwd} (${causeMessage})`
-      : `Failed to access terminal cwd: ${this.cwd}`;
-  }
-}
-
-export class TerminalHistoryError extends Schema.TaggedErrorClass<TerminalHistoryError>()(
-  "TerminalHistoryError",
-  {
-    operation: Schema.Literals(["read", "truncate", "migrate"]),
-    threadId: Schema.String,
-    terminalId: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message() {
-    return `Failed to ${this.operation} terminal history for thread: ${this.threadId}, terminal: ${this.terminalId}`;
-  }
-}
-
-export class TerminalSessionLookupError extends Schema.TaggedErrorClass<TerminalSessionLookupError>()(
-  "TerminalSessionLookupError",
-  {
-    threadId: Schema.String,
-    terminalId: Schema.String,
-  },
-) {
-  override get message() {
-    return `Unknown terminal thread: ${this.threadId}, terminal: ${this.terminalId}`;
-  }
-}
-
-export class TerminalNotRunningError extends Schema.TaggedErrorClass<TerminalNotRunningError>()(
-  "TerminalNotRunningError",
-  {
-    threadId: Schema.String,
-    terminalId: Schema.String,
-  },
-) {
-  override get message() {
-    return `Terminal is not running for thread: ${this.threadId}, terminal: ${this.terminalId}`;
-  }
-}
-
-export const TerminalError = Schema.Union([
+export {
   TerminalCwdError,
+  TerminalError,
   TerminalHistoryError,
-  TerminalSessionLookupError,
   TerminalNotRunningError,
-]);
-export type TerminalError = typeof TerminalError.Type;
+  TerminalSessionLookupError,
+};
+
+export interface TerminalSessionState {
+  threadId: string;
+  terminalId: string;
+  cwd: string;
+  status: TerminalSessionStatus;
+  pid: number | null;
+  history: string;
+  pendingHistoryControlSequence: string;
+  exitCode: number | null;
+  exitSignal: number | null;
+  updatedAt: string;
+  cols: number;
+  rows: number;
+  process: PtyProcess | null;
+  unsubscribeData: (() => void) | null;
+  unsubscribeExit: (() => void) | null;
+  hasRunningSubprocess: boolean;
+  runtimeEnv: Record<string, string> | null;
+}
+
+export interface ShellCandidate {
+  shell: string;
+  args?: string[];
+}
+
+export interface TerminalStartInput extends TerminalOpenInput {
+  cols: number;
+  rows: number;
+}
 
 /**
  * TerminalManagerShape - Service API for terminal session lifecycle operations.

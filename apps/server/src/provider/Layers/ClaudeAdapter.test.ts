@@ -208,6 +208,9 @@ async function readFirstPromptText(
   if (next.done) {
     return undefined;
   }
+  if (typeof next.value.message.content === "string") {
+    return next.value.message.content;
+  }
   const content = next.value.message.content[0];
   if (!content || content.type !== "text") {
     return undefined;

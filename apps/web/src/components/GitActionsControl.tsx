@@ -295,74 +295,6 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     : null;
 
   useEffect(() => {
-    const api = readNativeApi();
-    if (!api) {
-      return;
-    }
-
-    const applyProgressEvent = (event: GitActionProgressEvent) => {
-      const progress = activeGitActionProgressRef.current;
-      if (!progress) {
-        return;
-      }
-      if (gitCwd && event.cwd !== gitCwd) {
-        return;
-      }
-      if (progress.actionId !== event.actionId) {
-        return;
-      }
-
-      const now = Date.now();
-      switch (event.kind) {
-        case "action_started":
-          progress.phaseStartedAtMs = now;
-          progress.hookStartedAtMs = null;
-          progress.hookName = null;
-          progress.lastOutputLine = null;
-          break;
-        case "phase_started":
-          progress.title = event.label;
-          progress.currentPhaseLabel = event.label;
-          progress.phaseStartedAtMs = now;
-          progress.hookStartedAtMs = null;
-          progress.hookName = null;
-          progress.lastOutputLine = null;
-          break;
-        case "hook_started":
-          progress.title = `Running ${event.hookName}...`;
-          progress.hookName = event.hookName;
-          progress.hookStartedAtMs = now;
-          progress.lastOutputLine = null;
-          break;
-        case "hook_output":
-          progress.lastOutputLine = event.text;
-          break;
-        case "hook_finished":
-          progress.title = progress.currentPhaseLabel ?? "Committing...";
-          progress.hookName = null;
-          progress.hookStartedAtMs = null;
-          progress.lastOutputLine = null;
-          break;
-        case "action_finished":
-          // Don't clear timestamps here — the HTTP response handler (line 496)
-          // sets activeGitActionProgressRef to null and shows the success toast.
-          // Clearing timestamps early causes the "Running for Xs" description
-          // to disappear before the success state renders, leaving a bare
-          // "Pushing..." toast in the gap between the WS event and HTTP response.
-          return;
-        case "action_failed":
-          // Same reasoning as action_finished — let the HTTP error handler
-          // manage the final toast state to avoid a flash of bare title.
-          return;
-      }
-
-      updateActiveProgressToast();
-    };
-
-    return api.git.onActionProgress(applyProgressEvent);
-  }, [gitCwd, updateActiveProgressToast]);
-
-  useEffect(() => {
     const interval = window.setInterval(() => {
       if (!activeGitActionProgressRef.current) {
         return;
@@ -483,12 +415,69 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         });
       }
 
+      const applyProgressEvent = (event: GitActionProgressEvent) => {
+        const progress = activeGitActionProgressRef.current;
+        if (!progress) {
+          return;
+        }
+        if (gitCwd && event.cwd !== gitCwd) {
+          return;
+        }
+        if (progress.actionId !== event.actionId) {
+          return;
+        }
+
+        const now = Date.now();
+        switch (event.kind) {
+          case "action_started":
+            progress.phaseStartedAtMs = now;
+            progress.hookStartedAtMs = null;
+            progress.hookName = null;
+            progress.lastOutputLine = null;
+            break;
+          case "phase_started":
+            progress.title = event.label;
+            progress.currentPhaseLabel = event.label;
+            progress.phaseStartedAtMs = now;
+            progress.hookStartedAtMs = null;
+            progress.hookName = null;
+            progress.lastOutputLine = null;
+            break;
+          case "hook_started":
+            progress.title = `Running ${event.hookName}...`;
+            progress.hookName = event.hookName;
+            progress.hookStartedAtMs = now;
+            progress.lastOutputLine = null;
+            break;
+          case "hook_output":
+            progress.lastOutputLine = event.text;
+            break;
+          case "hook_finished":
+            progress.title = progress.currentPhaseLabel ?? "Committing...";
+            progress.hookName = null;
+            progress.hookStartedAtMs = null;
+            progress.lastOutputLine = null;
+            break;
+          case "action_finished":
+            // Let the resolved mutation update the toast so we keep the
+            // elapsed description visible until the final success state renders.
+            return;
+          case "action_failed":
+            // Let the rejected mutation publish the error toast to avoid a
+            // transient intermediate state before the final failure message.
+            return;
+        }
+
+        updateActiveProgressToast();
+      };
+
       const promise = runImmediateGitActionMutation.mutateAsync({
         actionId,
         action,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
+        onProgress: applyProgressEvent,
       });
 
       try {

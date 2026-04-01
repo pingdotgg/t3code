@@ -12,12 +12,13 @@ import { WorkspacePathsLive } from "./WorkspacePaths.ts";
 
 const ProjectLayer = WorkspaceFileSystemLive.pipe(
   Layer.provide(WorkspacePathsLive),
-  Layer.provide(WorkspaceEntriesLive),
+  Layer.provide(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
 );
 
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(ProjectLayer),
-  Layer.provideMerge(WorkspaceEntriesLive),
+  Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
+  Layer.provideMerge(WorkspacePathsLive),
   Layer.provideMerge(GitCoreLive),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), {

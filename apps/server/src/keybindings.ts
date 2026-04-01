@@ -9,6 +9,7 @@
 import {
   KeybindingRule,
   KeybindingsConfig,
+  KeybindingsConfigError,
   KeybindingShortcut,
   KeybindingWhenNode,
   MAX_KEYBINDINGS_COUNT,
@@ -45,19 +46,6 @@ import {
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
-
-export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
-  "KeybindingsConfigParseError",
-  {
-    configPath: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Unable to parse keybindings config at ${this.configPath}: ${this.detail}`;
-  }
-}
 
 type WhenToken =
   | { type: "identifier"; value: string }

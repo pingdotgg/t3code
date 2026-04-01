@@ -10,7 +10,7 @@ import { CheckpointStoreLive } from "./CheckpointStore.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
 import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
-import { GitCommandError } from "../../git/Errors.ts";
+import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../../config.ts";
 import { ThreadId } from "@t3tools/contracts";
 
