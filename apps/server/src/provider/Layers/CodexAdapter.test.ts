@@ -19,8 +19,8 @@ import { Effect, Fiber, Layer, Option, Stream } from "effect";
 import {
   CodexAppServerManager,
   type CodexAppServerStartSessionInput,
-  type CodexAppServerSendTurnInput,
 } from "../../codexAppServerManager.ts";
+import type { CodexAppServerSendTurnInput } from "../../codexAppServerManager.shared.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";

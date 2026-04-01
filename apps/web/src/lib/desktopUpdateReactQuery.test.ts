@@ -4,8 +4,8 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 import {
   desktopUpdateQueryKeys,
   desktopUpdateStateQueryOptions,
-  setDesktopUpdateStateQueryData,
-} from "./desktopUpdateReactQuery";
+} from "./desktopUpdateReactQuery.shared";
+import { setDesktopUpdateStateQueryData } from "./desktopUpdateReactQuery";
 
 const baseState: DesktopUpdateState = {
   enabled: true,

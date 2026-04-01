@@ -18,7 +18,7 @@ import { OrchestrationEventStoreLive } from "../../persistence/Layers/Orchestrat
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
+} from "../../persistence/Layers/Sqlite.testing.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import {

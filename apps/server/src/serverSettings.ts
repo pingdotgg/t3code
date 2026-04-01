@@ -16,7 +16,6 @@ import {
   type ModelSelection,
   type ProviderKind,
   ServerSettings,
-  ServerSettingsError,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import {
@@ -36,14 +35,26 @@ import {
   Scope,
   ServiceMap,
   Stream,
-  Cause,
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 
-export interface ServerSettingsShape {
+export class ServerSettingsError extends Schema.TaggedErrorClass<ServerSettingsError>()(
+  "ServerSettingsError",
+  {
+    settingsPath: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Server settings error at ${this.settingsPath}: ${this.detail}`;
+  }
+}
+
+interface ServerSettingsShape {
   /** Start the settings runtime and attach file watching. */
   readonly start: Effect.Effect<void, ServerSettingsError>;
 
@@ -204,7 +215,6 @@ const makeServerSettings = Effect.gen(function* () {
     if (decoded._tag === "Failure") {
       yield* Effect.logWarning("failed to parse settings.json, using defaults", {
         path: settingsPath,
-        issues: Cause.pretty(decoded.cause),
       });
       return DEFAULT_SERVER_SETTINGS;
     }

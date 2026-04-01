@@ -4,12 +4,12 @@ import {
   buildGitActionProgressStages,
   buildMenuItems,
   requiresDefaultBranchConfirmation,
-  resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
+import { resolveAutoFeatureBranchName } from "./GitActionsControl.logic.testing";
 
 function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
   return {

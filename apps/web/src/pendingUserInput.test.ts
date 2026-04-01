@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildPendingUserInputAnswers,
-  countAnsweredPendingUserInputQuestions,
   derivePendingUserInputProgress,
-  findFirstUnansweredPendingUserInputQuestionIndex,
-  resolvePendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
 } from "./pendingUserInput";
+import {
+  countAnsweredPendingUserInputQuestions,
+  resolvePendingUserInputAnswer,
+} from "./pendingUserInput.shared";
+import { findFirstUnansweredPendingUserInputQuestionIndex } from "./pendingUserInput.testing";
 
 describe("resolvePendingUserInputAnswer", () => {
   it("prefers a custom answer over a selected option", () => {

@@ -97,7 +97,7 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
   );
 }
 
-export function parseClaudeAuthStatusFromOutput(result: CommandResult): {
+function parseClaudeAuthStatusFromOutput(result: CommandResult): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: Pick<ServerProviderAuth, "status">;
   readonly message?: string;
@@ -438,7 +438,7 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (args: Readonly
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
-export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
+const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   resolveSubscriptionType?: (binaryPath: string) => Effect.Effect<string | undefined>,
 ): Effect.fn.Return<
   ServerProvider,

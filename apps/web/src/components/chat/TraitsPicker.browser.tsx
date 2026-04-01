@@ -17,12 +17,14 @@ import { render } from "vitest-browser-react";
 
 import { TraitsPicker } from "./TraitsPicker";
 import {
-  ComposerThreadDraftState,
   useComposerDraftStore,
   useComposerThreadDraft,
   useEffectiveComposerModelState,
 } from "../../composerDraftStore";
-import { COMPOSER_DRAFT_STORAGE_KEY } from "../../composerDraftStore.shared";
+import {
+  COMPOSER_DRAFT_STORAGE_KEY,
+  type ComposerThreadDraftState,
+} from "../../composerDraftStore.shared";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 // ── Claude TraitsPicker tests ─────────────────────────────────────────

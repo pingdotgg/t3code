@@ -17,6 +17,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   type ServerProvider,
+  type ServerSettingsPatch,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
@@ -28,11 +29,14 @@ import {
   hasCustomModelProvider,
   parseAuthStatusFromOutput,
   readCodexConfigModelProvider,
-} from "./CodexProvider";
-import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
+} from "./CodexProvider.testing";
+import {
+  checkClaudeProviderStatus,
+  parseClaudeAuthStatusFromOutput,
+} from "./ClaudeProvider.testing";
 import { ProviderRegistryLive } from "./ProviderRegistry";
 import { haveProvidersChanged } from "./ProviderRegistry.shared";
-import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
+import { ServerSettingsService } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
 
 // ── Test helpers ────────────────────────────────────────────────────
@@ -108,7 +112,7 @@ function makeMutableServerSettingsService(
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
-      updateSettings: (patch) =>
+      updateSettings: (patch: ServerSettingsPatch) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);
           const next = Schema.decodeSync(ServerSettings)(deepMerge(current, patch));
@@ -117,7 +121,7 @@ function makeMutableServerSettingsService(
           return next;
         }),
       streamChanges: Stream.fromPubSub(changes),
-    } satisfies ServerSettingsShape;
+    };
   });
 }
 
@@ -519,7 +523,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+            Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings as never)),
             Layer.provideMerge(
               mockCommandSpawnerLayer((command, args) => {
                 const joined = args.join(" ");
@@ -538,7 +542,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           );
           const runtimeServices = yield* Layer.build(
             Layer.mergeAll(
-              Layer.succeed(ServerSettingsService, serverSettings),
+              Layer.succeed(ServerSettingsService, serverSettings as never),
               providerRegistryLayer,
             ),
           ).pipe(Scope.provide(scope));

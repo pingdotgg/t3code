@@ -16,7 +16,7 @@ import {
   applyOrchestrationEvents,
   syncServerReadModel,
   type AppState,
-} from "./store";
+} from "./store.logic";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {

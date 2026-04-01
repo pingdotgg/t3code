@@ -3,24 +3,26 @@ import { describe, expect, it } from "vitest";
 
 import {
   appendTerminalContextsToPrompt,
-  buildTerminalContextPreviewTitle,
-  buildTerminalContextBlock,
-  countInlineTerminalContextPlaceholders,
   deriveDisplayedUserMessageState,
   ensureInlineTerminalContextPlaceholders,
-  extractTrailingTerminalContexts,
   filterTerminalContextsWithText,
   formatInlineTerminalContextLabel,
   formatTerminalContextLabel,
-  hasTerminalContextText,
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   insertInlineTerminalContextPlaceholder,
   isTerminalContextExpired,
-  materializeInlineTerminalContextPrompt,
   removeInlineTerminalContextPlaceholder,
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "./terminalContext";
+import {
+  buildTerminalContextBlock,
+  countInlineTerminalContextPlaceholders,
+  extractTrailingTerminalContexts,
+  hasTerminalContextText,
+  materializeInlineTerminalContextPrompt,
+} from "./terminalContext.shared";
+import { buildTerminalContextPreviewTitle } from "./terminalContext.testing";
 
 function makeContext(overrides?: Partial<TerminalContextDraft>): TerminalContextDraft {
   return {
