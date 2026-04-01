@@ -43,3 +43,8 @@ export const makeSqlitePersistenceLive = (dbPath: string) =>
 
     return Layer.provideMerge(setup, makeRuntimeSqliteLayer({ filename: dbPath }));
   }).pipe(Layer.unwrap);
+
+export const SqlitePersistenceMemory = Layer.provideMerge(
+  setup,
+  makeRuntimeSqliteLayer({ filename: ":memory:" }),
+);

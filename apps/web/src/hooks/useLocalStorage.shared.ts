@@ -1,4 +1,3 @@
-import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 const isomorphicLocalStorage: Storage =
@@ -9,7 +8,7 @@ const isomorphicLocalStorage: Storage =
         return {
           clear: () => store.clear(),
           getItem: (_) => store.get(_) ?? null,
-          key: (_) => Record.keys(store).at(_) ?? null,
+          key: (_) => Array.from(store.keys()).at(_) ?? null,
           get length() {
             return store.size;
           },
