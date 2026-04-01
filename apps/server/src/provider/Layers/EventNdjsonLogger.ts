@@ -168,90 +168,86 @@ const makeThreadWriter = Effect.fn("makeThreadWriter")(function* (input: {
   } satisfies ThreadWriter;
 });
 
-export function makeEventNdjsonLogger(
+export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function* (
   filePath: string,
   options: EventNdjsonLoggerOptions,
-): Effect.Effect<EventNdjsonLogger | undefined> {
-  return Effect.fn("makeEventNdjsonLogger")(function* (): Effect.fn.Return<
-    EventNdjsonLogger | undefined
-  > {
-    const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-    const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
-    const batchWindowMs = options.batchWindowMs ?? DEFAULT_BATCH_WINDOW_MS;
-    const streamLabel = resolveStreamLabel(options.stream);
+): Effect.fn.Return<EventNdjsonLogger | undefined> {
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
+  const batchWindowMs = options.batchWindowMs ?? DEFAULT_BATCH_WINDOW_MS;
+  const streamLabel = resolveStreamLabel(options.stream);
 
-    const directoryReady = yield* Effect.sync(() => {
-      try {
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        return true;
-      } catch (error) {
-        return { ok: false as const, error };
-      }
+  const directoryReady = yield* Effect.sync(() => {
+    try {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      return true;
+    } catch (error) {
+      return { ok: false as const, error };
+    }
+  });
+  if (directoryReady !== true) {
+    yield* logWarning("failed to create provider event log directory", {
+      filePath,
+      error: directoryReady.error,
     });
-    if (directoryReady !== true) {
-      yield* logWarning("failed to create provider event log directory", {
-        filePath,
-        error: directoryReady.error,
-      });
+    return undefined;
+  }
+
+  const threadWriters = new Map<string, ThreadWriter>();
+  const failedSegments = new Set<string>();
+
+  const resolveThreadWriter = Effect.fn("resolveThreadWriter")(function* (
+    threadSegment: string,
+  ): Effect.fn.Return<ThreadWriter | undefined> {
+    if (failedSegments.has(threadSegment)) {
+      return undefined;
+    }
+    const existing = threadWriters.get(threadSegment);
+    if (existing) {
+      return existing;
+    }
+
+    const writer = yield* makeThreadWriter({
+      filePath: path.join(path.dirname(filePath), `${threadSegment}.log`),
+      maxBytes,
+      maxFiles,
+      batchWindowMs,
+      streamLabel,
+    });
+    if (!writer) {
+      failedSegments.add(threadSegment);
       return undefined;
     }
 
-    const threadWriters = new Map<string, ThreadWriter>();
-    const failedSegments = new Set<string>();
+    threadWriters.set(threadSegment, writer);
+    return writer;
+  });
 
-    const resolveThreadWriter = Effect.fn("resolveThreadWriter")(function* (
-      threadSegment: string,
-    ): Effect.fn.Return<ThreadWriter | undefined> {
-      if (failedSegments.has(threadSegment)) {
-        return undefined;
-      }
-      const existing = threadWriters.get(threadSegment);
-      if (existing) {
-        return existing;
-      }
+  const write = Effect.fn("write")(function* (event: unknown, threadId: ThreadId | null) {
+    const threadSegment = resolveThreadSegment(threadId);
+    const message = yield* toLogMessage(event);
+    if (!message) {
+      return;
+    }
 
-      const writer = yield* makeThreadWriter({
-        filePath: path.join(path.dirname(filePath), `${threadSegment}.log`),
-        maxBytes,
-        maxFiles,
-        batchWindowMs,
-        streamLabel,
-      });
-      if (!writer) {
-        failedSegments.add(threadSegment);
-        return undefined;
-      }
+    const writer = yield* resolveThreadWriter(threadSegment);
+    if (!writer) {
+      return;
+    }
 
-      threadWriters.set(threadSegment, writer);
-      return writer;
-    });
+    yield* writer.writeMessage(message);
+  });
 
-    const write = Effect.fn("write")(function* (event: unknown, threadId: ThreadId | null) {
-      const threadSegment = resolveThreadSegment(threadId);
-      const message = yield* toLogMessage(event);
-      if (!message) {
-        return;
-      }
+  const close = Effect.fn("close")(function* () {
+    for (const writer of threadWriters.values()) {
+      yield* writer.close();
+    }
+    threadWriters.clear();
+  });
 
-      const writer = yield* resolveThreadWriter(threadSegment);
-      if (!writer) {
-        return;
-      }
-
-      yield* writer.writeMessage(message);
-    });
-
-    const close = Effect.fn("close")(function* () {
-      for (const writer of threadWriters.values()) {
-        yield* writer.close();
-      }
-      threadWriters.clear();
-    });
-
-    return {
-      filePath,
-      write,
-      close,
-    } satisfies EventNdjsonLogger;
-  })();
-}
+  return {
+    filePath,
+    write,
+    close,
+  } satisfies EventNdjsonLogger;
+});
