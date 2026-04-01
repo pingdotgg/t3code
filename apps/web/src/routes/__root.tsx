@@ -175,7 +175,10 @@ function coalesceOrchestrationUiEvents(
           ...event.payload,
           attachments: event.payload.attachments ?? previous.payload.attachments,
           createdAt: previous.payload.createdAt,
-          text: previous.payload.text + event.payload.text,
+          text:
+            !event.payload.streaming && event.payload.text.length > 0
+              ? event.payload.text
+              : previous.payload.text + event.payload.text,
         },
       };
       continue;

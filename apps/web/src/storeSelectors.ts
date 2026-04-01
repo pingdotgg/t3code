@@ -1,10 +1,9 @@
-import { type ProjectId, type ThreadId } from "@t3tools/contracts";
+import { type ThreadId } from "@t3tools/contracts";
 import { useMemo } from "react";
 import {
   selectProjectById,
   selectSidebarThreadSummaryById,
   selectThreadById,
-  selectThreadIdsByProjectId,
   useStore,
 } from "./store";
 import { type Project, type SidebarThreadSummary, type Thread } from "./types";
@@ -23,10 +22,5 @@ export function useSidebarThreadSummaryById(
   threadId: ThreadId | null | undefined,
 ): SidebarThreadSummary | undefined {
   const selector = useMemo(() => selectSidebarThreadSummaryById(threadId), [threadId]);
-  return useStore(selector);
-}
-
-export function useThreadIdsByProjectId(projectId: ProjectId | null | undefined): ThreadId[] {
-  const selector = useMemo(() => selectThreadIdsByProjectId(projectId), [projectId]);
   return useStore(selector);
 }
