@@ -842,6 +842,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   },
                   push: { status: "skipped_not_requested" as const },
                   pr: { status: "skipped_not_requested" as const },
+                  toast: {
+                    title: "Committed abc123",
+                    description: "feat: demo",
+                    cta: {
+                      kind: "run_action" as const,
+                      label: "Push",
+                      action: {
+                        kind: "push" as const,
+                      },
+                    },
+                  },
                 };
 
                 yield* (
