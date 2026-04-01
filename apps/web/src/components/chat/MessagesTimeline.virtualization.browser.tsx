@@ -2,7 +2,7 @@ import "../../index.css";
 
 import { MessageId, type TurnId } from "@t3tools/contracts";
 import { page } from "vitest/browser";
-import { useState, type ComponentProps } from "react";
+import { useCallback, useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -39,6 +39,19 @@ function MessagesTimelineBrowserHarness(
   props: Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer">,
 ) {
   const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null);
+  const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>(
+    () => props.expandedWorkGroups,
+  );
+  const handleToggleWorkGroup = useCallback(
+    (groupId: string) => {
+      setExpandedWorkGroups((current) => ({
+        ...current,
+        [groupId]: !(current[groupId] ?? false),
+      }));
+      props.onToggleWorkGroup(groupId);
+    },
+    [props],
+  );
 
   return (
     <div
@@ -46,7 +59,12 @@ function MessagesTimelineBrowserHarness(
       data-testid="messages-timeline-scroll-container"
       className="h-full overflow-y-auto overscroll-y-contain"
     >
-      <MessagesTimeline {...props} scrollContainer={scrollContainer} />
+      <MessagesTimeline
+        {...props}
+        scrollContainer={scrollContainer}
+        expandedWorkGroups={expandedWorkGroups}
+        onToggleWorkGroup={handleToggleWorkGroup}
+      />
     </div>
   );
 }
@@ -107,6 +125,7 @@ function createBaseTimelineProps(input: {
   messages?: ChatMessage[];
   proposedPlans?: ProposedPlan[];
   workEntries?: WorkLogEntry[];
+  expandedWorkGroups?: Record<string, boolean>;
   completionDividerBeforeEntryId?: string | null;
   turnDiffSummaryByAssistantMessageId?: Map<MessageId, TurnDiffSummary>;
 }): Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer"> {
@@ -124,7 +143,7 @@ function createBaseTimelineProps(input: {
     completionSummary: null,
     turnDiffSummaryByAssistantMessageId: input.turnDiffSummaryByAssistantMessageId ?? new Map(),
     nowIso: isoAt(10_000),
-    expandedWorkGroups: {},
+    expandedWorkGroups: input.expandedWorkGroups ?? {},
     onToggleWorkGroup: () => {},
     onOpenTurnDiff: () => {},
     revertTurnCountByUserMessageId: new Map(),
@@ -275,6 +294,24 @@ function buildStaticScenarios(): VirtualizationScenario[] {
         workEntries,
       }),
       maxEstimateDeltaPx: 56,
+    },
+    {
+      name: "expanded grouped work log row with show more enabled",
+      targetRowId: "target-work-expanded-0",
+      props: createBaseTimelineProps({
+        messages: [...beforeMessages, ...afterMessages],
+        workEntries: Array.from({ length: 10 }, (_, index) =>
+          createToolWorkEntry({
+            id: `target-work-expanded-${index}`,
+            offsetSeconds: 12 + index,
+            detail: `tool output line ${index + 1}`,
+          }),
+        ),
+        expandedWorkGroups: {
+          "target-work-expanded-0": true,
+        },
+      }),
+      maxEstimateDeltaPx: 72,
     },
     {
       name: "proposed plan row",
@@ -434,6 +471,7 @@ async function measureTimelineRow(input: {
   return {
     actualHeightPx,
     estimatedHeightPx: estimateMessagesTimelineRowHeight(targetRow!, {
+      expandedWorkGroups: input.props.expandedWorkGroups,
       timelineWidthPx,
       turnDiffSummaryByAssistantMessageId: input.props.turnDiffSummaryByAssistantMessageId,
     }),
@@ -599,6 +637,74 @@ describe("MessagesTimeline virtualization harness", () => {
       });
       expect(
         Math.abs(afterCollapse.actualHeightPx - afterCollapse.virtualizerSizePx),
+      ).toBeLessThanOrEqual(8);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the work-log row virtualizer size in sync after show more expands the group", async () => {
+    const beforeMessages = createFillerMessages({
+      prefix: "before-worklog-expand",
+      startOffsetSeconds: 0,
+      pairCount: 2,
+    });
+    const afterMessages = createFillerMessages({
+      prefix: "after-worklog-expand",
+      startOffsetSeconds: 40,
+      pairCount: 8,
+    });
+    const workEntries = Array.from({ length: 10 }, (_, index) =>
+      createToolWorkEntry({
+        id: `target-work-toggle-${index}`,
+        offsetSeconds: 12 + index,
+        detail: `tool output line ${index + 1}`,
+      }),
+    );
+    const props = createBaseTimelineProps({
+      messages: [...beforeMessages, ...afterMessages],
+      workEntries,
+    });
+    const mounted = await mountMessagesTimeline({ props });
+
+    try {
+      const beforeExpand = await measureTimelineRow({
+        host: mounted.host,
+        props,
+        targetRowId: workEntries[0]!.id,
+      });
+      const targetRowElement = mounted.host.querySelector<HTMLElement>(
+        `[data-timeline-row-id="${workEntries[0]!.id}"]`,
+      );
+      expect(targetRowElement, "Unable to locate target work-log row.").toBeTruthy();
+
+      const showMoreButton =
+        Array.from(targetRowElement!.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+          button.textContent?.includes("Show 4 more"),
+        ) ?? null;
+      expect(showMoreButton, 'Unable to find "Show more" button.').toBeTruthy();
+
+      showMoreButton!.click();
+
+      await vi.waitFor(
+        async () => {
+          const afterExpand = await measureTimelineRow({
+            host: mounted.host,
+            props,
+            targetRowId: workEntries[0]!.id,
+          });
+          expect(afterExpand.actualHeightPx).toBeGreaterThan(beforeExpand.actualHeightPx + 72);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const afterExpand = await measureTimelineRow({
+        host: mounted.host,
+        props,
+        targetRowId: workEntries[0]!.id,
+      });
+      expect(
+        Math.abs(afterExpand.actualHeightPx - afterExpand.virtualizerSizePx),
       ).toBeLessThanOrEqual(8);
     } finally {
       await mounted.cleanup();

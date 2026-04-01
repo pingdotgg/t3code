@@ -4,6 +4,8 @@ import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { estimateTimelineMessageHeight } from "../timelineHeight";
 
+export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
+
 export interface TimelineDurationMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -131,12 +133,13 @@ export function estimateMessagesTimelineRowHeight(
   row: MessagesTimelineRow,
   input: {
     timelineWidthPx: number | null;
+    expandedWorkGroups?: Readonly<Record<string, boolean>>;
     turnDiffSummaryByAssistantMessageId?: ReadonlyMap<MessageId, TurnDiffSummary>;
   },
 ): number {
   switch (row.kind) {
     case "work":
-      return 112;
+      return estimateWorkRowHeight(row, input);
     case "proposed-plan":
       return estimateTimelineProposedPlanHeight(row.proposedPlan);
     case "working":
@@ -152,6 +155,23 @@ export function estimateMessagesTimelineRowHeight(
       return estimate;
     }
   }
+}
+
+function estimateWorkRowHeight(
+  row: Extract<MessagesTimelineRow, { kind: "work" }>,
+  input: {
+    expandedWorkGroups?: Readonly<Record<string, boolean>>;
+  },
+): number {
+  const isExpanded = input.expandedWorkGroups?.[row.id] ?? false;
+  const hasOverflow = row.groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+  const visibleEntries =
+    hasOverflow && !isExpanded ? MAX_VISIBLE_WORK_LOG_ENTRIES : row.groupedEntries.length;
+  const onlyToolEntries = row.groupedEntries.every((entry) => entry.tone === "tool");
+  const showHeader = hasOverflow || !onlyToolEntries;
+
+  // Card chrome, optional header, and one compact work-entry row per visible entry.
+  return 28 + (showHeader ? 26 : 0) + visibleEntries * 32;
 }
 
 function estimateTimelineProposedPlanHeight(proposedPlan: ProposedPlan): number {

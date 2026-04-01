@@ -41,6 +41,7 @@ import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
+  MAX_VISIBLE_WORK_LOG_ENTRIES,
   deriveMessagesTimelineRows,
   estimateMessagesTimelineRowHeight,
   normalizeCompactToolLabel,
@@ -60,7 +61,6 @@ import {
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
 
-const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 
 interface MessagesTimelineProps {
@@ -201,6 +201,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       const row = rows[index];
       if (!row) return 96;
       return estimateMessagesTimelineRowHeight(row, {
+        expandedWorkGroups,
         timelineWidthPx,
         turnDiffSummaryByAssistantMessageId,
       });
