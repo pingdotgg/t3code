@@ -355,6 +355,10 @@ function EventRouter() {
       );
       if (result === "applied" && !disposed) {
         scheduleFullSnapshotHydration();
+        return;
+      }
+      if (result === "failed" && !disposed) {
+        await runSnapshotRecovery("bootstrap", () => api.orchestration.getSnapshot());
       }
     };
 
