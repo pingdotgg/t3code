@@ -92,19 +92,20 @@ export interface RunMigrationsOptions {
  *
  * @returns Effect containing array of executed migrations
  */
-export const runMigrations = ({ toMigrationInclusive }: RunMigrationsOptions = {}) =>
-  Effect.gen(function* () {
-    yield* Effect.log(
-      toMigrationInclusive === undefined
-        ? "Running all migrations..."
-        : `Running migrations 1 through ${toMigrationInclusive}...`,
-    );
-    const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
-    yield* Effect.log("Migrations ran successfully").pipe(
-      Effect.annotateLogs({ migrations: executedMigrations.map(([id, name]) => `${id}_${name}`) }),
-    );
-    return executedMigrations;
-  });
+export const runMigrations = Effect.fn("runMigrations")(function* ({
+  toMigrationInclusive,
+}: RunMigrationsOptions = {}) {
+  yield* Effect.log(
+    toMigrationInclusive === undefined
+      ? "Running all migrations..."
+      : `Running migrations 1 through ${toMigrationInclusive}...`,
+  );
+  const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  yield* Effect.log("Migrations ran successfully").pipe(
+    Effect.annotateLogs({ migrations: executedMigrations.map(([id, name]) => `${id}_${name}`) }),
+  );
+  return executedMigrations;
+});
 
 /**
  * Layer that runs migrations when the layer is built.
