@@ -1,15 +1,6 @@
 import { ThreadId } from "@t3tools/contracts";
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
-import {
-  Suspense,
-  lazy,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 
 import ChatView from "../components/ChatView";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
@@ -19,14 +10,18 @@ import {
   DiffPanelShell,
   type DiffPanelMode,
 } from "../components/DiffPanelShell";
-import { WorkspaceRightSidebar } from "../components/WorkspaceRightSidebar";
+import {
+  WorkspacePanelLayout,
+  WorkspaceRightRail,
+  WorkspaceSideSheet,
+} from "../components/WorkspacePanels";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { type DiffRouteSearch, parseDiffRouteSearch } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useSettings } from "../hooks/useSettings";
+import { useWorkspacePanelController } from "../hooks/useWorkspacePanelController";
 import { useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
-import { Sheet, SheetPopup } from "../components/ui/sheet";
 import { SidebarInset } from "~/components/ui/sidebar";
 import { WorkspaceTerminalPortalTargetsContext } from "../workspaceTerminalPortal";
 import { cn } from "~/lib/utils";
@@ -37,51 +32,6 @@ const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
 const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
-
-const DiffPanelSheet = (props: {
-  children: ReactNode;
-  diffOpen: boolean;
-  onCloseDiff: () => void;
-}) => {
-  return (
-    <Sheet
-      open={props.diffOpen}
-      onOpenChange={(open) => {
-        if (!open) {
-          props.onCloseDiff();
-        }
-      }}
-    >
-      <SheetPopup
-        side="right"
-        showCloseButton={false}
-        keepMounted
-        className="w-[min(88vw,820px)] max-w-[820px] p-0"
-      >
-        {props.children}
-      </SheetPopup>
-    </Sheet>
-  );
-};
-
-const TerminalPanelSheet = (props: {
-  children: ReactNode;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) => {
-  return (
-    <Sheet open={props.open} onOpenChange={props.onOpenChange}>
-      <SheetPopup
-        side="right"
-        showCloseButton={false}
-        keepMounted
-        className="w-[min(88vw,820px)] max-w-[820px] p-0"
-      >
-        {props.children}
-      </SheetPopup>
-    </Sheet>
-  );
-};
 
 const DiffLoadingFallback = (props: { mode: DiffPanelMode }) => {
   return (
@@ -98,25 +48,6 @@ const LazyDiffPanel = (props: { mode: DiffPanelMode }) => {
         <DiffPanel mode={props.mode} />
       </Suspense>
     </DiffWorkerPoolProvider>
-  );
-};
-
-const DiffPanelInlineSidebar = (props: { open: boolean; renderDiffContent: boolean }) => {
-  const { open, renderDiffContent } = props;
-
-  return (
-    <WorkspaceRightSidebar
-      defaultWidth={DIFF_INLINE_DEFAULT_WIDTH}
-      minWidth={DIFF_INLINE_SIDEBAR_MIN_WIDTH}
-      open={open}
-      storageKey={WORKSPACE_PANEL_STORAGE_KEYS.diffRight}
-    >
-      <div className="flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden">
-        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          {renderDiffContent ? <LazyDiffPanel mode="sidebar" /> : null}
-        </div>
-      </div>
-    </WorkspaceRightSidebar>
   );
 };
 
@@ -141,34 +72,32 @@ const SharedRightWorkspaceRail = (props: {
   const renderedPanel = activePanel ?? fallbackPanel;
 
   return (
-    <WorkspaceRightSidebar
+    <WorkspaceRightRail
       defaultWidth={DIFF_INLINE_DEFAULT_WIDTH}
       minWidth={DIFF_INLINE_SIDEBAR_MIN_WIDTH}
       onOpenChange={onOpenChange}
       open={open}
       storageKey={storageKey}
     >
-      <div className="flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden">
-        <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          <div
-            className={cn(
-              "min-h-0 min-w-0 flex-1 overflow-hidden",
-              renderedPanel === "diff" ? "flex" : "hidden",
-            )}
-          >
-            {renderDiffContent ? <LazyDiffPanel mode="sidebar" /> : null}
-          </div>
-          <div
-            ref={setTerminalPortalTarget}
-            className={cn(
-              "min-h-0 min-w-0 flex-1 overflow-hidden",
-              renderedPanel === "terminal" ? "flex" : "hidden",
-            )}
-            data-workspace-terminal-slot="right"
-          />
+      <WorkspacePanelLayout bodyClassName="relative">
+        <div
+          className={cn(
+            "min-h-0 min-w-0 flex-1 overflow-hidden",
+            renderedPanel === "diff" ? "flex" : "hidden",
+          )}
+        >
+          {renderDiffContent ? <LazyDiffPanel mode="sidebar" /> : null}
         </div>
-      </div>
-    </WorkspaceRightSidebar>
+        <div
+          ref={setTerminalPortalTarget}
+          className={cn(
+            "min-h-0 min-w-0 flex-1 overflow-hidden",
+            renderedPanel === "terminal" ? "flex" : "hidden",
+          )}
+          data-workspace-terminal-slot="right"
+        />
+      </WorkspacePanelLayout>
+    </WorkspaceRightRail>
   );
 };
 
@@ -199,14 +128,6 @@ function ChatThreadRouteView() {
   const lastRightRailPanelRef = useRef<"diff" | "terminal">(
     terminalState.terminalOpen ? "terminal" : "diff",
   );
-  const closeDiff = useCallback(() => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-      search: { diff: undefined },
-    });
-  }, [navigate, threadId]);
-
   useEffect(() => {
     if (diffOpen) {
       setHasOpenedDiff(true);
@@ -231,6 +152,15 @@ function ChatThreadRouteView() {
     terminalOpen: terminalState.terminalOpen,
   });
   const activeRightRailPanel = workspacePanels.rightRailPanel;
+  const panelController = useWorkspacePanelController({
+    diffOpen,
+    diffToggleActive: workspacePanels.diffToggleActive,
+    setTerminalOpen: (open) => setTerminalOpen(threadId, open),
+    terminalOpen: terminalState.terminalOpen,
+    terminalPosition: settings.terminalPosition,
+    terminalToggleActive: workspacePanels.terminalToggleActive,
+    threadId,
+  });
 
   useEffect(() => {
     if (activeRightRailPanel === null) {
@@ -285,34 +215,26 @@ function ChatThreadRouteView() {
         open={activeRightRailPanel !== null}
         onOpenChange={(open) => {
           if (open) {
-            if (lastRightRailPanelRef.current === "terminal") {
-              setTerminalOpen(threadId, true);
-              return;
-            }
-            void navigate({
-              to: "/$threadId",
-              params: { threadId },
-              search: (previous) => ({ ...previous, diff: "1" }),
-            });
+            panelController.reopenRightRailPanel(lastRightRailPanelRef.current);
             return;
           }
-
-          if (activeRightRailPanel === "terminal") {
-            setTerminalOpen(threadId, false);
-            return;
-          }
-
-          void closeDiff();
+          panelController.closeRightRailPanel(activeRightRailPanel);
         }}
         renderDiffContent={shouldRenderDiffContent}
         setTerminalPortalTarget={setWorkspaceRightTerminalPortalTarget}
         storageKey={rightRailStorageKey}
       />
     ) : shouldMountInlineDiffRail ? (
-      <DiffPanelInlineSidebar
+      <WorkspaceRightRail
+        defaultWidth={DIFF_INLINE_DEFAULT_WIDTH}
+        minWidth={DIFF_INLINE_SIDEBAR_MIN_WIDTH}
         open={workspacePanels.showInlineDiffRail}
-        renderDiffContent={shouldRenderDiffContent}
-      />
+        storageKey={WORKSPACE_PANEL_STORAGE_KEYS.diffRight}
+      >
+        <WorkspacePanelLayout>
+          {shouldRenderDiffContent ? <LazyDiffPanel mode="sidebar" /> : null}
+        </WorkspacePanelLayout>
+      </WorkspaceRightRail>
     ) : null;
 
   const workspaceRow = (
@@ -336,12 +258,19 @@ function ChatThreadRouteView() {
         />
       </div>
       {shouldUseDiffSheet ? (
-        <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
+        <WorkspaceSideSheet
+          open={diffOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              panelController.closeDiffPanel();
+            }
+          }}
+        >
           {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
-        </DiffPanelSheet>
+        </WorkspaceSideSheet>
       ) : null}
       {workspacePanels.showTerminalSheet ? (
-        <TerminalPanelSheet
+        <WorkspaceSideSheet
           open={workspacePanels.showTerminalSheet}
           onOpenChange={(open) => {
             if (!open) {
@@ -354,7 +283,7 @@ function ChatThreadRouteView() {
             className="flex h-full min-h-0 min-w-0 overflow-hidden"
             data-workspace-terminal-slot="right-sheet"
           />
-        </TerminalPanelSheet>
+        </WorkspaceSideSheet>
       ) : null}
     </WorkspaceTerminalPortalTargetsContext.Provider>
   );

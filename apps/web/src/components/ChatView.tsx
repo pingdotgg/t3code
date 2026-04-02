@@ -125,6 +125,7 @@ import {
   resolveSelectableProvider,
 } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
+import { useWorkspacePanelController } from "../hooks/useWorkspacePanelController";
 import { resolveAppModelSelection } from "../modelSelection";
 import type { TerminalDockTarget } from "../workspacePanels";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -1604,58 +1605,23 @@ export default function ChatView({ layoutState, threadId }: ChatViewProps) {
   );
   const terminalToggleActive = layoutState.terminalToggleActive;
   const diffToggleActive = layoutState.diffToggleActive;
-  const closeDiffPanel = useCallback(() => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-      replace: true,
-      search: (previous) => ({
-        ...stripDiffSearchParams(previous),
-        diff: undefined,
-      }),
-    });
-  }, [navigate, threadId]);
-  const openDiffPanel = useCallback(() => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-      replace: true,
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
-      },
-    });
-  }, [navigate, threadId]);
   const setTerminalOpen = useCallback(
     (open: boolean) => {
-      if (!activeThreadId) return;
-      storeSetTerminalOpen(activeThreadId, open);
+      storeSetTerminalOpen(threadId, open);
     },
-    [activeThreadId, storeSetTerminalOpen],
+    [storeSetTerminalOpen, threadId],
   );
-  const onToggleDiff = useCallback(() => {
-    if (terminalPosition === "right") {
-      if (diffToggleActive) {
-        closeDiffPanel();
-        return;
-      }
-      setTerminalOpen(false);
-      openDiffPanel();
-      return;
-    }
-    if (diffOpen) {
-      closeDiffPanel();
-      return;
-    }
-    openDiffPanel();
-  }, [
-    closeDiffPanel,
+  const panelController = useWorkspacePanelController({
     diffOpen,
     diffToggleActive,
-    openDiffPanel,
+    replaceHistory: true,
     setTerminalOpen,
+    terminalOpen: terminalState.terminalOpen,
     terminalPosition,
-  ]);
+    terminalToggleActive,
+    threadId,
+  });
+  const onToggleDiff = panelController.toggleDiffPanel;
 
   const envLocked = Boolean(
     activeThread &&
@@ -1743,33 +1709,7 @@ export default function ChatView({ layoutState, threadId }: ChatViewProps) {
     },
     [activeThread, composerCursor, composerTerminalContexts, insertComposerDraftTerminalContext],
   );
-  const toggleTerminalVisibility = useCallback(() => {
-    if (!activeThreadId) return;
-    if (terminalPosition === "right") {
-      if (terminalToggleActive) {
-        setTerminalOpen(false);
-        return;
-      }
-      if (diffOpen) {
-        setTerminalOpen(true);
-        closeDiffPanel();
-        return;
-      }
-      if (!terminalState.terminalOpen) {
-        setTerminalOpen(true);
-      }
-      return;
-    }
-    setTerminalOpen(!terminalState.terminalOpen);
-  }, [
-    activeThreadId,
-    closeDiffPanel,
-    diffOpen,
-    setTerminalOpen,
-    terminalToggleActive,
-    terminalPosition,
-    terminalState.terminalOpen,
-  ]);
+  const toggleTerminalVisibility = panelController.toggleTerminalPanel;
   const splitTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedSplitLimit) return;
     const terminalId = `terminal-${randomUUID()}`;
