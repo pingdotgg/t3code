@@ -46,33 +46,55 @@ export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
     Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/),
   ),
   Schema.Literal(".run"),
-]);
+]).annotate({
+  description: "Command identifier for running a project script, formatted as `script.<id>.run`.",
+});
 
 export const KeybindingCommand = Schema.Union([
   Schema.Literals(STATIC_KEYBINDING_COMMANDS),
   SCRIPT_RUN_COMMAND_PATTERN,
-]);
+]).annotate({
+  description: "Command invoked when the keybinding is triggered.",
+});
 export type KeybindingCommand = typeof KeybindingCommand.Type;
 
-const KeybindingValue = TrimmedString.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(MAX_KEYBINDING_VALUE_LENGTH),
-);
+const KeybindingValue = TrimmedString.annotate({
+  description:
+    "Keyboard shortcut string such as `mod+j`, `ctrl+k`, or `shift+space`, using the T3 Code keybinding syntax.",
+}).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_KEYBINDING_VALUE_LENGTH));
 
-const KeybindingWhen = TrimmedString.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(MAX_KEYBINDING_WHEN_LENGTH),
-);
+const KeybindingWhen = TrimmedString.annotate({
+  description:
+    "Optional context expression controlling when the keybinding is active, such as `terminalFocus` or `!terminalFocus`.",
+}).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_KEYBINDING_WHEN_LENGTH));
 export const KeybindingRule = Schema.Struct({
-  key: KeybindingValue,
-  command: KeybindingCommand,
-  when: Schema.optional(KeybindingWhen),
+  key: KeybindingValue.pipe(
+    Schema.flip,
+    Schema.annotate({
+      description: "Keyboard shortcut to listen for.",
+    }),
+    Schema.flip,
+  ),
+  command: KeybindingCommand.pipe(
+    Schema.annotate({
+      description: "Command to execute when the shortcut matches.",
+    }),
+  ),
+  when: Schema.optional(KeybindingWhen).pipe(
+    Schema.annotate({
+      description: "Optional expression limiting when the shortcut is active.",
+    }),
+  ),
+}).annotate({
+  description: "Single keybinding rule entry in `keybindings.json`.",
 });
 export type KeybindingRule = typeof KeybindingRule.Type;
 
-export const KeybindingsConfig = Schema.Array(KeybindingRule).check(
-  Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
-);
+export const KeybindingsConfig = Schema.Array(KeybindingRule)
+  .check(Schema.isMaxLength(MAX_KEYBINDINGS_COUNT))
+  .annotate({
+    description: "Ordered list of custom keybinding rules persisted in `keybindings.json`.",
+  });
 export type KeybindingsConfig = typeof KeybindingsConfig.Type;
 
 export const KeybindingShortcut = Schema.Struct({

@@ -12,14 +12,19 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ClaudeSettings,
+  ClientSettingsSchema,
+  CodexSettings,
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
+  ServerSettings,
   ThreadId,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import { getSchemaDescription } from "@t3tools/shared/schemaJson";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
 import {
@@ -85,6 +90,52 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+function requireSchemaDescription(
+  schema: Parameters<typeof getSchemaDescription>[0],
+  label: string,
+) {
+  const description = getSchemaDescription(schema);
+  if (!description) {
+    throw new Error(`Missing schema description for ${label}`);
+  }
+  return description;
+}
+
+const SETTINGS_DESCRIPTIONS = {
+  timestampFormat: requireSchemaDescription(
+    ClientSettingsSchema.fields.timestampFormat,
+    "ClientSettings.timestampFormat",
+  ),
+  diffWordWrap: requireSchemaDescription(
+    ClientSettingsSchema.fields.diffWordWrap,
+    "ClientSettings.diffWordWrap",
+  ),
+  confirmThreadArchive: requireSchemaDescription(
+    ClientSettingsSchema.fields.confirmThreadArchive,
+    "ClientSettings.confirmThreadArchive",
+  ),
+  confirmThreadDelete: requireSchemaDescription(
+    ClientSettingsSchema.fields.confirmThreadDelete,
+    "ClientSettings.confirmThreadDelete",
+  ),
+  enableAssistantStreaming: requireSchemaDescription(
+    ServerSettings.fields.enableAssistantStreaming,
+    "ServerSettings.enableAssistantStreaming",
+  ),
+  defaultThreadEnvMode: requireSchemaDescription(
+    ServerSettings.fields.defaultThreadEnvMode,
+    "ServerSettings.defaultThreadEnvMode",
+  ),
+  textGenerationModelSelection: requireSchemaDescription(
+    ServerSettings.fields.textGenerationModelSelection,
+    "ServerSettings.textGenerationModelSelection",
+  ),
+  codexBinaryPath: requireSchemaDescription(CodexSettings.fields.binaryPath, "Codex.binaryPath"),
+  codexHomePath: requireSchemaDescription(CodexSettings.fields.homePath, "Codex.homePath"),
+  claudeBinaryPath: requireSchemaDescription(ClaudeSettings.fields.binaryPath, "Claude.binaryPath"),
+} as const;
+
+const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
@@ -100,16 +151,16 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     provider: "codex",
     title: "Codex",
     binaryPlaceholder: "Codex binary path",
-    binaryDescription: "Path to the Codex binary",
+    binaryDescription: SETTINGS_DESCRIPTIONS.codexBinaryPath,
     homePathKey: "codexHomePath",
     homePlaceholder: "CODEX_HOME",
-    homeDescription: "Optional custom Codex home and config directory.",
+    homeDescription: SETTINGS_DESCRIPTIONS.codexHomePath,
   },
   {
     provider: "claudeAgent",
     title: "Claude",
     binaryPlaceholder: "Claude binary path",
-    binaryDescription: "Path to the Claude binary",
+    binaryDescription: SETTINGS_DESCRIPTIONS.claudeBinaryPath,
   },
 ] as const;
 
@@ -773,7 +824,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Time format"
-          description="System default follows your browser or OS clock preference."
+          description={SETTINGS_DESCRIPTIONS.timestampFormat}
           resetAction={
             settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
               <SettingResetButton
@@ -815,7 +866,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Diff line wrapping"
-          description="Set the default wrap state when the diff panel opens."
+          description={SETTINGS_DESCRIPTIONS.diffWordWrap}
           resetAction={
             settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap ? (
               <SettingResetButton
@@ -839,7 +890,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Assistant output"
-          description="Show token-by-token output while a response is in progress."
+          description={SETTINGS_DESCRIPTIONS.enableAssistantStreaming}
           resetAction={
             settings.enableAssistantStreaming !==
             DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
@@ -866,7 +917,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="New threads"
-          description="Pick the default workspace mode for newly created draft threads."
+          description={SETTINGS_DESCRIPTIONS.defaultThreadEnvMode}
           resetAction={
             settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ? (
               <SettingResetButton
@@ -907,7 +958,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Archive confirmation"
-          description="Require a second click on the inline archive action before a thread is archived."
+          description={SETTINGS_DESCRIPTIONS.confirmThreadArchive}
           resetAction={
             settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
               <SettingResetButton
@@ -933,7 +984,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Delete confirmation"
-          description="Ask before deleting a thread and its chat history."
+          description={SETTINGS_DESCRIPTIONS.confirmThreadDelete}
           resetAction={
             settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
               <SettingResetButton
@@ -959,7 +1010,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Text generation model"
-          description="Configure the model used for generated commit messages, PR titles, and similar Git text."
+          description={SETTINGS_DESCRIPTIONS.textGenerationModelSelection}
           resetAction={
             isGitWritingModelDirty ? (
               <SettingResetButton

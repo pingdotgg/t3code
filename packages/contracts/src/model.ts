@@ -9,16 +9,47 @@ export type ClaudeCodeEffort = (typeof CLAUDE_CODE_EFFORT_OPTIONS)[number];
 export type ProviderReasoningEffort = CodexReasoningEffort | ClaudeCodeEffort;
 
 export const CodexModelOptions = Schema.Struct({
-  reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)),
-  fastMode: Schema.optional(Schema.Boolean),
+  reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)).pipe(
+    Schema.annotate({
+      description:
+        "Reasoning depth for Codex text generation. Higher values trade latency and cost for stronger reasoning.",
+    }),
+  ),
+  fastMode: Schema.optional(Schema.Boolean).pipe(
+    Schema.annotate({
+      description: "Whether to prefer Codex fast mode when the selected model supports it.",
+    }),
+  ),
+}).annotate({
+  description: "Provider-specific text generation options for Codex models.",
 });
 export type CodexModelOptions = typeof CodexModelOptions.Type;
 
 export const ClaudeModelOptions = Schema.Struct({
-  thinking: Schema.optional(Schema.Boolean),
-  effort: Schema.optional(Schema.Literals(CLAUDE_CODE_EFFORT_OPTIONS)),
-  fastMode: Schema.optional(Schema.Boolean),
-  contextWindow: Schema.optional(Schema.String),
+  thinking: Schema.optional(Schema.Boolean).pipe(
+    Schema.annotate({
+      description: "Whether Claude should enable extended thinking for the selected model.",
+    }),
+  ),
+  effort: Schema.optional(Schema.Literals(CLAUDE_CODE_EFFORT_OPTIONS)).pipe(
+    Schema.annotate({
+      description:
+        "Reasoning effort for Claude text generation. Higher values trade latency and cost for stronger reasoning.",
+    }),
+  ),
+  fastMode: Schema.optional(Schema.Boolean).pipe(
+    Schema.annotate({
+      description: "Whether to prefer Claude fast mode when the selected model supports it.",
+    }),
+  ),
+  contextWindow: Schema.optional(Schema.String).pipe(
+    Schema.annotate({
+      description:
+        "Optional Claude context window preset to request for the selected model, if supported.",
+    }),
+  ),
+}).annotate({
+  description: "Provider-specific text generation options for Claude models.",
 });
 export type ClaudeModelOptions = typeof ClaudeModelOptions.Type;
 

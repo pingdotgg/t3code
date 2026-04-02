@@ -23,17 +23,32 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+const makeTrimmedStringSetting = (description: string) =>
+  Schema.String.annotate({ description }).pipe(
+    Schema.decodeTo(TrimmedString, SchemaTransformation.passthrough()),
+  );
+
 export const ClientSettingsSchema = Schema.Struct({
-  confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
-  confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
-  diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
-  sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
-    Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER),
-  ),
-  sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
-    Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_THREAD_SORT_ORDER),
-  ),
-  timestampFormat: TimestampFormat.pipe(Schema.withDecodingDefault(() => DEFAULT_TIMESTAMP_FORMAT)),
+  confirmThreadArchive: Schema.Boolean.annotate({
+    description: "Require a second click on the inline archive action before a thread is archived.",
+  }).pipe(Schema.withDecodingDefault(() => false)),
+  confirmThreadDelete: Schema.Boolean.annotate({
+    description: "Ask before deleting a thread and its chat history.",
+  }).pipe(Schema.withDecodingDefault(() => true)),
+  diffWordWrap: Schema.Boolean.annotate({
+    description: "Set the default wrap state when the diff panel opens.",
+  }).pipe(Schema.withDecodingDefault(() => false)),
+  sidebarProjectSortOrder: SidebarProjectSortOrder.annotate({
+    description: "Choose how projects are ordered in the sidebar.",
+  }).pipe(Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER)),
+  sidebarThreadSortOrder: SidebarThreadSortOrder.annotate({
+    description: "Choose how threads are ordered inside the selected project.",
+  }).pipe(Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+  timestampFormat: TimestampFormat.annotate({
+    description: "System default follows your browser or OS clock preference.",
+  }).pipe(Schema.withDecodingDefault(() => DEFAULT_TIMESTAMP_FORMAT)),
+}).annotate({
+  description: "Client-only settings persisted locally in the browser.",
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -41,11 +56,13 @@ export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientS
 
 // ── Server Settings (server-authoritative) ────────────────────
 
-export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
+export const ThreadEnvMode = Schema.Literals(["local", "worktree"]).annotate({
+  description: "Pick the default workspace mode for newly created draft threads.",
+});
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 
-const makeBinaryPathSetting = (fallback: string) =>
-  TrimmedString.pipe(
+const makeBinaryPathSetting = (fallback: string, description: string) =>
+  makeTrimmedStringSetting(description).pipe(
     Schema.decodeTo(
       Schema.String,
       SchemaTransformation.transformOrFail({
@@ -57,26 +74,51 @@ const makeBinaryPathSetting = (fallback: string) =>
   );
 
 export const CodexSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
-  binaryPath: makeBinaryPathSetting("codex"),
-  homePath: TrimmedString.pipe(Schema.withDecodingDefault(() => "")),
-  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
+  enabled: Schema.Boolean.annotate({
+    description: "Whether the Codex provider is enabled and available for selection.",
+  }).pipe(Schema.withDecodingDefault(() => true)),
+  binaryPath: makeBinaryPathSetting("codex", "Path to the Codex binary"),
+  homePath: makeTrimmedStringSetting("Optional custom Codex home and config directory.").pipe(
+    Schema.withDecodingDefault(() => ""),
+  ),
+  customModels: Schema.Array(Schema.String)
+    .annotate({
+      description:
+        "Additional Codex model slugs to surface in the UI alongside discovered defaults.",
+    })
+    .pipe(Schema.withDecodingDefault(() => [])),
+}).annotate({
+  description: "Server-side configuration for the Codex provider.",
 });
 export type CodexSettings = typeof CodexSettings.Type;
 
 export const ClaudeSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
-  binaryPath: makeBinaryPathSetting("claude"),
-  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
+  enabled: Schema.Boolean.annotate({
+    description: "Whether the Claude provider is enabled and available for selection.",
+  }).pipe(Schema.withDecodingDefault(() => true)),
+  binaryPath: makeBinaryPathSetting("claude", "Path to the Claude binary"),
+  customModels: Schema.Array(Schema.String)
+    .annotate({
+      description:
+        "Additional Claude model slugs to surface in the UI alongside discovered defaults.",
+    })
+    .pipe(Schema.withDecodingDefault(() => [])),
+}).annotate({
+  description: "Server-side configuration for the Claude provider.",
 });
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
 export const ServerSettings = Schema.Struct({
-  enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
-  defaultThreadEnvMode: ThreadEnvMode.pipe(
-    Schema.withDecodingDefault(() => "local" as const satisfies ThreadEnvMode),
-  ),
-  textGenerationModelSelection: ModelSelection.pipe(
+  enableAssistantStreaming: Schema.Boolean.annotate({
+    description: "Show token-by-token output while a response is in progress.",
+  }).pipe(Schema.withDecodingDefault(() => false)),
+  defaultThreadEnvMode: ThreadEnvMode.annotate({
+    description: "Pick the default workspace mode for newly created draft threads.",
+  }).pipe(Schema.withDecodingDefault(() => "local" as const satisfies ThreadEnvMode)),
+  textGenerationModelSelection: ModelSelection.annotate({
+    description:
+      "Configure the model used for generated commit messages, PR titles, and similar Git text.",
+  }).pipe(
     Schema.withDecodingDefault(() => ({
       provider: "codex" as const,
       model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
@@ -85,9 +127,19 @@ export const ServerSettings = Schema.Struct({
 
   // Provider specific settings
   providers: Schema.Struct({
-    codex: CodexSettings.pipe(Schema.withDecodingDefault(() => ({}))),
-    claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
-  }).pipe(Schema.withDecodingDefault(() => ({}))),
+    codex: CodexSettings.annotate({
+      description: "Configuration for the Codex provider.",
+    }).pipe(Schema.withDecodingDefault(() => ({}))),
+    claudeAgent: ClaudeSettings.annotate({
+      description: "Configuration for the Claude provider.",
+    }).pipe(Schema.withDecodingDefault(() => ({}))),
+  })
+    .annotate({
+      description: "Provider-specific server configuration.",
+    })
+    .pipe(Schema.withDecodingDefault(() => ({}))),
+}).annotate({
+  description: "Server-authoritative settings persisted in `settings.json`.",
 });
 export type ServerSettings = typeof ServerSettings.Type;
 

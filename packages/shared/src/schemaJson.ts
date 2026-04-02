@@ -36,11 +36,93 @@ export const decodeUnknownJsonResult = <S extends Schema.Codec<unknown, unknown,
   };
 };
 
+const schemaDescriptionCache = new WeakMap<object, string | undefined>();
+
+const PrettyJsonString = SchemaGetter.parseJson<string>().compose(
+  SchemaGetter.stringifyJson({ space: 2 }),
+);
+
+export const encodePrettyJsonEffect = <S extends Schema.Top>(schema: S) =>
+  Schema.encodeEffect(
+    Schema.fromJsonString(schema).pipe(
+      Schema.encode({
+        decode: PrettyJsonString,
+        encode: PrettyJsonString,
+      }),
+    ),
+  );
+
 export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
   const squashed = Cause.squash(cause);
   return Schema.isSchemaError(squashed)
     ? SchemaIssue.makeFormatterDefault()(squashed.issue)
     : Cause.pretty(cause);
+};
+
+function hoistJsonSchemaDescriptions(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(hoistJsonSchemaDescriptions);
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const record = Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, hoistJsonSchemaDescriptions(entry)]),
+  ) as Record<string, unknown>;
+
+  if (typeof record.description !== "string") {
+    const candidates = ["allOf", "anyOf", "oneOf"]
+      .flatMap((key) => (Array.isArray(record[key]) ? (record[key] as ReadonlyArray<unknown>) : []))
+      .filter((candidate): candidate is Record<string, unknown> => {
+        return !!candidate && typeof candidate === "object" && !Array.isArray(candidate);
+      });
+
+    const description = candidates.find(
+      (candidate) =>
+        typeof candidate.description === "string" &&
+        !(candidate.type === "null" && Object.keys(candidate).length <= 1),
+    )?.description;
+
+    if (typeof description === "string") {
+      record.description = description;
+    }
+  }
+
+  return record;
+}
+
+/** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
+export const toJsonSchemaObject = (schema: Schema.Top): unknown => {
+  const document = Schema.toJsonSchemaDocument(schema);
+  if (document.definitions && Object.keys(document.definitions).length > 0) {
+    return hoistJsonSchemaDescriptions({ ...document.schema, $defs: document.definitions });
+  }
+  return hoistJsonSchemaDescriptions(document.schema);
+};
+
+export const getSchemaDescription = (schema: Schema.Top): string | undefined => {
+  if (schema && typeof schema === "object") {
+    const cached = schemaDescriptionCache.get(schema);
+    if (cached !== undefined || schemaDescriptionCache.has(schema)) {
+      return cached;
+    }
+  }
+
+  const jsonSchema = toJsonSchemaObject(schema);
+  const description =
+    jsonSchema && typeof jsonSchema === "object" && !Array.isArray(jsonSchema)
+      ? typeof (jsonSchema as Record<string, unknown>).description === "string"
+        ? ((jsonSchema as Record<string, unknown>).description as string)
+        : undefined
+      : undefined;
+
+  if (schema && typeof schema === "object") {
+    schemaDescriptionCache.set(schema, description);
+  }
+
+  return description;
 };
 
 /**

@@ -14,15 +14,6 @@ export function isGitRepository(cwd: string): boolean {
   return existsSync(join(cwd, ".git"));
 }
 
-/** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
-export function toJsonSchemaObject(schema: Schema.Top): unknown {
-  const document = Schema.toJsonSchemaDocument(schema);
-  if (document.definitions && Object.keys(document.definitions).length > 0) {
-    return { ...document.schema, $defs: document.definitions };
-  }
-  return document.schema;
-}
-
 /** Truncate a text section to `maxChars`, appending a `[truncated]` marker when needed. */
 export function limitSection(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;

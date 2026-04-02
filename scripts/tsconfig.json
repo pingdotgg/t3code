@@ -12,5 +12,9 @@
       }
     ]
   },
-  "include": ["**/*.ts"]
+  "include": [
+    "**/*.ts",
+    "../packages/contracts/src/baseSchemas.ts",
+    "../packages/contracts/src/keybindings.ts"
+  ]
 }

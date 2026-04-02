@@ -1,0 +1,326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "T3 Code Server Settings",
+  "description": "Server-authoritative settings persisted in `settings.json`.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON Schema reference for editor tooling. May point to the stable or versioned T3 Code settings schema URL."
+    },
+    "enableAssistantStreaming": {
+      "anyOf": [
+        {
+          "type": "boolean",
+          "description": "Show token-by-token output while a response is in progress."
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Show token-by-token output while a response is in progress."
+    },
+    "defaultThreadEnvMode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "local",
+            "worktree"
+          ],
+          "description": "Pick the default workspace mode for newly created draft threads."
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Pick the default workspace mode for newly created draft threads."
+    },
+    "textGenerationModelSelection": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "codex"
+                  ],
+                  "description": "The provider used for text generation."
+                },
+                "model": {
+                  "type": "string",
+                  "description": "The Codex model slug to use for text generation."
+                },
+                "options": {
+                  "type": "object",
+                  "properties": {
+                    "reasoningEffort": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "xhigh",
+                            "high",
+                            "medium",
+                            "low"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Reasoning depth for Codex text generation. Higher values trade latency and cost for stronger reasoning."
+                    },
+                    "fastMode": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Whether to prefer Codex fast mode when the selected model supports it."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "Optional Codex-specific tuning knobs for the selected model."
+                }
+              },
+              "required": [
+                "provider",
+                "model"
+              ],
+              "additionalProperties": false,
+              "description": "Text generation model selection for the Codex provider."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "claudeAgent"
+                  ],
+                  "description": "The provider used for text generation."
+                },
+                "model": {
+                  "type": "string",
+                  "description": "The Claude model slug to use for text generation."
+                },
+                "options": {
+                  "type": "object",
+                  "properties": {
+                    "thinking": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Whether Claude should enable extended thinking for the selected model."
+                    },
+                    "effort": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high",
+                            "max",
+                            "ultrathink"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Reasoning effort for Claude text generation. Higher values trade latency and cost for stronger reasoning."
+                    },
+                    "fastMode": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Whether to prefer Claude fast mode when the selected model supports it."
+                    },
+                    "contextWindow": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Optional Claude context window preset to request for the selected model, if supported."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "Optional Claude-specific tuning knobs for the selected model."
+                }
+              },
+              "required": [
+                "provider",
+                "model"
+              ],
+              "additionalProperties": false,
+              "description": "Text generation model selection for the Claude provider."
+            }
+          ],
+          "description": "Configure the model used for generated commit messages, PR titles, and similar Git text."
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Configure the model used for generated commit messages, PR titles, and similar Git text."
+    },
+    "providers": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "codex": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Whether the Codex provider is enabled and available for selection."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Whether the Codex provider is enabled and available for selection."
+                    },
+                    "binaryPath": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Path to the Codex binary"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Path to the Codex binary"
+                    },
+                    "homePath": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Optional custom Codex home and config directory."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Optional custom Codex home and config directory."
+                    },
+                    "customModels": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Additional Codex model slugs to surface in the UI alongside discovered defaults."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Additional Codex model slugs to surface in the UI alongside discovered defaults."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "Configuration for the Codex provider."
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Configuration for the Codex provider."
+            },
+            "claudeAgent": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Whether the Claude provider is enabled and available for selection."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Whether the Claude provider is enabled and available for selection."
+                    },
+                    "binaryPath": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Path to the Claude binary"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Path to the Claude binary"
+                    },
+                    "customModels": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Additional Claude model slugs to surface in the UI alongside discovered defaults."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Additional Claude model slugs to surface in the UI alongside discovered defaults."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "Configuration for the Claude provider."
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Configuration for the Claude provider."
+            }
+          },
+          "additionalProperties": false,
+          "description": "Provider-specific server configuration."
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Provider-specific server configuration."
+    }
+  },
+  "additionalProperties": false
+}

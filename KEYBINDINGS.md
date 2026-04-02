@@ -15,6 +15,29 @@ The file must be a JSON array of rules:
 
 See the full schema for more details: [`packages/contracts/src/keybindings.ts`](packages/contracts/src/keybindings.ts)
 
+## Editor Schema Support
+
+`keybindings.json` is intentionally a top-level JSON array, so it cannot carry an inline `$schema` property the way `settings.json` can.
+
+To get autocomplete and hover docs in editors like VS Code, associate the file externally with the published schema:
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["**/.t3/keybindings.json", "**/keybindings.json"],
+      "url": "https://t3.codes/schemas/keybindings.json"
+    }
+  ]
+}
+```
+
+If you want a pinned schema instead of the latest stable one, use a versioned URL such as:
+
+```text
+https://t3.codes/schemas/keybindings/0.0.15.json
+```
+
 ## Defaults
 
 ```json

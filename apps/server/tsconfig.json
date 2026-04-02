@@ -21,5 +21,12 @@
       }
     ]
   },
-  "include": ["src", "tsdown.config.ts", "scripts", "integration", "../../scripts/lib"]
+  "include": [
+    "src",
+    "tsdown.config.ts",
+    "scripts",
+    "integration",
+    "../../scripts/lib/brand-assets.ts",
+    "../../scripts/lib/resolve-catalog.ts"
+  ]
 }

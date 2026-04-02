@@ -42,20 +42,54 @@ export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
 
 export const CodexModelSelection = Schema.Struct({
-  provider: Schema.Literal("codex"),
-  model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(CodexModelOptions),
+  provider: Schema.Literal("codex").pipe(
+    Schema.annotate({
+      description: "The provider used for text generation.",
+    }),
+  ),
+  model: TrimmedNonEmptyString.pipe(
+    Schema.flip,
+    Schema.annotate({
+      description: "The Codex model slug to use for text generation.",
+    }),
+    Schema.flip,
+  ),
+  options: Schema.optionalKey(CodexModelOptions).pipe(
+    Schema.annotate({
+      description: "Optional Codex-specific tuning knobs for the selected model.",
+    }),
+  ),
+}).annotate({
+  description: "Text generation model selection for the Codex provider.",
 });
 export type CodexModelSelection = typeof CodexModelSelection.Type;
 
 export const ClaudeModelSelection = Schema.Struct({
-  provider: Schema.Literal("claudeAgent"),
-  model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(ClaudeModelOptions),
+  provider: Schema.Literal("claudeAgent").pipe(
+    Schema.annotate({
+      description: "The provider used for text generation.",
+    }),
+  ),
+  model: TrimmedNonEmptyString.pipe(
+    Schema.flip,
+    Schema.annotate({
+      description: "The Claude model slug to use for text generation.",
+    }),
+    Schema.flip,
+  ),
+  options: Schema.optionalKey(ClaudeModelOptions).pipe(
+    Schema.annotate({
+      description: "Optional Claude-specific tuning knobs for the selected model.",
+    }),
+  ),
+}).annotate({
+  description: "Text generation model selection for the Claude provider.",
 });
 export type ClaudeModelSelection = typeof ClaudeModelSelection.Type;
 
-export const ModelSelection = Schema.Union([CodexModelSelection, ClaudeModelSelection]);
+export const ModelSelection = Schema.Union([CodexModelSelection, ClaudeModelSelection]).annotate({
+  description: "Selects which provider and model T3 Code should use for text generation.",
+});
 export type ModelSelection = typeof ModelSelection.Type;
 
 export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);

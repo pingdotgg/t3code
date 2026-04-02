@@ -17,6 +17,8 @@ This document covers how to run desktop releases from one tag, first without sig
 - Includes Electron auto-update metadata (for example `latest*.yml` and `*.blockmap`) in release assets.
 - Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing.
 - Signing is optional and auto-detected per platform from secrets.
+- Refreshes the marketing-site JSON Schemas for `settings.json` and `keybindings.json` at `/schemas/settings.json` and `/schemas/keybindings.json`.
+- Commits immutable versioned JSON Schema copies at `/schemas/settings/<version>.json` and `/schemas/keybindings/<version>.json`.
 
 ## Desktop auto-update notes
 

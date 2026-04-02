@@ -216,4 +216,50 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("preserves a top-level $schema declaration when rewriting settings", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        `${JSON.stringify(
+          {
+            $schema: "https://t3.codes/schemas/settings/0.0.15.json",
+            providers: {
+              codex: {
+                binaryPath: "/usr/local/bin/codex",
+              },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      const serverSettings = yield* ServerSettingsService;
+      yield* serverSettings.start;
+      yield* serverSettings.updateSettings({
+        providers: {
+          claudeAgent: {
+            binaryPath: "/usr/local/bin/claude",
+          },
+        },
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.deepEqual(JSON.parse(raw), {
+        $schema: "https://t3.codes/schemas/settings/0.0.15.json",
+        providers: {
+          codex: {
+            binaryPath: "/usr/local/bin/codex",
+          },
+          claudeAgent: {
+            binaryPath: "/usr/local/bin/claude",
+          },
+        },
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 });

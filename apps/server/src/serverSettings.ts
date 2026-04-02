@@ -41,7 +41,7 @@ import {
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { encodePrettyJsonEffect, fromLenientJson } from "@t3tools/shared/schemaJson";
 
 export interface ServerSettingsShape {
   /** Start the settings runtime and attach file watching. */
@@ -90,6 +90,9 @@ export class ServerSettingsService extends ServiceMap.Service<
 }
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
+const UnknownJson = fromLenientJson(Schema.Unknown);
+const encodeServerSettingsDocument = encodePrettyJsonEffect(Schema.Unknown);
+const SETTINGS_SCHEMA_DECLARATION_KEY = "$schema";
 
 const PROVIDER_ORDER: readonly ProviderKind[] = ["codex", "claudeAgent"];
 
@@ -166,6 +169,7 @@ const makeServerSettings = Effect.gen(function* () {
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
+  const schemaDeclarationRef = yield* Ref.make<string | undefined>(undefined);
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
 
@@ -196,10 +200,25 @@ const makeServerSettings = Effect.gen(function* () {
 
   const loadSettingsFromDisk = Effect.gen(function* () {
     if (!(yield* readConfigExists)) {
+      yield* Ref.set(schemaDeclarationRef, undefined);
       return DEFAULT_SERVER_SETTINGS;
     }
 
     const raw = yield* readRawConfig;
+    const rawJson = Schema.decodeUnknownExit(UnknownJson)(raw);
+    if (rawJson._tag === "Success") {
+      const value = rawJson.value;
+      const valueRecord =
+        value && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)
+          : undefined;
+      const schemaDeclaration =
+        valueRecord && typeof valueRecord[SETTINGS_SCHEMA_DECLARATION_KEY] === "string"
+          ? valueRecord[SETTINGS_SCHEMA_DECLARATION_KEY]
+          : undefined;
+      yield* Ref.set(schemaDeclarationRef, schemaDeclaration);
+    }
+
     const decoded = Schema.decodeUnknownExit(ServerSettingsJson)(raw);
     if (decoded._tag === "Failure") {
       yield* Effect.logWarning("failed to parse settings.json, using defaults", {
@@ -222,7 +241,17 @@ const makeServerSettings = Effect.gen(function* () {
     const tempPath = `${settingsPath}.${process.pid}.${Date.now()}.tmp`;
     const sparseSettings = stripDefaultServerSettings(settings, DEFAULT_SERVER_SETTINGS) ?? {};
 
-    return Effect.succeed(`${JSON.stringify(sparseSettings, null, 2)}\n`).pipe(
+    return Ref.get(schemaDeclarationRef).pipe(
+      Effect.map((schemaDeclaration) =>
+        schemaDeclaration
+          ? {
+              [SETTINGS_SCHEMA_DECLARATION_KEY]: schemaDeclaration,
+              ...sparseSettings,
+            }
+          : sparseSettings,
+      ),
+      Effect.flatMap(encodeServerSettingsDocument),
+      Effect.map((encoded) => `${encoded}\n`),
       Effect.tap(() => fs.makeDirectory(pathService.dirname(settingsPath), { recursive: true })),
       Effect.tap((encoded) => fs.writeFileString(tempPath, encoded)),
       Effect.flatMap(() => fs.rename(tempPath, settingsPath)),
