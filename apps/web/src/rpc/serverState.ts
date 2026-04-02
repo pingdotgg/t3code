@@ -11,6 +11,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
+import { useCallback, useRef } from "react";
 
 import type { WsRpcClient } from "../wsRpcClient";
 import { appAtomRegistry, resetAppAtomRegistryForTests } from "./atomRegistry";
@@ -242,17 +243,18 @@ function subscribeLatest<A>(
 function useLatestAtomSubscription<A>(
   atom: Atom.Atom<A | null>,
   listener: (value: NonNullable<A>) => void,
-) {
-  useAtomSubscribe(
-    atom,
-    (value) => {
-      if (value === null) {
-        return;
-      }
-      listener(value as NonNullable<A>);
-    },
-    { immediate: true },
-  );
+): void {
+  const listenerRef = useRef(listener);
+  listenerRef.current = listener;
+
+  const stableListener = useCallback((value: A | null) => {
+    if (value === null) {
+      return;
+    }
+    listenerRef.current(value as NonNullable<A>);
+  }, []);
+
+  useAtomSubscribe(atom, stableListener, { immediate: true });
 }
 
 export function useServerConfig(): ServerConfig | null {

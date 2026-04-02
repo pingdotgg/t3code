@@ -97,4 +97,37 @@ describe("createOrchestrationRecoveryCoordinator", () => {
       reason: "replay-failed",
     });
   });
+
+  it("keeps enough state to explain why bootstrap snapshot recovery requests replay", () => {
+    const coordinator = createOrchestrationRecoveryCoordinator();
+
+    expect(coordinator.beginSnapshotRecovery("bootstrap")).toBe(true);
+    expect(coordinator.classifyDomainEvent(4)).toBe("defer");
+    expect(coordinator.completeSnapshotRecovery(2)).toBe(true);
+
+    expect(coordinator.getState()).toMatchObject({
+      latestSequence: 2,
+      highestObservedSequence: 4,
+      bootstrapped: true,
+      pendingReplay: false,
+      inFlight: null,
+    });
+  });
+
+  it("reports skip state when snapshot recovery is requested while replay is in flight", () => {
+    const coordinator = createOrchestrationRecoveryCoordinator();
+
+    coordinator.beginSnapshotRecovery("bootstrap");
+    coordinator.completeSnapshotRecovery(3);
+    expect(coordinator.beginReplayRecovery("sequence-gap")).toBe(true);
+
+    expect(coordinator.beginSnapshotRecovery("bootstrap")).toBe(false);
+    expect(coordinator.getState()).toMatchObject({
+      pendingReplay: true,
+      inFlight: {
+        kind: "replay",
+        reason: "sequence-gap",
+      },
+    });
+  });
 });

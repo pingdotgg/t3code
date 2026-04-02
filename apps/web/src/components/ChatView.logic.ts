@@ -11,6 +11,7 @@ import {
 } from "../lib/terminalContext";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 const WORKTREE_BRANCH_PREFIX = "t3code";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
@@ -41,6 +42,37 @@ export function buildLocalDraftThread(
     activities: [],
     proposedPlans: [],
   };
+}
+
+export function reconcileMountedTerminalThreadIds(input: {
+  currentThreadIds: ReadonlyArray<ThreadId>;
+  openThreadIds: ReadonlyArray<ThreadId>;
+  activeThreadId: ThreadId | null;
+  activeThreadTerminalOpen: boolean;
+  maxHiddenThreadCount?: number;
+}): ThreadId[] {
+  const openThreadIdSet = new Set(input.openThreadIds);
+  const hiddenThreadIds = input.currentThreadIds.filter(
+    (threadId) => threadId !== input.activeThreadId && openThreadIdSet.has(threadId),
+  );
+  const maxHiddenThreadCount = Math.max(
+    0,
+    input.maxHiddenThreadCount ?? MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  );
+  const nextThreadIds =
+    hiddenThreadIds.length > maxHiddenThreadCount
+      ? hiddenThreadIds.slice(-maxHiddenThreadCount)
+      : hiddenThreadIds;
+
+  if (
+    input.activeThreadId &&
+    input.activeThreadTerminalOpen &&
+    !nextThreadIds.includes(input.activeThreadId)
+  ) {
+    nextThreadIds.push(input.activeThreadId);
+  }
+
+  return nextThreadIds;
 }
 
 export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {

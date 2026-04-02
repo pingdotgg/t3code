@@ -34,11 +34,16 @@ export function createOrchestrationRecoveryCoordinator() {
     state.highestObservedSequence = Math.max(state.highestObservedSequence, sequence);
   };
 
-  const shouldReplayAfterRecovery = (): boolean => {
-    const shouldReplay =
-      state.pendingReplay || state.highestObservedSequence > state.latestSequence;
+  const resolveReplayNeedAfterRecovery = () => {
+    const pendingReplayBeforeReset = state.pendingReplay;
+    const observedAhead = state.highestObservedSequence > state.latestSequence;
+    const shouldReplay = pendingReplayBeforeReset || observedAhead;
     state.pendingReplay = false;
-    return shouldReplay;
+    return {
+      shouldReplay,
+      pendingReplayBeforeReset,
+      observedAhead,
+    };
   };
 
   return {
@@ -93,7 +98,7 @@ export function createOrchestrationRecoveryCoordinator() {
       state.highestObservedSequence = Math.max(state.highestObservedSequence, state.latestSequence);
       state.bootstrapped = true;
       state.inFlight = null;
-      return shouldReplayAfterRecovery();
+      return resolveReplayNeedAfterRecovery().shouldReplay;
     },
 
     failSnapshotRecovery(): void {
@@ -124,7 +129,7 @@ export function createOrchestrationRecoveryCoordinator() {
         state.pendingReplay = false;
         return false;
       }
-      return shouldReplayAfterRecovery();
+      return resolveReplayNeedAfterRecovery().shouldReplay;
     },
 
     failReplayRecovery(): void {
