@@ -52,12 +52,18 @@ export const resolveServerUrl = (options?: {
   pathname?: string | undefined;
   searchParams?: Record<string, string> | undefined;
 }): string => {
-  const rawUrl = firstNonEmptyString(
+  let rawUrl = firstNonEmptyString(
     options?.url,
     window.desktopBridge?.getWsUrl(),
     import.meta.env.VITE_WS_URL,
     window.location.origin,
   );
+
+  // When accessing from a remote host (e.g. mobile), replace localhost in the
+  // resolved URL with the actual page hostname so the connection reaches the server.
+  if (rawUrl.includes("localhost") && window.location.hostname !== "localhost") {
+    rawUrl = rawUrl.replace("localhost", window.location.hostname);
+  }
 
   const parsedUrl = new URL(rawUrl);
   if (options?.protocol) {
