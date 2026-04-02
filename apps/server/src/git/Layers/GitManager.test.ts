@@ -2739,7 +2739,17 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect.objectContaining({
           kind: "phase_started",
           phase: "pr",
-          label: "Creating PR...",
+          label: "Preparing PR...",
+        }),
+        expect.objectContaining({
+          kind: "phase_started",
+          phase: "pr",
+          label: "Generating PR content...",
+        }),
+        expect.objectContaining({
+          kind: "phase_started",
+          phase: "pr",
+          label: "Creating GitHub pull request...",
         }),
       ]);
     }),

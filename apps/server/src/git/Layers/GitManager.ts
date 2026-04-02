@@ -37,6 +37,7 @@ const STATUS_RESULT_CACHE_TTL = Duration.seconds(1);
 const STATUS_RESULT_CACHE_CAPACITY = 2_048;
 type StripProgressContext<T> = T extends any ? Omit<T, "actionId" | "cwd" | "action"> : never;
 type GitActionProgressPayload = StripProgressContext<GitActionProgressEvent>;
+type GitActionProgressEmitter = (event: GitActionProgressPayload) => Effect.Effect<void, never>;
 
 interface OpenPrInfo {
   number: number;
@@ -1200,6 +1201,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     modelSelection: ModelSelection,
     cwd: string,
     fallbackBranch: string | null,
+    emit: GitActionProgressEmitter,
   ) {
     const details = yield* gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
@@ -1234,6 +1236,11 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     }
 
     const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef, headContext);
+    yield* emit({
+      kind: "phase_started",
+      phase: "pr",
+      label: "Generating PR content...",
+    });
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseBranch);
 
     const generated = yield* textGeneration.generatePrContent({
@@ -1254,6 +1261,11 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
           gitManagerError("runPrStep", "Failed to write pull request body temp file.", cause),
         ),
       );
+    yield* emit({
+      kind: "phase_started",
+      phase: "pr",
+      label: "Creating GitHub pull request...",
+    });
     yield* gitHubCli
       .createPullRequest({
         cwd,
@@ -1612,11 +1624,13 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
               .emit({
                 kind: "phase_started",
                 phase: "pr",
-                label: "Creating PR...",
+                label: "Preparing PR...",
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
-                Effect.flatMap(() => runPrStep(modelSelection, input.cwd, currentBranch)),
+                Effect.flatMap(() =>
+                  runPrStep(modelSelection, input.cwd, currentBranch, progress.emit),
+                ),
               )
           : { status: "skipped_not_requested" as const };
 
