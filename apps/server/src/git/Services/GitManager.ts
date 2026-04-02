@@ -56,7 +56,7 @@ export interface GitManagerShape {
   ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
 
   /**
-   * Run a stacked Git action (`commit`, `commit_push`, `commit_push_pr`).
+   * Run a Git action (`commit`, `push`, `create_pr`, `commit_push`, `commit_push_pr`).
    * When `featureBranch` is set, creates and checks out a feature branch first.
    */
   readonly runStackedAction: (

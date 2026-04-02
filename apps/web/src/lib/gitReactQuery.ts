@@ -23,8 +23,24 @@ export const gitMutationKeys = {
     ["git", "mutation", "prepare-pull-request-thread", cwd] as const,
 };
 
-export function invalidateGitQueries(queryClient: QueryClient) {
+export function invalidateGitQueries(queryClient: QueryClient, input?: { cwd?: string | null }) {
+  const cwd = input?.cwd ?? null;
+  if (cwd !== null) {
+    return Promise.all([
+      queryClient.invalidateQueries({ queryKey: gitQueryKeys.status(cwd) }),
+      queryClient.invalidateQueries({ queryKey: gitQueryKeys.branches(cwd) }),
+    ]);
+  }
+
   return queryClient.invalidateQueries({ queryKey: gitQueryKeys.all });
+}
+
+export function invalidateGitStatusQuery(queryClient: QueryClient, cwd: string | null) {
+  if (cwd === null) {
+    return Promise.resolve();
+  }
+
+  return queryClient.invalidateQueries({ queryKey: gitQueryKeys.status(cwd) });
 }
 
 export function gitStatusQueryOptions(cwd: string | null) {

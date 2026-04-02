@@ -4,6 +4,7 @@ import { Schema } from "effect";
 import {
   GitCreateWorktreeInput,
   GitPreparePullRequestThreadInput,
+  GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
 } from "./git";
@@ -13,6 +14,7 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadInput,
 );
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
+const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
 
 describe("GitCreateWorktreeInput", () => {
@@ -60,18 +62,55 @@ describe("GitResolvePullRequestResult", () => {
 });
 
 describe("GitRunStackedActionInput", () => {
-  it("requires a client-provided actionId for progress correlation", () => {
+  it("accepts explicit stacked actions and requires a client-provided actionId", () => {
     const parsed = decodeRunStackedActionInput({
       actionId: "action-1",
       cwd: "/repo",
-      action: "commit",
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.4-mini",
-      },
+      action: "create_pr",
     });
 
     expect(parsed.actionId).toBe("action-1");
-    expect(parsed.action).toBe("commit");
+    expect(parsed.action).toBe("create_pr");
+  });
+});
+
+describe("GitRunStackedActionResult", () => {
+  it("decodes a server-authored completion toast", () => {
+    const parsed = decodeRunStackedActionResult({
+      action: "commit_push",
+      branch: {
+        status: "created",
+        name: "feature/server-owned-toast",
+      },
+      commit: {
+        status: "created",
+        commitSha: "89abcdef01234567",
+        subject: "feat: move toast state into git manager",
+      },
+      push: {
+        status: "pushed",
+        branch: "feature/server-owned-toast",
+        upstreamBranch: "origin/feature/server-owned-toast",
+      },
+      pr: {
+        status: "skipped_not_requested",
+      },
+      toast: {
+        title: "Pushed 89abcde to origin/feature/server-owned-toast",
+        description: "feat: move toast state into git manager",
+        cta: {
+          kind: "run_action",
+          label: "Create PR",
+          action: {
+            kind: "create_pr",
+          },
+        },
+      },
+    });
+
+    expect(parsed.toast.cta.kind).toBe("run_action");
+    if (parsed.toast.cta.kind === "run_action") {
+      expect(parsed.toast.cta.action.kind).toBe("create_pr");
+    }
   });
 });
