@@ -13,6 +13,9 @@ import {
 
 function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
   return {
+    isRepo: true,
+    hasOriginRemote: true,
+    isDefaultBranch: false,
     branch: "feature/test",
     hasWorkingTreeChanges: false,
     workingTree: {

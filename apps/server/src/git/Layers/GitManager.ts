@@ -5,6 +5,7 @@ import { Cache, Duration, Effect, Exit, FileSystem, Layer, Option, Path, Ref } f
 import {
   GitActionProgressEvent,
   GitActionProgressPhase,
+  GitCommandError,
   GitRunStackedActionResult,
   GitStackedAction,
   ModelSelection,
@@ -22,7 +23,7 @@ import {
   type GitManagerShape,
   type GitRunStackedActionOptions,
 } from "../Services/GitManager.ts";
-import { GitCore } from "../Services/GitCore.ts";
+import { GitCore, GitStatusDetails } from "../Services/GitCore.ts";
 import { GitHubCli, type GitHubPullRequestSummary } from "../Services/GitHubCli.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { extractBranchNameFromRemoteRef } from "../remoteRefs.ts";
@@ -38,6 +39,10 @@ const STATUS_RESULT_CACHE_CAPACITY = 2_048;
 type StripProgressContext<T> = T extends any ? Omit<T, "actionId" | "cwd" | "action"> : never;
 type GitActionProgressPayload = StripProgressContext<GitActionProgressEvent>;
 type GitActionProgressEmitter = (event: GitActionProgressPayload) => Effect.Effect<void, never>;
+
+function isNotGitRepositoryError(error: GitCommandError): boolean {
+  return error.message.toLowerCase().includes("not a git repository");
+}
 
 interface OpenPrInfo {
   number: number;
@@ -689,10 +694,25 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
   const normalizeStatusCacheKey = (cwd: string) => canonicalizeExistingPath(cwd);
   const readStatus = Effect.fn("readStatus")(function* (cwd: string) {
-    const details = yield* gitCore.statusDetails(cwd);
+    const details = yield* gitCore.statusDetails(cwd).pipe(
+      Effect.catchIf(isNotGitRepositoryError, () =>
+        Effect.succeed({
+          isRepo: false,
+          hasOriginRemote: false,
+          isDefaultBranch: false,
+          branch: null,
+          upstreamRef: null,
+          hasWorkingTreeChanges: false,
+          workingTree: { files: [], insertions: 0, deletions: 0 },
+          hasUpstream: false,
+          aheadCount: 0,
+          behindCount: 0,
+        } satisfies GitStatusDetails),
+      ),
+    );
 
     const pr =
-      details.branch !== null
+      details.isRepo && details.branch !== null
         ? yield* findLatestPr(cwd, {
             branch: details.branch,
             upstreamRef: details.upstreamRef,
@@ -703,6 +723,9 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         : null;
 
     return {
+      isRepo: details.isRepo,
+      hasOriginRemote: details.hasOriginRemote,
+      isDefaultBranch: details.isDefaultBranch,
       branch: details.branch,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
@@ -909,12 +932,6 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     return parsed[0] ?? null;
   });
 
-  const isDefaultBranch = Effect.fn("isDefaultBranch")(function* (cwd: string, branch: string) {
-    const branches = yield* gitCore.listBranches({ cwd });
-    const currentBranch = branches.branches.find((candidate) => candidate.name === branch);
-    return currentBranch?.isDefault ?? (branch === "main" || branch === "master");
-  });
-
   const buildCompletionToast = Effect.fn("buildCompletionToast")(function* (
     cwd: string,
     result: Pick<GitRunStackedActionResult, "action" | "branch" | "commit" | "push" | "pr">,
@@ -936,11 +953,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
           upstreamRef: finalStatus.upstreamRef,
           hasUpstream: finalStatus.hasUpstream,
         };
-        currentBranchIsDefault = yield* isDefaultBranch(cwd, finalStatus.branch).pipe(
-          Effect.catch(() =>
-            Effect.succeed(finalStatus.branch === "main" || finalStatus.branch === "master"),
-          ),
-        );
+        currentBranchIsDefault = finalStatus.isDefaultBranch;
       }
     }
 

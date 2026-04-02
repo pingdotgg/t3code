@@ -41,14 +41,12 @@ import { Textarea } from "~/components/ui/textarea";
 import { toastManager, type ThreadToastData } from "~/components/ui/toast";
 import { openInPreferredEditor } from "~/editorPreferences";
 import {
-  gitBranchesQueryOptions,
   gitInitMutationOptions,
   gitMutationKeys,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
   gitStatusQueryOptions,
   invalidateGitStatusQuery,
-  invalidateGitQueries,
 } from "~/lib/gitReactQuery";
 import { newCommandId, randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
@@ -278,21 +276,10 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   );
 
   const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
-
-  const { data: branchList = null } = useQuery(gitBranchesQueryOptions(gitCwd));
   // Default to true while loading so we don't flash init controls.
-  const isRepo = branchList?.isRepo ?? true;
-  const hasOriginRemote = branchList?.hasOriginRemote ?? false;
-  const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
-  const isGitStatusOutOfSync =
-    !!gitStatus?.branch && !!currentBranch && gitStatus.branch !== currentBranch;
-
-  useEffect(() => {
-    if (!isGitStatusOutOfSync) return;
-    void invalidateGitQueries(queryClient, { cwd: gitCwd });
-  }, [gitCwd, isGitStatusOutOfSync, queryClient]);
-
-  const gitStatusForActions = isGitStatusOutOfSync ? null : gitStatus;
+  const isRepo = gitStatus?.isRepo ?? true;
+  const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
+  const gitStatusForActions = gitStatus;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -336,11 +323,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   ]);
 
   const isDefaultBranch = useMemo(() => {
-    const branchName = gitStatusForActions?.branch;
-    if (!branchName) return false;
-    const current = branchList?.branches.find((branch) => branch.name === branchName);
-    return current?.isDefault ?? (branchName === "main" || branchName === "master");
-  }, [branchList?.branches, gitStatusForActions?.branch]);
+    return gitStatusForActions?.isDefaultBranch ?? false;
+  }, [gitStatusForActions?.isDefaultBranch]);
 
   const gitActionMenuItems = useMemo(
     () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasOriginRemote),
@@ -881,11 +865,6 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                     Behind upstream. Pull/rebase first.
                   </p>
                 )}
-              {isGitStatusOutOfSync && (
-                <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                  Refreshing git status...
-                </p>
-              )}
               {gitStatusError && (
                 <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError.message}</p>
               )}

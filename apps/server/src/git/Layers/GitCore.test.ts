@@ -386,6 +386,36 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("paginates branch results and returns paging metadata", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(tmp);
+        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "feature-a" });
+        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "feature-b" });
+        yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "feature-c" });
+
+        const firstPage = yield* (yield* GitCore).listBranches({ cwd: tmp, limit: 2 });
+        expect(firstPage.totalCount).toBe(4);
+        expect(firstPage.nextCursor).toBe(2);
+        expect(firstPage.branches.map((branch) => branch.name)).toEqual([
+          initialBranch,
+          "feature-a",
+        ]);
+
+        const secondPage = yield* (yield* GitCore).listBranches({
+          cwd: tmp,
+          cursor: firstPage.nextCursor ?? 0,
+          limit: 2,
+        });
+        expect(secondPage.totalCount).toBe(4);
+        expect(secondPage.nextCursor).toBeNull();
+        expect(secondPage.branches.map((branch) => branch.name)).toEqual([
+          "feature-b",
+          "feature-c",
+        ]);
+      }),
+    );
+
     it.effect("parses separate branch names when column.ui is always enabled", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
@@ -530,6 +560,41 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(remoteBranch?.isRemote).toBe(true);
         expect(remoteBranch?.remoteName).toBe(remoteName);
       }),
+    );
+
+    it.effect(
+      "filters branch queries before pagination and dedupes origin refs with local matches",
+      () =>
+        Effect.gen(function* () {
+          const remote = yield* makeTmpDir();
+          const tmp = yield* makeTmpDir();
+
+          yield* git(remote, ["init", "--bare"]);
+          const { initialBranch } = yield* initRepoWithCommit(tmp);
+          yield* git(tmp, ["remote", "add", "origin", remote]);
+          yield* git(tmp, ["push", "-u", "origin", initialBranch]);
+
+          yield* (yield* GitCore).createBranch({ cwd: tmp, branch: "feature/demo" });
+          yield* git(tmp, ["push", "-u", "origin", "feature/demo"]);
+
+          yield* git(tmp, ["checkout", "-b", "feature/remote-only"]);
+          yield* git(tmp, ["push", "-u", "origin", "feature/remote-only"]);
+          yield* git(tmp, ["checkout", initialBranch]);
+          yield* git(tmp, ["branch", "-D", "feature/remote-only"]);
+
+          const result = yield* (yield* GitCore).listBranches({
+            cwd: tmp,
+            query: "feature/",
+            limit: 10,
+          });
+
+          expect(result.totalCount).toBe(2);
+          expect(result.nextCursor).toBeNull();
+          expect(result.branches.map((branch) => branch.name)).toEqual([
+            "feature/demo",
+            "origin/feature/remote-only",
+          ]);
+        }),
     );
   });
 
@@ -737,6 +802,9 @@ it.layer(TestLayer)("git integration", (it) => {
           ) {
             return ok();
           }
+          if (input.operation === "GitCore.statusDetails.defaultRef") {
+            return ok("refs/remotes/origin/main\n");
+          }
           return Effect.fail(
             new GitCommandError({
               operation: input.operation,
@@ -799,6 +867,9 @@ it.layer(TestLayer)("git integration", (it) => {
             input.operation === "GitCore.statusDetails.stagedNumstat"
           ) {
             return ok();
+          }
+          if (input.operation === "GitCore.statusDetails.defaultRef") {
+            return ok("refs/remotes/origin/main\n");
           }
           return Effect.fail(
             new GitCommandError({

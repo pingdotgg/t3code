@@ -157,11 +157,16 @@ function resolveWsRpc(tag: string): unknown {
     return {
       isRepo: true,
       hasOriginRemote: true,
+      nextCursor: null,
+      totalCount: 1,
       branches: [{ name: "main", current: true, isDefault: true, worktreePath: null }],
     };
   }
   if (tag === WS_METHODS.gitStatus) {
     return {
+      isRepo: true,
+      hasOriginRemote: true,
+      isDefaultBranch: true,
       branch: "main",
       hasWorkingTreeChanges: false,
       workingTree: { files: [], insertions: 0, deletions: 0 },

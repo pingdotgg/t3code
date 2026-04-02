@@ -26,7 +26,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
+import { gitCreateWorktreeMutationOptions, gitStatusQueryOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -1201,7 +1201,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
-  const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
+  const gitStatusQuery = useQuery(gitStatusQueryOptions(gitCwd));
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   const modelOptionsByProvider = useMemo(
@@ -1338,7 +1338,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
   }, [activeProjectCwd, activeThreadWorktreePath]);
   // Default true while loading to avoid toolbar flicker.
-  const isGitRepo = branchesQuery.data?.isRepo ?? true;
+  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
