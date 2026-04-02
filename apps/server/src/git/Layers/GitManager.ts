@@ -1234,7 +1234,45 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     }
 
     const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef, headContext);
-    const rangeContext = yield* gitCore.readRangeContext(cwd, baseBranch);
+
+    // Fetch the remote tracking ref for the base branch so that the range
+    // context reflects any upstream changes (e.g. previously merged PRs).
+    // Without this fetch the local ref can be stale, causing readRangeContext
+    // to include commits/diffs that were already merged upstream (#1487).
+    const rangeRef = yield* Effect.gen(function* () {
+      // If baseBranch already contains a remote prefix, use it as-is.
+      if (baseBranch.includes("/")) {
+        return baseBranch;
+      }
+      // Try to fetch the base branch from the remote and use the remote
+      // tracking ref for range computation.  Prefer the head context's
+      // remote when available (e.g. fork remotes) and fall back to "origin".
+      const remoteName = headContext.remoteName ?? "origin";
+      const remoteRef = `${remoteName}/${baseBranch}`;
+      yield* gitCore.execute({
+        operation: "runPrStep.fetchBaseBranch",
+        cwd,
+        args: [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          remoteName,
+          `+refs/heads/${baseBranch}:refs/remotes/${remoteRef}`,
+        ],
+        allowNonZeroExit: true,
+        timeoutMs: 30_000,
+      });
+      // Verify the remote ref exists after fetch; if it does, prefer it.
+      const verifyResult = yield* gitCore.execute({
+        operation: "runPrStep.verifyRemoteRef",
+        cwd,
+        args: ["rev-parse", "--verify", remoteRef],
+        allowNonZeroExit: true,
+      });
+      return verifyResult.code === 0 ? remoteRef : baseBranch;
+    }).pipe(Effect.catch(() => Effect.succeed(baseBranch)));
+
+    const rangeContext = yield* gitCore.readRangeContext(cwd, rangeRef);
 
     const generated = yield* textGeneration.generatePrContent({
       cwd,
