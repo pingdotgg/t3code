@@ -14,7 +14,6 @@ import type { GitListBranchesResult } from "@t3tools/contracts";
 
 import {
   gitBranchSearchInfiniteQueryOptions,
-  gitBranchesQueryOptions,
   gitMutationKeys,
   gitQueryKeys,
   gitPreparePullRequestThreadMutationOptions,
@@ -86,7 +85,6 @@ describe("invalidateGitQueries", () => {
     const queryClient = new QueryClient();
 
     queryClient.setQueryData(gitQueryKeys.status("/repo/a"), { ok: "a" });
-    queryClient.setQueryData(gitBranchesQueryOptions("/repo/a").queryKey, BRANCH_QUERY_RESULT);
     queryClient.setQueryData(
       gitBranchSearchInfiniteQueryOptions({
         cwd: "/repo/a",
@@ -95,7 +93,6 @@ describe("invalidateGitQueries", () => {
       BRANCH_SEARCH_RESULT,
     );
     queryClient.setQueryData(gitQueryKeys.status("/repo/b"), { ok: "b" });
-    queryClient.setQueryData(gitBranchesQueryOptions("/repo/b").queryKey, BRANCH_QUERY_RESULT);
     queryClient.setQueryData(
       gitBranchSearchInfiniteQueryOptions({
         cwd: "/repo/b",
@@ -110,9 +107,6 @@ describe("invalidateGitQueries", () => {
       queryClient.getQueryState(gitStatusQueryOptions("/repo/a").queryKey)?.isInvalidated,
     ).toBe(true);
     expect(
-      queryClient.getQueryState(gitBranchesQueryOptions("/repo/a").queryKey)?.isInvalidated,
-    ).toBe(true);
-    expect(
       queryClient.getQueryState(
         gitBranchSearchInfiniteQueryOptions({
           cwd: "/repo/a",
@@ -122,9 +116,6 @@ describe("invalidateGitQueries", () => {
     ).toBe(true);
     expect(
       queryClient.getQueryState(gitStatusQueryOptions("/repo/b").queryKey)?.isInvalidated,
-    ).toBe(false);
-    expect(
-      queryClient.getQueryState(gitBranchesQueryOptions("/repo/b").queryKey)?.isInvalidated,
     ).toBe(false);
     expect(
       queryClient.getQueryState(
@@ -142,7 +133,6 @@ describe("invalidateGitStatusQuery", () => {
     const queryClient = new QueryClient();
 
     queryClient.setQueryData(gitQueryKeys.status("/repo/a"), { ok: "a" });
-    queryClient.setQueryData(gitBranchesQueryOptions("/repo/a").queryKey, BRANCH_QUERY_RESULT);
     queryClient.setQueryData(gitQueryKeys.status("/repo/b"), { ok: "b" });
 
     await invalidateGitStatusQuery(queryClient, "/repo/a");
@@ -150,9 +140,6 @@ describe("invalidateGitStatusQuery", () => {
     expect(
       queryClient.getQueryState(gitStatusQueryOptions("/repo/a").queryKey)?.isInvalidated,
     ).toBe(true);
-    expect(
-      queryClient.getQueryState(gitBranchesQueryOptions("/repo/a").queryKey)?.isInvalidated,
-    ).toBe(false);
     expect(
       queryClient.getQueryState(gitStatusQueryOptions("/repo/b").queryKey)?.isInvalidated,
     ).toBe(false);

@@ -186,7 +186,10 @@ const GitStatusPr = Schema.Struct({
 });
 
 export const GitStatusResult = Schema.Struct({
-  branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
+  isRepo: Schema.Boolean,
+  hasOriginRemote: Schema.Boolean,
+  isDefaultBranch: Schema.Boolean,
+  branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
     files: Schema.Array(

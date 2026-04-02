@@ -660,6 +660,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
 
       const status = yield* manager.status({ cwd: repoDir });
+      expect(status.isRepo).toBe(true);
+      expect(status.hasOriginRemote).toBe(true);
+      expect(status.isDefaultBranch).toBe(false);
       expect(status.branch).toBe("feature/status-open-pr");
       expect(status.pr).toEqual({
         number: 13,
@@ -668,6 +671,32 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseBranch: "main",
         headBranch: "feature/status-open-pr",
         state: "open",
+      });
+    }),
+  );
+
+  it.effect("status returns an explicit non-repo result for non-git directories", () =>
+    Effect.gen(function* () {
+      const cwd = yield* makeTempDir("t3code-git-manager-non-repo-");
+      const { manager } = yield* makeManager();
+
+      const status = yield* manager.status({ cwd });
+
+      expect(status).toEqual({
+        isRepo: false,
+        hasOriginRemote: false,
+        isDefaultBranch: false,
+        branch: null,
+        hasWorkingTreeChanges: false,
+        workingTree: {
+          files: [],
+          insertions: 0,
+          deletions: 0,
+        },
+        hasUpstream: false,
+        aheadCount: 0,
+        behindCount: 0,
+        pr: null,
       });
     }),
   );

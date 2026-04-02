@@ -1137,14 +1137,51 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   const statusDetails: GitCoreShape["statusDetails"] = Effect.fn("statusDetails")(function* (cwd) {
     yield* refreshStatusUpstreamIfStale(cwd).pipe(Effect.ignoreCause({ log: true }));
 
-    const [statusStdout, unstagedNumstatStdout, stagedNumstatStdout] = yield* Effect.all(
-      [
-        runGitStdout("GitCore.statusDetails.status", cwd, ["status", "--porcelain=2", "--branch"]),
-        runGitStdout("GitCore.statusDetails.unstagedNumstat", cwd, ["diff", "--numstat"]),
-        runGitStdout("GitCore.statusDetails.stagedNumstat", cwd, ["diff", "--cached", "--numstat"]),
-      ],
-      { concurrency: "unbounded" },
+    const statusResult = yield* executeGit(
+      "GitCore.statusDetails.status",
+      cwd,
+      ["status", "--porcelain=2", "--branch"],
+      {
+        allowNonZeroExit: true,
+      },
     );
+
+    if (statusResult.code !== 0) {
+      const stderr = statusResult.stderr.trim();
+      return yield* createGitCommandError(
+        "GitCore.statusDetails.status",
+        cwd,
+        ["status", "--porcelain=2", "--branch"],
+        stderr || "git status failed",
+      );
+    }
+
+    const [unstagedNumstatStdout, stagedNumstatStdout, defaultRefResult, hasOriginRemote] =
+      yield* Effect.all(
+        [
+          runGitStdout("GitCore.statusDetails.unstagedNumstat", cwd, ["diff", "--numstat"]),
+          runGitStdout("GitCore.statusDetails.stagedNumstat", cwd, [
+            "diff",
+            "--cached",
+            "--numstat",
+          ]),
+          executeGit(
+            "GitCore.statusDetails.defaultRef",
+            cwd,
+            ["symbolic-ref", "refs/remotes/origin/HEAD"],
+            {
+              allowNonZeroExit: true,
+            },
+          ),
+          originRemoteExists(cwd).pipe(Effect.catch(() => Effect.succeed(false))),
+        ],
+        { concurrency: "unbounded" },
+      );
+    const statusStdout = statusResult.stdout;
+    const defaultBranch =
+      defaultRefResult.code === 0
+        ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
+        : null;
 
     let branch: string | null = null;
     let upstreamRef: string | null = null;
@@ -1212,6 +1249,12 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     files.sort((a, b) => a.path.localeCompare(b.path));
 
     return {
+      isRepo: true,
+      hasOriginRemote,
+      isDefaultBranch:
+        branch !== null &&
+        (branch === defaultBranch ||
+          (defaultBranch === null && (branch === "main" || branch === "master"))),
       branch,
       upstreamRef,
       hasWorkingTreeChanges,
@@ -1229,6 +1272,9 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   const status: GitCoreShape["status"] = (input) =>
     statusDetails(input.cwd).pipe(
       Effect.map((details) => ({
+        isRepo: details.isRepo,
+        hasOriginRemote: details.hasOriginRemote,
+        isDefaultBranch: details.isDefaultBranch,
         branch: details.branch,
         hasWorkingTreeChanges: details.hasWorkingTreeChanges,
         workingTree: details.workingTree,

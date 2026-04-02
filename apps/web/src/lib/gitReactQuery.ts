@@ -13,13 +13,11 @@ const GIT_STATUS_REFETCH_INTERVAL_MS = 15_000;
 const GIT_BRANCHES_STALE_TIME_MS = 15_000;
 const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
 const GIT_BRANCHES_PAGE_SIZE = 100;
-const GIT_BRANCH_OVERVIEW_LIMIT = GIT_BRANCHES_PAGE_SIZE;
 
 export const gitQueryKeys = {
   all: ["git"] as const,
   status: (cwd: string | null) => ["git", "status", cwd] as const,
   branches: (cwd: string | null) => ["git", "branches", cwd] as const,
-  branchesOverview: (cwd: string | null) => ["git", "branches", cwd, "overview"] as const,
   branchSearch: (cwd: string | null, query: string) =>
     ["git", "branches", cwd, "search", query] as const,
 };
@@ -66,22 +64,6 @@ export function gitStatusQueryOptions(cwd: string | null) {
     refetchOnWindowFocus: "always",
     refetchOnReconnect: "always",
     refetchInterval: GIT_STATUS_REFETCH_INTERVAL_MS,
-  });
-}
-
-export function gitBranchesQueryOptions(cwd: string | null) {
-  return queryOptions({
-    queryKey: gitQueryKeys.branchesOverview(cwd),
-    queryFn: async () => {
-      const api = ensureNativeApi();
-      if (!cwd) throw new Error("Git branches are unavailable.");
-      return api.git.listBranches({ cwd, limit: GIT_BRANCH_OVERVIEW_LIMIT });
-    },
-    enabled: cwd !== null,
-    staleTime: GIT_BRANCHES_STALE_TIME_MS,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-    refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
   });
 }
 

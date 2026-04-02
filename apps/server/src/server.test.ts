@@ -822,6 +822,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           gitManager: {
             status: () =>
               Effect.succeed({
+                isRepo: true,
+                hasOriginRemote: true,
+                isDefaultBranch: true,
                 branch: "main",
                 hasWorkingTreeChanges: false,
                 workingTree: { files: [], insertions: 0, deletions: 0 },

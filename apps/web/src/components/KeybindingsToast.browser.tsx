@@ -164,6 +164,9 @@ function resolveWsRpc(tag: string): unknown {
   }
   if (tag === WS_METHODS.gitStatus) {
     return {
+      isRepo: true,
+      hasOriginRemote: true,
+      isDefaultBranch: true,
       branch: "main",
       hasWorkingTreeChanges: false,
       workingTree: { files: [], insertions: 0, deletions: 0 },
