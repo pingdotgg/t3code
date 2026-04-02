@@ -35,13 +35,18 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { clamp } from "effect/Number";
-import { estimateTimelineMessageHeight } from "../timelineHeight";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import {
+  MAX_VISIBLE_WORK_LOG_ENTRIES,
+  deriveMessagesTimelineRows,
+  estimateMessagesTimelineRowHeight,
+  normalizeCompactToolLabel,
+  type MessagesTimelineRow,
+} from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import {
   deriveDisplayedUserMessageState,
@@ -56,7 +61,6 @@ import {
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
 
-const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 
 interface MessagesTimelineProps {
@@ -81,6 +85,17 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  onVirtualizerSnapshot?: (snapshot: {
+    totalSize: number;
+    measurements: ReadonlyArray<{
+      id: string;
+      kind: MessagesTimelineRow["kind"];
+      index: number;
+      size: number;
+      start: number;
+      end: number;
+    }>;
+  }) => void;
 }
 
 export const MessagesTimeline = memo(function MessagesTimeline({
@@ -105,6 +120,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  onVirtualizerSnapshot,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -134,70 +150,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     };
   }, [hasMessages, isWorking]);
 
-  const rows = useMemo<TimelineRow[]>(() => {
-    const nextRows: TimelineRow[] = [];
-    const durationStartByMessageId = computeMessageDurationStart(
-      timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
-    );
-
-    for (let index = 0; index < timelineEntries.length; index += 1) {
-      const timelineEntry = timelineEntries[index];
-      if (!timelineEntry) {
-        continue;
-      }
-
-      if (timelineEntry.kind === "work") {
-        const groupedEntries = [timelineEntry.entry];
-        let cursor = index + 1;
-        while (cursor < timelineEntries.length) {
-          const nextEntry = timelineEntries[cursor];
-          if (!nextEntry || nextEntry.kind !== "work") break;
-          groupedEntries.push(nextEntry.entry);
-          cursor += 1;
-        }
-        nextRows.push({
-          kind: "work",
-          id: timelineEntry.id,
-          createdAt: timelineEntry.createdAt,
-          groupedEntries,
-        });
-        index = cursor - 1;
-        continue;
-      }
-
-      if (timelineEntry.kind === "proposed-plan") {
-        nextRows.push({
-          kind: "proposed-plan",
-          id: timelineEntry.id,
-          createdAt: timelineEntry.createdAt,
-          proposedPlan: timelineEntry.proposedPlan,
-        });
-        continue;
-      }
-
-      nextRows.push({
-        kind: "message",
-        id: timelineEntry.id,
-        createdAt: timelineEntry.createdAt,
-        message: timelineEntry.message,
-        durationStart:
-          durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt,
-        showCompletionDivider:
-          timelineEntry.message.role === "assistant" &&
-          completionDividerBeforeEntryId === timelineEntry.id,
-      });
-    }
-
-    if (isWorking) {
-      nextRows.push({
-        kind: "working",
-        id: "working-indicator-row",
-        createdAt: activeTurnStartedAt,
-      });
-    }
-
-    return nextRows;
-  }, [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt]);
+  const rows = useMemo(
+    () =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        completionDividerBeforeEntryId,
+        isWorking,
+        activeTurnStartedAt,
+      }),
+    [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt],
+  );
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
     const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
@@ -241,19 +203,26 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     minimum: 0,
     maximum: rows.length,
   });
+  const virtualMeasurementScopeKey =
+    timelineWidthPx === null ? "width:unknown" : `width:${Math.round(timelineWidthPx)}`;
 
   const rowVirtualizer = useVirtualizer({
     count: virtualizedRowCount,
     getScrollElement: () => scrollContainer,
-    // Use stable row ids so virtual measurements do not leak across thread switches.
-    getItemKey: (index: number) => rows[index]?.id ?? index,
+    // Scope cached row measurements to the current timeline width so offscreen
+    // rows do not keep stale heights after wrapping changes.
+    getItemKey: (index: number) => {
+      const rowId = rows[index]?.id ?? String(index);
+      return `${virtualMeasurementScopeKey}:${rowId}`;
+    },
     estimateSize: (index: number) => {
       const row = rows[index];
       if (!row) return 96;
-      if (row.kind === "work") return 112;
-      if (row.kind === "proposed-plan") return estimateTimelineProposedPlanHeight(row.proposedPlan);
-      if (row.kind === "working") return 40;
-      return estimateTimelineMessageHeight(row.message, { timelineWidthPx });
+      return estimateMessagesTimelineRowHeight(row, {
+        expandedWorkGroups,
+        timelineWidthPx,
+        turnDiffSummaryByAssistantMessageId,
+      });
     },
     measureElement: measureVirtualElement,
     useAnimationFrameWithResizeObserver: true,
@@ -295,6 +264,32 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }
     };
   }, []);
+  useLayoutEffect(() => {
+    if (!onVirtualizerSnapshot) {
+      return;
+    }
+    onVirtualizerSnapshot({
+      totalSize: rowVirtualizer.getTotalSize(),
+      measurements: rowVirtualizer.measurementsCache
+        .slice(0, virtualizedRowCount)
+        .flatMap((measurement) => {
+          const row = rows[measurement.index];
+          if (!row) {
+            return [];
+          }
+          return [
+            {
+              id: row.id,
+              kind: row.kind,
+              index: measurement.index,
+              size: measurement.size,
+              start: measurement.start,
+              end: measurement.end,
+            },
+          ];
+        }),
+    });
+  }, [onVirtualizerSnapshot, rowVirtualizer, rows, virtualizedRowCount]);
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const nonVirtualizedRows = rows.slice(virtualizedRowCount);
@@ -311,6 +306,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const renderRowContent = (row: TimelineRow) => (
     <div
       className="pb-4"
+      data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
@@ -585,6 +581,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               <div
                 key={`virtual-row:${row.id}`}
                 data-index={virtualRow.index}
+                data-virtual-row-id={row.id}
+                data-virtual-row-kind={row.kind}
+                data-virtual-row-size={virtualRow.size}
+                data-virtual-row-start={virtualRow.start}
                 ref={rowVirtualizer.measureElement}
                 className="absolute left-0 top-0 w-full"
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
@@ -605,35 +605,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
-type TimelineProposedPlan = Extract<TimelineEntry, { kind: "proposed-plan" }>["proposedPlan"];
-type TimelineWorkEntry = Extract<TimelineEntry, { kind: "work" }>["entry"];
-type TimelineRow =
-  | {
-      kind: "work";
-      id: string;
-      createdAt: string;
-      groupedEntries: TimelineWorkEntry[];
-    }
-  | {
-      kind: "message";
-      id: string;
-      createdAt: string;
-      message: TimelineMessage;
-      durationStart: string;
-      showCompletionDivider: boolean;
-    }
-  | {
-      kind: "proposed-plan";
-      id: string;
-      createdAt: string;
-      proposedPlan: TimelineProposedPlan;
-    }
-  | { kind: "working"; id: string; createdAt: string | null };
-
-function estimateTimelineProposedPlanHeight(proposedPlan: TimelineProposedPlan): number {
-  const estimatedLines = Math.max(1, Math.ceil(proposedPlan.planMarkdown.length / 72));
-  return 120 + Math.min(estimatedLines * 22, 880);
-}
+type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
+type TimelineRow = MessagesTimelineRow;
 
 function formatWorkingTimer(startIso: string, endIso: string): string | null {
   const startedAtMs = Date.parse(startIso);

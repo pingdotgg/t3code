@@ -1,11 +1,13 @@
 import { type TurnId } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
 import { ChevronRightIcon, FolderIcon, FolderClosedIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { VscodeEntryIcon } from "./VscodeEntryIcon";
+
+const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
 export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   turnId: TurnId;
@@ -20,32 +22,39 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
     [treeNodes],
   );
-  const allDirectoryExpansionState = useMemo(
-    () =>
-      buildDirectoryExpansionState(
-        directoryPathsKey ? directoryPathsKey.split("\u0000") : [],
-        allDirectoriesExpanded,
-      ),
-    [allDirectoriesExpanded, directoryPathsKey],
-  );
-  const [expandedDirectories, setExpandedDirectories] = useState<Record<string, boolean>>(() =>
-    buildDirectoryExpansionState(directoryPathsKey ? directoryPathsKey.split("\u0000") : [], true),
-  );
-  useEffect(() => {
-    setExpandedDirectories(allDirectoryExpansionState);
-  }, [allDirectoryExpansionState]);
+  const expansionStateKey = `${allDirectoriesExpanded ? "expanded" : "collapsed"}\u0000${directoryPathsKey}`;
+  const [directoryExpansionState, setDirectoryExpansionState] = useState<{
+    key: string;
+    overrides: Record<string, boolean>;
+  }>(() => ({
+    key: expansionStateKey,
+    overrides: {},
+  }));
+  const expandedDirectories =
+    directoryExpansionState.key === expansionStateKey
+      ? directoryExpansionState.overrides
+      : EMPTY_DIRECTORY_OVERRIDES;
 
-  const toggleDirectory = useCallback((pathValue: string, fallbackExpanded: boolean) => {
-    setExpandedDirectories((current) => ({
-      ...current,
-      [pathValue]: !(current[pathValue] ?? fallbackExpanded),
-    }));
-  }, []);
+  const toggleDirectory = useCallback(
+    (pathValue: string) => {
+      setDirectoryExpansionState((current) => {
+        const nextOverrides = current.key === expansionStateKey ? current.overrides : {};
+        return {
+          key: expansionStateKey,
+          overrides: {
+            ...nextOverrides,
+            [pathValue]: !(nextOverrides[pathValue] ?? allDirectoriesExpanded),
+          },
+        };
+      });
+    },
+    [allDirectoriesExpanded, expansionStateKey],
+  );
 
   const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
     const leftPadding = 8 + depth * 14;
     if (node.kind === "directory") {
-      const isExpanded = expandedDirectories[node.path] ?? depth === 0;
+      const isExpanded = expandedDirectories[node.path] ?? allDirectoriesExpanded;
       return (
         <div key={`dir:${node.path}`}>
           <button
@@ -53,7 +62,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             data-scroll-anchor-ignore
             className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
             style={{ paddingLeft: `${leftPadding}px` }}
-            onClick={() => toggleDirectory(node.path, depth === 0)}
+            onClick={() => toggleDirectory(node.path)}
           >
             <ChevronRightIcon
               aria-hidden="true"
@@ -123,15 +132,4 @@ function collectDirectoryPaths(nodes: ReadonlyArray<TurnDiffTreeNode>): string[]
     paths.push(...collectDirectoryPaths(node.children));
   }
   return paths;
-}
-
-function buildDirectoryExpansionState(
-  directoryPaths: ReadonlyArray<string>,
-  expanded: boolean,
-): Record<string, boolean> {
-  const expandedState: Record<string, boolean> = {};
-  for (const directoryPath of directoryPaths) {
-    expandedState[directoryPath] = expanded;
-  }
-  return expandedState;
 }

@@ -21,6 +21,7 @@ import { AnchoredToastProvider, ToastProvider, toastManager } from "../component
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { readNativeApi } from "../nativeApi";
 import {
+  getServerConfigUpdatedNotification,
   type ServerConfigUpdateSource,
   useServerConfig,
   useServerConfigUpdatedSubscription,
@@ -206,7 +207,7 @@ function EventRouter() {
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const pathnameRef = useRef(pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
-  const handledConfigReplayRef = useRef(false);
+  const seenServerConfigUpdateIdRef = useRef(getServerConfigUpdatedNotification()?.id ?? 0);
   const disposedRef = useRef(false);
   const bootstrapFromSnapshotRef = useRef<() => Promise<void>>(async () => undefined);
   const serverConfig = useServerConfig();
@@ -243,15 +244,19 @@ function EventRouter() {
 
   const handleServerConfigUpdated = useEffectEvent(
     ({
+      id,
       payload,
       source,
     }: {
+      readonly id: number;
       readonly payload: import("@t3tools/contracts").ServerConfigUpdatedPayload;
       readonly source: ServerConfigUpdateSource;
     }) => {
-      const isReplay = !handledConfigReplayRef.current;
-      handledConfigReplayRef.current = true;
-      if (isReplay || source !== "keybindingsUpdated") {
+      if (id <= seenServerConfigUpdateIdRef.current) {
+        return;
+      }
+      seenServerConfigUpdateIdRef.current = id;
+      if (source !== "keybindingsUpdated") {
         return;
       }
 
