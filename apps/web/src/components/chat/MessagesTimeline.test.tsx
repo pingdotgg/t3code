@@ -84,6 +84,17 @@ describe("MessagesTimeline", () => {
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
         isRevertingCheckpoint={false}
+        isSendBusy={false}
+        editingUserMessageId={null}
+        editingUserMessageText=""
+        editingUserMessageImages={[]}
+        onStartEditUserMessage={() => {}}
+        onChangeEditingUserMessageText={() => {}}
+        onAddEditingUserMessageImages={() => {}}
+        onRemoveEditingUserMessageImage={() => {}}
+        onEditUserMessagePaste={() => {}}
+        onCancelEditUserMessage={() => {}}
+        onSubmitEditUserMessage={() => {}}
         onImageExpand={() => {}}
         markdownCwd={undefined}
         resolvedTheme="light"
@@ -129,6 +140,17 @@ describe("MessagesTimeline", () => {
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
         isRevertingCheckpoint={false}
+        isSendBusy={false}
+        editingUserMessageId={null}
+        editingUserMessageText=""
+        editingUserMessageImages={[]}
+        onStartEditUserMessage={() => {}}
+        onChangeEditingUserMessageText={() => {}}
+        onAddEditingUserMessageImages={() => {}}
+        onRemoveEditingUserMessageImage={() => {}}
+        onEditUserMessagePaste={() => {}}
+        onCancelEditUserMessage={() => {}}
+        onSubmitEditUserMessage={() => {}}
         onImageExpand={() => {}}
         markdownCwd={undefined}
         resolvedTheme="light"

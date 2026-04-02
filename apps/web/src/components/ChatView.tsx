@@ -137,6 +137,7 @@ import {
 } from "../composerDraftStore";
 import {
   appendTerminalContextsToPrompt,
+  deriveDisplayedUserMessageState,
   formatTerminalContextLabel,
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
@@ -153,7 +154,7 @@ import {
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
-import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { MessagesTimeline, type TimelineUserChatMessage } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
@@ -188,8 +189,11 @@ import {
   readFileAsDataUrl,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  EDIT_REVERT_SYNC_TIMEOUT_MS,
+  materializeMessageImageAttachmentForEdit,
   threadHasStarted,
   waitForStartedServerThread,
+  waitForThreadMessageRemoval,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
@@ -492,6 +496,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [editingUserMessageId, setEditingUserMessageId] = useState<MessageId | null>(null);
+  const [editingUserMessageText, setEditingUserMessageText] = useState("");
+  const [editingUserMessageImages, setEditingUserMessageImages] = useState<
+    ComposerImageAttachment[]
+  >([]);
+  const userMessageEditSessionRef = useRef(0);
+  const discardUserMessageEditSession = useCallback(() => {
+    userMessageEditSessionRef.current += 1;
+    setEditingUserMessageId(null);
+    setEditingUserMessageText("");
+    setEditingUserMessageImages((existing) => {
+      for (const image of existing) {
+        revokeBlobPreviewUrl(image.previewUrl);
+      }
+      return [];
+    });
+  }, []);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
@@ -2241,7 +2262,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
-  }, [resetLocalDispatch, threadId]);
+    discardUserMessageEditSession();
+  }, [discardUserMessageEditSession, resetLocalDispatch, threadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2525,6 +2547,74 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setThreadError(activeThreadId, error);
   };
 
+  const addEditingUserMessageImages = useCallback(
+    (files: File[]) => {
+      if (!activeThreadId || files.length === 0) return;
+
+      const nextImages: ComposerImageAttachment[] = [];
+      let nextImageCount = editingUserMessageImages.length;
+      let error: string | null = null;
+      for (const file of files) {
+        if (!file.type.startsWith("image/")) {
+          error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+          continue;
+        }
+        if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+          error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
+          continue;
+        }
+        if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+          error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+          break;
+        }
+
+        const previewUrl = URL.createObjectURL(file);
+        nextImages.push({
+          type: "image",
+          id: randomUUID(),
+          name: file.name || "image",
+          mimeType: file.type,
+          sizeBytes: file.size,
+          previewUrl,
+          file,
+        });
+        nextImageCount += 1;
+      }
+
+      if (nextImages.length > 0) {
+        setEditingUserMessageImages((existing) => [...existing, ...nextImages]);
+      }
+      setThreadError(activeThreadId, error);
+    },
+    [activeThreadId, editingUserMessageImages.length, setThreadError],
+  );
+
+  const removeEditingUserMessageImage = useCallback((imageId: string) => {
+    setEditingUserMessageImages((existing) => {
+      const image = existing.find((entry) => entry.id === imageId);
+      if (image) {
+        revokeBlobPreviewUrl(image.previewUrl);
+      }
+      return existing.filter((entry) => entry.id !== imageId);
+    });
+  }, []);
+
+  const onEditUserMessagePaste = useCallback(
+    (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = Array.from(event.clipboardData.files);
+      if (files.length === 0) {
+        return;
+      }
+      const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+      if (imageFiles.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      addEditingUserMessageImages(imageFiles);
+    },
+    [addEditingUserMessageImages],
+  );
+
   const removeComposerImage = (imageId: string) => {
     removeComposerImageFromDraft(imageId);
   };
@@ -2588,23 +2678,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
   };
 
   const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
+    async (
+      turnCount: number,
+      options?: {
+        confirm?: boolean;
+      },
+    ): Promise<boolean> => {
       const api = readNativeApi();
-      if (!api || !activeThread || isRevertingCheckpoint) return;
+      if (!api || !activeThread || isRevertingCheckpoint) {
+        return false;
+      }
 
       if (phase === "running" || isSendBusy || isConnecting) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
-        return;
+        return false;
       }
-      const confirmed = await api.dialogs.confirm(
-        [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
-        ].join("\n"),
-      );
-      if (!confirmed) {
-        return;
+      if (options?.confirm !== false) {
+        const confirmed = await api.dialogs.confirm(
+          [
+            `Revert this thread to checkpoint ${turnCount}?`,
+            "This will discard newer messages and turn diffs in this thread.",
+            "This action cannot be undone.",
+          ].join("\n"),
+        );
+        if (!confirmed) {
+          return false;
+        }
       }
 
       setIsRevertingCheckpoint(true);
@@ -2617,80 +2716,40 @@ export default function ChatView({ threadId }: ChatViewProps) {
           turnCount,
           createdAt: new Date().toISOString(),
         });
+        return true;
       } catch (err) {
         setThreadError(
           activeThread.id,
           err instanceof Error ? err.message : "Failed to revert thread state.",
         );
+        return false;
+      } finally {
+        setIsRevertingCheckpoint(false);
       }
-      setIsRevertingCheckpoint(false);
     },
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
-    e?.preventDefault();
+  const submitComposerTurn = async (input: {
+    promptForSend: string;
+    trimmedPrompt: string;
+    composerImagesSnapshot: ComposerImageAttachment[];
+    composerTerminalContextsSnapshot: TerminalContextDraft[];
+    clearComposerDraft: boolean;
+    expiredTerminalContextCount: number;
+  }): Promise<boolean> => {
     const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
-    if (activePendingProgress) {
-      onAdvanceActivePendingUserInput();
-      return;
+    if (
+      !api ||
+      !activeThread ||
+      !activeProject ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current
+    ) {
+      return false;
     }
-    const promptForSend = promptRef.current;
-    const {
-      trimmedPrompt: trimmed,
-      sendableTerminalContexts: sendableComposerTerminalContexts,
-      expiredTerminalContextCount,
-      hasSendableContent,
-    } = deriveComposerSendState({
-      prompt: promptForSend,
-      imageCount: composerImages.length,
-      terminalContexts: composerTerminalContexts,
-    });
-    if (showPlanFollowUpPrompt && activeProposedPlan) {
-      const followUp = resolvePlanFollowUpSubmission({
-        draftText: trimmed,
-        planMarkdown: activeProposedPlan.planMarkdown,
-      });
-      promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
-      await onSubmitPlanFollowUp({
-        text: followUp.text,
-        interactionMode: followUp.interactionMode,
-      });
-      return;
-    }
-    const standaloneSlashCommand =
-      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
-        ? parseStandaloneComposerSlashCommand(trimmed)
-        : null;
-    if (standaloneSlashCommand) {
-      handleInteractionModeChange(standaloneSlashCommand);
-      promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
-      return;
-    }
-    if (!hasSendableContent) {
-      if (expiredTerminalContextCount > 0) {
-        const toastCopy = buildExpiredTerminalContextToastCopy(
-          expiredTerminalContextCount,
-          "empty",
-        );
-        toastManager.add({
-          type: "warning",
-          title: toastCopy.title,
-          description: toastCopy.description,
-        });
-      }
-      return;
-    }
-    if (!activeProject) return;
+
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
@@ -2707,14 +2766,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
         threadIdForSend,
         "Select a base branch before sending in New worktree mode.",
       );
-      return;
+      return false;
     }
+
+    const {
+      promptForSend,
+      trimmedPrompt,
+      composerImagesSnapshot,
+      composerTerminalContextsSnapshot,
+      clearComposerDraft,
+      expiredTerminalContextCount,
+    } = input;
 
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
-    const composerImagesSnapshot = [...composerImages];
-    const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const messageTextForSend = appendTerminalContextsToPrompt(
       promptForSend,
       composerTerminalContextsSnapshot,
@@ -2772,11 +2838,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         description: toastCopy.description,
       });
     }
-    promptRef.current = "";
-    clearComposerDraftContent(threadIdForSend);
-    setComposerHighlightedItemId(null);
-    setComposerCursor(0);
-    setComposerTrigger(null);
+    if (clearComposerDraft) {
+      promptRef.current = "";
+      clearComposerDraftContent(threadIdForSend);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+    }
 
     let createdServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
@@ -2815,7 +2883,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           firstComposerImageName = firstComposerImage.name;
         }
       }
-      let titleSeed = trimmed;
+      let titleSeed = trimmedPrompt;
       if (!titleSeed) {
         if (firstComposerImageName) {
           titleSeed = `Image: ${firstComposerImageName}`;
@@ -2927,6 +2995,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           .catch(() => undefined);
       }
       if (
+        clearComposerDraft &&
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
@@ -2956,7 +3025,157 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!turnStartSucceeded) {
       resetLocalDispatch();
     }
+    return turnStartSucceeded;
   };
+
+  const submitEditUserMessageFnRef = useRef<(message: TimelineUserChatMessage) => Promise<void>>(
+    async () => {},
+  );
+
+  submitEditUserMessageFnRef.current = async (message: TimelineUserChatMessage) => {
+    const nextText = editingUserMessageText.trim();
+    if (!activeThread || (nextText.length === 0 && editingUserMessageImages.length === 0)) {
+      return;
+    }
+
+    const targetTurnCount = revertTurnCountByUserMessageId.get(message.id);
+    if (typeof targetTurnCount !== "number") {
+      setThreadError(activeThread.id, "This message can no longer be edited.");
+      return;
+    }
+
+    const reverted = await onRevertToTurnCount(targetTurnCount, { confirm: false });
+    if (!reverted) {
+      return;
+    }
+
+    await waitForThreadMessageRemoval(activeThread.id, message.id, EDIT_REVERT_SYNC_TIMEOUT_MS);
+
+    const nextImages = editingUserMessageImages;
+    const ok = await submitComposerTurn({
+      promptForSend: nextText,
+      trimmedPrompt: nextText,
+      composerImagesSnapshot: nextImages,
+      composerTerminalContextsSnapshot: [],
+      clearComposerDraft: false,
+      expiredTerminalContextCount: 0,
+    });
+    if (ok) {
+      discardUserMessageEditSession();
+    }
+  };
+
+  const onSubmitEditUserMessage = useCallback((message: TimelineUserChatMessage) => {
+    void submitEditUserMessageFnRef.current(message);
+  }, []);
+
+  const onSend = async (e?: { preventDefault: () => void }) => {
+    e?.preventDefault();
+    const api = readNativeApi();
+    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (activePendingProgress) {
+      onAdvanceActivePendingUserInput();
+      return;
+    }
+    const promptForSend = promptRef.current;
+    const {
+      trimmedPrompt: trimmed,
+      sendableTerminalContexts: sendableComposerTerminalContexts,
+      expiredTerminalContextCount,
+      hasSendableContent,
+    } = deriveComposerSendState({
+      prompt: promptForSend,
+      imageCount: composerImages.length,
+      terminalContexts: composerTerminalContexts,
+    });
+    if (showPlanFollowUpPrompt && activeProposedPlan) {
+      const followUp = resolvePlanFollowUpSubmission({
+        draftText: trimmed,
+        planMarkdown: activeProposedPlan.planMarkdown,
+      });
+      promptRef.current = "";
+      clearComposerDraftContent(activeThread.id);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      await onSubmitPlanFollowUp({
+        text: followUp.text,
+        interactionMode: followUp.interactionMode,
+      });
+      return;
+    }
+    const standaloneSlashCommand =
+      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
+        ? parseStandaloneComposerSlashCommand(trimmed)
+        : null;
+    if (standaloneSlashCommand) {
+      handleInteractionModeChange(standaloneSlashCommand);
+      promptRef.current = "";
+      clearComposerDraftContent(activeThread.id);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      return;
+    }
+    if (!hasSendableContent) {
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "empty",
+        );
+        toastManager.add({
+          type: "warning",
+          title: toastCopy.title,
+          description: toastCopy.description,
+        });
+      }
+      return;
+    }
+    if (!activeProject) return;
+    await submitComposerTurn({
+      promptForSend,
+      trimmedPrompt: trimmed,
+      composerImagesSnapshot: [...composerImages],
+      composerTerminalContextsSnapshot: [...sendableComposerTerminalContexts],
+      clearComposerDraft: true,
+      expiredTerminalContextCount,
+    });
+  };
+
+  const onStartEditUserMessage = useCallback(async (message: TimelineUserChatMessage) => {
+    const session = ++userMessageEditSessionRef.current;
+    setEditingUserMessageId(message.id);
+    const displayed = deriveDisplayedUserMessageState(message.text);
+    setEditingUserMessageText(displayed.visibleText);
+
+    const nextImages = await Promise.all(
+      (message.attachments ?? [])
+        .filter(
+          (
+            attachment,
+          ): attachment is Extract<
+            NonNullable<ChatMessage["attachments"]>[number],
+            { type: "image" }
+          > => attachment.type === "image",
+        )
+        .map(materializeMessageImageAttachmentForEdit),
+    );
+
+    if (session !== userMessageEditSessionRef.current) {
+      return;
+    }
+
+    setEditingUserMessageImages((existing) => {
+      for (const image of existing) {
+        if (!nextImages.some((candidate) => candidate?.previewUrl === image.previewUrl)) {
+          revokeBlobPreviewUrl(image.previewUrl);
+        }
+      }
+      return nextImages.flatMap((image) => (image ? [image] : []));
+    });
+  }, []);
+
+  const onCancelEditUserMessage = discardUserMessageEditSession;
 
   const onInterrupt = async () => {
     const api = readNativeApi();
@@ -3832,6 +4051,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
                 isRevertingCheckpoint={isRevertingCheckpoint}
+                isSendBusy={isSendBusy}
+                editingUserMessageId={editingUserMessageId}
+                editingUserMessageText={editingUserMessageText}
+                editingUserMessageImages={editingUserMessageImages}
+                onStartEditUserMessage={onStartEditUserMessage}
+                onChangeEditingUserMessageText={setEditingUserMessageText}
+                onAddEditingUserMessageImages={addEditingUserMessageImages}
+                onRemoveEditingUserMessageImage={removeEditingUserMessageImage}
+                onEditUserMessagePaste={onEditUserMessagePaste}
+                onCancelEditUserMessage={onCancelEditUserMessage}
+                onSubmitEditUserMessage={onSubmitEditUserMessage}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}

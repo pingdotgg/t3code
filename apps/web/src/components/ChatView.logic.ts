@@ -1,4 +1,10 @@
-import { ProjectId, type ModelSelection, type ThreadId, type TurnId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type MessageId,
+  type ModelSelection,
+  type ThreadId,
+  type TurnId,
+} from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -11,6 +17,7 @@ import {
 } from "../lib/terminalContext";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+export const EDIT_REVERT_SYNC_TIMEOUT_MS = 3000;
 const WORKTREE_BRANCH_PREFIX = "t3code";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
@@ -116,6 +123,89 @@ export function cloneComposerImageForRetry(
     };
   } catch {
     return image;
+  }
+}
+
+export function waitForThreadMessageRemoval(
+  threadId: ThreadId,
+  messageId: MessageId,
+  timeoutMs = EDIT_REVERT_SYNC_TIMEOUT_MS,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const hasMessage = () =>
+      useStore
+        .getState()
+        .threads.find((thread) => thread.id === threadId)
+        ?.messages.some((message) => message.id === messageId) ?? false;
+
+    if (!hasMessage()) {
+      resolve();
+      return;
+    }
+
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      unsubscribe();
+      if (timeoutId !== undefined) {
+        globalThis.clearTimeout(timeoutId);
+      }
+      resolve();
+    };
+
+    const unsubscribe = useStore.subscribe((state) => {
+      const stillPresent =
+        state.threads
+          .find((thread) => thread.id === threadId)
+          ?.messages.some((message) => message.id === messageId) ?? false;
+      if (!stillPresent) {
+        finish();
+      }
+    });
+
+    if (!hasMessage()) {
+      finish();
+    }
+
+    if (!settled) {
+      timeoutId = globalThis.setTimeout(() => {
+        finish();
+      }, timeoutMs);
+    }
+  });
+}
+
+export async function materializeMessageImageAttachmentForEdit(
+  attachment: Extract<NonNullable<ChatMessage["attachments"]>[number], { type: "image" }>,
+): Promise<ComposerImageAttachment | null> {
+  if (!attachment.previewUrl) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(attachment.previewUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load ${attachment.name}.`);
+    }
+    const blob = await response.blob();
+    const file = new File([blob], attachment.name, {
+      type: blob.type || attachment.mimeType,
+    });
+    return {
+      type: "image",
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: file.type || attachment.mimeType,
+      sizeBytes: blob.size || attachment.sizeBytes,
+      previewUrl: attachment.previewUrl,
+      file,
+    };
+  } catch {
+    return null;
   }
 }
 
