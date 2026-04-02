@@ -70,6 +70,13 @@ describe("when: branch is clean and has an open PR", () => {
         dialogAction: "commit",
       },
       {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
+      },
+      {
         id: "push",
         label: "Push",
         disabled: true,
@@ -109,6 +116,13 @@ describe("when: actions are busy", () => {
         icon: "commit",
         kind: "open_dialog",
         dialogAction: "commit",
+      },
+      {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
       },
       {
         id: "push",
@@ -191,6 +205,13 @@ describe("when: branch is clean, ahead, and has an open PR", () => {
         dialogAction: "commit",
       },
       {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
+      },
+      {
         id: "push",
         label: "Push",
         disabled: false,
@@ -229,6 +250,13 @@ describe("when: branch is clean, ahead, and has no open PR", () => {
         icon: "commit",
         kind: "open_dialog",
         dialogAction: "commit",
+      },
+      {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
       },
       {
         id: "push",
@@ -271,6 +299,13 @@ describe("when: branch is clean, up to date, and has no open PR", () => {
         dialogAction: "commit",
       },
       {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
+      },
+      {
         id: "push",
         label: "Push",
         disabled: true,
@@ -296,7 +331,7 @@ describe("when: branch is behind upstream", () => {
     assert.deepInclude(quick, { kind: "run_pull", label: "Pull", disabled: false });
   });
 
-  it("buildMenuItems disables push and create PR", () => {
+  it("buildMenuItems enables pull and disables push and create PR", () => {
     const items = buildMenuItems(status({ behindCount: 1, pr: null }), false);
     assert.deepEqual(items, [
       {
@@ -306,6 +341,13 @@ describe("when: branch is behind upstream", () => {
         icon: "commit",
         kind: "open_dialog",
         dialogAction: "commit",
+      },
+      {
+        id: "pull",
+        label: "Pull",
+        disabled: false,
+        icon: "pull",
+        kind: "run_pull",
       },
       {
         id: "push",
@@ -328,13 +370,12 @@ describe("when: branch is behind upstream", () => {
 });
 
 describe("when: branch has diverged from upstream", () => {
-  it("resolveQuickAction returns a disabled sync hint", () => {
+  it("resolveQuickAction enables sync when working tree is clean", () => {
     const quick = resolveQuickAction(status({ aheadCount: 2, behindCount: 1 }), false);
     assert.deepEqual(quick, {
       label: "Sync branch",
-      disabled: true,
-      kind: "show_hint",
-      hint: "Branch has diverged from upstream. Rebase/merge first.",
+      disabled: false,
+      kind: "run_pull",
     });
   });
 });
@@ -396,6 +437,13 @@ describe("when: working tree has local changes", () => {
         icon: "commit",
         kind: "open_dialog",
         dialogAction: "commit",
+      },
+      {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
       },
       {
         id: "push",
@@ -472,6 +520,13 @@ describe("when: working tree has local changes and branch is behind upstream", (
         dialogAction: "commit",
       },
       {
+        id: "pull",
+        label: "Pull",
+        disabled: false,
+        icon: "pull",
+        kind: "run_pull",
+      },
+      {
         id: "push",
         label: "Push",
         disabled: true,
@@ -500,7 +555,7 @@ describe("when: HEAD is detached and there are no local changes", () => {
     assert.deepInclude(quick, { kind: "show_hint", label: "Commit", disabled: true });
   });
 
-  it("buildMenuItems keeps commit, push, and PR disabled", () => {
+  it("buildMenuItems keeps commit, pull, push, and PR disabled", () => {
     const items = buildMenuItems(status({ branch: null, hasWorkingTreeChanges: false }), false);
     assert.deepEqual(items, [
       {
@@ -510,6 +565,13 @@ describe("when: HEAD is detached and there are no local changes", () => {
         icon: "commit",
         kind: "open_dialog",
         dialogAction: "commit",
+      },
+      {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
       },
       {
         id: "push",
@@ -604,6 +666,13 @@ describe("when: branch has no upstream configured", () => {
         dialogAction: "commit",
       },
       {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
+      },
+      {
         id: "push",
         label: "Push",
         disabled: true,
@@ -670,6 +739,13 @@ describe("when: branch has no upstream configured", () => {
         dialogAction: "commit",
       },
       {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
+      },
+      {
         id: "push",
         label: "Push",
         disabled: false,
@@ -702,6 +778,13 @@ describe("when: branch has no upstream configured", () => {
         icon: "commit",
         kind: "open_dialog",
         dialogAction: "commit",
+      },
+      {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
       },
       {
         id: "push",
@@ -778,6 +861,13 @@ describe("when: branch has no upstream configured", () => {
         icon: "commit",
         kind: "open_dialog",
         dialogAction: "commit",
+      },
+      {
+        id: "pull",
+        label: "Pull",
+        disabled: true,
+        icon: "pull",
+        kind: "run_pull",
       },
       {
         id: "push",

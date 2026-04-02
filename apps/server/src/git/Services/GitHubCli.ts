@@ -76,6 +76,8 @@ export interface GitHubCliShape {
     readonly headSelector: string;
     readonly title: string;
     readonly bodyFile: string;
+    /** Optional owner/repo to target. Without this, `gh` defaults to the upstream parent for forks. */
+    readonly repo?: string | null;
   }) => Effect.Effect<void, GitHubCliError>;
 
   /**

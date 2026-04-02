@@ -247,6 +247,7 @@ const makeGitHubCli = Effect.sync(() => {
         args: [
           "pr",
           "create",
+          ...(input.repo ? ["--repo", input.repo] : []),
           "--base",
           input.baseBranch,
           "--head",

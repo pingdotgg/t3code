@@ -222,7 +222,34 @@ const WsRpcLayer = WsRpcGroup.toLayer(
         ),
       [WS_METHODS.shellOpenInEditor]: (input) => open.openInEditor(input),
       [WS_METHODS.gitStatus]: (input) => gitManager.status(input),
-      [WS_METHODS.gitPull]: (input) => git.pullCurrentBranch(input.cwd),
+      [WS_METHODS.gitPull]: (input) =>
+        git.pullCurrentBranch(input.cwd).pipe(
+          Effect.catch((pullError) =>
+            Effect.gen(function* () {
+              // Only attempt reset-to-upstream when the branch has actually diverged.
+              // Re-throw for network errors, auth failures, missing upstream, etc.
+              const details = yield* git.statusDetails(input.cwd);
+              if (details.aheadCount === 0 || details.behindCount === 0) {
+                return yield* Effect.fail(pullError);
+              }
+              if (details.hasWorkingTreeChanges) {
+                return yield* Effect.fail(
+                  new GitManagerServiceError({
+                    message:
+                      "Branch has diverged and has local changes. Stash or commit changes before syncing.",
+                  }),
+                );
+              }
+              yield* git.resetToUpstream(input.cwd);
+              const refreshed = yield* git.statusDetails(input.cwd);
+              return {
+                status: "pulled" as const,
+                branch: refreshed.branch ?? "unknown",
+                upstreamBranch: refreshed.upstreamRef,
+              };
+            }),
+          ),
+        ),
       [WS_METHODS.gitRunStackedAction]: (input) =>
         Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
           gitManager

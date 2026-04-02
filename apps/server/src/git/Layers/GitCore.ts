@@ -1424,6 +1424,20 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     },
   );
 
+  const resetToUpstream: GitCoreShape["resetToUpstream"] = (cwd) =>
+    Effect.gen(function* () {
+      const upstream = yield* runGitStdout(
+        "GitCore.resetToUpstream.upstream",
+        cwd,
+        ["rev-parse", "--abbrev-ref", "@{upstream}"],
+      );
+      yield* runGit("GitCore.resetToUpstream.reset", cwd, [
+        "reset",
+        "--hard",
+        upstream.trim(),
+      ]);
+    });
+
   const readRangeContext: GitCoreShape["readRangeContext"] = Effect.fn("readRangeContext")(
     function* (cwd, baseBranch) {
       const range = `${baseBranch}..HEAD`;
@@ -1966,6 +1980,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     commit,
     pushCurrentBranch,
     pullCurrentBranch,
+    resetToUpstream,
     readRangeContext,
     readConfigValue,
     isInsideWorkTree,

@@ -4,16 +4,16 @@ import type {
   GitStatusResult,
 } from "@t3tools/contracts";
 
-export type GitActionIconName = "commit" | "push" | "pr";
+export type GitActionIconName = "commit" | "push" | "pull" | "pr";
 
 export type GitDialogAction = "commit" | "push" | "create_pr";
 
 export interface GitActionMenuItem {
-  id: "commit" | "push" | "pr";
+  id: "commit" | "push" | "pull" | "pr";
   label: string;
   disabled: boolean;
   icon: GitActionIconName;
-  kind: "open_dialog" | "open_pr";
+  kind: "open_dialog" | "open_pr" | "run_pull";
   dialogAction?: GitDialogAction;
 }
 
@@ -80,22 +80,25 @@ export function buildMenuItems(
   const hasBranch = gitStatus.branch !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
+  const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
   const canPushWithoutUpstream = hasOriginRemote && !gitStatus.hasUpstream;
   const canCommit = !isBusy && hasChanges;
+  const canPull =
+    !isBusy && hasBranch && gitStatus.hasUpstream && isBehind;
   const canPush =
     !isBusy &&
     hasBranch &&
     !hasChanges &&
     !isBehind &&
-    gitStatus.aheadCount > 0 &&
+    isAhead &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canCreatePr =
     !isBusy &&
     hasBranch &&
     !hasChanges &&
     !hasOpenPr &&
-    gitStatus.aheadCount > 0 &&
+    isAhead &&
     !isBehind &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canOpenPr = !isBusy && hasOpenPr;
@@ -108,6 +111,13 @@ export function buildMenuItems(
       icon: "commit",
       kind: "open_dialog",
       dialogAction: "commit",
+    },
+    {
+      id: "pull",
+      label: isAhead && isBehind ? "Sync (force pull)" : "Pull",
+      disabled: !canPull,
+      icon: "pull",
+      kind: "run_pull",
     },
     {
       id: "push",
@@ -226,12 +236,15 @@ export function resolveQuickAction(
   }
 
   if (isDiverged) {
-    return {
-      label: "Sync branch",
-      disabled: true,
-      kind: "show_hint",
-      hint: "Branch has diverged from upstream. Rebase/merge first.",
-    };
+    if (hasChanges) {
+      return {
+        label: "Sync branch",
+        disabled: true,
+        kind: "show_hint",
+        hint: "Stash or commit local changes before syncing.",
+      };
+    }
+    return { label: "Sync branch", disabled: false, kind: "run_pull" };
   }
 
   if (isBehind) {

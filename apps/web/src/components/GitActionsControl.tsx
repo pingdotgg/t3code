@@ -7,7 +7,13 @@ import type {
 } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
+import {
+  ArrowDownToLineIcon,
+  ChevronDownIcon,
+  CloudUploadIcon,
+  GitCommitIcon,
+  InfoIcon,
+} from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
@@ -141,6 +147,19 @@ function getMenuActionDisabledReason({
     return "Commit is currently unavailable.";
   }
 
+  if (item.id === "pull") {
+    if (!hasBranch) {
+      return "Detached HEAD: checkout a branch before pulling.";
+    }
+    if (!gitStatus.hasUpstream) {
+      return "No upstream configured. Push with upstream first.";
+    }
+    if (!isBehind) {
+      return "Branch is already up to date with upstream.";
+    }
+    return "Pull is currently unavailable.";
+  }
+
   if (item.id === "push") {
     if (!hasBranch) {
       return "Detached HEAD: checkout a branch before pushing.";
@@ -187,6 +206,7 @@ const COMMIT_DIALOG_DESCRIPTION =
 
 function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
   if (icon === "commit") return <GitCommitIcon />;
+  if (icon === "pull") return <ArrowDownToLineIcon />;
   if (icon === "push") return <CloudUploadIcon />;
   return <GitHubIcon />;
 }
@@ -194,7 +214,7 @@ function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
 function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   const iconClassName = "size-3.5";
   if (quickAction.kind === "open_pr") return <GitHubIcon className={iconClassName} />;
-  if (quickAction.kind === "run_pull") return <InfoIcon className={iconClassName} />;
+  if (quickAction.kind === "run_pull") return <ArrowDownToLineIcon className={iconClassName} />;
   if (quickAction.kind === "run_action") {
     if (quickAction.action === "commit") return <GitCommitIcon className={iconClassName} />;
     if (quickAction.action === "push" || quickAction.action === "commit_push") {
@@ -702,6 +722,27 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         void openExistingPr();
         return;
       }
+      if (item.kind === "run_pull") {
+        const promise = pullMutation.mutateAsync();
+        toastManager.promise(promise, {
+          loading: { title: "Pulling...", data: threadToastData },
+          success: (result) => ({
+            title: result.status === "pulled" ? "Pulled" : "Already up to date",
+            description:
+              result.status === "pulled"
+                ? `Updated ${result.branch} from ${result.upstreamBranch ?? "upstream"}`
+                : `${result.branch} is already synchronized.`,
+            data: threadToastData,
+          }),
+          error: (err) => ({
+            title: "Pull failed",
+            description: err instanceof Error ? err.message : "An error occurred.",
+            data: threadToastData,
+          }),
+        });
+        void promise.catch(() => undefined);
+        return;
+      }
       if (item.dialogAction === "push") {
         void runGitActionWithToast({ action: "push" });
         return;
@@ -714,7 +755,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       setIsEditingFiles(false);
       setIsCommitDialogOpen(true);
     },
-    [openExistingPr, setIsCommitDialogOpen],
+    [openExistingPr, pullMutation, runGitActionWithToast, setIsCommitDialogOpen, threadToastData, toastManager],
   );
 
   const runDialogAction = useCallback(() => {
