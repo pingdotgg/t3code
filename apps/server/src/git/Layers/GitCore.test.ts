@@ -802,6 +802,9 @@ it.layer(TestLayer)("git integration", (it) => {
           ) {
             return ok();
           }
+          if (input.operation === "GitCore.statusDetails.defaultRef") {
+            return ok("refs/remotes/origin/main\n");
+          }
           return Effect.fail(
             new GitCommandError({
               operation: input.operation,
@@ -864,6 +867,9 @@ it.layer(TestLayer)("git integration", (it) => {
             input.operation === "GitCore.statusDetails.stagedNumstat"
           ) {
             return ok();
+          }
+          if (input.operation === "GitCore.statusDetails.defaultRef") {
+            return ok("refs/remotes/origin/main\n");
           }
           return Effect.fail(
             new GitCommandError({
