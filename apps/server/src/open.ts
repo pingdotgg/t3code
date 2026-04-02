@@ -34,10 +34,45 @@ interface CommandAvailabilityOptions {
   readonly env?: NodeJS.ProcessEnv;
 }
 
-const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
 
-function shouldUseGotoFlag(editor: (typeof EDITORS)[number], target: string): boolean {
-  return editor.supportsGoto && LINE_COLUMN_SUFFIX_PATTERN.test(target);
+function parseTargetPathAndPosition(target: string): {
+  path: string;
+  line: string | undefined;
+  column: string | undefined;
+} | null {
+  const match = TARGET_WITH_POSITION_PATTERN.exec(target);
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+
+  return {
+    path: match[1],
+    line: match[2],
+    column: match[3],
+  };
+}
+
+function resolveCommandEditorArgs(
+  editor: (typeof EDITORS)[number],
+  target: string,
+): ReadonlyArray<string> {
+  const parsedTarget = parseTargetPathAndPosition(target);
+
+  switch (editor.launchStyle) {
+    case "direct-path":
+      return [target];
+    case "goto":
+      return parsedTarget ? ["--goto", target] : [target];
+    case "line-column": {
+      if (!parsedTarget) {
+        return [target];
+      }
+
+      const { path, line, column } = parsedTarget;
+      return [...(line ? ["--line", line] : []), ...(column ? ["--column", column] : []), path];
+    }
+  }
 }
 
 function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
@@ -208,9 +243,10 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
   }
 
   if (editorDef.command) {
-    return shouldUseGotoFlag(editorDef, input.cwd)
-      ? { command: editorDef.command, args: ["--goto", input.cwd] }
-      : { command: editorDef.command, args: [input.cwd] };
+    return {
+      command: editorDef.command,
+      args: resolveCommandEditorArgs(editorDef, input.cwd),
+    };
   }
 
   if (editorDef.id !== "file-manager") {

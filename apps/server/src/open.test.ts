@@ -75,10 +75,19 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         command: "zed",
         args: ["/tmp/workspace"],
       });
+
+      const ideaLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "idea" },
+        "darwin",
+      );
+      assert.deepEqual(ideaLaunch, {
+        command: "idea",
+        args: ["/tmp/workspace"],
+      });
     }),
   );
 
-  it.effect("uses --goto when editor supports line/column suffixes", () =>
+  it.effect("applies launch-style-specific navigation arguments", () =>
     Effect.gen(function* () {
       const lineOnly = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/AGENTS.md:48", editor: "cursor" },
@@ -141,6 +150,33 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       assert.deepEqual(zedLineAndColumn, {
         command: "zed",
         args: ["/tmp/workspace/src/open.ts:71:5"],
+      });
+
+      const zedLineOnly = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/AGENTS.md:48", editor: "zed" },
+        "darwin",
+      );
+      assert.deepEqual(zedLineOnly, {
+        command: "zed",
+        args: ["/tmp/workspace/AGENTS.md:48"],
+      });
+
+      const ideaLineOnly = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/AGENTS.md:48", editor: "idea" },
+        "darwin",
+      );
+      assert.deepEqual(ideaLineOnly, {
+        command: "idea",
+        args: ["--line", "48", "/tmp/workspace/AGENTS.md"],
+      });
+
+      const ideaLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "idea" },
+        "darwin",
+      );
+      assert.deepEqual(ideaLineAndColumn, {
+        command: "idea",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
       });
     }),
   );
