@@ -109,6 +109,12 @@ export function BranchToolbarBranchSelector({
       enabled: isBranchMenuOpen,
     }),
   );
+  const {
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isPending: isBranchesSearchPending,
+  } = branchesSearchQuery;
   const branches = useMemo(
     () => branchesSearchQuery.data?.pages.flatMap((page) => page.branches) ?? [],
     [branchesSearchQuery.data?.pages],
@@ -173,11 +179,11 @@ export function BranchToolbarBranchSelector({
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const shouldVirtualizeBranchList = filteredBranchPickerItems.length > 40;
   const totalBranchCount = branchesSearchQuery.data?.pages[0]?.totalCount ?? 0;
-  const branchStatusText = branchesSearchQuery.isPending
+  const branchStatusText = isBranchesSearchPending
     ? "Loading branches..."
-    : branchesSearchQuery.isFetchingNextPage
+    : isFetchingNextPage
       ? "Loading more branches..."
-      : branchesSearchQuery.hasNextPage
+      : hasNextPage
         ? `Showing ${branches.length} of ${totalBranchCount} branches`
         : null;
 
@@ -237,7 +243,7 @@ export function BranchToolbarBranchSelector({
 
       let nextBranchName = selectedBranchName;
       if (branch.isRemote) {
-        const status = await api.git.status({ cwd: branchCwd }).catch(() => null);
+        const status = await api.git.status({ cwd: selectionTarget.checkoutCwd }).catch(() => null);
         if (status?.branch) {
           nextBranchName = status.branch;
         }
@@ -320,11 +326,7 @@ export function BranchToolbarBranchSelector({
 
   const branchListScrollElementRef = useRef<HTMLDivElement | null>(null);
   const maybeFetchNextBranchPage = useCallback(() => {
-    if (
-      !isBranchMenuOpen ||
-      !branchesSearchQuery.hasNextPage ||
-      branchesSearchQuery.isFetchingNextPage
-    ) {
+    if (!isBranchMenuOpen || !hasNextPage || isFetchingNextPage) {
       return;
     }
 
@@ -339,8 +341,8 @@ export function BranchToolbarBranchSelector({
       return;
     }
 
-    void branchesSearchQuery.fetchNextPage().catch(() => undefined);
-  }, [branchesSearchQuery, isBranchMenuOpen]);
+    void fetchNextPage().catch(() => undefined);
+  }, [fetchNextPage, hasNextPage, isBranchMenuOpen, isFetchingNextPage]);
   const branchListVirtualizer = useVirtualizer({
     count: filteredBranchPickerItems.length,
     estimateSize: (index) =>
