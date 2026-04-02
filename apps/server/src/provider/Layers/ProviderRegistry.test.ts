@@ -30,10 +30,7 @@ import {
   parseAuthStatusFromOutput,
   readCodexConfigModelProvider,
 } from "./CodexProvider.testing";
-import {
-  checkClaudeProviderStatus,
-  parseClaudeAuthStatusFromOutput,
-} from "./ClaudeProvider.testing";
+import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
 import { ProviderRegistryLive } from "./ProviderRegistry";
 import { haveProvidersChanged } from "./ProviderRegistry.shared";
 import { ServerSettingsService } from "../../serverSettings";
