@@ -960,8 +960,7 @@ export function GeneralSettingsPanel() {
                   size="xs"
                   variant="outline"
                   disabled={
-                    notificationPermission === "unsupported" ||
-                    notificationPermission === "granted"
+                    notificationPermission === "unsupported" || notificationPermission === "granted"
                   }
                   onClick={requestPermission}
                 >
