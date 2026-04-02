@@ -25,6 +25,7 @@ import {
 } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { readNativeApi } from "~/nativeApi";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -39,6 +40,15 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not copy plan",
+        description: error instanceof Error ? error.message : "An error occurred while copying.",
+      });
+    },
+  });
   const savePathInputId = useId();
   const title = proposedPlanTitle(planMarkdown) ?? "Proposed plan";
   const lineCount = planMarkdown.split("\n").length;
@@ -52,6 +62,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
 
   const handleDownload = () => {
     downloadPlanAsTextFile(downloadFilename, saveContents);
+  };
+
+  const handleCopyPlan = () => {
+    copyToClipboard(saveContents);
   };
 
   const openSaveDialog = () => {
@@ -127,6 +141,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <EllipsisIcon aria-hidden="true" className="size-4" />
           </MenuTrigger>
           <MenuPopup align="end">
+            <MenuItem onClick={handleCopyPlan}>
+              {isCopied ? "Copied!" : "Copy to clipboard"}
+            </MenuItem>
             <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
             <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
               Save to workspace
