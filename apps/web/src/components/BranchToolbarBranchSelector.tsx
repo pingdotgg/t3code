@@ -84,8 +84,6 @@ export function BranchToolbarBranchSelector({
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
-  "use no memo";
-
   const queryClient = useQueryClient();
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
@@ -102,22 +100,22 @@ export function BranchToolbarBranchSelector({
     );
   }, [branchCwd, queryClient]);
 
-  const branchesSearchQuery = useInfiniteQuery(
+  const {
+    data: branchesSearchData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isPending: isBranchesSearchPending,
+  } = useInfiniteQuery(
     gitBranchSearchInfiniteQueryOptions({
       cwd: branchCwd,
       query: deferredTrimmedBranchQuery,
       enabled: isBranchMenuOpen,
     }),
   );
-  const {
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-    isPending: isBranchesSearchPending,
-  } = branchesSearchQuery;
   const branches = useMemo(
-    () => branchesSearchQuery.data?.pages.flatMap((page) => page.branches) ?? [],
-    [branchesSearchQuery.data?.pages],
+    () => branchesSearchData?.pages.flatMap((page) => page.branches) ?? [],
+    [branchesSearchData?.pages],
   );
   const currentGitBranch =
     branchStatusQuery.data?.branch ?? branches.find((branch) => branch.current)?.name ?? null;
@@ -178,7 +176,7 @@ export function BranchToolbarBranchSelector({
   );
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const shouldVirtualizeBranchList = filteredBranchPickerItems.length > 40;
-  const totalBranchCount = branchesSearchQuery.data?.pages[0]?.totalCount ?? 0;
+  const totalBranchCount = branchesSearchData?.pages[0]?.totalCount ?? 0;
   const branchStatusText = isBranchesSearchPending
     ? "Loading branches..."
     : isFetchingNextPage
@@ -502,7 +500,7 @@ export function BranchToolbarBranchSelector({
       <ComboboxTrigger
         render={<Button variant="ghost" size="xs" />}
         className="text-muted-foreground/70 hover:text-foreground/80"
-        disabled={(branchesSearchQuery.isPending && branches.length === 0) || isBranchActionPending}
+        disabled={(isBranchesSearchPending && branches.length === 0) || isBranchActionPending}
       >
         <span className="max-w-[240px] truncate">{triggerLabel}</span>
         <ChevronDownIcon />
