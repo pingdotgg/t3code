@@ -2166,13 +2166,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       pendingUserScrollUpIntentRef.current = false;
     } else if (shouldAutoScrollRef.current && pendingUserScrollUpIntentRef.current) {
       const scrolledUp = currentScrollTop < lastKnownScrollTopRef.current - 1;
-      if (scrolledUp) {
+      if (scrolledUp && !isNearBottom) {
         shouldAutoScrollRef.current = false;
       }
       pendingUserScrollUpIntentRef.current = false;
     } else if (shouldAutoScrollRef.current && isPointerScrollActiveRef.current) {
       const scrolledUp = currentScrollTop < lastKnownScrollTopRef.current - 1;
-      if (scrolledUp) {
+      if (scrolledUp && !isNearBottom) {
         shouldAutoScrollRef.current = false;
       }
     } else if (shouldAutoScrollRef.current && !isNearBottom) {
