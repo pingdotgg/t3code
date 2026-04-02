@@ -42,6 +42,7 @@ describe("deriveOrchestrationBatchEffects", () => {
   it("targets draft promotion and terminal cleanup from thread lifecycle events", () => {
     const createdThreadId = ThreadId.makeUnsafe("thread-created");
     const deletedThreadId = ThreadId.makeUnsafe("thread-deleted");
+    const startedThreadId = ThreadId.makeUnsafe("thread-started");
 
     const effects = deriveOrchestrationBatchEffects([
       makeEvent("thread.created", {
@@ -60,10 +61,19 @@ describe("deriveOrchestrationBatchEffects", () => {
         threadId: deletedThreadId,
         deletedAt: "2026-02-27T00:00:01.000Z",
       }),
+      makeEvent("thread.turn-start-requested", {
+        threadId: startedThreadId,
+        messageId: MessageId.makeUnsafe("message-started"),
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: "2026-02-27T00:00:02.000Z",
+      }),
     ]);
 
     expect(effects.clearPromotedDraftThreadIds).toEqual([createdThreadId]);
     expect(effects.clearDeletedThreadIds).toEqual([deletedThreadId]);
+    expect(effects.clearRuntimeToolOutputThreadIds).toEqual([deletedThreadId, startedThreadId]);
     expect(effects.removeTerminalStateThreadIds).toEqual([deletedThreadId]);
     expect(effects.needsProviderInvalidation).toBe(false);
   });
@@ -102,6 +112,7 @@ describe("deriveOrchestrationBatchEffects", () => {
 
     expect(effects.clearPromotedDraftThreadIds).toEqual([threadId]);
     expect(effects.clearDeletedThreadIds).toEqual([]);
+    expect(effects.clearRuntimeToolOutputThreadIds).toEqual([]);
     expect(effects.removeTerminalStateThreadIds).toEqual([]);
     expect(effects.needsProviderInvalidation).toBe(true);
   });

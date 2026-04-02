@@ -140,4 +140,57 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Context compacted");
     expect(markup).toContain("Work log");
   });
+
+  it("renders command output collapsed by default for tool work entries", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Ran command completed",
+              tone: "tool",
+              command: "bun fmt",
+              output:
+                "apps/web/src/session-logic.ts\napps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts\n",
+              toolTitle: "Ran command",
+              itemType: "command_execution",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup.match(/bun fmt/g)?.length).toBe(1);
+    expect(markup).toContain("Show output");
+    expect(markup).not.toContain("apps/web/src/session-logic.ts");
+    expect(markup).not.toContain(
+      "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+    );
+  });
 });

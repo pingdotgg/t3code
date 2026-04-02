@@ -5,6 +5,8 @@ import {
   EventId,
   ProjectId,
   type OrchestrationEvent,
+  type ProviderRuntimeEvent,
+  RuntimeItemId,
   type ServerConfig,
   type ServerProvider,
   type TerminalEvent,
@@ -31,6 +33,7 @@ function registerListener<T>(listeners: Set<(event: T) => void>, listener: (even
 
 const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
 const orchestrationEventListeners = new Set<(event: OrchestrationEvent) => void>();
+const runtimeToolOutputEventListeners = new Set<(event: ProviderRuntimeEvent) => void>();
 
 const rpcClientMock = {
   dispose: vi.fn(),
@@ -82,6 +85,9 @@ const rpcClientMock = {
     replayEvents: vi.fn(),
     onDomainEvent: vi.fn((listener: (event: OrchestrationEvent) => void) =>
       registerListener(orchestrationEventListeners, listener),
+    ),
+    onRuntimeToolOutputEvent: vi.fn((listener: (event: ProviderRuntimeEvent) => void) =>
+      registerListener(runtimeToolOutputEventListeners, listener),
     ),
   },
 };
@@ -168,6 +174,7 @@ beforeEach(() => {
   showContextMenuFallbackMock.mockReset();
   terminalEventListeners.clear();
   orchestrationEventListeners.clear();
+  runtimeToolOutputEventListeners.clear();
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
 });
 
@@ -194,9 +201,11 @@ describe("wsNativeApi", () => {
     const api = createWsNativeApi();
     const onTerminalEvent = vi.fn();
     const onDomainEvent = vi.fn();
+    const onRuntimeToolOutputEvent = vi.fn();
 
     api.terminal.onEvent(onTerminalEvent);
     api.orchestration.onDomainEvent(onDomainEvent);
+    api.orchestration.onRuntimeToolOutputEvent(onRuntimeToolOutputEvent);
 
     const terminalEvent = {
       threadId: "thread-1",
@@ -233,8 +242,23 @@ describe("wsNativeApi", () => {
     } satisfies Extract<OrchestrationEvent, { type: "project.created" }>;
     emitEvent(orchestrationEventListeners, orchestrationEvent);
 
+    const runtimeToolOutputEvent = {
+      eventId: EventId.makeUnsafe("runtime-1"),
+      provider: "codex",
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      itemId: RuntimeItemId.makeUnsafe("item-1"),
+      createdAt: "2026-02-24T00:00:00.000Z",
+      type: "content.delta",
+      payload: {
+        streamKind: "command_output",
+        delta: "hello\n",
+      },
+    } as const satisfies Extract<ProviderRuntimeEvent, { type: "content.delta" }>;
+    emitEvent(runtimeToolOutputEventListeners, runtimeToolOutputEvent);
+
     expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
     expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
+    expect(onRuntimeToolOutputEvent).toHaveBeenCalledWith(runtimeToolOutputEvent);
   });
 
   it("sends orchestration dispatch commands as the direct RPC payload", async () => {

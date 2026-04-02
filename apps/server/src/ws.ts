@@ -29,6 +29,7 @@ import { normalizeDispatchCommand } from "./orchestration/Normalizer";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
+import { ProviderService } from "./provider/Services/ProviderService";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
@@ -185,6 +186,18 @@ const WsRpcLayer = WsRpcGroup.toLayer(
                 ),
               ),
               Stream.flatMap((events) => Stream.fromIterable(events)),
+            );
+          }),
+        ),
+      [WS_METHODS.subscribeProviderRuntimeToolOutputEvents]: (_input) =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const providerService = yield* ProviderService;
+            return providerService.streamEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "content.delta" && event.payload.streamKind === "command_output",
+              ),
             );
           }),
         ),

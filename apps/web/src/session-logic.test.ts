@@ -825,6 +825,558 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("merges ephemeral command output into the matching command entry", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          title: "Ran command",
+          data: {
+            item: {
+              command: ["bun", "fmt"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-progress-1",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          title: "Ran command",
+        },
+      }),
+      makeActivity({
+        id: "command-progress-2",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          title: "Ran command",
+        },
+      }),
+      makeActivity({
+        id: "command-complete",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.completed",
+        summary: "Ran command completed",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          title: "Ran command",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(
+      activities,
+      undefined,
+      new Map([
+        [
+          "item-command-1",
+          "apps/web/src/session-logic.ts\napps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts\n",
+        ],
+      ]),
+    );
+
+    expect(entry).toMatchObject({
+      id: "command-complete",
+      command: "bun fmt",
+      output:
+        "apps/web/src/session-logic.ts\napps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts\n",
+      itemType: "command_execution",
+      toolTitle: "Ran command",
+    });
+  });
+
+  it("keeps command tool.started entries so output can stream before completion", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-start-only",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-live",
+          title: "Ran command",
+          data: {
+            item: {
+              command: ["bun", "run", "build"],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(
+      activities,
+      undefined,
+      new Map([["item-command-live", "building...\n"]]),
+    );
+
+    expect(entry).toMatchObject({
+      id: "command-start-only",
+      command: "bun run build",
+      output: "building...\n",
+      itemType: "command_execution",
+      toolTitle: "Ran command",
+    });
+  });
+
+  it("collapses command started and completed rows even when their details differ", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-build",
+          title: "Ran command",
+          detail: "npm run build",
+          data: {
+            item: {
+              command: ["npm", "run", "build"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command completed",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-build",
+          title: "Ran command",
+          detail: "<exited with exit code 0>",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "command-complete",
+      command: "npm run build",
+      itemType: "command_execution",
+      toolTitle: "Ran command",
+    });
+  });
+
+  it("collapses a single replayed command completion by group when itemId is absent", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-start-no-item-id",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          detail: "npm run build",
+          data: {
+            item: {
+              command: ["npm", "run", "build"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-complete-no-item-id",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command completed",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          detail: "<exited with exit code 0>",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "command-complete-no-item-id",
+      command: "npm run build",
+      itemType: "command_execution",
+      toolTitle: "Ran command",
+    });
+  });
+
+  it("collapses replayed command started and updated rows when only the summary differs by lifecycle suffix", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          detail: "npm run build",
+          data: {
+            item: {
+              command: ["npm", "run", "build"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-update",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          detail: "npm run build",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "command-update",
+      command: "npm run build",
+      itemType: "command_execution",
+      label: "Ran command",
+    });
+  });
+
+  it("collapses replayed multi-command rows by itemId when all started events sort before later lifecycle events", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-1-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          detail: "npm run build",
+          data: {
+            item: {
+              command: ["npm", "run", "build"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-2-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-2",
+          detail: "npm run lint",
+          data: {
+            item: {
+              command: ["npm", "run", "lint"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-1-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          detail: "npm run build",
+        },
+      }),
+      makeActivity({
+        id: "command-1-complete",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Ran command completed",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          detail: "<exited with exit code 0>",
+        },
+      }),
+      makeActivity({
+        id: "command-2-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-2",
+          detail: "npm run lint",
+        },
+      }),
+      makeActivity({
+        id: "command-2-complete",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Ran command completed",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-2",
+          detail: "<exited with exit code 0>",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      id: "command-1-complete",
+      command: "npm run build",
+      itemType: "command_execution",
+    });
+    expect(entries[1]).toMatchObject({
+      id: "command-2-complete",
+      command: "npm run lint",
+      itemType: "command_execution",
+    });
+  });
+
+  it("does not collapse ambiguous replayed command completions when multiple open commands share a group and itemId is absent", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-1-start-no-item-id",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          detail: "npm run build",
+          data: {
+            item: {
+              command: ["npm", "run", "build"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-2-start-no-item-id",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          detail: "npm run lint",
+          data: {
+            item: {
+              command: ["npm", "run", "lint"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-complete-ambiguous",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Ran command completed",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          detail: "<exited with exit code 0>",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries).toHaveLength(3);
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "command-1-start-no-item-id",
+      "command-2-start-no-item-id",
+      "command-complete-ambiguous",
+    ]);
+  });
+
+  it("preserves output on the first command when multiple replayed commands are present", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-1-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          detail: "npm run build",
+          data: {
+            item: {
+              command: ["npm", "run", "build"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-2-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-2",
+          detail: "npm run lint",
+          data: {
+            item: {
+              command: ["npm", "run", "lint"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-1-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command completed",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          detail: "<exited with exit code 0>",
+        },
+      }),
+      makeActivity({
+        id: "command-2-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Ran command completed",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-2",
+          detail: "<exited with exit code 0>",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(
+      activities,
+      undefined,
+      new Map([
+        ["item-command-1", "build output\n"],
+        ["item-command-2", "lint output\n"],
+      ]),
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      id: "command-1-complete",
+      command: "npm run build",
+      output: "build output\n",
+      itemType: "command_execution",
+    });
+    expect(entries[1]).toMatchObject({
+      id: "command-2-complete",
+      command: "npm run lint",
+      output: "lint output\n",
+      itemType: "command_execution",
+    });
+  });
+
+  it("preserves output for both commands while a second command is still in progress", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-1-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          title: "Ran command",
+          data: {
+            item: {
+              command: ["npm", "run", "build"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-1-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command completed",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-1",
+          title: "Ran command",
+          detail: "<exited with exit code 0>",
+        },
+      }),
+      makeActivity({
+        id: "command-2-start",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.started",
+        summary: "Ran command started",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-2",
+          title: "Ran command",
+          data: {
+            item: {
+              command: ["npm", "run", "lint"],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-2-update",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          itemId: "item-command-2",
+          title: "Ran command",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(
+      activities,
+      undefined,
+      new Map([
+        ["item-command-1", "build output\n"],
+        ["item-command-2", "lint output\n"],
+      ]),
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      id: "command-1-complete",
+      command: "npm run build",
+      output: "build output\n",
+      itemType: "command_execution",
+    });
+    expect(entries[1]).toMatchObject({
+      id: "command-2-update",
+      command: "npm run lint",
+      output: "lint output\n",
+      itemType: "command_execution",
+    });
+  });
+
   it("keeps separate tool entries when an identical call starts after the prior one completed", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

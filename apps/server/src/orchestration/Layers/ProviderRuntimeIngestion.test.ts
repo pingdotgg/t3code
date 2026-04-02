@@ -328,6 +328,32 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("does not project command output deltas into persisted tool activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-command-output"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      itemId: asItemId("item-command-1"),
+      createdAt: now,
+      payload: {
+        streamKind: "command_output",
+        delta: "hello from stdout\n",
+      },
+    });
+
+    await harness.drain();
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    expect(
+      thread?.activities.some((entry) => entry.id === asEventId("evt-command-output")) ?? false,
+    ).toBe(false);
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = new Date().toISOString();
@@ -1834,6 +1860,11 @@ describe("ProviderRuntimeIngestion", () => {
         status: "in_progress",
         title: "Read file",
         detail: "/tmp/file.ts",
+        data: {
+          item: {
+            command: ["sed", "-n", "1,40p", "/tmp/file.ts"],
+          },
+        },
       },
     });
 
@@ -1853,6 +1884,18 @@ describe("ProviderRuntimeIngestion", () => {
         (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.started",
       ),
     ).toBe(true);
+    const toolStarted = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-started",
+    );
+    const toolStartedPayload =
+      toolStarted?.payload && typeof toolStarted.payload === "object"
+        ? (toolStarted.payload as Record<string, unknown>)
+        : undefined;
+    expect(toolStartedPayload?.data).toEqual({
+      item: {
+        command: ["sed", "-n", "1,40p", "/tmp/file.ts"],
+      },
+    });
   });
 
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {

@@ -38,6 +38,7 @@ export interface WorkLogEntry {
   label: string;
   detail?: string;
   command?: string;
+  output?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
@@ -45,9 +46,14 @@ export interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
 }
 
-interface DerivedWorkLogEntry extends WorkLogEntry {
+export interface RuntimeAttachableWorkLogEntry extends WorkLogEntry {
+  itemId?: string;
+}
+
+interface DerivedWorkLogEntry extends RuntimeAttachableWorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
+  groupKey?: string;
 }
 
 export interface PendingApproval {
@@ -457,19 +463,55 @@ export function hasActionableProposedPlan(
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
+  runtimeOutputByItemId: ReadonlyMap<string, string> = new Map(),
 ): WorkLogEntry[] {
+  return mergeRuntimeOutputIntoWorkLogEntries(
+    deriveBaseWorkLogEntries(activities, latestTurnId),
+    runtimeOutputByItemId,
+  );
+}
+
+export function deriveBaseWorkLogEntries(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  latestTurnId: TurnId | undefined,
+): RuntimeAttachableWorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries = ordered
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
-    .filter((activity) => activity.kind !== "tool.started")
+    .filter((activity) => shouldIncludeWorkLogActivity(activity))
     .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
     .filter((activity) => activity.kind !== "context-window.updated")
     .filter((activity) => activity.summary !== "Checkpoint captured")
     .filter((activity) => !isPlanBoundaryToolActivity(activity))
     .map(toDerivedWorkLogEntry);
   return collapseDerivedWorkLogEntries(entries).map(
-    ({ activityKind: _activityKind, collapseKey: _collapseKey, ...entry }) => entry,
+    ({ activityKind: _activityKind, collapseKey: _collapseKey, groupKey: _groupKey, ...entry }) =>
+      entry,
   );
+}
+
+export function mergeRuntimeOutputIntoWorkLogEntries(
+  entries: ReadonlyArray<RuntimeAttachableWorkLogEntry>,
+  runtimeOutputByItemId: ReadonlyMap<string, string>,
+): WorkLogEntry[] {
+  return entries.map(({ itemId, ...entry }) => {
+    if (!itemId || !runtimeOutputByItemId.has(itemId)) {
+      return entry;
+    }
+    return Object.assign(entry, { output: runtimeOutputByItemId.get(itemId) });
+  });
+}
+
+function shouldIncludeWorkLogActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "tool.started") {
+    return true;
+  }
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  const itemType = extractWorkLogItemType(payload);
+  return itemType === "command_execution" || itemType === "file_change";
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -519,12 +561,20 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (itemType) {
     entry.itemType = itemType;
   }
+  const itemId = extractWorkLogItemId(payload);
+  if (itemId) {
+    entry.itemId = itemId;
+  }
   if (requestKind) {
     entry.requestKind = requestKind;
   }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
+  }
+  const groupKey = deriveToolLifecycleGroupKey(entry);
+  if (groupKey) {
+    entry.groupKey = groupKey;
   }
   return entry;
 }
@@ -533,31 +583,103 @@ function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
   const collapsed: DerivedWorkLogEntry[] = [];
+  const openIndicesByGroupKey = new Map<string, Array<number>>();
+
   for (const entry of entries) {
-    const previous = collapsed.at(-1);
-    if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
-      collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
+    const isLifecycleEntry =
+      entry.activityKind === "tool.started" ||
+      entry.activityKind === "tool.updated" ||
+      entry.activityKind === "tool.completed";
+    const groupKey = entry.groupKey;
+    const openIndices =
+      isLifecycleEntry && groupKey ? openIndicesByGroupKey.get(groupKey) : undefined;
+    const openIndex = findOpenLifecycleIndex(collapsed, openIndices, entry);
+    const openEntry = openIndex !== undefined ? collapsed[openIndex] : undefined;
+
+    if (
+      openIndex !== undefined &&
+      openEntry &&
+      shouldCollapseToolLifecycleEntries(openEntry, entry)
+    ) {
+      collapsed[openIndex] = mergeDerivedWorkLogEntries(openEntry, entry);
+      if (entry.activityKind === "tool.completed") {
+        if (openIndices) {
+          const queueIndex = openIndices.indexOf(openIndex);
+          if (queueIndex >= 0) {
+            openIndices.splice(queueIndex, 1);
+          }
+        }
+        if (groupKey && (!openIndices || openIndices.length === 0)) {
+          openIndicesByGroupKey.delete(groupKey);
+        }
+      }
       continue;
     }
-    collapsed.push(entry);
+
+    const nextIndex = collapsed.push(entry) - 1;
+    if (isLifecycleEntry && groupKey && entry.activityKind !== "tool.completed") {
+      const queue = openIndicesByGroupKey.get(groupKey) ?? [];
+      queue.push(nextIndex);
+      openIndicesByGroupKey.set(groupKey, queue);
+    }
   }
   return collapsed;
+}
+
+function findOpenLifecycleIndex(
+  collapsed: ReadonlyArray<DerivedWorkLogEntry>,
+  openIndices: ReadonlyArray<number> | undefined,
+  next: DerivedWorkLogEntry,
+): number | undefined {
+  if (!openIndices || openIndices.length === 0) {
+    return undefined;
+  }
+  const matchingCollapseKey = next.collapseKey;
+  if (matchingCollapseKey) {
+    for (const index of openIndices) {
+      if (collapsed[index]?.collapseKey === matchingCollapseKey) {
+        return index;
+      }
+    }
+  }
+  const fallbackCandidates = openIndices.filter((index) => {
+    const previous = collapsed[index];
+    return previous !== undefined && shouldCollapseToolLifecycleEntries(previous, next);
+  });
+  return fallbackCandidates.length === 1 ? fallbackCandidates[0] : undefined;
 }
 
 function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (
+    previous.activityKind !== "tool.started" &&
+    previous.activityKind !== "tool.updated" &&
+    previous.activityKind !== "tool.completed"
+  ) {
     return false;
   }
-  if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
+  if (
+    next.activityKind !== "tool.started" &&
+    next.activityKind !== "tool.updated" &&
+    next.activityKind !== "tool.completed"
+  ) {
     return false;
   }
   if (previous.activityKind === "tool.completed") {
     return false;
   }
-  return previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey;
+  if (previous.itemId && next.itemId && previous.itemId !== next.itemId) {
+    return false;
+  }
+  if (previous.collapseKey && next.collapseKey && previous.collapseKey === next.collapseKey) {
+    return true;
+  }
+  if (!previous.groupKey || previous.groupKey !== next.groupKey) {
+    return false;
+  }
+  return previous.collapseKey === previous.groupKey || next.collapseKey === next.groupKey;
 }
 
 function mergeDerivedWorkLogEntries(
@@ -571,6 +693,8 @@ function mergeDerivedWorkLogEntries(
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
+  const groupKey = next.groupKey ?? previous.groupKey;
+  const itemId = next.itemId ?? previous.itemId;
   return {
     ...previous,
     ...next,
@@ -581,6 +705,8 @@ function mergeDerivedWorkLogEntries(
     ...(itemType ? { itemType } : {}),
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
+    ...(groupKey ? { groupKey } : {}),
+    ...(itemId ? { itemId } : {}),
   };
 }
 
@@ -596,20 +722,68 @@ function mergeChangedFiles(
 }
 
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+  if (
+    entry.activityKind !== "tool.started" &&
+    entry.activityKind !== "tool.updated" &&
+    entry.activityKind !== "tool.completed"
+  ) {
     return undefined;
   }
+  if (entry.itemId && entry.itemId.trim().length > 0) {
+    return entry.itemId;
+  }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
-  const detail = entry.detail?.trim() ?? "";
   const itemType = entry.itemType ?? "";
+  if (itemType === "command_execution" || itemType === "file_change") {
+    const commandIdentity = deriveLifecycleCommandIdentity(entry);
+    if (commandIdentity) {
+      return [itemType, normalizedLabel, commandIdentity].join("\u001f");
+    }
+    if (normalizedLabel.length === 0 && itemType.length === 0) {
+      return undefined;
+    }
+    return [itemType, normalizedLabel].join("\u001f");
+  }
+  const detail = entry.detail?.trim() ?? "";
   if (normalizedLabel.length === 0 && detail.length === 0 && itemType.length === 0) {
     return undefined;
   }
   return [itemType, normalizedLabel, detail].join("\u001f");
 }
 
+function deriveToolLifecycleGroupKey(entry: DerivedWorkLogEntry): string | undefined {
+  if (
+    entry.activityKind !== "tool.started" &&
+    entry.activityKind !== "tool.updated" &&
+    entry.activityKind !== "tool.completed"
+  ) {
+    return undefined;
+  }
+  if (entry.itemId && entry.itemId.trim().length > 0) {
+    return entry.itemId;
+  }
+  const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
+  const itemType = entry.itemType ?? "";
+  if (normalizedLabel.length === 0 && itemType.length === 0) {
+    return undefined;
+  }
+  return [itemType, normalizedLabel].join("\u001f");
+}
+
+function deriveLifecycleCommandIdentity(entry: DerivedWorkLogEntry): string | undefined {
+  const normalizedCommand = entry.command?.trim();
+  if (normalizedCommand) {
+    return normalizedCommand;
+  }
+  const normalizedDetail = entry.detail?.trim();
+  if (!normalizedDetail || /^<exited with exit code \d+>$/i.test(normalizedDetail)) {
+    return undefined;
+  }
+  return normalizedDetail;
+}
+
 function normalizeCompactToolLabel(value: string): string {
-  return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+  return value.replace(/\s+(?:start|started|update|updated|complete|completed)\s*$/i, "").trim();
 }
 
 function toLatestProposedPlanState(proposedPlan: ProposedPlan): LatestProposedPlanState {
@@ -696,6 +870,10 @@ function extractWorkLogItemType(
     return payload.itemType;
   }
   return undefined;
+}
+
+function extractWorkLogItemId(payload: Record<string, unknown> | null): string | undefined {
+  return typeof payload?.itemId === "string" ? payload.itemId : undefined;
 }
 
 function extractWorkLogRequestKind(

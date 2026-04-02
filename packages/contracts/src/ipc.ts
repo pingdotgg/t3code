@@ -47,6 +47,7 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
+import type { ProviderRuntimeEvent } from "./providerRuntime";
 import { EditorId } from "./editor";
 import { ServerSettings, ServerSettingsPatch } from "./settings";
 
@@ -181,5 +182,6 @@ export interface NativeApi {
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
+    onRuntimeToolOutputEvent: (callback: (event: ProviderRuntimeEvent) => void) => () => void;
   };
 }

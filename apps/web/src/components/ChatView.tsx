@@ -47,13 +47,14 @@ import {
   deriveTimelineEntries,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveBaseWorkLogEntries,
   findSidebarProposedPlan,
   findLatestProposedPlan,
-  deriveWorkLogEntries,
   hasActionableProposedPlan,
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
+  mergeRuntimeOutputIntoWorkLogEntries,
 } from "../session-logic";
 import { isScrollContainerNearBottom } from "../chat-scroll";
 import {
@@ -65,6 +66,7 @@ import {
 import { useStore } from "../store";
 import { useProjectById, useThreadById } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
+import { useRuntimeToolOutputStore } from "../runtimeToolOutputStore";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -834,9 +836,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedModelForPicker = selectedModel;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
-  const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
+  const runtimeToolOutputByItemIdRaw = useRuntimeToolOutputStore((state) =>
+    activeThread ? (state.outputsByThreadId[activeThread.id] ?? null) : null,
+  );
+  const runtimeToolOutputByItemId = useMemo(
+    () => new Map(Object.entries(runtimeToolOutputByItemIdRaw ?? {})),
+    [runtimeToolOutputByItemIdRaw],
+  );
+  const baseWorkLogEntries = useMemo(
+    () => deriveBaseWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
+  );
+  const workLogEntries = useMemo(
+    () => mergeRuntimeOutputIntoWorkLogEntries(baseWorkLogEntries, runtimeToolOutputByItemId),
+    [baseWorkLogEntries, runtimeToolOutputByItemId],
   );
   const latestTurnHasToolActivity = useMemo(
     () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),

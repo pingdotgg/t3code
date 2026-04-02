@@ -41,6 +41,7 @@ import {
   OrchestrationReplayEventsInput,
   OrchestrationRpcSchemas,
 } from "./orchestration";
+import { ProviderRuntimeEvent } from "./providerRuntime";
 import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
@@ -111,6 +112,7 @@ export const WS_METHODS = {
 
   // Streaming subscriptions
   subscribeOrchestrationDomainEvents: "subscribeOrchestrationDomainEvents",
+  subscribeProviderRuntimeToolOutputEvents: "subscribeProviderRuntimeToolOutputEvents",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
@@ -302,6 +304,15 @@ export const WsSubscribeOrchestrationDomainEventsRpc = Rpc.make(
   },
 );
 
+export const WsSubscribeProviderRuntimeToolOutputEventsRpc = Rpc.make(
+  WS_METHODS.subscribeProviderRuntimeToolOutputEvents,
+  {
+    payload: Schema.Struct({}),
+    success: ProviderRuntimeEvent,
+    stream: true,
+  },
+);
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -348,6 +359,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTerminalRestartRpc,
   WsTerminalCloseRpc,
   WsSubscribeOrchestrationDomainEventsRpc,
+  WsSubscribeProviderRuntimeToolOutputEventsRpc,
   WsSubscribeTerminalEventsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,

@@ -836,6 +836,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
 }) {
   const { workEntry } = props;
+  const [outputExpanded, setOutputExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
@@ -843,6 +844,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+  const hasOutput = typeof workEntry.output === "string" && workEntry.output.length > 0;
 
   return (
     <div className="rounded-lg px-1 py-1">
@@ -868,6 +870,22 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           </p>
         </div>
       </div>
+      {hasOutput && (
+        <div className="mt-1 pl-6">
+          <button
+            type="button"
+            className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65 transition-colors duration-150 hover:text-foreground/75"
+            onClick={() => setOutputExpanded((current) => !current)}
+          >
+            {outputExpanded ? "Hide output" : "Show output"}
+          </button>
+          {outputExpanded && (
+            <pre className="mt-1 max-h-56 overflow-auto rounded-md border border-border/55 bg-background/75 px-2 py-1 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-words text-foreground/80">
+              {workEntry.output}
+            </pre>
+          )}
+        </div>
+      )}
       {hasChangedFiles && !previewIsChangedFiles && (
         <div className="mt-1 flex flex-wrap gap-1 pl-6">
           {workEntry.changedFiles?.slice(0, 4).map((filePath) => (
