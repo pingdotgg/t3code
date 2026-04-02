@@ -85,7 +85,20 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
         Effect.gen(function* () {
           const normalizedCommand = yield* normalizeDispatchCommand(command);
-          return yield* startup.enqueueCommand(orchestrationEngine.dispatch(normalizedCommand));
+          const result = yield* startup.enqueueCommand(
+            orchestrationEngine.dispatch(normalizedCommand),
+          );
+          if (normalizedCommand.type === "thread.archive") {
+            yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("failed to close thread terminals after archive", {
+                  threadId: normalizedCommand.threadId,
+                  error: error.message,
+                }),
+              ),
+            );
+          }
+          return result;
         }).pipe(
           Effect.mapError((cause) =>
             Schema.is(OrchestrationDispatchCommandError)(cause)

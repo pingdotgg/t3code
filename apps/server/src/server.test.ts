@@ -1193,6 +1193,41 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("closes thread terminals after a successful archive command", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.makeUnsafe("thread-archive");
+      const closeInputs: Array<Parameters<TerminalManagerShape["close"]>[0]> = [];
+
+      yield* buildAppUnderTest({
+        layers: {
+          terminalManager: {
+            close: (input) =>
+              Effect.sync(() => {
+                closeInputs.push(input);
+              }),
+          },
+          orchestrationEngine: {
+            dispatch: () => Effect.succeed({ sequence: 8 }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const dispatchResult = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.archive",
+            commandId: CommandId.makeUnsafe("cmd-thread-archive"),
+            threadId,
+          }),
+        ),
+      );
+
+      assert.equal(dispatchResult.sequence, 8);
+      assert.deepEqual(closeInputs, [{ threadId }]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect(
     "routes websocket rpc subscribeOrchestrationDomainEvents with replay/live overlap resilience",
     () =>

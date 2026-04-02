@@ -42,6 +42,7 @@ describe("deriveOrchestrationBatchEffects", () => {
   it("targets draft promotion and terminal cleanup from thread lifecycle events", () => {
     const createdThreadId = ThreadId.makeUnsafe("thread-created");
     const deletedThreadId = ThreadId.makeUnsafe("thread-deleted");
+    const archivedThreadId = ThreadId.makeUnsafe("thread-archived");
 
     const effects = deriveOrchestrationBatchEffects([
       makeEvent("thread.created", {
@@ -60,11 +61,16 @@ describe("deriveOrchestrationBatchEffects", () => {
         threadId: deletedThreadId,
         deletedAt: "2026-02-27T00:00:01.000Z",
       }),
+      makeEvent("thread.archived", {
+        threadId: archivedThreadId,
+        archivedAt: "2026-02-27T00:00:02.000Z",
+        updatedAt: "2026-02-27T00:00:02.000Z",
+      }),
     ]);
 
     expect(effects.clearPromotedDraftThreadIds).toEqual([createdThreadId]);
     expect(effects.clearDeletedThreadIds).toEqual([deletedThreadId]);
-    expect(effects.removeTerminalStateThreadIds).toEqual([deletedThreadId]);
+    expect(effects.removeTerminalStateThreadIds).toEqual([deletedThreadId, archivedThreadId]);
     expect(effects.needsProviderInvalidation).toBe(false);
   });
 
@@ -104,5 +110,25 @@ describe("deriveOrchestrationBatchEffects", () => {
     expect(effects.clearDeletedThreadIds).toEqual([]);
     expect(effects.removeTerminalStateThreadIds).toEqual([]);
     expect(effects.needsProviderInvalidation).toBe(true);
+  });
+
+  it("does not retain archive cleanup when a thread is unarchived later in the same batch", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+
+    const effects = deriveOrchestrationBatchEffects([
+      makeEvent("thread.archived", {
+        threadId,
+        archivedAt: "2026-02-27T00:00:01.000Z",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+      makeEvent("thread.unarchived", {
+        threadId,
+        updatedAt: "2026-02-27T00:00:02.000Z",
+      }),
+    ]);
+
+    expect(effects.clearPromotedDraftThreadIds).toEqual([]);
+    expect(effects.clearDeletedThreadIds).toEqual([]);
+    expect(effects.removeTerminalStateThreadIds).toEqual([]);
   });
 });
