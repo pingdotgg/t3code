@@ -1423,7 +1423,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
           "push",
           "-u",
           publishRemoteName,
-          branch,
+          `HEAD:refs/heads/${branch}`,
         ]);
         return {
           status: "pushed" as const,
