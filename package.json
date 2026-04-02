@@ -36,7 +36,6 @@
     "build": "turbo run build",
     "build:marketing": "turbo run build --filter=@t3tools/marketing",
     "build:desktop": "turbo run build --filter=@t3tools/desktop --filter=t3",
-    "benchmark:git-list-branches-rpc": "bun run scripts/git-list-branches-rpc-benchmark.ts",
     "typecheck": "turbo run typecheck",
     "lint": "oxlint --report-unused-disable-directives",
     "test": "turbo run test",
