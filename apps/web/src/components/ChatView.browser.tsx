@@ -2,6 +2,7 @@
 import "../index.css";
 
 import {
+  CheckpointRef,
   EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
@@ -294,6 +295,70 @@ function createSnapshotForTargetUser(options: {
       },
     ],
     updatedAt: NOW_ISO,
+  };
+}
+
+function withLatestTurnState(
+  snapshot: OrchestrationReadModel,
+  options?: {
+    turnId?: TurnId;
+    completedAt?: string;
+    includeCheckpoint?: boolean;
+    sessionStatus?: OrchestrationSessionStatus;
+  },
+): OrchestrationReadModel {
+  const turnId = options?.turnId ?? ("turn-browser-running" as TurnId);
+  const completedAt = options?.completedAt ?? isoAt(180);
+  const sessionStatus = options?.sessionStatus ?? "running";
+  const threads = [...snapshot.threads];
+  const threadIndex = threads.findIndex((thread) => thread.id === THREAD_ID);
+  if (threadIndex < 0) {
+    return snapshot;
+  }
+
+  const thread = threads[threadIndex];
+  if (!thread) {
+    return snapshot;
+  }
+
+  threads[threadIndex] = {
+    ...thread,
+    latestTurn: {
+      turnId,
+      state: "completed",
+      requestedAt: isoAt(120),
+      startedAt: isoAt(121),
+      completedAt,
+      assistantMessageId: null,
+    },
+    session: thread.session
+      ? {
+          ...thread.session,
+          status: sessionStatus,
+          activeTurnId: sessionStatus === "running" ? turnId : null,
+          updatedAt: options?.includeCheckpoint ? isoAt(181) : isoAt(121),
+        }
+      : null,
+    checkpoints: options?.includeCheckpoint
+      ? [
+          {
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.makeUnsafe(
+              "refs/t3/checkpoints/thread-browser-test/turn/1",
+            ),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: isoAt(181),
+          },
+        ]
+      : [],
+  };
+
+  return {
+    ...snapshot,
+    threads,
   };
 }
 
@@ -2099,6 +2164,97 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores the composer send button when a running session already has a finalized checkpoint for its latest turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withLatestTurnState(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-stale-running-target" as MessageId,
+          targetText: "stale running target",
+        }),
+        { includeCheckpoint: true },
+      ),
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton).toBeTruthy();
+      expect(
+        document.querySelector<HTMLButtonElement>('button[aria-label="Stop generation"]'),
+      ).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the composer stop button while a running session lacks a finalized checkpoint for its latest turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withLatestTurnState(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-active-running-target" as MessageId,
+          targetText: "active running target",
+        }),
+      ),
+    });
+
+    try {
+      const stopButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Stop generation"]'),
+        "Unable to find stop generation button.",
+      );
+      expect(stopButton).toBeTruthy();
+      expect(
+        document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]'),
+      ).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the composer in sending state during a delayed turn start", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withLatestTurnState(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-delayed-turn-start" as MessageId,
+          targetText: "delayed turn start target",
+        }),
+        { includeCheckpoint: true, sessionStatus: "ready" },
+      ),
+      resolveRpc: (body) => {
+        if (
+          body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          body.type === "thread.turn.start"
+        ) {
+          return new Promise(() => undefined);
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByTestId("composer-editor").fill("follow up while waiting");
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelector<HTMLButtonElement>('button[aria-label="Sending"]'),
+          ).toBeTruthy();
+          expect(
+            document.querySelector<HTMLButtonElement>('button[aria-label="Stop generation"]'),
+          ).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
