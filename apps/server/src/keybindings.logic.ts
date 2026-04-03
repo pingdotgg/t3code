@@ -44,7 +44,10 @@ function normalizeKeyToken(token: string): string {
 }
 
 export function parseKeybindingShortcut(value: string): KeybindingShortcut | null {
-  const rawTokens = value
+  const trimmedValue = value.trim();
+  if (trimmedValue.length === 0) return null;
+
+  const rawTokens = trimmedValue
     .toLowerCase()
     .split("+")
     .map((token) => token.trim());

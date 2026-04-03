@@ -44,7 +44,7 @@
     },
     "packages/shared": {
       "entry": [
-        "src/{model,git,logging,shell,Net,DrainableWorker,KeyedCoalescingWorker,schemaJson,Struct,String}.ts!",
+        "src/{model,git,logging,shell,Net,DrainableWorker,KeyedCoalescingWorker,schemaJson,Struct,serverSettings,String}.ts!",
         "src/**/*.test.ts"
       ],
       "project": ["src/**/*.ts!", "!src/**/*.test.ts!"]

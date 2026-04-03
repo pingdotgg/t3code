@@ -137,7 +137,7 @@ function parseClaudeAuthStatusFromOutput(result: CommandResult): {
         auth: extractAuthBoolean(JSON.parse(trimmed)),
       };
     } catch {
-      return { attemptedJsonParse: false as const, auth: undefined as boolean | undefined };
+      return { attemptedJsonParse: true as const, auth: undefined as boolean | undefined };
     }
   })();
 

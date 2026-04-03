@@ -990,6 +990,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           ),
         ),
       );
+
+      it.effect("returns warning when auth status emits malformed json", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus();
+          assert.strictEqual(status.provider, "claudeAgent");
+          assert.strictEqual(status.status, "warning");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(
+            status.message,
+            "Could not verify Claude authentication status from JSON output (missing auth marker).",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
     });
   },
 );

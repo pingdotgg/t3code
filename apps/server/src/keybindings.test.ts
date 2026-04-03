@@ -75,6 +75,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         altKey: false,
         modKey: true,
       });
+      assert.deepEqual(parseKeybindingShortcut("   "), null);
     }),
   );
 
