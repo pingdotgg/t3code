@@ -56,6 +56,12 @@ function createBaseServerConfig(): ServerConfig {
       },
     ],
     availableEditors: [],
+    observability: {
+      logsDirectoryPath: "/repo/project/.t3/logs",
+      localTracingEnabled: true,
+      otlpTracesEnabled: false,
+      otlpMetricsEnabled: false,
+    },
     settings: {
       enableAssistantStreaming: false,
       defaultThreadEnvMode: "local" as const,

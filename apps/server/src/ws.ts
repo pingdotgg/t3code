@@ -28,6 +28,11 @@ import { Open, resolveAvailableEditors } from "./open";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
+import {
+  observeRpcEffect,
+  observeRpcStream,
+  observeRpcStreamEffect,
+} from "./observability/RpcInstrumentation";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
@@ -67,85 +72,114 @@ const WsRpcLayer = WsRpcGroup.toLayer(
         issues: keybindingsConfig.issues,
         providers,
         availableEditors: resolveAvailableEditors(),
+        observability: {
+          logsDirectoryPath: config.logsDir,
+          localTracingEnabled: true,
+          ...(config.otlpTracesUrl !== undefined ? { otlpTracesUrl: config.otlpTracesUrl } : {}),
+          otlpTracesEnabled: config.otlpTracesUrl !== undefined,
+          ...(config.otlpMetricsUrl !== undefined ? { otlpMetricsUrl: config.otlpMetricsUrl } : {}),
+          otlpMetricsEnabled: config.otlpMetricsUrl !== undefined,
+        },
         settings,
       };
     });
 
     return WsRpcGroup.of({
       [ORCHESTRATION_WS_METHODS.getSnapshot]: (_input) =>
-        projectionSnapshotQuery.getSnapshot().pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationGetSnapshotError({
-                message: "Failed to load orchestration snapshot",
-                cause,
-              }),
-          ),
-        ),
-      [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
-        Effect.gen(function* () {
-          const normalizedCommand = yield* normalizeDispatchCommand(command);
-          const result = yield* startup.enqueueCommand(
-            orchestrationEngine.dispatch(normalizedCommand),
-          );
-          if (normalizedCommand.type === "thread.archive") {
-            yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("failed to close thread terminals after archive", {
-                  threadId: normalizedCommand.threadId,
-                  error: error.message,
-                }),
-              ),
-            );
-          }
-          return result;
-        }).pipe(
-          Effect.mapError((cause) =>
-            Schema.is(OrchestrationDispatchCommandError)(cause)
-              ? cause
-              : new OrchestrationDispatchCommandError({
-                  message: "Failed to dispatch orchestration command",
+        observeRpcEffect(
+          ORCHESTRATION_WS_METHODS.getSnapshot,
+          projectionSnapshotQuery.getSnapshot().pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetSnapshotError({
+                  message: "Failed to load orchestration snapshot",
                   cause,
                 }),
+            ),
           ),
+          { "rpc.aggregate": "orchestration" },
+        ),
+      [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
+        observeRpcEffect(
+          ORCHESTRATION_WS_METHODS.dispatchCommand,
+          Effect.gen(function* () {
+            const normalizedCommand = yield* normalizeDispatchCommand(command);
+            const result = yield* startup.enqueueCommand(
+              orchestrationEngine.dispatch(normalizedCommand),
+            );
+            if (normalizedCommand.type === "thread.archive") {
+              yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("failed to close thread terminals after archive", {
+                    threadId: normalizedCommand.threadId,
+                    error: error.message,
+                  }),
+                ),
+              );
+            }
+            return result;
+          }).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(OrchestrationDispatchCommandError)(cause)
+                ? cause
+                : new OrchestrationDispatchCommandError({
+                    message: "Failed to dispatch orchestration command",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "orchestration" },
         ),
       [ORCHESTRATION_WS_METHODS.getTurnDiff]: (input) =>
-        checkpointDiffQuery.getTurnDiff(input).pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationGetTurnDiffError({
-                message: "Failed to load turn diff",
-                cause,
-              }),
+        observeRpcEffect(
+          ORCHESTRATION_WS_METHODS.getTurnDiff,
+          checkpointDiffQuery.getTurnDiff(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetTurnDiffError({
+                  message: "Failed to load turn diff",
+                  cause,
+                }),
+            ),
           ),
+          { "rpc.aggregate": "orchestration" },
         ),
       [ORCHESTRATION_WS_METHODS.getFullThreadDiff]: (input) =>
-        checkpointDiffQuery.getFullThreadDiff(input).pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationGetFullThreadDiffError({
-                message: "Failed to load full thread diff",
-                cause,
-              }),
+        observeRpcEffect(
+          ORCHESTRATION_WS_METHODS.getFullThreadDiff,
+          checkpointDiffQuery.getFullThreadDiff(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetFullThreadDiffError({
+                  message: "Failed to load full thread diff",
+                  cause,
+                }),
+            ),
           ),
+          { "rpc.aggregate": "orchestration" },
         ),
       [ORCHESTRATION_WS_METHODS.replayEvents]: (input) =>
-        Stream.runCollect(
-          orchestrationEngine.readEvents(
-            clamp(input.fromSequenceExclusive, { maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }),
+        observeRpcEffect(
+          ORCHESTRATION_WS_METHODS.replayEvents,
+          Stream.runCollect(
+            orchestrationEngine.readEvents(
+              clamp(input.fromSequenceExclusive, { maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }),
+            ),
+          ).pipe(
+            Effect.map((events) => Array.from(events)),
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationReplayEventsError({
+                  message: "Failed to replay orchestration events",
+                  cause,
+                }),
+            ),
           ),
-        ).pipe(
-          Effect.map((events) => Array.from(events)),
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationReplayEventsError({
-                message: "Failed to replay orchestration events",
-                cause,
-              }),
-          ),
+          { "rpc.aggregate": "orchestration" },
         ),
       [WS_METHODS.subscribeOrchestrationDomainEvents]: (_input) =>
-        Stream.unwrap(
+        observeRpcStreamEffect(
+          WS_METHODS.subscribeOrchestrationDomainEvents,
           Effect.gen(function* () {
             const snapshot = yield* orchestrationEngine.getReadModel();
             const fromSequenceExclusive = snapshot.snapshotSequence;
@@ -200,82 +234,167 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               Stream.flatMap((events) => Stream.fromIterable(events)),
             );
           }),
+          { "rpc.aggregate": "orchestration" },
         ),
-      [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig,
-      [WS_METHODS.serverRefreshProviders]: (_input) =>
-        providerRegistry.refresh().pipe(Effect.map((providers) => ({ providers }))),
-      [WS_METHODS.serverUpsertKeybinding]: (rule) =>
-        Effect.gen(function* () {
-          const keybindingsConfig = yield* keybindings.upsertKeybindingRule(rule);
-          return { keybindings: keybindingsConfig, issues: [] };
+      [WS_METHODS.serverGetConfig]: (_input) =>
+        observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
+          "rpc.aggregate": "server",
         }),
-      [WS_METHODS.serverGetSettings]: (_input) => serverSettings.getSettings,
-      [WS_METHODS.serverUpdateSettings]: ({ patch }) => serverSettings.updateSettings(patch),
+      [WS_METHODS.serverRefreshProviders]: (_input) =>
+        observeRpcEffect(
+          WS_METHODS.serverRefreshProviders,
+          providerRegistry.refresh().pipe(Effect.map((providers) => ({ providers }))),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.serverUpsertKeybinding]: (rule) =>
+        observeRpcEffect(
+          WS_METHODS.serverUpsertKeybinding,
+          Effect.gen(function* () {
+            const keybindingsConfig = yield* keybindings.upsertKeybindingRule(rule);
+            return { keybindings: keybindingsConfig, issues: [] };
+          }),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.serverGetSettings]: (_input) =>
+        observeRpcEffect(WS_METHODS.serverGetSettings, serverSettings.getSettings, {
+          "rpc.aggregate": "server",
+        }),
+      [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
+        observeRpcEffect(WS_METHODS.serverUpdateSettings, serverSettings.updateSettings(patch), {
+          "rpc.aggregate": "server",
+        }),
       [WS_METHODS.projectsSearchEntries]: (input) =>
-        workspaceEntries.search(input).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProjectSearchEntriesError({
-                message: `Failed to search workspace entries: ${cause.detail}`,
-                cause,
-              }),
+        observeRpcEffect(
+          WS_METHODS.projectsSearchEntries,
+          workspaceEntries.search(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectSearchEntriesError({
+                  message: `Failed to search workspace entries: ${cause.detail}`,
+                  cause,
+                }),
+            ),
           ),
+          { "rpc.aggregate": "workspace" },
         ),
       [WS_METHODS.projectsWriteFile]: (input) =>
-        workspaceFileSystem.writeFile(input).pipe(
-          Effect.mapError((cause) => {
-            const message = Schema.is(WorkspacePathOutsideRootError)(cause)
-              ? "Workspace file path must stay within the project root."
-              : "Failed to write workspace file";
-            return new ProjectWriteFileError({
-              message,
-              cause,
-            });
-          }),
-        ),
-      [WS_METHODS.shellOpenInEditor]: (input) => open.openInEditor(input),
-      [WS_METHODS.gitStatus]: (input) => gitManager.status(input),
-      [WS_METHODS.gitPull]: (input) => git.pullCurrentBranch(input.cwd),
-      [WS_METHODS.gitRunStackedAction]: (input) =>
-        Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-          gitManager
-            .runStackedAction(input, {
-              actionId: input.actionId,
-              progressReporter: {
-                publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-              },
-            })
-            .pipe(
-              Effect.matchCauseEffect({
-                onFailure: (cause) => Queue.failCause(queue, cause),
-                onSuccess: () => Queue.end(queue).pipe(Effect.asVoid),
-              }),
-            ),
-        ),
-      [WS_METHODS.gitResolvePullRequest]: (input) => gitManager.resolvePullRequest(input),
-      [WS_METHODS.gitPreparePullRequestThread]: (input) =>
-        gitManager.preparePullRequestThread(input),
-      [WS_METHODS.gitListBranches]: (input) => git.listBranches(input),
-      [WS_METHODS.gitCreateWorktree]: (input) => git.createWorktree(input),
-      [WS_METHODS.gitRemoveWorktree]: (input) => git.removeWorktree(input),
-      [WS_METHODS.gitCreateBranch]: (input) => git.createBranch(input),
-      [WS_METHODS.gitCheckout]: (input) => Effect.scoped(git.checkoutBranch(input)),
-      [WS_METHODS.gitInit]: (input) => git.initRepo(input),
-      [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
-      [WS_METHODS.terminalWrite]: (input) => terminalManager.write(input),
-      [WS_METHODS.terminalResize]: (input) => terminalManager.resize(input),
-      [WS_METHODS.terminalClear]: (input) => terminalManager.clear(input),
-      [WS_METHODS.terminalRestart]: (input) => terminalManager.restart(input),
-      [WS_METHODS.terminalClose]: (input) => terminalManager.close(input),
-      [WS_METHODS.subscribeTerminalEvents]: (_input) =>
-        Stream.callback<TerminalEvent>((queue) =>
-          Effect.acquireRelease(
-            terminalManager.subscribe((event) => Queue.offer(queue, event)),
-            (unsubscribe) => Effect.sync(unsubscribe),
+        observeRpcEffect(
+          WS_METHODS.projectsWriteFile,
+          workspaceFileSystem.writeFile(input).pipe(
+            Effect.mapError((cause) => {
+              const message = Schema.is(WorkspacePathOutsideRootError)(cause)
+                ? "Workspace file path must stay within the project root."
+                : "Failed to write workspace file";
+              return new ProjectWriteFileError({
+                message,
+                cause,
+              });
+            }),
           ),
+          { "rpc.aggregate": "workspace" },
+        ),
+      [WS_METHODS.shellOpenInEditor]: (input) =>
+        observeRpcEffect(WS_METHODS.shellOpenInEditor, open.openInEditor(input), {
+          "rpc.aggregate": "workspace",
+        }),
+      [WS_METHODS.gitStatus]: (input) =>
+        observeRpcEffect(WS_METHODS.gitStatus, gitManager.status(input), {
+          "rpc.aggregate": "git",
+        }),
+      [WS_METHODS.gitPull]: (input) =>
+        observeRpcEffect(WS_METHODS.gitPull, git.pullCurrentBranch(input.cwd), {
+          "rpc.aggregate": "git",
+        }),
+      [WS_METHODS.gitRunStackedAction]: (input) =>
+        observeRpcStream(
+          WS_METHODS.gitRunStackedAction,
+          Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
+            gitManager
+              .runStackedAction(input, {
+                actionId: input.actionId,
+                progressReporter: {
+                  publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                },
+              })
+              .pipe(
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Queue.failCause(queue, cause),
+                  onSuccess: () => Queue.end(queue).pipe(Effect.asVoid),
+                }),
+              ),
+          ),
+          { "rpc.aggregate": "git" },
+        ),
+      [WS_METHODS.gitResolvePullRequest]: (input) =>
+        observeRpcEffect(WS_METHODS.gitResolvePullRequest, gitManager.resolvePullRequest(input), {
+          "rpc.aggregate": "git",
+        }),
+      [WS_METHODS.gitPreparePullRequestThread]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.gitPreparePullRequestThread,
+          gitManager.preparePullRequestThread(input),
+          { "rpc.aggregate": "git" },
+        ),
+      [WS_METHODS.gitListBranches]: (input) =>
+        observeRpcEffect(WS_METHODS.gitListBranches, git.listBranches(input), {
+          "rpc.aggregate": "git",
+        }),
+      [WS_METHODS.gitCreateWorktree]: (input) =>
+        observeRpcEffect(WS_METHODS.gitCreateWorktree, git.createWorktree(input), {
+          "rpc.aggregate": "git",
+        }),
+      [WS_METHODS.gitRemoveWorktree]: (input) =>
+        observeRpcEffect(WS_METHODS.gitRemoveWorktree, git.removeWorktree(input), {
+          "rpc.aggregate": "git",
+        }),
+      [WS_METHODS.gitCreateBranch]: (input) =>
+        observeRpcEffect(WS_METHODS.gitCreateBranch, git.createBranch(input), {
+          "rpc.aggregate": "git",
+        }),
+      [WS_METHODS.gitCheckout]: (input) =>
+        observeRpcEffect(WS_METHODS.gitCheckout, Effect.scoped(git.checkoutBranch(input)), {
+          "rpc.aggregate": "git",
+        }),
+      [WS_METHODS.gitInit]: (input) =>
+        observeRpcEffect(WS_METHODS.gitInit, git.initRepo(input), { "rpc.aggregate": "git" }),
+      [WS_METHODS.terminalOpen]: (input) =>
+        observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
+          "rpc.aggregate": "terminal",
+        }),
+      [WS_METHODS.terminalWrite]: (input) =>
+        observeRpcEffect(WS_METHODS.terminalWrite, terminalManager.write(input), {
+          "rpc.aggregate": "terminal",
+        }),
+      [WS_METHODS.terminalResize]: (input) =>
+        observeRpcEffect(WS_METHODS.terminalResize, terminalManager.resize(input), {
+          "rpc.aggregate": "terminal",
+        }),
+      [WS_METHODS.terminalClear]: (input) =>
+        observeRpcEffect(WS_METHODS.terminalClear, terminalManager.clear(input), {
+          "rpc.aggregate": "terminal",
+        }),
+      [WS_METHODS.terminalRestart]: (input) =>
+        observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
+          "rpc.aggregate": "terminal",
+        }),
+      [WS_METHODS.terminalClose]: (input) =>
+        observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
+          "rpc.aggregate": "terminal",
+        }),
+      [WS_METHODS.subscribeTerminalEvents]: (_input) =>
+        observeRpcStream(
+          WS_METHODS.subscribeTerminalEvents,
+          Stream.callback<TerminalEvent>((queue) =>
+            Effect.acquireRelease(
+              terminalManager.subscribe((event) => Queue.offer(queue, event)),
+              (unsubscribe) => Effect.sync(unsubscribe),
+            ),
+          ),
+          { "rpc.aggregate": "terminal" },
         ),
       [WS_METHODS.subscribeServerConfig]: (_input) =>
-        Stream.unwrap(
+        observeRpcStreamEffect(
+          WS_METHODS.subscribeServerConfig,
           Effect.gen(function* () {
             const keybindingsUpdates = keybindings.streamChanges.pipe(
               Stream.map((event) => ({
@@ -310,9 +429,11 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               Stream.merge(keybindingsUpdates, Stream.merge(providerStatuses, settingsUpdates)),
             );
           }),
+          { "rpc.aggregate": "server" },
         ),
       [WS_METHODS.subscribeServerLifecycle]: (_input) =>
-        Stream.unwrap(
+        observeRpcStreamEffect(
+          WS_METHODS.subscribeServerLifecycle,
           Effect.gen(function* () {
             const snapshot = yield* lifecycleEvents.snapshot;
             const snapshotEvents = Array.from(snapshot.events).toSorted(
@@ -323,6 +444,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             );
             return Stream.concat(Stream.fromIterable(snapshotEvents), liveEvents);
           }),
+          { "rpc.aggregate": "server" },
         ),
     });
   }),
@@ -330,9 +452,13 @@ const WsRpcLayer = WsRpcGroup.toLayer(
 
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup).pipe(
-      Effect.provide(Layer.mergeAll(WsRpcLayer, RpcSerialization.layerJson)),
-    );
+    const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
+      spanPrefix: "ws.rpc",
+      spanAttributes: {
+        "rpc.transport": "websocket",
+        "rpc.system": "effect-rpc",
+      },
+    }).pipe(Effect.provide(Layer.mergeAll(WsRpcLayer, RpcSerialization.layerJson)));
     return HttpRouter.add(
       "GET",
       "/ws",

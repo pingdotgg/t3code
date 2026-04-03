@@ -23,6 +23,11 @@ import {
 } from "effect";
 
 import { ServerConfig } from "../../config";
+import {
+  increment,
+  terminalRestartsTotal,
+  terminalSessionsTotal,
+} from "../../observability/Metrics";
 import { runProcess } from "../../processRunner";
 import {
   TerminalCwdError,
@@ -1294,6 +1299,12 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       eventType: "started" | "restarted",
     ) {
       yield* stopProcess(session);
+      yield* Effect.annotateCurrentSpan({
+        "terminal.thread_id": session.threadId,
+        "terminal.id": session.terminalId,
+        "terminal.event_type": eventType,
+        "terminal.cwd": input.cwd,
+      });
 
       yield* modifyManagerState((state) => {
         session.status = "starting";
@@ -1314,45 +1325,49 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       let startedShell: string | null = null;
 
       const startResult = yield* Effect.result(
-        Effect.gen(function* () {
-          const shellCandidates = resolveShellCandidates(shellResolver);
-          const terminalEnv = createTerminalSpawnEnv(process.env, session.runtimeEnv);
-          const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
-          ptyProcess = spawnResult.process;
-          startedShell = spawnResult.shellLabel;
+        increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              const shellCandidates = resolveShellCandidates(shellResolver);
+              const terminalEnv = createTerminalSpawnEnv(process.env, session.runtimeEnv);
+              const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
+              ptyProcess = spawnResult.process;
+              startedShell = spawnResult.shellLabel;
 
-          const processPid = ptyProcess.pid;
-          const unsubscribeData = ptyProcess.onData((data) => {
-            if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
-              return;
-            }
-            runFork(drainProcessEvents(session, processPid));
-          });
-          const unsubscribeExit = ptyProcess.onExit((event) => {
-            if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
-              return;
-            }
-            runFork(drainProcessEvents(session, processPid));
-          });
+              const processPid = ptyProcess.pid;
+              const unsubscribeData = ptyProcess.onData((data) => {
+                if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
+                  return;
+                }
+                runFork(drainProcessEvents(session, processPid));
+              });
+              const unsubscribeExit = ptyProcess.onExit((event) => {
+                if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
+                  return;
+                }
+                runFork(drainProcessEvents(session, processPid));
+              });
 
-          yield* modifyManagerState((state) => {
-            session.process = ptyProcess;
-            session.pid = processPid;
-            session.status = "running";
-            session.updatedAt = new Date().toISOString();
-            session.unsubscribeData = unsubscribeData;
-            session.unsubscribeExit = unsubscribeExit;
-            return [undefined, state] as const;
-          });
+              yield* modifyManagerState((state) => {
+                session.process = ptyProcess;
+                session.pid = processPid;
+                session.status = "running";
+                session.updatedAt = new Date().toISOString();
+                session.unsubscribeData = unsubscribeData;
+                session.unsubscribeExit = unsubscribeExit;
+                return [undefined, state] as const;
+              });
 
-          yield* publishEvent({
-            type: eventType,
-            threadId: session.threadId,
-            terminalId: session.terminalId,
-            createdAt: new Date().toISOString(),
-            snapshot: snapshot(session),
-          });
-        }),
+              yield* publishEvent({
+                type: eventType,
+                threadId: session.threadId,
+                terminalId: session.terminalId,
+                createdAt: new Date().toISOString(),
+                snapshot: snapshot(session),
+              });
+            }),
+          ),
+        ),
       );
 
       if (startResult._tag === "Success") {
@@ -1722,6 +1737,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          yield* increment(terminalRestartsTotal, { scope: "thread" });
           const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
           yield* assertValidCwd(input.cwd);
 

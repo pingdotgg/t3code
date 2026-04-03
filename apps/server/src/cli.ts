@@ -1,5 +1,5 @@
 import { NetService } from "@t3tools/shared/Net";
-import { Config, Effect, LogLevel, Option, Schema } from "effect";
+import { Config, Effect, FileSystem, LogLevel, Option, Path, Schema } from "effect";
 import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
 
 import {
@@ -81,6 +81,27 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
 
 const EnvServerConfig = Config.all({
   logLevel: Config.logLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
+  traceMinLevel: Config.logLevel("T3CODE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
+  traceTimingEnabled: Config.boolean("T3CODE_TRACE_TIMING_ENABLED").pipe(Config.withDefault(true)),
+  traceFile: Config.string("T3CODE_TRACE_FILE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  traceMaxBytes: Config.int("T3CODE_TRACE_MAX_BYTES").pipe(Config.withDefault(10 * 1024 * 1024)),
+  traceMaxFiles: Config.int("T3CODE_TRACE_MAX_FILES").pipe(Config.withDefault(10)),
+  traceBatchWindowMs: Config.int("T3CODE_TRACE_BATCH_WINDOW_MS").pipe(Config.withDefault(200)),
+  otlpTracesUrl: Config.string("T3CODE_OTLP_TRACES_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  otlpMetricsUrl: Config.string("T3CODE_OTLP_METRICS_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  otlpExportIntervalMs: Config.int("T3CODE_OTLP_EXPORT_INTERVAL_MS").pipe(
+    Config.withDefault(10_000),
+  ),
+  otlpServiceName: Config.string("T3CODE_OTLP_SERVICE_NAME").pipe(Config.withDefault("t3-server")),
   mode: Config.schema(RuntimeMode, "T3CODE_MODE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -137,6 +158,8 @@ export const resolveServerConfig = (
 ) =>
   Effect.gen(function* () {
     const { findAvailablePort } = yield* NetService;
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
     const env = yield* EnvServerConfig;
     const bootstrapFd = Option.getOrUndefined(flags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -190,6 +213,8 @@ export const resolveServerConfig = (
     );
     const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
     yield* ensureServerDirectories(derivedPaths);
+    const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
+    yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
     const noBrowser = resolveBooleanFlag(
       flags.noBrowser,
       Option.getOrElse(
@@ -248,11 +273,21 @@ export const resolveServerConfig = (
 
     const config: ServerConfigShape = {
       logLevel,
+      traceMinLevel: env.traceMinLevel,
+      traceTimingEnabled: env.traceTimingEnabled,
+      traceBatchWindowMs: env.traceBatchWindowMs,
+      traceMaxBytes: env.traceMaxBytes,
+      traceMaxFiles: env.traceMaxFiles,
+      otlpTracesUrl: env.otlpTracesUrl,
+      otlpMetricsUrl: env.otlpMetricsUrl,
+      otlpExportIntervalMs: env.otlpExportIntervalMs,
+      otlpServiceName: env.otlpServiceName,
       mode,
       port,
       cwd: process.cwd(),
       baseDir,
       ...derivedPaths,
+      serverTracePath,
       host,
       staticDir,
       devUrl,

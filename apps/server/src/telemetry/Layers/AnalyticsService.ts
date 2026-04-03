@@ -125,17 +125,19 @@ const makeAnalyticsService = Effect.gen(function* () {
     }
   }).pipe(Effect.catch((cause) => Effect.logError("Failed to flush telemetry", { cause })));
 
-  const record: AnalyticsServiceShape["record"] = Effect.fnUntraced(function* (event, properties) {
-    if (!telemetryConfig.enabled || !identifier) return;
+  const record: AnalyticsServiceShape["record"] = Effect.fn("record")(
+    function* (event, properties) {
+      if (!telemetryConfig.enabled || !identifier) return;
 
-    const enqueueResult = yield* enqueueBufferedEvent(event, properties);
-    if (enqueueResult.dropped) {
-      yield* Effect.logDebug("analytics buffer full; dropping oldest event", {
-        size: enqueueResult.size,
-        event,
-      });
-    }
-  });
+      const enqueueResult = yield* enqueueBufferedEvent(event, properties);
+      if (enqueueResult.dropped) {
+        yield* Effect.logDebug("analytics buffer full; dropping oldest event", {
+          size: enqueueResult.size,
+          event,
+        });
+      }
+    },
+  );
 
   yield* Effect.forever(Effect.sleep(1000).pipe(Effect.flatMap(() => flush)), {
     disableYield: true,

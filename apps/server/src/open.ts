@@ -233,10 +233,15 @@ export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
 // Implementations
 // ==============================
 
-export const resolveEditorLaunch = Effect.fnUntraced(function* (
+export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
 ): Effect.fn.Return<EditorLaunch, OpenError> {
+  yield* Effect.annotateCurrentSpan({
+    "open.editor": input.editor,
+    "open.cwd": input.cwd,
+    "open.platform": platform,
+  });
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });

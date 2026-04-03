@@ -9,6 +9,18 @@ import { deriveServerPaths } from "./config";
 import { resolveServerConfig } from "./cli";
 
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
+  const defaultObservabilityConfig = {
+    traceMinLevel: "Info",
+    traceTimingEnabled: true,
+    traceBatchWindowMs: 200,
+    traceMaxBytes: 10 * 1024 * 1024,
+    traceMaxFiles: 10,
+    otlpTracesUrl: undefined,
+    otlpMetricsUrl: undefined,
+    otlpExportIntervalMs: 10_000,
+    otlpServiceName: "t3-server",
+  } as const;
+
   const openBootstrapFd = Effect.fn(function* (payload: Record<string, unknown>) {
     const fs = yield* FileSystem.FileSystem;
     const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
@@ -62,6 +74,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       expect(resolved).toEqual({
         logLevel: "Warn",
+        ...defaultObservabilityConfig,
         mode: "desktop",
         port: 4001,
         cwd: process.cwd(),
@@ -123,6 +136,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       expect(resolved).toEqual({
         logLevel: "Debug",
+        ...defaultObservabilityConfig,
         mode: "web",
         port: 8788,
         cwd: process.cwd(),
@@ -187,6 +201,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       expect(resolved).toEqual({
         logLevel: "Info",
+        ...defaultObservabilityConfig,
         mode: "desktop",
         port: 4888,
         cwd: process.cwd(),
@@ -241,6 +256,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         resolved.attachmentsDir,
         resolved.worktreesDir,
         path.dirname(resolved.serverLogPath),
+        path.dirname(resolved.serverTracePath),
       ]) {
         expect(yield* fs.exists(directory)).toBe(true);
       }
@@ -300,6 +316,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       expect(resolved).toEqual({
         logLevel: "Debug",
+        ...defaultObservabilityConfig,
         mode: "web",
         port: 8788,
         cwd: process.cwd(),

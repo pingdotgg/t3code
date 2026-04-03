@@ -139,8 +139,17 @@ const buildAppUnderTest = (options?: {
     const baseDir = options?.config?.baseDir ?? tempBaseDir;
     const devUrl = options?.config?.devUrl;
     const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
-    const config = {
+    const config: ServerConfigShape = {
       logLevel: "Info",
+      traceMinLevel: "Info",
+      traceTimingEnabled: true,
+      traceBatchWindowMs: 200,
+      traceMaxBytes: 10 * 1024 * 1024,
+      traceMaxFiles: 10,
+      otlpTracesUrl: undefined,
+      otlpMetricsUrl: undefined,
+      otlpExportIntervalMs: 10_000,
+      otlpServiceName: "t3-server",
       mode: "web",
       port: 0,
       host: "127.0.0.1",
@@ -154,7 +163,7 @@ const buildAppUnderTest = (options?: {
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
       ...options?.config,
-    } satisfies ServerConfigShape;
+    };
     const layerConfig = Layer.succeed(ServerConfig, config);
 
     const appLayer = HttpRouter.serve(makeRoutesLayer, {
@@ -533,6 +542,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       } as const;
 
       yield* buildAppUnderTest({
+        config: {
+          otlpTracesUrl: "http://localhost:4318/v1/traces",
+          otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+        },
         layers: {
           keybindings: {
             loadConfigState: Effect.succeed({
@@ -561,6 +574,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.deepEqual(first.config.keybindings, []);
         assert.deepEqual(first.config.issues, []);
         assert.deepEqual(first.config.providers, providers);
+        assert.equal(first.config.observability.logsDirectoryPath.endsWith("/logs"), true);
+        assert.equal(first.config.observability.localTracingEnabled, true);
+        assert.equal(first.config.observability.otlpTracesUrl, "http://localhost:4318/v1/traces");
+        assert.equal(first.config.observability.otlpTracesEnabled, true);
+        assert.equal(first.config.observability.otlpMetricsUrl, "http://localhost:4318/v1/metrics");
+        assert.equal(first.config.observability.otlpMetricsEnabled, true);
         assert.deepEqual(first.config.settings, DEFAULT_SERVER_SETTINGS);
       }
       assert.deepEqual(second, {

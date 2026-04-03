@@ -159,6 +159,12 @@ const baseServerConfig: ServerConfig = {
   issues: [],
   providers: defaultProviders,
   availableEditors: ["cursor"],
+  observability: {
+    logsDirectoryPath: "/tmp/workspace/.config/logs",
+    localTracingEnabled: true,
+    otlpTracesEnabled: false,
+    otlpMetricsEnabled: false,
+  },
   settings: DEFAULT_SERVER_SETTINGS,
 };
 
