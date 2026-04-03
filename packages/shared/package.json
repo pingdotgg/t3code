@@ -47,6 +47,10 @@
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"
+    },
+    "./pendingRequestErrors": {
+      "types": "./src/pendingRequestErrors.ts",
+      "import": "./src/pendingRequestErrors.ts"
     }
   },
   "scripts": {

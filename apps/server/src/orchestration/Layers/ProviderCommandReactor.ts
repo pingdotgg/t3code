@@ -13,6 +13,10 @@ import {
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import {
+  isUnknownPendingApprovalRequestDetail,
+  isUnknownPendingUserInputRequestDetail,
+} from "@t3tools/shared/pendingRequestErrors";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
@@ -91,25 +95,17 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
 function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
   const error = Cause.squash(cause);
   if (Schema.is(ProviderAdapterRequestError)(error)) {
-    const detail = error.detail.toLowerCase();
-    return (
-      detail.includes("unknown pending approval request") ||
-      detail.includes("unknown pending permission request")
-    );
+    return isUnknownPendingApprovalRequestDetail(error.detail);
   }
-  const message = Cause.pretty(cause);
-  return (
-    message.includes("unknown pending approval request") ||
-    message.includes("unknown pending permission request")
-  );
+  return isUnknownPendingApprovalRequestDetail(Cause.pretty(cause));
 }
 
 function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
   const error = Cause.squash(cause);
   if (Schema.is(ProviderAdapterRequestError)(error)) {
-    return error.detail.toLowerCase().includes("unknown pending user-input request");
+    return isUnknownPendingUserInputRequestDetail(error.detail);
   }
-  return Cause.pretty(cause).toLowerCase().includes("unknown pending user-input request");
+  return isUnknownPendingUserInputRequestDetail(Cause.pretty(cause));
 }
 
 function stalePendingRequestDetail(

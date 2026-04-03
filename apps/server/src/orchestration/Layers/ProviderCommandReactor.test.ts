@@ -1429,7 +1429,7 @@ describe("ProviderCommandReactor", () => {
     expect(resolvedActivity).toBeUndefined();
   });
 
-  it("surfaces stale provider user-input failures without faking user-input resolution", async () => {
+  it("surfaces stale provider user-input failures for codex orphaned requests without faking user-input resolution", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
     harness.respondToUserInput.mockImplementation(() =>
@@ -1437,7 +1437,7 @@ describe("ProviderCommandReactor", () => {
         new ProviderAdapterRequestError({
           provider: "claudeAgent",
           method: "item/tool/respondToUserInput",
-          detail: "Unknown pending user-input request: user-input-request-1",
+          detail: "Unknown pending user input request: user-input-request-1",
         }),
       ),
     );

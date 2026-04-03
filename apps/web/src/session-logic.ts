@@ -10,6 +10,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import { isStalePendingRequestFailureDetail } from "@t3tools/shared/pendingRequestErrors";
 
 import type {
   ChatMessage,
@@ -163,20 +164,6 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     default:
       return null;
   }
-}
-
-function isStalePendingRequestFailureDetail(detail: string | undefined): boolean {
-  const normalized = detail?.toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  return (
-    normalized.includes("stale pending approval request") ||
-    normalized.includes("stale pending user-input request") ||
-    normalized.includes("unknown pending approval request") ||
-    normalized.includes("unknown pending permission request") ||
-    normalized.includes("unknown pending user-input request")
-  );
 }
 
 export function derivePendingApprovals(
