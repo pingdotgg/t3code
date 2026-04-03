@@ -40,6 +40,10 @@
       "types": "./src/Struct.ts",
       "import": "./src/Struct.ts"
     },
+    "./serverSettings": {
+      "types": "./src/serverSettings.ts",
+      "import": "./src/serverSettings.ts"
+    },
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"

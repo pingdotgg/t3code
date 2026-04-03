@@ -1,4 +1,5 @@
 import { NetService } from "@t3tools/shared/Net";
+import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { Config, Effect, FileSystem, LogLevel, Option, Path, Schema } from "effect";
 import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
 
@@ -27,6 +28,8 @@ const BootstrapEnvelopeSchema = Schema.Struct({
   authToken: Schema.optional(Schema.String),
   autoBootstrapProjectFromCwd: Schema.optional(Schema.Boolean),
   logWebSocketEvents: Schema.optional(Schema.Boolean),
+  otlpTracesUrl: Schema.optional(Schema.String),
+  otlpMetricsUrl: Schema.optional(Schema.String),
 });
 
 const modeFlag = Flag.choice("mode", RuntimeMode.literals).pipe(
@@ -152,6 +155,17 @@ const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
 ): Option.Option<Value> => Option.firstSomeOf(values);
 
+const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const exists = yield* fs.exists(settingsPath).pipe(Effect.orElseSucceed(() => false));
+  if (!exists) {
+    return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
+  }
+
+  const raw = yield* fs.readFileString(settingsPath).pipe(Effect.orElseSucceed(() => ""));
+  return parsePersistedServerObservabilitySettings(raw);
+});
+
 export const resolveServerConfig = (
   flags: CliServerFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
@@ -213,6 +227,9 @@ export const resolveServerConfig = (
     );
     const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
     yield* ensureServerDirectories(derivedPaths);
+    const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
+      derivedPaths.settingsPath,
+    );
     const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
     yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
     const noBrowser = resolveBooleanFlag(
@@ -278,8 +295,22 @@ export const resolveServerConfig = (
       traceBatchWindowMs: env.traceBatchWindowMs,
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
-      otlpTracesUrl: env.otlpTracesUrl,
-      otlpMetricsUrl: env.otlpMetricsUrl,
+      otlpTracesUrl:
+        env.otlpTracesUrl ??
+        Option.getOrUndefined(
+          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+            Option.fromUndefinedOr(bootstrap.otlpTracesUrl),
+          ),
+        ) ??
+        persistedObservabilitySettings.otlpTracesUrl,
+      otlpMetricsUrl:
+        env.otlpMetricsUrl ??
+        Option.getOrUndefined(
+          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+            Option.fromUndefinedOr(bootstrap.otlpMetricsUrl),
+          ),
+        ) ??
+        persistedObservabilitySettings.otlpMetricsUrl,
       otlpExportIntervalMs: env.otlpExportIntervalMs,
       otlpServiceName: env.otlpServiceName,
       mode,
