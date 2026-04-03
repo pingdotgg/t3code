@@ -70,14 +70,6 @@ export const terminalRestartsTotal = Metric.counter("t3_terminal_restarts_total"
   description: "Total terminal restart requests handled.",
 });
 
-export const dbQueriesTotal = Metric.counter("t3_db_queries_total", {
-  description: "Total sqlite queries executed by the server runtime.",
-});
-
-export const dbQueryDuration = Metric.timer("t3_db_query_duration", {
-  description: "Sqlite query execution duration.",
-});
-
 export const metricAttributes = (
   attributes: Readonly<Record<string, unknown>>,
 ): ReadonlyArray<[string, string]> => Object.entries(compactMetricAttributes(attributes));
