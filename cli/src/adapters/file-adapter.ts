@@ -49,11 +49,13 @@ export class FileAdapter {
     await fs.unlink(resolved);
   }
 
-  /** Move a file (copy to dest, delete source). */
+  /** Move a file (binary-safe: uses fs.copyFile then unlink). */
   async move(fromPath: string, toPath: string): Promise<void> {
-    const content = await this.read(fromPath);
-    await this.write(toPath, content);
-    await this.delete(fromPath);
+    const from = this.#resolve(fromPath);
+    const to = this.#resolve(toPath);
+    await fs.mkdir(nodePath.dirname(to), { recursive: true });
+    await fs.copyFile(from, to);
+    await fs.unlink(from);
   }
 
   /** List direct children of a directory. */

@@ -91,6 +91,10 @@ function parseBlocks(src: string): Block[] {
       const parsed = parseTable(tableLines);
       if (parsed) {
         blocks.push(parsed);
+      } else {
+        for (const tl of tableLines) {
+          blocks.push({ kind: "paragraph", text: tl });
+        }
       }
       continue;
     }
@@ -182,6 +186,8 @@ function InlineText({ text }: { text: string }) {
   );
 }
 
+const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
+
 // ── Block renderer ─────────────────────────────────────────────────────────
 
 function RenderBlock({ block }: { block: Block }) {
@@ -236,7 +242,6 @@ function RenderBlock({ block }: { block: Block }) {
       const colWidths = block.headers.map((h, ci) =>
         Math.max(h.length, ...block.rows.map((r) => (r[ci] ?? "").length)),
       );
-      const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
       return (
         <Box flexDirection="column" marginY={0}>
           {/* Header row */}

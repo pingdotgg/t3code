@@ -19,7 +19,7 @@ export function handleFatalError(err: unknown): never {
   } else {
     console.error(`\nError: ${message}`);
     if (process.env["DEBUG"]) {
-      console.error((err as Error).stack);
+      console.error(err instanceof Error ? err.stack : err);
     } else {
       console.error("Run with DEBUG=1 for a full stack trace.\n");
     }

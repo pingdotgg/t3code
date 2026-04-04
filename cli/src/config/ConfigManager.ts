@@ -38,7 +38,10 @@ export class ConfigManager {
 
     const existing = this.getApiKey();
     if (existing) {
-      const masked = `${existing.slice(0, 8)}${"*".repeat(existing.length - 8)}`;
+      const masked =
+        existing.length > 8
+          ? `${existing.slice(0, 8)}${"*".repeat(existing.length - 8)}`
+          : existing;
       console.log(`Current API key: ${masked}`);
     }
 

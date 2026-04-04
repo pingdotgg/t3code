@@ -10,7 +10,8 @@ const program = new Command();
 program
   .name("t3code")
   .description("AI pair programmer powered by Claude (T3 Code CLI)")
-  .version("0.0.1");
+  .version("0.0.1")
+  .option("-m, --model <model>", "Claude model to use", undefined);
 
 program
   .command("start")

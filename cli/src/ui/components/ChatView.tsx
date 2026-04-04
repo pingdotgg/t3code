@@ -93,8 +93,9 @@ function toolSummary(name: string, input: Record<string, unknown>): string {
     case "list_directory":
       return `ls ${input["path"] ?? "."}`;
     default: {
-      const preview = JSON.stringify(input).slice(0, 60);
-      return `${name}(${preview}${preview.length === 60 ? "..." : ""})`;
+      const json = JSON.stringify(input);
+      const preview = json.slice(0, 60);
+      return `${name}(${preview}${json.length > 60 ? "..." : ""})`;
     }
   }
 }
