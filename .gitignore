@@ -21,3 +21,7 @@ apps/web/src/components/__screenshots__
 .vitest-*
 __screenshots__/
 .tanstack
+.expo/
+/App.tsx
+/app.json
+ios/

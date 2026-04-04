@@ -64,27 +64,27 @@
 :root {
   color-scheme: light;
   --radius: 0.625rem;
-  --background: var(--color-white);
-  --foreground: var(--color-neutral-800);
-  --card: var(--color-white);
-  --card-foreground: var(--color-neutral-800);
-  --popover: var(--color-white);
-  --popover-foreground: var(--color-neutral-800);
-  --primary: oklch(0.488 0.217 264);
+  --background: oklch(0.982 0.012 95);
+  --foreground: oklch(0.255 0.03 255);
+  --card: color-mix(in srgb, var(--color-white) 74%, oklch(0.95 0.02 95));
+  --card-foreground: oklch(0.255 0.03 255);
+  --popover: color-mix(in srgb, var(--color-white) 82%, oklch(0.95 0.02 95));
+  --popover-foreground: oklch(0.255 0.03 255);
+  --primary: oklch(0.68 0.165 68);
   --primary-foreground: var(--color-white);
-  --secondary: --alpha(var(--color-black) / 4%);
-  --secondary-foreground: var(--color-neutral-800);
-  --muted: --alpha(var(--color-black) / 4%);
-  --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-black));
-  --accent: --alpha(var(--color-black) / 4%);
-  --accent-foreground: var(--color-neutral-800);
+  --secondary: color-mix(in srgb, var(--background) 78%, oklch(0.88 0.03 85));
+  --secondary-foreground: oklch(0.285 0.028 252);
+  --muted: color-mix(in srgb, var(--background) 82%, oklch(0.87 0.022 85));
+  --muted-foreground: oklch(0.56 0.028 248);
+  --accent: color-mix(in srgb, oklch(0.79 0.09 74) 22%, var(--background));
+  --accent-foreground: oklch(0.25 0.03 255);
   --destructive: var(--color-red-500);
-  --border: --alpha(var(--color-black) / 8%);
-  --input: --alpha(var(--color-black) / 10%);
-  --ring: oklch(0.488 0.217 264);
+  --border: color-mix(in srgb, oklch(0.48 0.03 250) 14%, transparent);
+  --input: color-mix(in srgb, oklch(0.43 0.028 250) 14%, transparent);
+  --ring: oklch(0.7 0.14 74);
   --destructive-foreground: var(--color-red-700);
-  --info: var(--color-blue-500);
-  --info-foreground: var(--color-blue-700);
+  --info: oklch(0.7 0.11 216);
+  --info-foreground: oklch(0.5 0.1 225);
   --success: var(--color-emerald-500);
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
@@ -92,27 +92,27 @@
 
   @variant dark {
     color-scheme: dark;
-    --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
-    --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    --background: oklch(0.15 0.02 250);
+    --foreground: oklch(0.94 0.012 100);
+    --card: color-mix(in srgb, var(--background) 72%, oklch(0.28 0.03 235));
     --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    --popover: color-mix(in srgb, var(--background) 78%, oklch(0.24 0.03 235));
     --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.588 0.217 264);
+    --primary: oklch(0.72 0.17 68);
     --primary-foreground: var(--color-white);
-    --secondary: --alpha(var(--color-white) / 4%);
+    --secondary: color-mix(in srgb, var(--background) 74%, oklch(0.24 0.025 230));
     --secondary-foreground: var(--color-neutral-100);
-    --muted: --alpha(var(--color-white) / 4%);
-    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
-    --accent: --alpha(var(--color-white) / 4%);
+    --muted: color-mix(in srgb, var(--background) 79%, oklch(0.24 0.03 235));
+    --muted-foreground: oklch(0.68 0.02 235);
+    --accent: color-mix(in srgb, oklch(0.72 0.12 70) 18%, transparent);
     --accent-foreground: var(--color-neutral-100);
     --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
-    --border: --alpha(var(--color-white) / 6%);
-    --input: --alpha(var(--color-white) / 8%);
-    --ring: oklch(0.588 0.217 264);
+    --border: color-mix(in srgb, oklch(0.78 0.018 92) 12%, transparent);
+    --input: color-mix(in srgb, oklch(0.76 0.02 92) 16%, transparent);
+    --ring: oklch(0.74 0.15 70);
     --destructive-foreground: var(--color-red-400);
-    --info: var(--color-blue-500);
-    --info-foreground: var(--color-blue-400);
+    --info: oklch(0.73 0.11 216);
+    --info-foreground: oklch(0.77 0.08 215);
     --success: var(--color-emerald-500);
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
@@ -131,6 +131,18 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at top left,
+      color-mix(in srgb, var(--primary) 16%, transparent),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--info) 12%, transparent),
+      transparent 34%
+    ),
+    linear-gradient(180deg, color-mix(in srgb, var(--background) 86%, black 14%), var(--background));
 }
 
 html,
@@ -154,6 +166,29 @@ body::after {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-repeat: repeat;
   background-size: 256px 256px;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle at 18% 16%,
+      color-mix(in srgb, var(--primary) 16%, transparent),
+      transparent 22%
+    ),
+    radial-gradient(
+      circle at 78% 12%,
+      color-mix(in srgb, var(--info) 12%, transparent),
+      transparent 26%
+    );
+  opacity: 0.95;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 28%, transparent);
 }
 
 pre,
@@ -244,6 +279,103 @@ label:has(> select#reasoning-effort) select {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.app-shell {
+  position: relative;
+  isolation: isolate;
+}
+
+.app-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle at left top,
+      color-mix(in srgb, var(--primary) 8%, transparent),
+      transparent 24%
+    ),
+    linear-gradient(180deg, color-mix(in srgb, var(--background) 92%, transparent), transparent 28%);
+  opacity: 0.9;
+}
+
+.app-sidebar-surface {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--card) 86%, transparent),
+      color-mix(in srgb, var(--background) 84%, transparent)
+    ),
+    color-mix(in srgb, var(--background) 94%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+.app-main-surface {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--background) 92%, transparent),
+    color-mix(in srgb, var(--background) 98%, transparent)
+  );
+}
+
+.app-topbar {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--background) 74%, transparent),
+    color-mix(in srgb, var(--background) 86%, transparent)
+  );
+  backdrop-filter: blur(16px) saturate(140%);
+}
+
+.app-chat-scroll {
+  background: radial-gradient(
+    circle at top,
+    color-mix(in srgb, var(--primary) 6%, transparent),
+    transparent 32%
+  );
+}
+
+.app-timeline-shell {
+  position: relative;
+}
+
+.app-timeline-shell::before {
+  content: "";
+  position: absolute;
+  left: 1rem;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--primary) 22%, transparent),
+    color-mix(in srgb, var(--border) 78%, transparent) 20%,
+    color-mix(in srgb, var(--border) 78%, transparent) 80%,
+    transparent
+  );
+  opacity: 0.7;
+}
+
+.app-composer-shell {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--card) 94%, transparent),
+    color-mix(in srgb, var(--background) 92%, transparent)
+  );
+  box-shadow:
+    0 20px 60px color-mix(in srgb, black 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+.app-empty-state {
+  background: radial-gradient(
+    circle at top,
+    color-mix(in srgb, var(--primary) 10%, transparent),
+    transparent 28%
+  );
 }
 
 .chat-markdown > :first-child {

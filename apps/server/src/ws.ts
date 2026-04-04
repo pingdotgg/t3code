@@ -9,6 +9,7 @@ import {
   type OrchestrationEvent,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
+  OrchestrationGetThreadMessagesPageError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   ProjectSearchEntriesError,
@@ -37,6 +38,7 @@ import {
   observeRpcStream,
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation";
+import { ThreadMessageHistoryQuery } from "./orchestration/Services/ThreadMessageHistoryQuery";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
@@ -52,6 +54,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
     const checkpointDiffQuery = yield* CheckpointDiffQuery;
+    const threadMessageHistoryQuery = yield* ThreadMessageHistoryQuery;
     const keybindings = yield* Keybindings;
     const open = yield* Open;
     const gitManager = yield* GitManager;
@@ -391,6 +394,16 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             ),
           ),
           { "rpc.aggregate": "orchestration" },
+        ),
+      [ORCHESTRATION_WS_METHODS.getThreadMessagesPage]: (input) =>
+        threadMessageHistoryQuery.getThreadMessagesPage(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationGetThreadMessagesPageError({
+                message: "Failed to load thread messages page",
+                cause,
+              }),
+          ),
         ),
       [ORCHESTRATION_WS_METHODS.getTurnDiff]: (input) =>
         observeRpcEffect(

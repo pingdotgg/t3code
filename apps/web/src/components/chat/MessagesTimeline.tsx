@@ -327,7 +327,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
 
           return (
-            <div className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
+            <div className="rounded-2xl border border-border/45 bg-card/35 px-2.5 py-2 shadow-[0_16px_40px_color-mix(in_srgb,black_7%,transparent)] backdrop-blur-sm">
               {showHeader && (
                 <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
                   <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
@@ -361,8 +361,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           const terminalContexts = displayedUserMessage.contexts;
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
-            <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+            <div className="flex justify-end pl-8">
+              <div className="group relative max-w-[80%] rounded-[24px] rounded-br-md border border-border/70 bg-secondary/88 px-4 py-3 shadow-[0_20px_50px_color-mix(in_srgb,black_8%,transparent)] backdrop-blur-md">
                 {userImages.length > 0 && (
                   <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
                     {userImages.map(
@@ -449,7 +449,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   <span className="h-px flex-1 bg-border" />
                 </div>
               )}
-              <div className="min-w-0 px-1 py-0.5">
+              <div className="min-w-0 rounded-[28px] border border-border/45 bg-card/32 px-4 py-3 shadow-[0_18px_54px_color-mix(in_srgb,black_8%,transparent)] backdrop-blur-sm">
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="inline-flex size-7 items-center justify-center rounded-full border border-border/60 bg-background/60 text-primary shadow-sm">
+                    <BotIcon className="size-3.5" />
+                  </span>
+                  <span className="text-[10px] font-semibold tracking-[0.18em] text-muted-foreground/70 uppercase">
+                    Assistant
+                  </span>
+                </div>
                 <ChatMarkdown
                   text={messageText}
                   cwd={markdownCwd}
@@ -569,7 +577,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     <div
       ref={timelineRootRef}
       data-timeline-root="true"
-      className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden"
+      className="app-timeline-shell mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden"
     >
       {virtualizedRowCount > 0 && (
         <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>

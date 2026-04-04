@@ -1,0 +1,17 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@import "nativewind/theme";
+
+@utility font-t3-medium {
+  font-weight: 500;
+}
+
+@utility font-t3-bold {
+  font-weight: 700;
+}
+
+@utility font-t3-extrabold {
+  font-weight: 800;
+}

@@ -8,6 +8,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -18,6 +19,7 @@ import {
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
   dispatchCommand: "orchestration.dispatchCommand",
+  getThreadMessagesPage: "orchestration.getThreadMessagesPage",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   replayEvents: "orchestration.replayEvents",
@@ -1012,6 +1014,24 @@ export type OrchestrationGetSnapshotInput = typeof OrchestrationGetSnapshotInput
 const OrchestrationGetSnapshotResult = OrchestrationReadModel;
 export type OrchestrationGetSnapshotResult = typeof OrchestrationGetSnapshotResult.Type;
 
+const THREAD_MESSAGE_PAGE_MAX_LIMIT = 100;
+
+export const OrchestrationGetThreadMessagesPageInput = Schema.Struct({
+  threadId: ThreadId,
+  offset: NonNegativeInt,
+  limit: PositiveInt.check(Schema.isLessThanOrEqualTo(THREAD_MESSAGE_PAGE_MAX_LIMIT)),
+});
+export type OrchestrationGetThreadMessagesPageInput =
+  typeof OrchestrationGetThreadMessagesPageInput.Type;
+
+export const OrchestrationGetThreadMessagesPageResult = Schema.Struct({
+  messages: Schema.Array(OrchestrationMessage),
+  total: NonNegativeInt,
+  hasMore: Schema.Boolean,
+});
+export type OrchestrationGetThreadMessagesPageResult =
+  typeof OrchestrationGetThreadMessagesPageResult.Type;
+
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({ threadId: ThreadId }),
   { unsafePreserveChecks: true },
@@ -1047,6 +1067,10 @@ export const OrchestrationRpcSchemas = {
     input: ClientOrchestrationCommand,
     output: DispatchResult,
   },
+  getThreadMessagesPage: {
+    input: OrchestrationGetThreadMessagesPageInput,
+    output: OrchestrationGetThreadMessagesPageResult,
+  },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,
     output: OrchestrationGetTurnDiffResult,
@@ -1071,6 +1095,14 @@ export class OrchestrationGetSnapshotError extends Schema.TaggedErrorClass<Orche
 
 export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<OrchestrationDispatchCommandError>()(
   "OrchestrationDispatchCommandError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class OrchestrationGetThreadMessagesPageError extends Schema.TaggedErrorClass<OrchestrationGetThreadMessagesPageError>()(
+  "OrchestrationGetThreadMessagesPageError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

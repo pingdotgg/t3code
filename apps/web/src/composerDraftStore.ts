@@ -215,6 +215,7 @@ interface ComposerDraftStoreState {
   ) => void;
   clearProjectDraftThreadId: (projectId: ProjectId) => void;
   clearProjectDraftThreadById: (projectId: ProjectId, threadId: ThreadId) => void;
+  promoteDraftThread: (threadId: ThreadId) => void;
   clearDraftThread: (threadId: ThreadId) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadId: ThreadId, prompt: string) => void;
@@ -1476,6 +1477,31 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           };
         });
       },
+      promoteDraftThread: (threadId) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        set((state) => {
+          const hasDraftThread = state.draftThreadsByThreadId[threadId] !== undefined;
+          const hasProjectMapping = Object.values(state.projectDraftThreadIdByProjectId).includes(
+            threadId,
+          );
+          if (!hasDraftThread && !hasProjectMapping) {
+            return state;
+          }
+          const nextProjectDraftThreadIdByProjectId = Object.fromEntries(
+            Object.entries(state.projectDraftThreadIdByProjectId).filter(
+              ([, draftThreadId]) => draftThreadId !== threadId,
+            ),
+          ) as Record<ProjectId, ThreadId>;
+          const { [threadId]: _removedDraftThread, ...restDraftThreadsByThreadId } =
+            state.draftThreadsByThreadId;
+          return {
+            draftThreadsByThreadId: restDraftThreadsByThreadId,
+            projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
+          };
+        });
+      },
       clearDraftThread: (threadId) => {
         if (threadId.length === 0) {
           return;
@@ -2205,6 +2231,7 @@ export function clearPromotedDraftThread(threadId: ThreadId): void {
   if (!useComposerDraftStore.getState().getDraftThread(threadId)) {
     return;
   }
+  useComposerDraftStore.getState().promoteDraftThread(threadId);
   useComposerDraftStore.getState().clearDraftThread(threadId);
 }
 

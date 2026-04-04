@@ -16,9 +16,17 @@
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"
     },
+    "./orchestrationTiming": {
+      "types": "./src/orchestrationTiming.ts",
+      "import": "./src/orchestrationTiming.ts"
+    },
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
+    },
+    "./remote": {
+      "types": "./src/remote.ts",
+      "import": "./src/remote.ts"
     },
     "./Net": {
       "types": "./src/Net.ts",

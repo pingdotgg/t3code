@@ -92,6 +92,7 @@ export function createWsNativeApi(): NativeApi {
     orchestration: {
       getSnapshot: rpcClient.orchestration.getSnapshot,
       dispatchCommand: rpcClient.orchestration.dispatchCommand,
+      getThreadMessagesPage: rpcClient.orchestration.getThreadMessagesPage,
       getTurnDiff: rpcClient.orchestration.getTurnDiff,
       getFullThreadDiff: rpcClient.orchestration.getFullThreadDiff,
       replayEvents: (fromSequenceExclusive) =>

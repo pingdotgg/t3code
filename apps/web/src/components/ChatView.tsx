@@ -576,6 +576,8 @@ function PersistentThreadTerminalDrawer({
 export default function ChatView({ threadId }: ChatViewProps) {
   const serverThread = useThreadById(threadId);
   const setStoreThreadError = useStore((store) => store.setError);
+  const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
+  const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore(
     (store) => store.threadLastVisitedAtById[threadId],
@@ -642,6 +644,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
+  const promoteDraftThread = useComposerDraftStore((store) => store.promoteDraftThread);
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
@@ -725,6 +728,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const localDraftPromotionPromiseByThreadIdRef = useRef(new Map<ThreadId, Promise<void>>());
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -1615,6 +1619,65 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [setStoreThreadError],
   );
+  useEffect(() => {
+    if (!isLocalDraftThread || !activeProject || !activeThread || localDraftError !== null) {
+      return;
+    }
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+
+    const draftThreadId = activeThread.id;
+    if (localDraftPromotionPromiseByThreadIdRef.current.has(draftThreadId)) {
+      return;
+    }
+
+    const promotionPromise = api.orchestration
+      .dispatchCommand({
+        type: "thread.create",
+        commandId: newCommandId(),
+        threadId: draftThreadId,
+        projectId: activeProject.id,
+        title: activeThread.title,
+        modelSelection: selectedModelSelection,
+        runtimeMode,
+        interactionMode,
+        branch: activeThread.branch,
+        worktreePath: activeThread.worktreePath,
+        createdAt: activeThread.createdAt,
+      })
+      .then(() => api.orchestration.getSnapshot())
+      .then((snapshot) => {
+        syncServerReadModel(snapshot);
+        if (snapshot.threads.some((thread) => thread.id === draftThreadId)) {
+          promoteDraftThread(draftThreadId);
+        }
+        setThreadError(draftThreadId, null);
+      })
+      .catch((error) => {
+        setThreadError(
+          draftThreadId,
+          error instanceof Error ? error.message : "Failed to sync the new thread.",
+        );
+      })
+      .finally(() => {
+        localDraftPromotionPromiseByThreadIdRef.current.delete(draftThreadId);
+      });
+
+    localDraftPromotionPromiseByThreadIdRef.current.set(draftThreadId, promotionPromise);
+  }, [
+    activeProject,
+    activeThread,
+    interactionMode,
+    isLocalDraftThread,
+    localDraftError,
+    promoteDraftThread,
+    runtimeMode,
+    selectedModelSelection,
+    setThreadError,
+    syncServerReadModel,
+  ]);
 
   const focusComposer = useCallback(() => {
     composerEditorRef.current?.focusAtEnd();
@@ -2907,6 +2970,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
+    if (localDraftPromotionPromiseByThreadIdRef.current.has(threadIdForSend)) {
+      setThreadError(threadIdForSend, "New thread is still syncing. Try again in a moment.");
+      return;
+    }
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
@@ -3892,23 +3959,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
   // Empty state: no active thread
   if (!activeThread) {
     return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
+      <div className="app-empty-state flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
         {!isElectron && (
-          <header className="border-b border-border px-3 py-2 md:hidden">
+          <header className="app-topbar border-b border-border/70 px-3 py-2 md:hidden">
             <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0" />
+              <SidebarTrigger className="size-7 shrink-0 rounded-full border border-border/60 bg-background/60" />
               <span className="text-sm font-medium text-foreground">Threads</span>
             </div>
           </header>
         )}
         {isElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
+          <div className="app-topbar drag-region flex h-[52px] shrink-0 items-center border-b border-border/70 px-5">
             <span className="text-xs text-muted-foreground/50">No active thread</span>
           </div>
         )}
         <div className="flex flex-1 items-center justify-center">
-          <div className="text-center">
-            <p className="text-sm">Select a thread or create a new one to get started.</p>
+          <div className="max-w-sm rounded-[28px] border border-border/60 bg-card/55 px-8 py-10 text-center shadow-[0_24px_80px_color-mix(in_srgb,black_12%,transparent)] backdrop-blur-xl">
+            <p className="text-[11px] font-semibold tracking-[0.24em] text-muted-foreground/55 uppercase">
+              Control Room Empty
+            </p>
+            <p className="mt-3 text-base font-semibold text-foreground">
+              Select a thread or create a new one to start shipping.
+            </p>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground/70">
+              Projects, plans, diffs, and terminals all light up here once a session is active.
+            </p>
           </div>
         </div>
       </div>
@@ -3920,7 +3995,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Top bar */}
       <header
         className={cn(
-          "border-b border-border px-3 sm:px-5",
+          "app-topbar border-b border-border/70 px-3 sm:px-5",
           isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
         )}
       >
@@ -3968,7 +4043,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             {/* Messages */}
             <div
               ref={setMessagesScrollContainerRef}
-              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
+              className="app-chat-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-4 sm:px-5 sm:py-5"
               onScroll={onMessagesScroll}
               onClickCapture={onMessagesClickCapture}
               onWheel={onMessagesWheel}
@@ -4012,7 +4087,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 <button
                   type="button"
                   onClick={() => scrollMessagesToBottom("smooth")}
-                  className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
+                  className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card/90 px-3 py-1 text-xs text-muted-foreground shadow-lg shadow-black/10 backdrop-blur-md transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
                 >
                   <ChevronDownIcon className="size-3.5" />
                   Scroll to bottom
@@ -4031,7 +4106,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             >
               <div
                 className={cn(
-                  "group rounded-[22px] p-px transition-colors duration-200",
+                  "group rounded-[24px] p-px transition-colors duration-200",
                   composerProviderState.composerFrameClassName,
                 )}
                 onDragEnter={onComposerDragEnter}
@@ -4041,7 +4116,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               >
                 <div
                   className={cn(
-                    "rounded-[20px] border bg-card transition-colors duration-200 has-focus-visible:border-ring/45",
+                    "app-composer-shell rounded-[22px] border transition-colors duration-200 has-focus-visible:border-ring/45",
                     isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
                     composerProviderState.composerSurfaceClassName,
                   )}

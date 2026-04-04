@@ -47,6 +47,10 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  ThreadMessageHistoryQuery,
+  type ThreadMessageHistoryQueryShape,
+} from "./orchestration/Services/ThreadMessageHistoryQuery.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import {
   ProviderRegistry,
@@ -137,6 +141,7 @@ const buildAppUnderTest = (options?: {
     terminalManager?: Partial<TerminalManagerShape>;
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
+    threadMessageHistoryQuery?: Partial<ThreadMessageHistoryQueryShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
@@ -242,6 +247,17 @@ const buildAppUnderTest = (options?: {
         Layer.mock(ProjectionSnapshotQuery)({
           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           ...options?.layers?.projectionSnapshotQuery,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ThreadMessageHistoryQuery)({
+          getThreadMessagesPage: () =>
+            Effect.succeed({
+              messages: [],
+              total: 0,
+              hasMore: false,
+            }),
+          ...options?.layers?.threadMessageHistoryQuery,
         }),
       ),
       Layer.provide(
@@ -389,6 +405,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 200);
       assert.include(yield* response.text, 'data-fallback="project-favicon"');
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves a remote health check when authorized", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          authToken: "secret-token",
+        },
+      });
+
+      const unauthorized = yield* HttpClient.get("/api/remote/health");
+      assert.equal(unauthorized.status, 401);
+      assert.equal(yield* unauthorized.text, '{"ok":false}');
+
+      const authorized = yield* HttpClient.get("/api/remote/health?token=secret-token");
+      assert.equal(authorized.status, 200);
+      assert.deepEqual(JSON.parse(yield* authorized.text), {
+        ok: true,
+        authRequired: true,
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

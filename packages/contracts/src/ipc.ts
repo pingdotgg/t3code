@@ -45,6 +45,8 @@ import type {
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
   OrchestrationEvent,
+  OrchestrationGetThreadMessagesPageInput,
+  OrchestrationGetThreadMessagesPageResult,
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
@@ -175,6 +177,9 @@ export interface NativeApi {
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
+    getThreadMessagesPage: (
+      input: OrchestrationGetThreadMessagesPageInput,
+    ) => Promise<OrchestrationGetThreadMessagesPageResult>;
     getTurnDiff: (input: OrchestrationGetTurnDiffInput) => Promise<OrchestrationGetTurnDiffResult>;
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,

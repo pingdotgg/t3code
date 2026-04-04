@@ -497,7 +497,9 @@ function titleForTool(itemType: CanonicalItemType): string {
   }
 }
 
-const SUPPORTED_CLAUDE_IMAGE_MIME_TYPES = new Set([
+type ClaudeImageMimeType = "image/gif" | "image/jpeg" | "image/png" | "image/webp";
+
+const SUPPORTED_CLAUDE_IMAGE_MIME_TYPES = new Set<ClaudeImageMimeType>([
   "image/gif",
   "image/jpeg",
   "image/png",
@@ -508,6 +510,14 @@ const CLAUDE_SETTING_SOURCES = [
   "project",
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
+type SDKUserMessageContent = Exclude<SDKUserMessage["message"]["content"], string>;
+type SDKUserContentBlock = SDKUserMessageContent[number];
+type SDKTextContentBlock = Extract<SDKUserContentBlock, { type: "text" }>;
+type SDKImageContentBlock = Extract<SDKUserContentBlock, { type: "image" }>;
+
+function isClaudeImageMimeType(value: string): value is ClaudeImageMimeType {
+  return SUPPORTED_CLAUDE_IMAGE_MIME_TYPES.has(value as ClaudeImageMimeType);
+}
 
 function buildPromptText(input: ProviderSendTurnInput): string {
   const rawEffort =
@@ -524,24 +534,23 @@ function buildPromptText(input: ProviderSendTurnInput): string {
   return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
 }
 
-function buildUserMessage(input: {
-  readonly sdkContent: Array<Record<string, unknown>>;
-}): SDKUserMessage {
+function buildUserMessage(input: { readonly sdkContent: SDKUserMessageContent }): SDKUserMessage {
+  const message: SDKUserMessage["message"] = {
+    role: "user",
+    content: input.sdkContent,
+  };
   return {
     type: "user",
     session_id: "",
     parent_tool_use_id: null,
-    message: {
-      role: "user",
-      content: input.sdkContent as unknown as SDKUserMessage["message"]["content"],
-    },
-  } as SDKUserMessage;
+    message,
+  };
 }
 
 function buildClaudeImageContentBlock(input: {
-  readonly mimeType: string;
+  readonly mimeType: ClaudeImageMimeType;
   readonly bytes: Uint8Array;
-}): Record<string, unknown> {
+}): SDKImageContentBlock {
   return {
     type: "image",
     source: {
@@ -560,10 +569,10 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   },
 ) {
   const text = buildPromptText(input);
-  const sdkContent: Array<Record<string, unknown>> = [];
+  const sdkContent: SDKUserMessageContent = [];
 
   if (text.length > 0) {
-    sdkContent.push({ type: "text", text });
+    sdkContent.push({ type: "text", text } satisfies SDKTextContentBlock);
   }
 
   for (const attachment of input.attachments ?? []) {
@@ -571,7 +580,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
       continue;
     }
 
-    if (!SUPPORTED_CLAUDE_IMAGE_MIME_TYPES.has(attachment.mimeType)) {
+    if (!isClaudeImageMimeType(attachment.mimeType)) {
       return yield* new ProviderAdapterRequestError({
         provider: PROVIDER,
         method: "turn/start",

@@ -62,22 +62,40 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
-    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
+    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
-        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <h2
-          className="min-w-0 shrink truncate text-sm font-medium text-foreground"
-          title={activeThreadTitle}
-        >
-          {activeThreadTitle}
-        </h2>
+        <SidebarTrigger className="size-7 shrink-0 rounded-full border border-border/60 bg-background/55 md:hidden" />
+        <div className="min-w-0 flex-1">
+          <div className="mb-0.5 flex items-center gap-2">
+            <span className="rounded-full border border-border/60 bg-background/55 px-2 py-0.5 text-[9px] font-semibold tracking-[0.22em] text-muted-foreground/75 uppercase">
+              Active Thread
+            </span>
+            {activeProjectName && (
+              <span className="truncate text-[10px] font-medium tracking-[0.12em] text-muted-foreground/60 uppercase">
+                {activeProjectName}
+              </span>
+            )}
+          </div>
+          <h2
+            className="min-w-0 shrink truncate text-sm font-semibold tracking-[0.01em] text-foreground sm:text-[15px]"
+            title={activeThreadTitle}
+          >
+            {activeThreadTitle}
+          </h2>
+        </div>
         {activeProjectName && (
-          <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
+          <Badge
+            variant="outline"
+            className="hidden min-w-0 shrink overflow-hidden border-border/60 bg-background/55 sm:inline-flex"
+          >
             <span className="min-w-0 truncate">{activeProjectName}</span>
           </Badge>
         )}
         {activeProjectName && !isGitRepo && (
-          <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
+          <Badge
+            variant="outline"
+            className="shrink-0 border-amber-500/35 bg-amber-500/8 text-[10px] text-amber-700 dark:text-amber-300"
+          >
             No Git
           </Badge>
         )}

@@ -1976,10 +1976,10 @@ export default function Sidebar() {
               to="/"
             >
               <T3Wordmark />
-              <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
+              <span className="truncate text-sm font-semibold tracking-tight text-foreground">
                 Code
               </span>
-              <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
+              <span className="rounded-full border border-border/50 bg-primary/10 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-primary/80">
                 {APP_STAGE_LABEL}
               </span>
             </Link>
@@ -1995,11 +1995,11 @@ export default function Sidebar() {
   return (
     <>
       {isElectron ? (
-        <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px]">
+        <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 border-b border-border/60 px-4 py-0 pl-[90px]">
           {wordmark}
         </SidebarHeader>
       ) : (
-        <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
+        <SidebarHeader className="gap-3 border-b border-border/60 px-3 py-3 sm:gap-2.5 sm:px-4">
           {wordmark}
         </SidebarHeader>
       )}
@@ -2032,9 +2032,9 @@ export default function Sidebar() {
                 </Alert>
               </SidebarGroup>
             ) : null}
-            <SidebarGroup className="px-2 py-2">
-              <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+            <SidebarGroup className="px-2 py-3">
+              <div className="mb-2 flex items-center justify-between pl-2 pr-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/55">
                   Projects
                 </span>
                 <div className="flex items-center gap-1">
@@ -2057,7 +2057,7 @@ export default function Sidebar() {
                             shouldShowProjectPathEntry ? "Cancel add project" : "Add project"
                           }
                           aria-pressed={shouldShowProjectPathEntry}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                          className="inline-flex size-6 cursor-pointer items-center justify-center rounded-full border border-border/50 bg-background/55 text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
                           onClick={handleStartAddProject}
                         />
                       }
@@ -2079,7 +2079,7 @@ export default function Sidebar() {
                   {isElectron && (
                     <button
                       type="button"
-                      className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                      className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-xl border border-border/60 bg-secondary/80 py-2 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                       onClick={() => void handlePickFolder()}
                       disabled={isPickingFolder || isAddingProject}
                     >
@@ -2090,7 +2090,7 @@ export default function Sidebar() {
                   <div className="flex gap-1.5">
                     <input
                       ref={addProjectInputRef}
-                      className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
+                      className={`min-w-0 flex-1 rounded-xl border bg-secondary/80 px-2.5 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
                         addProjectError
                           ? "border-red-500/70 focus:border-red-500"
                           : "border-border focus:border-ring"
@@ -2112,7 +2112,7 @@ export default function Sidebar() {
                     />
                     <button
                       type="button"
-                      className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
+                      className="shrink-0 rounded-xl bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
                       onClick={handleAddProject}
                       disabled={!canAddProject}
                     >
@@ -2153,9 +2153,9 @@ export default function Sidebar() {
                   </SidebarMenu>
                 </DndContext>
               ) : (
-                <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+                <SidebarMenu ref={attachProjectListAutoAnimateRef} className="space-y-1">
                   {renderedProjects.map((renderedProject) => (
-                    <SidebarMenuItem key={renderedProject.project.id} className="rounded-md">
+                    <SidebarMenuItem key={renderedProject.project.id} className="rounded-xl">
                       {renderProjectItem(renderedProject, null)}
                     </SidebarMenuItem>
                   ))}
@@ -2171,13 +2171,13 @@ export default function Sidebar() {
           </SidebarContent>
 
           <SidebarSeparator />
-          <SidebarFooter className="p-2">
+          <SidebarFooter className="border-t border-border/60 p-2.5">
             <SidebarUpdatePill />
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="sm"
-                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                  className="gap-2 rounded-xl border border-transparent px-2.5 py-2 text-muted-foreground/70 hover:border-border/50 hover:bg-accent hover:text-foreground"
                   onClick={() => void navigate({ to: "/settings" })}
                 >
                   <SettingsIcon className="size-3.5" />

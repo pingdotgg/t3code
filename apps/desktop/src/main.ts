@@ -73,6 +73,7 @@ const USER_DATA_DIR_NAME = isDevelopment ? "t3code-dev" : "t3code";
 const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
+const shouldAutoOpenDevTools = process.env.T3_DESKTOP_OPEN_DEVTOOLS === "1";
 const LOG_DIR = Path.join(STATE_DIR, "logs");
 const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_FILE_MAX_FILES = 10;
@@ -112,6 +113,7 @@ const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
 });
 const initialUpdateState = (): DesktopUpdateState =>
   createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 function logTimestamp(): string {
   return new Date().toISOString();
@@ -1407,7 +1409,9 @@ function createWindow(): BrowserWindow {
 
   if (isDevelopment) {
     void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
-    window.webContents.openDevTools({ mode: "detach" });
+    if (shouldAutoOpenDevTools) {
+      window.webContents.openDevTools({ mode: "detach" });
+    }
   } else {
     void window.loadURL(`${DESKTOP_SCHEME}://app/index.html`);
   }
@@ -1421,12 +1425,37 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+function focusOrCreateMainWindow(): void {
+  const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
+  if (existingWindow && !existingWindow.isDestroyed()) {
+    if (existingWindow.isMinimized()) {
+      existingWindow.restore();
+    }
+    if (!existingWindow.isVisible()) {
+      existingWindow.show();
+    }
+    existingWindow.focus();
+    mainWindow = existingWindow;
+    return;
+  }
+
+  mainWindow = createWindow();
+}
+
 // Override Electron's userData path before the `ready` event so that
 // Chromium session data uses a filesystem-friendly directory name.
 // Must be called synchronously at the top level — before `app.whenReady()`.
 app.setPath("userData", resolveUserDataPath());
 
 configureAppIdentity();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    focusOrCreateMainWindow();
+  });
+}
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
@@ -1458,27 +1487,29 @@ app.on("before-quit", () => {
   restoreStdIoCapture?.();
 });
 
-app
-  .whenReady()
-  .then(() => {
-    writeDesktopLogHeader("app ready");
-    configureAppIdentity();
-    configureApplicationMenu();
-    registerDesktopProtocol();
-    configureAutoUpdater();
-    void bootstrap().catch((error) => {
-      handleFatalStartupError("bootstrap", error);
-    });
+if (hasSingleInstanceLock) {
+  app
+    .whenReady()
+    .then(() => {
+      writeDesktopLogHeader("app ready");
+      configureAppIdentity();
+      configureApplicationMenu();
+      registerDesktopProtocol();
+      configureAutoUpdater();
+      void bootstrap().catch((error) => {
+        handleFatalStartupError("bootstrap", error);
+      });
 
-    app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        mainWindow = createWindow();
-      }
+      app.on("activate", () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+          focusOrCreateMainWindow();
+        }
+      });
+    })
+    .catch((error) => {
+      handleFatalStartupError("whenReady", error);
     });
-  })
-  .catch((error) => {
-    handleFatalStartupError("whenReady", error);
-  });
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin" && !isQuitting) {

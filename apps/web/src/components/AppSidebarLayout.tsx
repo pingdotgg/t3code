@@ -28,11 +28,11 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate]);
 
   return (
-    <SidebarProvider defaultOpen>
+    <SidebarProvider defaultOpen className="app-shell">
       <Sidebar
         side="left"
         collapsible="offcanvas"
-        className="border-r border-border bg-card text-foreground"
+        className="app-sidebar-surface border-r border-border/70 text-foreground"
         resizable={{
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: ({ nextWidth, wrapper }) =>
