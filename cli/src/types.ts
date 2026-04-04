@@ -31,6 +31,10 @@ export interface FileChange {
 
 export interface CodeSession {
   messages: Message[];
+  /** Full Anthropic API message history, including tool_use and tool_result
+   * blocks. Stored as unknown[] to avoid importing the SDK into types.ts;
+   * ClaudeAdapter casts back to MessageParam[] on restore. */
+  apiHistory?: unknown[];
   workingDirectory: string;
   currentTask?: string;
   savedAt: number;

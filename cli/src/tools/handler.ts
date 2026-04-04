@@ -1,4 +1,7 @@
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 import type { FileAdapter } from "../adapters/file-adapter.ts";
 import type { FileChange, ToolUse } from "../types.ts";
 
@@ -69,12 +72,11 @@ export class ToolHandler {
       originalContent = undefined;
     }
 
-    this.queueChange({
-      type: originalContent !== undefined ? "modify" : "create",
-      path,
-      originalContent,
-      newContent: content,
-    });
+    this.queueChange(
+      originalContent !== undefined
+        ? { type: "modify", path, originalContent, newContent: content }
+        : { type: "create", path, newContent: content },
+    );
 
     return `Queued: ${originalContent !== undefined ? "modify" : "create"} "${path}"`;
   }
@@ -135,13 +137,12 @@ export class ToolHandler {
     }
 
     try {
-      const output = execSync(command, {
+      const { stdout, stderr } = await execAsync(command, {
         cwd: this.fileAdapter.workingDir,
         timeout: 30_000,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
       });
-      return output.trim() || "(command completed with no output)";
+      const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
+      return combined || "(command completed with no output)";
     } catch (err: unknown) {
       const error = err as { stdout?: string; stderr?: string; message?: string };
       const detail = error.stderr ?? error.stdout ?? error.message ?? String(err);

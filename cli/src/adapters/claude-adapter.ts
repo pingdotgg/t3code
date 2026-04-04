@@ -20,9 +20,21 @@ export type ClaudeStreamEvent =
 
 export class ClaudeAdapter {
   private client: Anthropic;
+  /** Full API message history including tool_use and tool_result blocks. */
+  private apiHistory: Anthropic.MessageParam[] = [];
 
   constructor(apiKey: string) {
     this.client = new Anthropic({ apiKey });
+  }
+
+  /** Restore API history from a persisted session (call before first turn). */
+  setApiHistory(history: unknown[]): void {
+    this.apiHistory = history as Anthropic.MessageParam[];
+  }
+
+  /** Returns the full API history for session persistence. */
+  getApiHistory(): Anthropic.MessageParam[] {
+    return this.apiHistory;
   }
 
   /**
@@ -38,14 +50,25 @@ export class ClaudeAdapter {
   ): AsyncGenerator<ClaudeStreamEvent> {
     const systemPrompt = buildSystemPrompt(workingDir);
 
-    // Build the Anthropic API message history from our Message type.
-    // This grows as tool results are appended during the loop.
-    const apiMessages: Anthropic.MessageParam[] = messages.map(toApiMessage);
+    // On the first call after a fresh session, seed from the stored API history.
+    // Otherwise build from the Message[] (new session with no tool interactions).
+    if (this.apiHistory.length === 0) {
+      this.apiHistory = messages.map(toApiMessage);
+    } else {
+      // Append only the latest user message (already in messages array last)
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg && lastMsg.role === "user") {
+        this.apiHistory.push(toApiMessage(lastMsg));
+      }
+    }
+
+    // Local alias — we mutate this (and apiHistory) as the loop progresses
+    const apiMessages = this.apiHistory;
 
     while (true) {
       const stream = this.client.messages.stream({
         model,
-        max_tokens: 8096,
+        max_tokens: 8192,
         system: systemPrompt,
         tools,
         messages: apiMessages,

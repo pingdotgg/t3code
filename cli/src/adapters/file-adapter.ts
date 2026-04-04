@@ -76,10 +76,10 @@ export class FileAdapter {
 
   async #walkDir(dir: string, root: string): Promise<string[]> {
     const results: string[] = [];
-    let entries: Awaited<ReturnType<typeof fs.readdir>>;
+    let entries: import("node:fs").Dirent<string>[];
 
     try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
+      entries = await fs.readdir(dir, { withFileTypes: true, encoding: "utf-8" });
     } catch {
       return results;
     }

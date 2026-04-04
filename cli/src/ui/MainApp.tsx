@@ -48,12 +48,21 @@ export const MainApp: React.FC<Props> = ({
     initialSession?.messages ?? [],
   );
   const messagesRef = useRef<Message[]>(initialSession?.messages ?? []);
+
+  // Restore full API history (including tool_use/tool_result blocks) if available
+  React.useEffect(() => {
+    if (initialSession?.apiHistory) {
+      claudeAdapter.setApiHistory(initialSession.apiHistory);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const commandApprovalRef = useRef<((approved: boolean) => void) | null>(null);
 
   useInput((_input, key) => {
     if (key.ctrl && _input === "r" && state.mode === "chat") {
       messagesRef.current = [];
       setMessages([]);
+      claudeAdapter.setApiHistory([]);
       sessionManager.clear();
     }
   });
@@ -129,7 +138,7 @@ export const MainApp: React.FC<Props> = ({
         role: "assistant",
         content: responseText,
         timestamp: Date.now(),
-        toolUse: usedTools.length > 0 ? usedTools : undefined,
+        ...(usedTools.length > 0 && { toolUse: usedTools }),
       };
       const withResponse = [...messagesRef.current, assistantMsg];
       messagesRef.current = withResponse;
@@ -137,6 +146,7 @@ export const MainApp: React.FC<Props> = ({
 
       sessionManager.save({
         messages: withResponse,
+        apiHistory: claudeAdapter.getApiHistory(),
         workingDirectory: context.workingDirectory,
         currentTask: userText,
         savedAt: Date.now(),
