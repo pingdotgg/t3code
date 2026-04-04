@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { createOrchestrationRecoveryCoordinator } from "./orchestrationRecovery";
+import {
+  createOrchestrationRecoveryCoordinator,
+  deriveReplayRetryDecision,
+} from "./orchestrationRecovery";
 
 describe("createOrchestrationRecoveryCoordinator", () => {
   it("defers live events until bootstrap completes and then requests replay", () => {
@@ -146,6 +149,157 @@ describe("createOrchestrationRecoveryCoordinator", () => {
       inFlight: {
         kind: "replay",
         reason: "sequence-gap",
+      },
+    });
+  });
+});
+
+describe("deriveReplayRetryDecision", () => {
+  it("retries immediately when replay made progress", () => {
+    expect(
+      deriveReplayRetryDecision({
+        previousTracker: {
+          attempts: 2,
+          latestSequence: 3,
+          highestObservedSequence: 5,
+        },
+        completion: {
+          replayMadeProgress: true,
+          shouldReplay: true,
+        },
+        recoveryState: {
+          latestSequence: 5,
+          highestObservedSequence: 5,
+        },
+        baseDelayMs: 100,
+        maxNoProgressRetries: 3,
+      }),
+    ).toEqual({
+      shouldRetry: true,
+      delayMs: 0,
+      tracker: null,
+    });
+  });
+
+  it("caps no-progress retries for the same frontier", () => {
+    const first = deriveReplayRetryDecision({
+      previousTracker: null,
+      completion: {
+        replayMadeProgress: false,
+        shouldReplay: true,
+      },
+      recoveryState: {
+        latestSequence: 3,
+        highestObservedSequence: 5,
+      },
+      baseDelayMs: 100,
+      maxNoProgressRetries: 3,
+    });
+
+    const second = deriveReplayRetryDecision({
+      previousTracker: first.tracker,
+      completion: {
+        replayMadeProgress: false,
+        shouldReplay: true,
+      },
+      recoveryState: {
+        latestSequence: 3,
+        highestObservedSequence: 5,
+      },
+      baseDelayMs: 100,
+      maxNoProgressRetries: 3,
+    });
+
+    const third = deriveReplayRetryDecision({
+      previousTracker: second.tracker,
+      completion: {
+        replayMadeProgress: false,
+        shouldReplay: true,
+      },
+      recoveryState: {
+        latestSequence: 3,
+        highestObservedSequence: 5,
+      },
+      baseDelayMs: 100,
+      maxNoProgressRetries: 3,
+    });
+
+    const fourth = deriveReplayRetryDecision({
+      previousTracker: third.tracker,
+      completion: {
+        replayMadeProgress: false,
+        shouldReplay: true,
+      },
+      recoveryState: {
+        latestSequence: 3,
+        highestObservedSequence: 5,
+      },
+      baseDelayMs: 100,
+      maxNoProgressRetries: 3,
+    });
+
+    expect(first).toEqual({
+      shouldRetry: true,
+      delayMs: 100,
+      tracker: {
+        attempts: 1,
+        latestSequence: 3,
+        highestObservedSequence: 5,
+      },
+    });
+    expect(second).toEqual({
+      shouldRetry: true,
+      delayMs: 200,
+      tracker: {
+        attempts: 2,
+        latestSequence: 3,
+        highestObservedSequence: 5,
+      },
+    });
+    expect(third).toEqual({
+      shouldRetry: true,
+      delayMs: 400,
+      tracker: {
+        attempts: 3,
+        latestSequence: 3,
+        highestObservedSequence: 5,
+      },
+    });
+    expect(fourth).toEqual({
+      shouldRetry: false,
+      delayMs: 0,
+      tracker: null,
+    });
+  });
+
+  it("resets the retry budget when the replay frontier changes", () => {
+    const exhausted = {
+      attempts: 3,
+      latestSequence: 3,
+      highestObservedSequence: 5,
+    };
+
+    expect(
+      deriveReplayRetryDecision({
+        previousTracker: exhausted,
+        completion: {
+          replayMadeProgress: false,
+          shouldReplay: true,
+        },
+        recoveryState: {
+          latestSequence: 3,
+          highestObservedSequence: 6,
+        },
+        baseDelayMs: 100,
+        maxNoProgressRetries: 3,
+      }),
+    ).toEqual({
+      shouldRetry: true,
+      delayMs: 100,
+      tracker: {
+        attempts: 1,
+        latestSequence: 3,
+        highestObservedSequence: 6,
       },
     });
   });

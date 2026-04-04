@@ -43,6 +43,7 @@ import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
+import { deriveReplayRetryDecision } from "../orchestrationRecovery";
 import { getWsRpcClient } from "~/wsRpcClient";
 
 export const Route = createRootRouteWithContext<{
@@ -190,6 +191,7 @@ function coalesceOrchestrationUiEvents(
 }
 
 const REPLAY_RECOVERY_RETRY_DELAY_MS = 100;
+const MAX_NO_PROGRESS_REPLAY_RETRIES = 3;
 
 function ServerStateBootstrap() {
   useEffect(() => startServerStateSync(getWsRpcClient().server), []);
@@ -311,6 +313,7 @@ function EventRouter() {
     let disposed = false;
     disposedRef.current = false;
     const recovery = createOrchestrationRecoveryCoordinator();
+    let replayRetryTracker: import("../orchestrationRecovery").ReplayRetryTracker | null = null;
     let needsProviderInvalidation = false;
     const pendingDomainEvents: OrchestrationEvent[] = [];
     let flushPendingDomainEventsScheduled = false;
@@ -437,6 +440,7 @@ function EventRouter() {
           applyEventBatch(events);
         }
       } catch {
+        replayRetryTracker = null;
         recovery.failReplayRecovery();
         void fallbackToSnapshotRecovery();
         return;
@@ -444,16 +448,33 @@ function EventRouter() {
 
       if (!disposed) {
         const replayCompletion = recovery.completeReplayRecovery();
-        if (replayCompletion.shouldReplay) {
-          if (!replayCompletion.replayMadeProgress) {
+        const retryDecision = deriveReplayRetryDecision({
+          previousTracker: replayRetryTracker,
+          completion: replayCompletion,
+          recoveryState: recovery.getState(),
+          baseDelayMs: REPLAY_RECOVERY_RETRY_DELAY_MS,
+          maxNoProgressRetries: MAX_NO_PROGRESS_REPLAY_RETRIES,
+        });
+        replayRetryTracker = retryDecision.tracker;
+
+        if (retryDecision.shouldRetry) {
+          if (retryDecision.delayMs > 0) {
             await new Promise<void>((resolve) => {
-              setTimeout(resolve, REPLAY_RECOVERY_RETRY_DELAY_MS);
+              setTimeout(resolve, retryDecision.delayMs);
             });
             if (disposed) {
               return;
             }
           }
           void recoverFromSequenceGap();
+        } else if (replayCompletion.shouldReplay && import.meta.env.MODE !== "test") {
+          console.warn(
+            "[orchestration-recovery]",
+            "Stopping replay recovery after no-progress retries.",
+            {
+              state: recovery.getState(),
+            },
+          );
         }
       }
     };
