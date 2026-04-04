@@ -1,7 +1,21 @@
+import { useRef } from "react";
 import { useWindowZoom } from "../hooks/useWindowZoom";
 
 export function UiScaleIndicator() {
   const { announcementToken, indicatorMessage, indicatorVisible } = useWindowZoom();
+  const hasBeenVisibleRef = useRef(false);
+
+  if (indicatorVisible) {
+    hasBeenVisibleRef.current = true;
+  }
+
+  // Before first show: hide without animation.
+  // After first show: animate in/out via keyframes.
+  const animClass = !hasBeenVisibleRef.current
+    ? "opacity-0"
+    : indicatorVisible
+      ? "animate-zoom-indicator-in"
+      : "animate-zoom-indicator-out";
 
   return (
     <>
@@ -13,10 +27,8 @@ export function UiScaleIndicator() {
         className={[
           "pointer-events-none fixed right-4 bottom-4 z-[60] rounded-full border border-border/80",
           "bg-popover/92 px-3 py-1.5 text-xs font-medium text-popover-foreground shadow-lg/10",
-          "transition-[opacity,transform] sm:right-6 sm:bottom-6",
-          indicatorVisible
-            ? "translate-y-0 opacity-100 duration-0"
-            : "translate-y-2 opacity-0 duration-200 ease-in",
+          "sm:right-6 sm:bottom-6",
+          animClass,
         ].join(" ")}
         data-testid="ui-scale-indicator"
       >
