@@ -13,6 +13,10 @@ const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
+const LIST_VAULT_SECRETS_CHANNEL = "desktop:vault:list-secrets";
+const SAVE_VAULT_SECRET_CHANNEL = "desktop:vault:save-secret";
+const DELETE_VAULT_SECRET_CHANNEL = "desktop:vault:delete-secret";
+const VAULT_SECRETS_CHANNEL = "desktop:vault:updated";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => {
@@ -39,6 +43,22 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   checkForUpdate: () => ipcRenderer.invoke(UPDATE_CHECK_CHANNEL),
   downloadUpdate: () => ipcRenderer.invoke(UPDATE_DOWNLOAD_CHANNEL),
   installUpdate: () => ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL),
+  listVaultSecrets: () => ipcRenderer.invoke(LIST_VAULT_SECRETS_CHANNEL),
+  saveVaultSecret: (input) => ipcRenderer.invoke(SAVE_VAULT_SECRET_CHANNEL, input),
+  deleteVaultSecret: (input) => ipcRenderer.invoke(DELETE_VAULT_SECRET_CHANNEL, input),
+  subscribeVaultSecrets: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, snapshot: unknown) => {
+      if (typeof snapshot !== "object" || snapshot === null) {
+        return;
+      }
+      listener(snapshot as Parameters<typeof listener>[0]);
+    };
+
+    ipcRenderer.on(VAULT_SECRETS_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(VAULT_SECRETS_CHANNEL, wrappedListener);
+    };
+  },
   onUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (typeof state !== "object" || state === null) return;

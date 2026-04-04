@@ -49,6 +49,7 @@ import type {
 } from "./orchestration";
 import { EditorId } from "./editor";
 import { ServerSettings, ServerSettingsPatch } from "./settings";
+import type { VaultSecretDeleteInput, VaultSecretUpsertInput, VaultSecretsSnapshot } from "./vault";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -119,6 +120,10 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  listVaultSecrets: () => Promise<VaultSecretsSnapshot>;
+  saveVaultSecret: (input: VaultSecretUpsertInput) => Promise<VaultSecretsSnapshot>;
+  deleteVaultSecret: (input: VaultSecretDeleteInput) => Promise<VaultSecretsSnapshot>;
+  subscribeVaultSecrets: (listener: (snapshot: VaultSecretsSnapshot) => void) => () => void;
 }
 
 export interface NativeApi {
@@ -171,6 +176,12 @@ export interface NativeApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+  };
+  vault: {
+    listSecrets: () => Promise<VaultSecretsSnapshot>;
+    saveSecret: (input: VaultSecretUpsertInput) => Promise<VaultSecretsSnapshot>;
+    deleteSecret: (input: VaultSecretDeleteInput) => Promise<VaultSecretsSnapshot>;
+    subscribeSecrets: (listener: (snapshot: VaultSecretsSnapshot) => void) => () => void;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

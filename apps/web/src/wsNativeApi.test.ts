@@ -32,65 +32,79 @@ function registerListener<T>(listeners: Set<(event: T) => void>, listener: (even
 const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
 const orchestrationEventListeners = new Set<(event: OrchestrationEvent) => void>();
 
-const rpcClientMock = {
-  dispose: vi.fn(),
-  terminal: {
-    open: vi.fn(),
-    write: vi.fn(),
-    resize: vi.fn(),
-    clear: vi.fn(),
-    restart: vi.fn(),
-    close: vi.fn(),
-    onEvent: vi.fn((listener: (event: TerminalEvent) => void) =>
-      registerListener(terminalEventListeners, listener),
-    ),
-  },
-  projects: {
-    searchEntries: vi.fn(),
-    writeFile: vi.fn(),
-  },
-  shell: {
-    openInEditor: vi.fn(),
-  },
-  git: {
-    pull: vi.fn(),
-    status: vi.fn(),
-    runStackedAction: vi.fn(),
-    listBranches: vi.fn(),
-    createWorktree: vi.fn(),
-    removeWorktree: vi.fn(),
-    createBranch: vi.fn(),
-    checkout: vi.fn(),
-    init: vi.fn(),
-    resolvePullRequest: vi.fn(),
-    preparePullRequestThread: vi.fn(),
-  },
-  server: {
-    getConfig: vi.fn(),
-    refreshProviders: vi.fn(),
-    upsertKeybinding: vi.fn(),
-    getSettings: vi.fn(),
-    updateSettings: vi.fn(),
-    subscribeConfig: vi.fn(),
-    subscribeLifecycle: vi.fn(),
-  },
-  orchestration: {
-    getSnapshot: vi.fn(),
-    dispatchCommand: vi.fn(),
-    getTurnDiff: vi.fn(),
-    getFullThreadDiff: vi.fn(),
-    replayEvents: vi.fn(),
-    onDomainEvent: vi.fn((listener: (event: OrchestrationEvent) => void) =>
-      registerListener(orchestrationEventListeners, listener),
-    ),
-  },
-};
+function createRpcClientMock() {
+  return {
+    dispose: vi.fn(),
+    terminal: {
+      open: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      clear: vi.fn(),
+      restart: vi.fn(),
+      close: vi.fn(),
+      onEvent: vi.fn((listener: (event: TerminalEvent) => void) =>
+        registerListener(terminalEventListeners, listener),
+      ),
+    },
+    projects: {
+      searchEntries: vi.fn(),
+      writeFile: vi.fn(),
+    },
+    shell: {
+      openInEditor: vi.fn(),
+    },
+    git: {
+      pull: vi.fn(),
+      status: vi.fn(),
+      runStackedAction: vi.fn(),
+      listBranches: vi.fn(),
+      createWorktree: vi.fn(),
+      removeWorktree: vi.fn(),
+      createBranch: vi.fn(),
+      checkout: vi.fn(),
+      init: vi.fn(),
+      resolvePullRequest: vi.fn(),
+      preparePullRequestThread: vi.fn(),
+    },
+    server: {
+      getConfig: vi.fn(),
+      refreshProviders: vi.fn(),
+      upsertKeybinding: vi.fn(),
+      getSettings: vi.fn(),
+      updateSettings: vi.fn(),
+      subscribeConfig: vi.fn(),
+      subscribeLifecycle: vi.fn(),
+    },
+    orchestration: {
+      getSnapshot: vi.fn(),
+      dispatchCommand: vi.fn(),
+      getTurnDiff: vi.fn(),
+      getFullThreadDiff: vi.fn(),
+      replayEvents: vi.fn(),
+      onDomainEvent: vi.fn((listener: (event: OrchestrationEvent) => void) =>
+        registerListener(orchestrationEventListeners, listener),
+      ),
+    },
+  };
+}
+
+let rpcClientMock = createRpcClientMock();
 
 vi.mock("./wsRpcClient", () => {
   return {
     getWsRpcClient: () => rpcClientMock,
     __resetWsRpcClientForTests: vi.fn(),
   };
+});
+
+const originalRpcClientMock = rpcClientMock;
+
+beforeEach(() => {
+  rpcClientMock = createRpcClientMock();
+});
+
+afterEach(() => {
+  rpcClientMock = originalRpcClientMock;
 });
 
 vi.mock("./contextMenuFallback", () => ({
@@ -135,6 +149,16 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       throw new Error("installUpdate not implemented in test");
     },
     onUpdateState: () => () => undefined,
+    listVaultSecrets: async () => {
+      throw new Error("listVaultSecrets not implemented in test");
+    },
+    saveVaultSecret: async () => {
+      throw new Error("saveVaultSecret not implemented in test");
+    },
+    deleteVaultSecret: async () => {
+      throw new Error("deleteVaultSecret not implemented in test");
+    },
+    subscribeVaultSecrets: () => () => undefined,
     ...overrides,
   };
 }
@@ -333,6 +357,28 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("uses the latest RPC client after a backend reconnect without recreating the native API", async () => {
+    const firstRpcClient = rpcClientMock;
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+
+    const nextSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      enableAssistantStreaming: true,
+    };
+    const replacementRpcClient = createRpcClientMock();
+    replacementRpcClient.server.updateSettings.mockResolvedValue(nextSettings);
+    rpcClientMock = replacementRpcClient;
+
+    await expect(api.server.updateSettings({ enableAssistantStreaming: true })).resolves.toEqual(
+      nextSettings,
+    );
+    expect(firstRpcClient.server.updateSettings).not.toHaveBeenCalled();
+    expect(replacementRpcClient.server.updateSettings).toHaveBeenCalledWith({
+      enableAssistantStreaming: true,
+    });
+  });
+
   it("forwards context menu metadata to the desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     getWindowForTest().desktopBridge = makeDesktopBridge({ showContextMenu });
@@ -343,6 +389,27 @@ describe("wsNativeApi", () => {
 
     await expect(api.contextMenu.show(items)).resolves.toBe("delete");
     expect(showContextMenu).toHaveBeenCalledWith(items, undefined);
+  });
+
+  it("forwards vault secret requests to the desktop bridge", async () => {
+    const listVaultSecrets = vi.fn().mockResolvedValue({
+      enabled: true,
+      safeStorageAvailable: true,
+      message: null,
+      secrets: [],
+    });
+    getWindowForTest().desktopBridge = makeDesktopBridge({ listVaultSecrets });
+
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+
+    await expect(api.vault.listSecrets()).resolves.toEqual({
+      enabled: true,
+      safeStorageAvailable: true,
+      message: null,
+      secrets: [],
+    });
+    expect(listVaultSecrets).toHaveBeenCalledWith();
   });
 
   it("falls back to the browser context menu helper when the desktop bridge is missing", async () => {

@@ -127,6 +127,20 @@ export interface CodexAppServerStartSessionInput {
   readonly runtimeMode: RuntimeMode;
 }
 
+export function buildCodexAppServerSpawnConfig(input: { readonly homePath?: string }): {
+  readonly args: string[];
+  readonly env: Record<string, string>;
+} {
+  const args = ["app-server"];
+
+  const env: Record<string, string> = {};
+  if (input.homePath) {
+    env.CODEX_HOME = input.homePath;
+  }
+
+  return { args, env };
+}
+
 export interface CodexThreadTurnSnapshot {
   id: TurnId;
   items: unknown[];
@@ -464,11 +478,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
-      const child = spawn(codexBinaryPath, ["app-server"], {
+      const spawnConfig = buildCodexAppServerSpawnConfig({
+        ...(codexHomePath ? { homePath: codexHomePath } : {}),
+      });
+      const child = spawn(codexBinaryPath, spawnConfig.args, {
         cwd: resolvedCwd,
         env: {
           ...process.env,
-          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+          ...spawnConfig.env,
         },
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",

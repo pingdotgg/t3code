@@ -8,6 +8,7 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
 } from "./model";
 import { ModelSelection } from "./orchestration";
+import { VaultVariable } from "./vault";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -95,6 +96,7 @@ export const ServerSettings = Schema.Struct({
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   }).pipe(Schema.withDecodingDefault(() => ({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(() => ({}))),
+  vaultVariables: Schema.Array(VaultVariable).pipe(Schema.withDecodingDefault(() => [])),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -177,5 +179,6 @@ export const ServerSettingsPatch = Schema.Struct({
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
     }),
   ),
+  vaultVariables: Schema.optionalKey(Schema.Array(VaultVariable)),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;

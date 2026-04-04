@@ -11,17 +11,22 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  safeStorage,
   nativeTheme,
   protocol,
   shell,
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
-import type {
-  DesktopTheme,
-  DesktopUpdateActionResult,
-  DesktopUpdateCheckResult,
-  DesktopUpdateState,
+import * as Schema from "effect/Schema";
+import {
+  VaultSecretDeleteInput,
+  VaultSecretUpsertInput,
+  type DesktopTheme,
+  type DesktopUpdateActionResult,
+  type DesktopUpdateCheckResult,
+  type DesktopUpdateState,
+  type VaultSecretsSnapshot,
 } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
@@ -45,6 +50,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { SecretVault } from "./secretVault";
 
 syncShellEnvironment();
 
@@ -60,11 +66,18 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
+const LIST_VAULT_SECRETS_CHANNEL = "desktop:vault:list-secrets";
+const SAVE_VAULT_SECRET_CHANNEL = "desktop:vault:save-secret";
+const DELETE_VAULT_SECRET_CHANNEL = "desktop:vault:delete-secret";
+const VAULT_SECRETS_CHANNEL = "desktop:vault:updated";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
-const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
+const SERVER_STATE_DIR_NAME = isDevelopment ? "dev" : "userdata";
+const STATE_DIR = Path.join(BASE_DIR, SERVER_STATE_DIR_NAME);
+const SECRET_VAULT_PATH = Path.join(STATE_DIR, "vault.json");
+const LEGACY_SECRET_VAULT_PATH = Path.join(STATE_DIR, "managed-connectors.vault.json");
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
 const LINUX_DESKTOP_ENTRY_NAME = isDevelopment ? "t3code-dev.desktop" : "t3code.desktop";
@@ -102,6 +115,7 @@ let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
 let backendObservabilitySettings = readPersistedBackendObservabilitySettings();
+let secretVault: SecretVault | null = null;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
@@ -149,6 +163,28 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   delete env.T3CODE_HOST;
   delete env.T3CODE_DESKTOP_WS_URL;
   return env;
+}
+
+function getSecretVault(): SecretVault {
+  if (secretVault) {
+    return secretVault;
+  }
+  throw new Error("Secret vault is not ready.");
+}
+
+function getVaultSecretsSnapshot(): VaultSecretsSnapshot {
+  return getSecretVault().listNamedSecrets();
+}
+
+function emitVaultSecretsSnapshot(
+  snapshot: VaultSecretsSnapshot = getVaultSecretsSnapshot(),
+): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) {
+      continue;
+    }
+    window.webContents.send(VAULT_SECRETS_CHANNEL, snapshot);
+  }
 }
 
 function writeDesktopLogHeader(message: string): void {
@@ -1328,6 +1364,25 @@ function registerIpcHandlers(): void {
       state: updateState,
     } satisfies DesktopUpdateCheckResult;
   });
+
+  ipcMain.removeHandler(LIST_VAULT_SECRETS_CHANNEL);
+  ipcMain.handle(LIST_VAULT_SECRETS_CHANNEL, async () => getVaultSecretsSnapshot());
+
+  ipcMain.removeHandler(SAVE_VAULT_SECRET_CHANNEL);
+  ipcMain.handle(SAVE_VAULT_SECRET_CHANNEL, async (_event, rawInput: unknown) => {
+    const input = Schema.decodeUnknownSync(VaultSecretUpsertInput)(rawInput);
+    const snapshot = getSecretVault().saveNamedSecret(input);
+    emitVaultSecretsSnapshot(snapshot);
+    return snapshot;
+  });
+
+  ipcMain.removeHandler(DELETE_VAULT_SECRET_CHANNEL);
+  ipcMain.handle(DELETE_VAULT_SECRET_CHANNEL, async (_event, rawInput: unknown) => {
+    const input = Schema.decodeUnknownSync(VaultSecretDeleteInput)(rawInput);
+    const snapshot = getSecretVault().deleteNamedSecret(input);
+    emitVaultSecretsSnapshot(snapshot);
+    return snapshot;
+  });
 }
 
 function getIconOption(): { icon: string } | Record<string, never> {
@@ -1440,6 +1495,15 @@ async function bootstrap(): Promise<void> {
   const baseUrl = `ws://127.0.0.1:${backendPort}`;
   backendWsUrl = `${baseUrl}/?token=${encodeURIComponent(backendAuthToken)}`;
   writeDesktopLogHeader(`bootstrap resolved websocket endpoint baseUrl=${baseUrl}`);
+
+  secretVault = new SecretVault({
+    vaultPath: SECRET_VAULT_PATH,
+    legacyVaultPaths: [LEGACY_SECRET_VAULT_PATH],
+    safeStorage,
+  });
+  secretVault.onDidChange(() => {
+    emitVaultSecretsSnapshot();
+  });
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");

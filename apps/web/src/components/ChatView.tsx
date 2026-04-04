@@ -1363,6 +1363,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const revertTurnCountByTurnId = useMemo(() => {
+    const byTurnId = new Map<TurnId, number>();
+    for (const summary of turnDiffSummaries) {
+      const turnCount =
+        summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+      if (typeof turnCount !== "number") {
+        continue;
+      }
+      byTurnId.set(summary.turnId, Math.max(0, turnCount - 1));
+    }
+    return byTurnId;
+  }, [inferredCheckpointTurnCountByTurnId, turnDiffSummaries]);
 
   const completionSummary = useMemo(() => {
     if (!latestTurnSettled) return null;
@@ -3888,6 +3900,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     void onRevertToTurnCount(targetTurnCount);
   };
+  const onRevertTurn = (turnId: TurnId) => {
+    const targetTurnCount = revertTurnCountByTurnId.get(turnId);
+    if (typeof targetTurnCount !== "number") {
+      return;
+    }
+    void onRevertToTurnCount(targetTurnCount);
+  };
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -3996,7 +4015,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 onToggleWorkGroup={onToggleWorkGroup}
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+                revertTurnCountByTurnId={revertTurnCountByTurnId}
                 onRevertUserMessage={onRevertUserMessage}
+                onRevertTurn={onRevertTurn}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}

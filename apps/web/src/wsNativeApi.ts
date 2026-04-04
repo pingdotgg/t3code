@@ -17,7 +17,7 @@ export function createWsNativeApi(): NativeApi {
     return instance.api;
   }
 
-  const rpcClient = getWsRpcClient();
+  const getRpcClient = () => getWsRpcClient();
 
   const api: NativeApi = {
     dialogs: {
@@ -33,20 +33,20 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     terminal: {
-      open: (input) => rpcClient.terminal.open(input as never),
-      write: (input) => rpcClient.terminal.write(input as never),
-      resize: (input) => rpcClient.terminal.resize(input as never),
-      clear: (input) => rpcClient.terminal.clear(input as never),
-      restart: (input) => rpcClient.terminal.restart(input as never),
-      close: (input) => rpcClient.terminal.close(input as never),
-      onEvent: (callback) => rpcClient.terminal.onEvent(callback),
+      open: (input) => getRpcClient().terminal.open(input as never),
+      write: (input) => getRpcClient().terminal.write(input as never),
+      resize: (input) => getRpcClient().terminal.resize(input as never),
+      clear: (input) => getRpcClient().terminal.clear(input as never),
+      restart: (input) => getRpcClient().terminal.restart(input as never),
+      close: (input) => getRpcClient().terminal.close(input as never),
+      onEvent: (callback) => getRpcClient().terminal.onEvent(callback),
     },
     projects: {
-      searchEntries: rpcClient.projects.searchEntries,
-      writeFile: rpcClient.projects.writeFile,
+      searchEntries: (input) => getRpcClient().projects.searchEntries(input),
+      writeFile: (input) => getRpcClient().projects.writeFile(input),
     },
     shell: {
-      openInEditor: (cwd, editor) => rpcClient.shell.openInEditor({ cwd, editor }),
+      openInEditor: (cwd, editor) => getRpcClient().shell.openInEditor({ cwd, editor }),
       openExternal: async (url) => {
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);
@@ -60,16 +60,16 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     git: {
-      pull: rpcClient.git.pull,
-      status: rpcClient.git.status,
-      listBranches: rpcClient.git.listBranches,
-      createWorktree: rpcClient.git.createWorktree,
-      removeWorktree: rpcClient.git.removeWorktree,
-      createBranch: rpcClient.git.createBranch,
-      checkout: rpcClient.git.checkout,
-      init: rpcClient.git.init,
-      resolvePullRequest: rpcClient.git.resolvePullRequest,
-      preparePullRequestThread: rpcClient.git.preparePullRequestThread,
+      pull: (input) => getRpcClient().git.pull(input),
+      status: (input) => getRpcClient().git.status(input),
+      listBranches: (input) => getRpcClient().git.listBranches(input),
+      createWorktree: (input) => getRpcClient().git.createWorktree(input),
+      removeWorktree: (input) => getRpcClient().git.removeWorktree(input),
+      createBranch: (input) => getRpcClient().git.createBranch(input),
+      checkout: (input) => getRpcClient().git.checkout(input),
+      init: (input) => getRpcClient().git.init(input),
+      resolvePullRequest: (input) => getRpcClient().git.resolvePullRequest(input),
+      preparePullRequestThread: (input) => getRpcClient().git.preparePullRequestThread(input),
     },
     contextMenu: {
       show: async <T extends string>(
@@ -83,22 +83,48 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     server: {
-      getConfig: rpcClient.server.getConfig,
-      refreshProviders: rpcClient.server.refreshProviders,
-      upsertKeybinding: rpcClient.server.upsertKeybinding,
-      getSettings: rpcClient.server.getSettings,
-      updateSettings: rpcClient.server.updateSettings,
+      getConfig: () => getRpcClient().server.getConfig(),
+      refreshProviders: () => getRpcClient().server.refreshProviders(),
+      upsertKeybinding: (input) => getRpcClient().server.upsertKeybinding(input),
+      getSettings: () => getRpcClient().server.getSettings(),
+      updateSettings: (patch) => getRpcClient().server.updateSettings(patch),
+    },
+    vault: {
+      listSecrets: async () => {
+        if (!window.desktopBridge) {
+          throw new Error("Vault secrets are only available in the desktop app.");
+        }
+        return window.desktopBridge.listVaultSecrets();
+      },
+      saveSecret: async (input) => {
+        if (!window.desktopBridge) {
+          throw new Error("Vault secrets are only available in the desktop app.");
+        }
+        return window.desktopBridge.saveVaultSecret(input);
+      },
+      deleteSecret: async (input) => {
+        if (!window.desktopBridge) {
+          throw new Error("Vault secrets are only available in the desktop app.");
+        }
+        return window.desktopBridge.deleteVaultSecret(input);
+      },
+      subscribeSecrets: (callback) => {
+        if (!window.desktopBridge) {
+          return () => undefined;
+        }
+        return window.desktopBridge.subscribeVaultSecrets(callback);
+      },
     },
     orchestration: {
-      getSnapshot: rpcClient.orchestration.getSnapshot,
-      dispatchCommand: rpcClient.orchestration.dispatchCommand,
-      getTurnDiff: rpcClient.orchestration.getTurnDiff,
-      getFullThreadDiff: rpcClient.orchestration.getFullThreadDiff,
+      getSnapshot: () => getRpcClient().orchestration.getSnapshot(),
+      dispatchCommand: (command) => getRpcClient().orchestration.dispatchCommand(command),
+      getTurnDiff: (input) => getRpcClient().orchestration.getTurnDiff(input),
+      getFullThreadDiff: (input) => getRpcClient().orchestration.getFullThreadDiff(input),
       replayEvents: (fromSequenceExclusive) =>
-        rpcClient.orchestration
-          .replayEvents({ fromSequenceExclusive })
+        getRpcClient()
+          .orchestration.replayEvents({ fromSequenceExclusive })
           .then((events) => [...events]),
-      onDomainEvent: (callback) => rpcClient.orchestration.onDomainEvent(callback),
+      onDomainEvent: (callback) => getRpcClient().orchestration.onDomainEvent(callback),
     },
   };
 

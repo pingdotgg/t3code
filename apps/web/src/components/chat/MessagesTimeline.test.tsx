@@ -1,6 +1,10 @@
-import { MessageId } from "@t3tools/contracts";
+import { MessageId, TurnId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+
+vi.mock("../ChatMarkdown", () => ({
+  default: (props: { text: string }) => props.text,
+}));
 
 function matchMedia() {
   return {
@@ -82,7 +86,9 @@ describe("MessagesTimeline", () => {
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
+        revertTurnCountByTurnId={new Map()}
         onRevertUserMessage={() => {}}
+        onRevertTurn={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -127,7 +133,9 @@ describe("MessagesTimeline", () => {
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
+        revertTurnCountByTurnId={new Map()}
         onRevertUserMessage={() => {}}
+        onRevertTurn={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -139,5 +147,76 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Context compacted");
     expect(markup).toContain("Work log");
+  });
+
+  it("renders a revert action in the changed files card when a checkpoint is available", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const turnId = TurnId.makeUnsafe("turn-1");
+    const assistantMessageId = MessageId.makeUnsafe("message-3");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "Updated the vault settings.",
+              turnId,
+              createdAt: "2026-03-17T19:12:28.000Z",
+              completedAt: "2026-03-17T19:12:29.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={
+          new Map([
+            [
+              assistantMessageId,
+              {
+                turnId,
+                completedAt: "2026-03-17T19:12:29.000Z",
+                files: [
+                  {
+                    path: "apps/desktop/src/secretVault.ts",
+                    additions: 1,
+                    deletions: 0,
+                  },
+                ],
+                assistantMessageId,
+                checkpointTurnCount: 2,
+              },
+            ],
+          ])
+        }
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        revertTurnCountByTurnId={new Map([[turnId, 1]])}
+        onRevertUserMessage={() => {}}
+        onRevertTurn={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Changed files");
+    expect(markup).toContain("View diff");
+    expect(markup).toContain("Revert");
   });
 });

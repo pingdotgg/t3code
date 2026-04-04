@@ -6,6 +6,7 @@ import path from "node:path";
 import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 
 import {
+  buildCodexAppServerSpawnConfig,
   buildCodexInitializeParams,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
@@ -469,6 +470,15 @@ describe("startSession", () => {
       versionCheck.mockRestore();
       manager.stopAll();
     }
+  });
+});
+
+describe("buildCodexAppServerSpawnConfig", () => {
+  it("returns the default app-server spawn config", () => {
+    const result = buildCodexAppServerSpawnConfig({});
+
+    expect(result.args).toEqual(["app-server"]);
+    expect(result.env).toEqual({});
   });
 });
 

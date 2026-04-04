@@ -291,8 +291,7 @@ export const resolveServerConfig = (
       () => (mode === "desktop" ? "127.0.0.1" : undefined),
     );
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
-
-    const config: ServerConfigShape = {
+    const baseConfig = {
       logLevel,
       traceMinLevel: env.traceMinLevel,
       traceTimingEnabled: env.traceTimingEnabled,
@@ -330,9 +329,9 @@ export const resolveServerConfig = (
       authToken,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
-    };
+    } satisfies ServerConfigShape;
 
-    return config;
+    return baseConfig;
   });
 
 const commandFlags = {

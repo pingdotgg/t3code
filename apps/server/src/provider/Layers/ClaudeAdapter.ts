@@ -65,6 +65,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
+import { injectVaultVariablesIntoPrompt } from "../vaultVariables.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -509,7 +510,7 @@ const CLAUDE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
-function buildPromptText(input: ProviderSendTurnInput): string {
+function buildPromptText(input: ProviderSendTurnInput, promptText: string | undefined): string {
   const rawEffort =
     input.modelSelection?.provider === "claudeAgent" ? input.modelSelection.options?.effort : null;
   const claudeModel =
@@ -521,7 +522,7 @@ function buildPromptText(input: ProviderSendTurnInput): string {
   const trimmedEffort = trimOrNull(rawEffort);
   const promptEffort =
     trimmedEffort && caps.promptInjectedEffortLevels.includes(trimmedEffort) ? trimmedEffort : null;
-  return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+  return applyClaudePromptEffortPrefix(promptText?.trim() ?? "", promptEffort);
 }
 
 function buildUserMessage(input: {
@@ -553,13 +554,15 @@ function buildClaudeImageContentBlock(input: {
 }
 
 const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
-  input: ProviderSendTurnInput,
+  input: ProviderSendTurnInput & {
+    readonly promptText?: string;
+  },
   dependencies: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly attachmentsDir: string;
   },
 ) {
-  const text = buildPromptText(input);
+  const text = buildPromptText(input, input.promptText);
   const sdkContent: Array<Record<string, unknown>> = [];
 
   if (text.length > 0) {
@@ -2848,6 +2851,14 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const context = yield* requireSession(input.threadId);
     const modelSelection =
       input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
+    const vaultVariables = yield* serverSettingsService.getSettings.pipe(
+      Effect.map((settings) => settings.vaultVariables),
+      Effect.mapError((error) => toRequestError(input.threadId, "turn/start", error)),
+    );
+    const promptText = injectVaultVariablesIntoPrompt({
+      prompt: input.input,
+      variables: vaultVariables,
+    });
 
     if (context.turnState) {
       // Auto-close a stale synthetic turn (from background agent responses
@@ -2919,10 +2930,16 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       providerRefs: {},
     });
 
-    const message = yield* buildUserMessageEffect(input, {
-      fileSystem,
-      attachmentsDir: serverConfig.attachmentsDir,
-    });
+    const message = yield* buildUserMessageEffect(
+      {
+        ...input,
+        ...(promptText !== undefined ? { promptText } : {}),
+      },
+      {
+        fileSystem,
+        attachmentsDir: serverConfig.attachmentsDir,
+      },
+    );
 
     yield* Queue.offer(context.promptQueue, {
       type: "message",

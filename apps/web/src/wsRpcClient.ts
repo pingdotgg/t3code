@@ -11,6 +11,7 @@ import { Effect, Stream } from "effect";
 
 import { type WsRpcProtocolClient } from "./rpc/protocol";
 import { WsTransport } from "./wsTransport";
+import { resolveServerUrl } from "./lib/utils";
 
 type RpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends RpcTag> = WsRpcProtocolClient[TTag];
@@ -96,18 +97,32 @@ export interface WsRpcClient {
 }
 
 let sharedWsRpcClient: WsRpcClient | null = null;
+let sharedWsRpcClientUrl: string | null = null;
+
+function resolveCurrentWsRpcUrl(): string {
+  return resolveServerUrl({
+    protocol: window.location.protocol === "https:" ? "wss" : "ws",
+    pathname: "/ws",
+  });
+}
 
 export function getWsRpcClient(): WsRpcClient {
-  if (sharedWsRpcClient) {
+  const nextUrl = resolveCurrentWsRpcUrl();
+  if (sharedWsRpcClient && sharedWsRpcClientUrl === nextUrl) {
     return sharedWsRpcClient;
   }
-  sharedWsRpcClient = createWsRpcClient();
+
+  const previousClient = sharedWsRpcClient;
+  sharedWsRpcClient = createWsRpcClient(new WsTransport(nextUrl));
+  sharedWsRpcClientUrl = nextUrl;
+  void previousClient?.dispose();
   return sharedWsRpcClient;
 }
 
 export async function __resetWsRpcClientForTests() {
   await sharedWsRpcClient?.dispose();
   sharedWsRpcClient = null;
+  sharedWsRpcClientUrl = null;
 }
 
 export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {

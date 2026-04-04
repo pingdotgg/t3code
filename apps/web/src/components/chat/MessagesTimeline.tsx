@@ -78,7 +78,9 @@ interface MessagesTimelineProps {
   onToggleWorkGroup: (groupId: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
+  revertTurnCountByTurnId: Map<TurnId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onRevertTurn: (turnId: TurnId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
@@ -113,7 +115,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onToggleWorkGroup,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
+  revertTurnCountByTurnId,
   onRevertUserMessage,
+  onRevertTurn,
   isRevertingCheckpoint,
   onImageExpand,
   markdownCwd,
@@ -464,6 +468,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   const changedFileCountLabel = String(checkpointFiles.length);
                   const allDirectoriesExpanded =
                     allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true;
+                  const canRevertTurn = revertTurnCountByTurnId.has(turnSummary.turnId);
                   return (
                     <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
                       <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -499,6 +504,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                           >
                             View diff
                           </Button>
+                          {canRevertTurn && (
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              disabled={isRevertingCheckpoint || isWorking}
+                              onClick={() => onRevertTurn(turnSummary.turnId)}
+                              title="Revert the code changes from this turn"
+                            >
+                              <Undo2Icon className="size-3" />
+                              Revert
+                            </Button>
+                          )}
                         </div>
                       </div>
                       <ChangedFilesTree

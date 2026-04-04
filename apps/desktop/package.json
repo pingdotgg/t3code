@@ -14,9 +14,11 @@
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0-alpha.2",
     "effect": "catalog:",
     "electron": "40.6.0",
-    "electron-updater": "^6.6.2"
+    "electron-updater": "^6.6.2",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@t3tools/contracts": "workspace:*",

@@ -41,6 +41,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { injectVaultVariablesIntoPrompt } from "../vaultVariables.ts";
 
 const PROVIDER = "codex" as const;
 
@@ -1470,12 +1471,20 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       (attachment) => resolveAttachment(input, attachment),
       { concurrency: 1 },
     );
+    const vaultVariables = yield* serverSettingsService.getSettings.pipe(
+      Effect.map((settings) => settings.vaultVariables),
+      Effect.mapError((error) => toRequestError(input.threadId, "turn/start", error)),
+    );
+    const prompt = injectVaultVariablesIntoPrompt({
+      prompt: input.input,
+      variables: vaultVariables,
+    });
 
     return yield* Effect.tryPromise({
       try: () => {
         const managerInput = {
           threadId: input.threadId,
-          ...(input.input !== undefined ? { input: input.input } : {}),
+          ...(prompt !== undefined ? { input: prompt } : {}),
           ...(input.modelSelection?.provider === "codex"
             ? { model: input.modelSelection.model }
             : {}),
