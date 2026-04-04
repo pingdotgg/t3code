@@ -36,6 +36,7 @@ import { isElectron } from "../../env";
 import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { useWindowZoom } from "../../hooks/useWindowZoom";
 import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
@@ -460,6 +461,9 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(settings.windowZoomLevel !== DEFAULT_UNIFIED_SETTINGS.windowZoomLevel
+        ? ["UI scale"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -490,6 +494,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.timestampFormat,
+      settings.windowZoomLevel,
       theme,
     ],
   );
@@ -519,6 +524,7 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
+  const { resetZoom, zoomIn, zoomOut, zoomPercent } = useWindowZoom();
   const [openingPathByTarget, setOpeningPathByTarget] = useState({
     keybindings: false,
     logsDirectory: false,
@@ -809,6 +815,37 @@ export function GeneralSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="UI scale"
+          description="Adjust the scale of the entire app window."
+          resetAction={
+            settings.windowZoomLevel !== DEFAULT_UNIFIED_SETTINGS.windowZoomLevel ? (
+              <SettingResetButton
+                label="UI scale"
+                onClick={() => {
+                  void resetZoom();
+                }}
+              />
+            ) : null
+          }
+          control={
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span className="min-w-14 text-right text-sm font-medium text-foreground">
+                {zoomPercent}%
+              </span>
+              <Button size="xs" variant="outline" onClick={() => void zoomOut()}>
+                Zoom out
+              </Button>
+              <Button size="xs" variant="outline" onClick={() => void resetZoom()}>
+                Reset
+              </Button>
+              <Button size="xs" variant="outline" onClick={() => void zoomIn()}>
+                Zoom in
+              </Button>
+            </div>
           }
         />
 

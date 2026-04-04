@@ -104,6 +104,10 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+  { shortcut: modShortcut("=", {}), command: "window.zoomIn" },
+  { shortcut: modShortcut("=", { shiftKey: true }), command: "window.zoomIn" },
+  { shortcut: modShortcut("-"), command: "window.zoomOut" },
+  { shortcut: modShortcut("0"), command: "window.zoomReset" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
@@ -603,6 +607,56 @@ describe("plus key parsing", () => {
       isTerminalToggleShortcut(event({ key: "+", ctrlKey: true }), plusBindings, {
         platform: "Linux",
       }),
+    );
+  });
+});
+
+describe("window zoom shortcuts", () => {
+  it("matches Ctrl/Cmd plus, minus, and zero through command resolution", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "=", code: "Equal", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+      "window.zoomIn",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "Equal", metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel" },
+      ),
+      "window.zoomIn",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "-", code: "Minus", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+      "window.zoomOut",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "0", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+      "window.zoomReset",
+    );
+  });
+
+  it("matches numpad zoom shortcuts", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "NumpadAdd", ctrlKey: true }),
+        compile([{ shortcut: modShortcut("+"), command: "window.zoomIn" }]),
+        { platform: "Linux" },
+      ),
+      "window.zoomIn",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "-", code: "NumpadSubtract", ctrlKey: true }),
+        compile([{ shortcut: modShortcut("-"), command: "window.zoomOut" }]),
+        { platform: "Linux" },
+      ),
+      "window.zoomOut",
     );
   });
 });

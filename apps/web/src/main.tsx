@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./index.css";
 
 import { isElectron } from "./env";
+import { applyInitialWindowZoom } from "./hooks/useWindowZoom";
 import { getRouter } from "./router";
 import { APP_DISPLAY_NAME } from "./branding";
 
@@ -16,6 +17,7 @@ const history = isElectron ? createHashHistory() : createBrowserHistory();
 const router = getRouter(history);
 
 document.title = APP_DISPLAY_NAME;
+applyInitialWindowZoom();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

@@ -7,8 +7,8 @@ import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
-  useNavigate,
   useLocation,
+  useNavigate,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
@@ -16,9 +16,12 @@ import { Throttler } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { UiScaleIndicator } from "../components/UiScaleIndicator";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { useWindowZoom } from "../hooks/useWindowZoom";
+import { resolveShortcutCommand } from "../keybindings";
 import { readNativeApi } from "../nativeApi";
 import {
   getServerConfigUpdatedNotification,
@@ -26,6 +29,7 @@ import {
   startServerStateSync,
   useServerConfig,
   useServerConfigUpdatedSubscription,
+  useServerKeybindings,
   useServerWelcomeSubscription,
 } from "../rpc/serverState";
 import {
@@ -72,13 +76,85 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <ServerStateBootstrap />
+        <DesktopMenuActionRouter />
         <EventRouter />
+        <WindowZoomShortcuts />
         <AppSidebarLayout>
           <Outlet />
         </AppSidebarLayout>
+        <UiScaleIndicator />
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function DesktopMenuActionRouter() {
+  const navigate = useNavigate();
+  const { resetZoom, zoomIn, zoomOut } = useWindowZoom();
+
+  useEffect(() => {
+    const onMenuAction = window.desktopBridge?.onMenuAction;
+    if (typeof onMenuAction !== "function") {
+      return;
+    }
+
+    return onMenuAction((action) => {
+      if (action === "open-settings") {
+        void navigate({ to: "/settings" });
+        return;
+      }
+      if (action === "zoom-in") {
+        void zoomIn();
+        return;
+      }
+      if (action === "zoom-out") {
+        void zoomOut();
+        return;
+      }
+      if (action === "zoom-reset") {
+        void resetZoom();
+      }
+    });
+  }, [navigate, resetZoom, zoomIn, zoomOut]);
+
+  return null;
+}
+
+function WindowZoomShortcuts() {
+  const keybindings = useServerKeybindings();
+  const { resetZoom, zoomIn, zoomOut } = useWindowZoom();
+
+  useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+
+      const command = resolveShortcutCommand(event, keybindings);
+      if (command === "window.zoomIn") {
+        event.preventDefault();
+        event.stopPropagation();
+        void zoomIn();
+        return;
+      }
+      if (command === "window.zoomOut") {
+        event.preventDefault();
+        event.stopPropagation();
+        void zoomOut();
+        return;
+      }
+      if (command === "window.zoomReset") {
+        event.preventDefault();
+        event.stopPropagation();
+        void resetZoom();
+      }
+    };
+
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onWindowKeyDown);
+    };
+  }, [keybindings, resetZoom, zoomIn, zoomOut]);
+
+  return null;
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {

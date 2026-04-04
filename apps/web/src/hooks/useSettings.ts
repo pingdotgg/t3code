@@ -34,7 +34,7 @@ import { DeepMutable } from "effect/Types";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
 
-const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
+export const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 const OLD_SETTINGS_KEY = "t3code:app-settings:v1";
 
 // ── Key sets for routing patches ─────────────────────────────────────
@@ -67,9 +67,9 @@ function splitPatch(patch: Partial<UnifiedSettings>): {
  * only re-render when the slice they care about changes.
  */
 
-export function useSettings<T extends UnifiedSettings = UnifiedSettings>(
-  selector?: (s: UnifiedSettings) => T,
-): T {
+export function useSettings(): UnifiedSettings;
+export function useSettings<T>(selector: (s: UnifiedSettings) => T): T;
+export function useSettings<T>(selector?: (s: UnifiedSettings) => T): UnifiedSettings | T {
   const serverSettings = useServerSettings();
   const [clientSettings] = useLocalStorage(
     CLIENT_SETTINGS_STORAGE_KEY,

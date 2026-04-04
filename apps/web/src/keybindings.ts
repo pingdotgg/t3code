@@ -40,6 +40,8 @@ const TERMINAL_LINE_END = "\u0005";
 const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   BracketLeft: ["["],
   BracketRight: ["]"],
+  Equal: ["=", "+"],
+  Minus: ["-", "_"],
   Digit0: ["0"],
   Digit1: ["1"],
   Digit2: ["2"],
@@ -50,6 +52,8 @@ const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   Digit7: ["7"],
   Digit8: ["8"],
   Digit9: ["9"],
+  NumpadAdd: ["+"],
+  NumpadSubtract: ["-"],
 };
 
 function normalizeEventKey(key: string): string {
