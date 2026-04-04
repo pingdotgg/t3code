@@ -1,4 +1,8 @@
-import { type GitActionProgressEvent, type GitStackedAction } from "@t3tools/contracts";
+import {
+  type GitActionProgressEvent,
+  type GitStackedAction,
+  type ThreadId,
+} from "@t3tools/contracts";
 import {
   infiniteQueryOptions,
   mutationOptions,
@@ -244,13 +248,22 @@ export function gitPreparePullRequestThreadMutationOptions(input: {
   queryClient: QueryClient;
 }) {
   return mutationOptions({
-    mutationFn: async ({ reference, mode }: { reference: string; mode: "local" | "worktree" }) => {
+    mutationFn: async ({
+      reference,
+      mode,
+      threadId,
+    }: {
+      reference: string;
+      mode: "local" | "worktree";
+      threadId?: ThreadId;
+    }) => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Pull request thread preparation is unavailable.");
       return api.git.preparePullRequestThread({
         cwd: input.cwd,
         reference,
         mode,
+        ...(threadId ? { threadId } : {}),
       });
     },
     mutationKey: gitMutationKeys.preparePullRequestThread(input.cwd),

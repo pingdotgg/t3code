@@ -7,6 +7,7 @@ const snapshot: TerminalSessionSnapshot = {
   threadId: "thread-1",
   terminalId: "default",
   cwd: "/tmp",
+  worktreePath: null,
   status: "running",
   pid: 1234,
   history: "",

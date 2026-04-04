@@ -1,4 +1,4 @@
-import type { GitResolvePullRequestResult } from "@t3tools/contracts";
+import type { GitResolvePullRequestResult, ThreadId } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -24,6 +24,7 @@ import { Spinner } from "./ui/spinner";
 
 interface PullRequestThreadDialogProps {
   open: boolean;
+  threadId: ThreadId;
   cwd: string | null;
   initialReference: string | null;
   onOpenChange: (open: boolean) => void;
@@ -32,6 +33,7 @@ interface PullRequestThreadDialogProps {
 
 export function PullRequestThreadDialog({
   open,
+  threadId,
   cwd,
   initialReference,
   onOpenChange,
@@ -130,6 +132,7 @@ export function PullRequestThreadDialog({
         const result = await preparePullRequestThreadMutation.mutateAsync({
           reference: parsedReference,
           mode,
+          ...(mode === "worktree" ? { threadId } : {}),
         });
         await onPrepared({
           branch: result.branch,
@@ -147,6 +150,7 @@ export function PullRequestThreadDialog({
       parsedReference,
       preparePullRequestThreadMutation,
       resolvedPullRequest,
+      threadId,
     ],
   );
 

@@ -41,6 +41,7 @@ import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResol
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
+import { ProjectSetupScriptRunnerLive } from "./project/Layers/ProjectSetupScriptRunner";
 import { ObservabilityLive } from "./observability/Layers/Observability";
 
 const PtyAdapterLive = Layer.unwrap(
@@ -158,6 +159,7 @@ const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersisten
 const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(
     GitManagerLive.pipe(
+      Layer.provideMerge(ProjectSetupScriptRunnerLive),
       Layer.provideMerge(GitCoreLive),
       Layer.provideMerge(GitHubCliLive),
       Layer.provideMerge(RoutingTextGenerationLive),
@@ -177,15 +179,12 @@ const WorkspaceLayerLive = Layer.mergeAll(
   ),
 );
 
-const RuntimeServicesLive = Layer.empty.pipe(
-  Layer.provideMerge(ServerRuntimeStartupLive),
-  Layer.provideMerge(ReactorLayerLive),
-
+const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
+  Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
   Layer.provideMerge(ProviderLayerLive),
-  Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(TerminalLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(KeybindingsLive),
@@ -198,6 +197,10 @@ const RuntimeServicesLive = Layer.empty.pipe(
   Layer.provideMerge(AnalyticsServiceLayerLive),
   Layer.provideMerge(OpenLive),
   Layer.provideMerge(ServerLifecycleEventsLive),
+);
+
+const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
+  Layer.provideMerge(RuntimeDependenciesLive),
 );
 
 export const makeRoutesLayer = Layer.mergeAll(

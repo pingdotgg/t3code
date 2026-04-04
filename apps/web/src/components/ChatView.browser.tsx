@@ -33,6 +33,7 @@ import { isMacPlatform } from "../lib/utils";
 import { __resetNativeApiForTests } from "../nativeApi";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { useTerminalStateStore } from "../terminalStateStore";
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -682,6 +683,12 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       threadId: typeof body.threadId === "string" ? body.threadId : THREAD_ID,
       terminalId: typeof body.terminalId === "string" ? body.terminalId : "default",
       cwd: typeof body.cwd === "string" ? body.cwd : "/repo/project",
+      worktreePath:
+        typeof body.worktreePath === "string"
+          ? body.worktreePath
+          : body.worktreePath === null
+            ? null
+            : null,
       status: "running",
       pid: 123,
       history: "",
@@ -1149,6 +1156,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
       threads: [],
       bootstrapComplete: false,
     });
+    useTerminalStateStore.persist.clearStorage();
+    useTerminalStateStore.setState({
+      terminalStateByThreadId: {},
+      terminalLaunchContextByThreadId: {},
+      terminalEventEntriesByKey: {},
+      nextTerminalEventId: 1,
+    });
   });
 
   afterEach(() => {
@@ -1364,6 +1378,74 @@ describe("ChatView timeline estimator parity (full app)", () => {
             cwd: "/repo/project",
             editor: "vscode",
           });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not leak a server worktree path into drawer runtime env when launch context clears it", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-launch-context-target" as MessageId,
+      targetText: "launch context worktree override",
+    });
+    const targetThread = snapshot.threads.find((thread) => thread.id === THREAD_ID);
+    if (targetThread) {
+      Object.assign(targetThread, {
+        branch: "feature/branch",
+        worktreePath: "/repo/worktrees/feature-branch",
+      });
+    }
+
+    useTerminalStateStore.setState({
+      terminalStateByThreadId: {
+        [THREAD_ID]: {
+          terminalOpen: true,
+          terminalHeight: 280,
+          terminalIds: ["default"],
+          runningTerminalIds: [],
+          activeTerminalId: "default",
+          terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
+          activeTerminalGroupId: "group-default",
+        },
+      },
+      terminalLaunchContextByThreadId: {
+        [THREAD_ID]: {
+          cwd: "/repo/project",
+          worktreePath: null,
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalOpen,
+          ) as
+            | {
+                _tag: string;
+                cwd?: string;
+                worktreePath?: string | null;
+                env?: Record<string, string>;
+              }
+            | undefined;
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.terminalOpen,
+            cwd: "/repo/project",
+            worktreePath: null,
+            env: {
+              T3CODE_PROJECT_ROOT: "/repo/project",
+            },
+          });
+          expect(openRequest?.env?.T3CODE_WORKTREE_PATH).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -1713,7 +1795,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("runs setup scripts after preparing a pull request worktree thread", async () => {
+  it("lets the server own setup after preparing a pull request worktree thread", async () => {
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {
         [THREAD_ID]: {
@@ -1818,45 +1900,188 @@ describe("ChatView timeline estimator parity (full app)", () => {
             cwd: "/repo/project",
             reference: "1359",
             mode: "worktree",
+            threadId: THREAD_ID,
           });
         },
         { timeout: 8_000, interval: 16 },
       );
 
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === WS_METHODS.terminalWrite && request.data === "bun install\r",
+        ),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("sends bootstrap turn-starts and waits for server setup on first-send worktree drafts", async () => {
+    useTerminalStateStore.setState({
+      terminalStateByThreadId: {},
+    });
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withProjectScripts(createDraftOnlySnapshot(), [
+        {
+          id: "setup",
+          name: "Setup",
+          command: "bun install",
+          icon: "configure",
+          runOnWorktreeCreate: true,
+        },
+      ]),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Ship it");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find(
-            (request) =>
-              request._tag === WS_METHODS.terminalOpen && request.cwd === "/repo/worktrees/pr-1359",
-          );
-          expect(openRequest).toMatchObject({
-            _tag: WS_METHODS.terminalOpen,
-            threadId: expect.any(String),
-            cwd: "/repo/worktrees/pr-1359",
-            env: {
-              T3CODE_PROJECT_ROOT: "/repo/project",
-              T3CODE_WORKTREE_PATH: "/repo/worktrees/pr-1359",
+          const dispatchRequest = wsRequests.find(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                bootstrap?: {
+                  createThread?: { projectId?: string };
+                  prepareWorktree?: { projectCwd?: string; baseBranch?: string; branch?: string };
+                  runSetupScript?: boolean;
+                };
+              }
+            | undefined;
+          expect(dispatchRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.turn.start",
+            bootstrap: {
+              createThread: {
+                projectId: PROJECT_ID,
+              },
+              prepareWorktree: {
+                projectCwd: "/repo/project",
+                baseBranch: "main",
+                branch: expect.stringMatching(/^t3code\/[0-9a-f]{8}$/),
+              },
+              runSetupScript: true,
             },
           });
         },
         { timeout: 8_000, interval: 16 },
       );
 
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.gitCreateWorktree)).toBe(
+        false,
+      );
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === WS_METHODS.terminalWrite &&
+            request.threadId === THREAD_ID &&
+            request.data === "bun install\r",
+        ),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows the send state once bootstrap dispatch is in flight", async () => {
+    useTerminalStateStore.setState({
+      terminalStateByThreadId: {},
+    });
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    let resolveDispatch!: (value: { sequence: number }) => void;
+    const dispatchPromise = new Promise<{ sequence: number }>((resolve) => {
+      resolveDispatch = resolve;
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withProjectScripts(createDraftOnlySnapshot(), [
+        {
+          id: "setup",
+          name: "Setup",
+          command: "bun install",
+          icon: "configure",
+          runOnWorktreeCreate: true,
+        },
+      ]),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return dispatchPromise;
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Ship it");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
       await vi.waitFor(
         () => {
-          const writeRequest = wsRequests.find(
-            (request) =>
-              request._tag === WS_METHODS.terminalWrite && request.data === "bun install\r",
-          );
-          expect(writeRequest).toMatchObject({
-            _tag: WS_METHODS.terminalWrite,
-            threadId: expect.any(String),
-            data: "bun install\r",
-          });
+          expect(
+            wsRequests.some((request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand),
+          ).toBe(true);
+          expect(document.querySelector('button[aria-label="Sending"]')).toBeTruthy();
+          expect(document.querySelector('button[aria-label="Preparing worktree"]')).toBeNull();
         },
         { timeout: 8_000, interval: 16 },
       );
     } finally {
+      resolveDispatch({ sequence: fixture.snapshot.snapshotSequence + 1 });
       await mounted.cleanup();
     }
   });

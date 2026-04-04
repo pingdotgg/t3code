@@ -6,7 +6,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
 import { expect } from "vitest";
-import type { GitActionProgressEvent, ModelSelection } from "@t3tools/contracts";
+import type {
+  GitActionProgressEvent,
+  GitPreparePullRequestThreadInput,
+  ModelSelection,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import { GitCommandError, GitHubCliError, TextGenerationError } from "@t3tools/contracts";
 import { type GitManagerShape } from "../Services/GitManager.ts";
@@ -21,6 +26,11 @@ import { GitCore } from "../Services/GitCore.ts";
 import { makeGitManager } from "./GitManager.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  ProjectSetupScriptRunner,
+  type ProjectSetupScriptRunnerInput,
+  type ProjectSetupScriptRunnerShape,
+} from "../../project/Services/ProjectSetupScriptRunner.ts";
 
 interface FakeGhScenario {
   prListSequence?: string[];
@@ -593,7 +603,7 @@ function resolvePullRequest(manager: GitManagerShape, input: { cwd: string; refe
 
 function preparePullRequestThread(
   manager: GitManagerShape,
-  input: { cwd: string; reference: string; mode: "local" | "worktree" },
+  input: GitPreparePullRequestThreadInput,
 ) {
   return manager.preparePullRequestThread(input);
 }
@@ -601,6 +611,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
+  setupScriptRunner?: ProjectSetupScriptRunnerShape;
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -618,6 +629,12 @@ function makeManager(input?: {
   const managerLayer = Layer.mergeAll(
     Layer.succeed(GitHubCli, gitHubCli),
     Layer.succeed(TextGeneration, textGeneration),
+    Layer.succeed(
+      ProjectSetupScriptRunner,
+      input?.setupScriptRunner ?? {
+        runForThread: () => Effect.succeed({ status: "no-script" as const }),
+      },
+    ),
     gitCoreLayer,
     serverSettingsLayer,
   ).pipe(Layer.provideMerge(NodeServices.layer));
@@ -627,6 +644,8 @@ function makeManager(input?: {
     Effect.map((manager) => ({ manager, ghCalls })),
   );
 }
+
+const asThreadId = (threadId: string) => threadId as ThreadId;
 
 const GitManagerTestLayer = GitCoreLive.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
@@ -2176,6 +2195,59 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("launches setup only when creating a new PR worktree", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-worktree-setup"]);
+      fs.writeFileSync(path.join(repoDir, "setup.txt"), "setup\n");
+      yield* runGit(repoDir, ["add", "setup.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "PR worktree setup branch"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-worktree-setup"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/177/head"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const setupCalls: ProjectSetupScriptRunnerInput[] = [];
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 177,
+            title: "Worktree setup PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/177",
+            baseRefName: "main",
+            headRefName: "feature/pr-worktree-setup",
+            state: "open",
+          },
+        },
+        setupScriptRunner: {
+          runForThread: (setupInput) =>
+            Effect.sync(() => {
+              setupCalls.push(setupInput);
+              return { status: "no-script" as const };
+            }),
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "177",
+        mode: "worktree",
+        threadId: asThreadId("thread-pr-setup"),
+      });
+
+      expect(result.worktreePath).not.toBeNull();
+      expect(setupCalls).toHaveLength(1);
+      expect(setupCalls[0]).toEqual({
+        threadId: "thread-pr-setup",
+        projectCwd: repoDir,
+        worktreePath: result.worktreePath as string,
+      });
+    }),
+  );
+
   it.effect("preserves fork upstream tracking when preparing a worktree PR thread", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -2360,6 +2432,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const worktreePath = path.join(repoDir, "..", `pr-existing-${Date.now()}`);
       yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/pr-existing-worktree"]);
 
+      const setupCalls: ProjectSetupScriptRunnerInput[] = [];
       const { manager } = yield* makeManager({
         ghScenario: {
           pullRequest: {
@@ -2371,18 +2444,27 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             state: "open",
           },
         },
+        setupScriptRunner: {
+          runForThread: (setupInput) =>
+            Effect.sync(() => {
+              setupCalls.push(setupInput);
+              return { status: "no-script" as const };
+            }),
+        },
       });
 
       const result = yield* preparePullRequestThread(manager, {
         cwd: repoDir,
         reference: "78",
         mode: "worktree",
+        threadId: asThreadId("thread-pr-existing-worktree"),
       });
 
       expect(result.worktreePath && fs.realpathSync.native(result.worktreePath)).toBe(
         fs.realpathSync.native(worktreePath),
       );
       expect(result.branch).toBe("feature/pr-existing-worktree");
+      expect(setupCalls).toHaveLength(0);
     }),
   );
 
@@ -2559,6 +2641,50 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(
         (yield* runGit(worktreePath, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
       ).toBe("fork-seed/feature/pr-reused-fork");
+    }),
+  );
+
+  it.effect("does not fail PR worktree prep when setup terminal startup fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-setup-failure"]);
+      fs.writeFileSync(path.join(repoDir, "setup-failure.txt"), "setup failure\n");
+      yield* runGit(repoDir, ["add", "setup-failure.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "PR setup failure branch"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-setup-failure"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/184/head"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 184,
+            title: "Setup failure PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/184",
+            baseRefName: "main",
+            headRefName: "feature/pr-setup-failure",
+            state: "open",
+          },
+        },
+        setupScriptRunner: {
+          runForThread: () => Effect.fail(new Error("terminal start failed")),
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "184",
+        mode: "worktree",
+        threadId: asThreadId("thread-pr-setup-failure"),
+      });
+
+      expect(result.branch).toBe("feature/pr-setup-failure");
+      expect(result.worktreePath).not.toBeNull();
+      expect(fs.existsSync(result.worktreePath as string)).toBe(true);
     }),
   );
 
