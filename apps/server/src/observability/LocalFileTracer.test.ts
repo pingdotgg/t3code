@@ -5,7 +5,7 @@ import path from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Logger, References, Tracer } from "effect";
 
-import type { TraceRecord } from "./TraceRecord.ts";
+import type { EffectTraceRecord } from "./TraceRecord.ts";
 import { makeLocalFileTracer } from "./LocalFileTracer.ts";
 
 const makeTestLayer = (tracePath: string) =>
@@ -23,13 +23,13 @@ const makeTestLayer = (tracePath: string) =>
     Layer.succeed(References.MinimumLogLevel, "Info"),
   );
 
-const readTraceRecords = (tracePath: string): Array<TraceRecord> =>
+const readTraceRecords = (tracePath: string): Array<EffectTraceRecord> =>
   fs
     .readFileSync(tracePath, "utf8")
     .trim()
     .split("\n")
     .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as TraceRecord);
+    .map((line) => JSON.parse(line) as EffectTraceRecord);
 
 describe("LocalFileTracer", () => {
   it.effect("writes nested spans to disk and captures log messages as span events", () =>

@@ -1,8 +1,8 @@
 import type * as Exit from "effect/Exit";
 import { Effect, Option, Tracer } from "effect";
 
-import { spanToTraceRecord } from "./TraceRecord.ts";
-import { makeTraceSink } from "./TraceSink.ts";
+import { EffectTraceRecord, spanToTraceRecord } from "./TraceRecord.ts";
+import { makeTraceSink, type TraceSink } from "./TraceSink.ts";
 
 export interface LocalFileTracerOptions {
   readonly filePath: string;
@@ -10,6 +10,7 @@ export interface LocalFileTracerOptions {
   readonly maxFiles: number;
   readonly batchWindowMs: number;
   readonly delegate?: Tracer.Tracer;
+  readonly sink?: TraceSink;
 }
 
 class LocalFileSpan implements Tracer.Span {
@@ -30,7 +31,7 @@ class LocalFileSpan implements Tracer.Span {
   constructor(
     options: Parameters<Tracer.Tracer["span"]>[0],
     private readonly delegate: Tracer.Span,
-    private readonly push: (record: ReturnType<typeof spanToTraceRecord>) => void,
+    private readonly push: (record: EffectTraceRecord) => void,
   ) {
     this.name = delegate.name;
     this.spanId = delegate.spanId;
@@ -82,12 +83,14 @@ class LocalFileSpan implements Tracer.Span {
 export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
   options: LocalFileTracerOptions,
 ) {
-  const sink = yield* makeTraceSink({
-    filePath: options.filePath,
-    maxBytes: options.maxBytes,
-    maxFiles: options.maxFiles,
-    batchWindowMs: options.batchWindowMs,
-  });
+  const sink =
+    options.sink ??
+    (yield* makeTraceSink({
+      filePath: options.filePath,
+      maxBytes: options.maxBytes,
+      maxFiles: options.maxFiles,
+      batchWindowMs: options.batchWindowMs,
+    }));
 
   const delegate =
     options.delegate ??

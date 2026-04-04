@@ -2,6 +2,10 @@ import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
 
+import {
+  configureClientTracing,
+  __resetClientTracingForTests,
+} from "../observability/clientTracing";
 import { __resetWsRpcAtomClientForTests, runRpc, WsRpcAtomClient } from "./client";
 
 type WsEventType = "open" | "message" | "close" | "error";
@@ -66,6 +70,7 @@ class MockWebSocket {
 }
 
 const originalWebSocket = globalThis.WebSocket;
+const originalFetch = globalThis.fetch;
 
 function getSocket(): MockWebSocket {
   const socket = sockets.at(-1);
@@ -112,6 +117,7 @@ beforeEach(() => {
 afterEach(() => {
   __resetWsRpcAtomClientForTests();
   globalThis.WebSocket = originalWebSocket;
+  globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
 });
 
@@ -227,5 +233,47 @@ describe("WsRpcAtomClient", () => {
 
     release();
     registry.dispose();
+  });
+
+  it("attaches distributed trace ids when client OTLP tracing is enabled", async () => {
+    await configureClientTracing({
+      exportIntervalMs: 10,
+    });
+
+    const requestPromise = runRpc((client) => client(WS_METHODS.serverGetSettings, {}));
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const socket = getSocket();
+    socket.open();
+
+    await waitFor(() => {
+      expect(socket.sent).toHaveLength(1);
+    });
+
+    const requestMessage = JSON.parse(socket.sent[0] ?? "{}") as {
+      id: string;
+      spanId?: string;
+      tag: string;
+      traceId?: string;
+    };
+    expect(requestMessage.tag).toBe(WS_METHODS.serverGetSettings);
+    expect(requestMessage.traceId).toMatch(/^[0-9a-f]{32}$/);
+    expect(requestMessage.spanId).toMatch(/^[0-9a-f]{16}$/);
+
+    socket.serverMessage(
+      JSON.stringify({
+        _tag: "Exit",
+        requestId: requestMessage.id,
+        exit: {
+          _tag: "Success",
+          value: DEFAULT_SERVER_SETTINGS,
+        },
+      }),
+    );
+
+    await expect(requestPromise).resolves.toEqual(DEFAULT_SERVER_SETTINGS);
   });
 });

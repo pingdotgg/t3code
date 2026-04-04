@@ -1,4 +1,4 @@
-import { Duration, Effect, Exit, ManagedRuntime, Option, Scope, Stream } from "effect";
+import { Duration, Effect, Exit, Layer, ManagedRuntime, Option, Scope, Stream } from "effect";
 
 import {
   createWsRpcProtocolLayer,
@@ -6,6 +6,7 @@ import {
   type WsRpcProtocolClient,
 } from "./rpc/protocol";
 import { RpcClient } from "effect/unstable/rpc";
+import { ClientTracingLive, configureClientTracing } from "./observability/clientTracing";
 
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
@@ -28,10 +29,14 @@ export class WsTransport {
   private readonly runtime: ManagedRuntime.ManagedRuntime<RpcClient.Protocol, never>;
   private readonly clientScope: Scope.Closeable;
   private readonly clientPromise: Promise<WsRpcProtocolClient>;
+  private readonly tracingReady: Promise<void>;
   private disposed = false;
 
   constructor(url?: string) {
-    this.runtime = ManagedRuntime.make(createWsRpcProtocolLayer(url));
+    this.tracingReady = configureClientTracing();
+    this.runtime = ManagedRuntime.make(
+      Layer.mergeAll(createWsRpcProtocolLayer(url), ClientTracingLive),
+    );
     this.clientScope = this.runtime.runSync(Scope.make());
     this.clientPromise = this.runtime.runPromise(
       Scope.provide(this.clientScope)(makeWsRpcProtocolClient),
@@ -46,6 +51,7 @@ export class WsTransport {
       throw new Error("Transport disposed");
     }
 
+    await this.tracingReady;
     const client = await this.clientPromise;
     return await this.runtime.runPromise(Effect.suspend(() => execute(client)));
   }
@@ -58,6 +64,7 @@ export class WsTransport {
       throw new Error("Transport disposed");
     }
 
+    await this.tracingReady;
     const client = await this.clientPromise;
     await this.runtime.runPromise(
       Stream.runForEach(connect(client), (value) =>
@@ -84,7 +91,8 @@ export class WsTransport {
     let active = true;
     const retryDelayMs = options?.retryDelay ?? DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS;
     const cancel = this.runtime.runCallback(
-      Effect.promise(() => this.clientPromise).pipe(
+      Effect.promise(() => this.tracingReady).pipe(
+        Effect.flatMap(() => Effect.promise(() => this.clientPromise)),
         Effect.flatMap((client) =>
           Stream.runForEach(connect(client), (value) =>
             Effect.sync(() => {
