@@ -11,7 +11,7 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
-import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, Equal, FileSystem, Layer, Option, Result, Schema, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -255,6 +255,26 @@ const make = Effect.gen(function* () {
       thread,
       projects: readModel.projects,
     });
+
+    // Validate that the workspace root exists before attempting to start a session
+    // This provides a clear error message when a project directory has been moved/deleted
+    if (effectiveCwd) {
+      const pathExists = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.stat(effectiveCwd)),
+        Effect.map(() => true),
+        Effect.catchTag("SystemError", (e) =>
+          e.reason === "NotFound" ? Effect.succeed(false) : Effect.fail(e),
+        ),
+        Effect.result,
+      );
+      if (Result.isFailure(pathExists) || pathExists.success === Option.none()) {
+        return yield* new ProviderAdapterRequestError({
+          provider: preferredProvider ?? "claudeAgent",
+          method: "thread.turn.start",
+          detail: `Project workspace path '${effectiveCwd}' no longer exists. The project directory may have been moved or deleted. Please recreate the project or select a different project.`,
+        });
+      }
+    }
 
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
