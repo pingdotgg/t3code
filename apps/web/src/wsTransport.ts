@@ -1,11 +1,12 @@
-import { Cause, Duration, Effect, Exit, ManagedRuntime, Option, Scope, Stream } from "effect";
+import { Cause, Duration, Effect, Exit, Layer, ManagedRuntime, Option, Scope, Stream } from "effect";
+import { RpcClient } from "effect/unstable/rpc";
 
+import { ClientTracingLive, configureClientTracing } from "./observability/clientTracing";
 import {
   createWsRpcProtocolLayer,
   makeWsRpcProtocolClient,
   type WsRpcProtocolClient,
 } from "./rpc/protocol";
-import { RpcClient } from "effect/unstable/rpc";
 
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
@@ -33,6 +34,7 @@ function formatErrorMessage(error: unknown): string {
 }
 
 export class WsTransport {
+  private readonly tracingReady: Promise<void>;
   private readonly url: string | undefined;
   private disposed = false;
   private reconnectChain: Promise<void> = Promise.resolve();
@@ -40,6 +42,7 @@ export class WsTransport {
 
   constructor(url?: string) {
     this.url = url;
+    this.tracingReady = configureClientTracing();
     this.session = this.createSession();
   }
 
@@ -51,6 +54,7 @@ export class WsTransport {
       throw new Error("Transport disposed");
     }
 
+    await this.tracingReady;
     const session = this.session;
     const client = await session.clientPromise;
     return await session.runtime.runPromise(Effect.suspend(() => execute(client)));
@@ -64,6 +68,7 @@ export class WsTransport {
       throw new Error("Transport disposed");
     }
 
+    await this.tracingReady;
     const session = this.session;
     const client = await session.clientPromise;
     await session.runtime.runPromise(
@@ -100,6 +105,7 @@ export class WsTransport {
         if (!active || this.disposed) {
           return;
         }
+
         try {
           if (hasReceivedValue) {
             try {
@@ -108,6 +114,7 @@ export class WsTransport {
               // Swallow reconnect hook errors so the stream can recover.
             }
           }
+
           const session = this.session;
           const runningStream = this.runStreamOnSession(
             session,
@@ -126,6 +133,7 @@ export class WsTransport {
           if (!active || this.disposed) {
             return;
           }
+
           console.warn("WebSocket RPC subscription disconnected", {
             error: formatErrorMessage(error),
           });
@@ -174,7 +182,9 @@ export class WsTransport {
   }
 
   private createSession(): TransportSession {
-    const runtime = ManagedRuntime.make(createWsRpcProtocolLayer(this.url));
+    const runtime = ManagedRuntime.make(
+      Layer.mergeAll(createWsRpcProtocolLayer(this.url), ClientTracingLive),
+    );
     const clientScope = runtime.runSync(Scope.make());
     return {
       runtime,
@@ -200,13 +210,15 @@ export class WsTransport {
       rejectCompleted = reject;
     });
     const cancel = session.runtime.runCallback(
-      Effect.promise(() => session.clientPromise).pipe(
+      Effect.promise(() => this.tracingReady).pipe(
+        Effect.flatMap(() => Effect.promise(() => session.clientPromise)),
         Effect.flatMap((client) =>
           Stream.runForEach(connect(client), (value) =>
             Effect.sync(() => {
               if (!isActive()) {
                 return;
               }
+
               markValueReceived();
               try {
                 listener(value);
@@ -223,6 +235,7 @@ export class WsTransport {
             resolveCompleted();
             return;
           }
+
           rejectCompleted(Cause.squash(exit.cause));
         },
       },

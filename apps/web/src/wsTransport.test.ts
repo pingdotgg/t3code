@@ -1,6 +1,10 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  __resetClientTracingForTests,
+  configureClientTracing,
+} from "./observability/clientTracing";
 import { getSlowRpcAckRequests, resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import {
   getWsConnectionStatus,
@@ -73,6 +77,7 @@ class MockWebSocket {
 }
 
 const originalWebSocket = globalThis.WebSocket;
+const originalFetch = globalThis.fetch;
 
 function getSocket(): MockWebSocket {
   const socket = sockets.at(-1);
@@ -123,10 +128,12 @@ beforeEach(() => {
   globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
 });
 
-afterEach(() => {
+afterEach(async () => {
   globalThis.WebSocket = originalWebSocket;
+  globalThis.fetch = originalFetch;
   resetRequestLatencyStateForTests();
   resetWsConnectionStateForTests();
+  await __resetClientTracingForTests();
   vi.restoreAllMocks();
 });
 
@@ -682,7 +689,7 @@ describe("WsTransport", () => {
       ).closeSession,
     } as unknown as WsTransport;
 
-    WsTransport.prototype.dispose.call(transport);
+    void WsTransport.prototype.dispose.call(transport);
 
     expect(runtime.runPromise).toHaveBeenCalledTimes(1);
     expect(runtime.dispose).not.toHaveBeenCalled();
@@ -695,5 +702,47 @@ describe("WsTransport", () => {
     });
 
     expect(callOrder).toEqual(["close:start", "close:done", "runtime:dispose"]);
+  });
+
+  it("propagates OTLP trace ids for ws transport requests when client tracing is enabled", async () => {
+    await configureClientTracing({
+      exportIntervalMs: 10,
+    });
+
+    const transport = new WsTransport("ws://localhost:3020");
+    const requestPromise = transport.request((client) => client[WS_METHODS.serverGetSettings]({}));
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const socket = getSocket();
+    socket.open();
+
+    await waitFor(() => {
+      expect(socket.sent).toHaveLength(1);
+    });
+
+    const requestMessage = JSON.parse(socket.sent[0] ?? "{}") as {
+      id: string;
+      spanId?: string;
+      traceId?: string;
+    };
+    expect(requestMessage.traceId).toMatch(/^[0-9a-f]{32}$/);
+    expect(requestMessage.spanId).toMatch(/^[0-9a-f]{16}$/);
+
+    socket.serverMessage(
+      JSON.stringify({
+        _tag: "Exit",
+        requestId: requestMessage.id,
+        exit: {
+          _tag: "Success",
+          value: DEFAULT_SERVER_SETTINGS,
+        },
+      }),
+    );
+
+    await expect(requestPromise).resolves.toEqual(DEFAULT_SERVER_SETTINGS);
+    await transport.dispose();
   });
 });
