@@ -1,3 +1,13 @@
+/**
+ * RuntimeReceiptBus layers.
+ *
+ * `RuntimeReceiptBusLive` is the production default and intentionally does not
+ * retain or broadcast receipts. `RuntimeReceiptBusTest` installs the in-memory
+ * PubSub-backed implementation used by integration tests that need to await
+ * checkpoint-reactor milestones precisely.
+ *
+ * @module RuntimeReceiptBus
+ */
 import { Effect, Layer, PubSub, Stream } from "effect";
 
 import {
@@ -8,7 +18,7 @@ import {
 
 const makeRuntimeReceiptBus = Effect.succeed({
   publish: () => Effect.void,
-  stream: Stream.empty,
+  streamEventsForTest: Stream.empty,
 } satisfies RuntimeReceiptBusShape);
 
 const makeRuntimeReceiptBusTest = Effect.gen(function* () {
@@ -16,11 +26,11 @@ const makeRuntimeReceiptBusTest = Effect.gen(function* () {
 
   return {
     publish: (receipt) => PubSub.publish(pubSub, receipt).pipe(Effect.asVoid),
-    get stream() {
+    get streamEventsForTest() {
       return Stream.fromPubSub(pubSub);
     },
   } satisfies RuntimeReceiptBusShape;
 });
 
 export const RuntimeReceiptBusLive = Layer.effect(RuntimeReceiptBus, makeRuntimeReceiptBus);
-export const RuntimeReceiptBusTestLive = Layer.effect(RuntimeReceiptBus, makeRuntimeReceiptBusTest);
+export const RuntimeReceiptBusTest = Layer.effect(RuntimeReceiptBus, makeRuntimeReceiptBusTest);
