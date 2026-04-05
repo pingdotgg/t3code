@@ -6,7 +6,12 @@ import {
   type OrchestrationRuntimeReceipt,
 } from "../Services/RuntimeReceiptBus.ts";
 
-const makeRuntimeReceiptBus = Effect.gen(function* () {
+const makeRuntimeReceiptBus = Effect.succeed({
+  publish: () => Effect.void,
+  stream: Stream.empty,
+} satisfies RuntimeReceiptBusShape);
+
+const makeRuntimeReceiptBusTest = Effect.gen(function* () {
   const pubSub = yield* PubSub.unbounded<OrchestrationRuntimeReceipt>();
 
   return {
@@ -18,3 +23,4 @@ const makeRuntimeReceiptBus = Effect.gen(function* () {
 });
 
 export const RuntimeReceiptBusLive = Layer.effect(RuntimeReceiptBus, makeRuntimeReceiptBus);
+export const RuntimeReceiptBusTestLive = Layer.effect(RuntimeReceiptBus, makeRuntimeReceiptBusTest);
