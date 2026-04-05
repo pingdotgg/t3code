@@ -2818,6 +2818,55 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("uses the active worktree path when saving a proposed plan to the workspace", async () => {
+    const snapshot = createSnapshotWithLongProposedPlan();
+    const threads = snapshot.threads.slice();
+    const targetThreadIndex = threads.findIndex((thread) => thread.id === THREAD_ID);
+    const targetThread = targetThreadIndex >= 0 ? threads[targetThreadIndex] : undefined;
+    if (targetThread) {
+      threads[targetThreadIndex] = {
+        ...targetThread,
+        worktreePath: "/repo/worktrees/plan-thread",
+      };
+    }
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        threads,
+      },
+    });
+
+    try {
+      const planActionsButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Plan actions"]'),
+        "Unable to find proposed plan actions button.",
+      );
+      planActionsButton.click();
+
+      const saveToWorkspaceItem = await waitForElement(
+        () =>
+          (Array.from(document.querySelectorAll('[data-slot="menu-item"]')).find(
+            (item) => item.textContent?.trim() === "Save to workspace",
+          ) ?? null) as HTMLElement | null,
+        'Unable to find "Save to workspace" menu item.',
+      );
+      saveToWorkspaceItem.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(
+            "Enter a path relative to /repo/worktrees/plan-thread.",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps pending-question footer actions inside the composer after a real resize", async () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
