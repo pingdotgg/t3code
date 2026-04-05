@@ -19,6 +19,8 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 interface PersistedUiState {
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
+  canvasEnabled?: boolean;
+  canvasColumnWidthPreset?: number;
 }
 
 export interface UiProjectState {

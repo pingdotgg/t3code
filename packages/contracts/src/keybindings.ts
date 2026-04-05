@@ -27,6 +27,40 @@ export const THREAD_KEYBINDING_COMMANDS = [
 ] as const;
 export type ThreadKeybindingCommand = (typeof THREAD_KEYBINDING_COMMANDS)[number];
 
+export const CANVAS_KEYBINDING_COMMANDS = [
+  "canvas.focusLeft",
+  "canvas.focusRight",
+  "canvas.focusUp",
+  "canvas.focusDown",
+  "canvas.toggleOverview",
+  "canvas.openLauncher",
+  "canvas.cycleWidth",
+  "canvas.jumpProject.1",
+  "canvas.jumpProject.2",
+  "canvas.jumpProject.3",
+  "canvas.jumpProject.4",
+  "canvas.jumpProject.5",
+  "canvas.jumpProject.6",
+  "canvas.jumpProject.7",
+  "canvas.jumpProject.8",
+  "canvas.jumpProject.9",
+  "canvas.togglePrevious",
+] as const;
+export type CanvasKeybindingCommand = (typeof CANVAS_KEYBINDING_COMMANDS)[number];
+
+export const CANVAS_JUMP_PROJECT_COMMANDS = [
+  "canvas.jumpProject.1",
+  "canvas.jumpProject.2",
+  "canvas.jumpProject.3",
+  "canvas.jumpProject.4",
+  "canvas.jumpProject.5",
+  "canvas.jumpProject.6",
+  "canvas.jumpProject.7",
+  "canvas.jumpProject.8",
+  "canvas.jumpProject.9",
+] as const;
+export type CanvasJumpProjectCommand = (typeof CANVAS_JUMP_PROJECT_COMMANDS)[number];
+
 const STATIC_KEYBINDING_COMMANDS = [
   "terminal.toggle",
   "terminal.split",
@@ -37,6 +71,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "chat.newLocal",
   "editor.openFavorite",
   ...THREAD_KEYBINDING_COMMANDS,
+  ...CANVAS_KEYBINDING_COMMANDS,
 ] as const;
 
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([

@@ -3,6 +3,9 @@ import { useNavigate } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
 import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
+import { CanvasShell } from "./canvas/CanvasShell";
+import { useCanvasStore } from "../canvasStore";
+import { useServerKeybindings } from "../rpc/serverState";
 
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
@@ -10,6 +13,8 @@ const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const canvasEnabled = useCanvasStore((s) => s.enabled);
+  const keybindings = useServerKeybindings();
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
@@ -26,6 +31,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       unsubscribe?.();
     };
   }, [navigate]);
+
+  if (canvasEnabled) {
+    return <CanvasShell keybindings={keybindings} />;
+  }
 
   return (
     <SidebarProvider defaultOpen>

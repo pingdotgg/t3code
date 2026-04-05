@@ -5,6 +5,9 @@ import {
   type ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
   type ThreadJumpKeybindingCommand,
+  CANVAS_JUMP_PROJECT_COMMANDS,
+  type CanvasJumpProjectCommand,
+  type CanvasKeybindingCommand,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "./lib/utils";
 
@@ -368,6 +371,81 @@ export function isTerminalClearShortcut(
     !event.altKey &&
     !event.shiftKey
   );
+}
+
+// ── Canvas shortcut helpers ──────────────────────────────────────────
+
+export function isCanvasCommand(command: string | null): command is CanvasKeybindingCommand {
+  return command !== null && command.startsWith("canvas.");
+}
+
+export function isCanvasFocusLeftShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "canvas.focusLeft", options);
+}
+
+export function isCanvasFocusRightShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "canvas.focusRight", options);
+}
+
+export function isCanvasFocusUpShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "canvas.focusUp", options);
+}
+
+export function isCanvasFocusDownShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "canvas.focusDown", options);
+}
+
+export function isCanvasToggleOverviewShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "canvas.toggleOverview", options);
+}
+
+export function isCanvasOpenLauncherShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "canvas.openLauncher", options);
+}
+
+export function isCanvasCycleWidthShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "canvas.cycleWidth", options);
+}
+
+export function isCanvasTogglePreviousShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "canvas.togglePrevious", options);
+}
+
+export function canvasJumpProjectIndexFromCommand(command: string): number | null {
+  const index = CANVAS_JUMP_PROJECT_COMMANDS.indexOf(command as CanvasJumpProjectCommand);
+  return index === -1 ? null : index;
 }
 
 export function terminalNavigationShortcutData(
