@@ -98,7 +98,9 @@ function createProviderServiceHarness() {
     listSessions: () => Effect.succeed([...runtimeSessions]),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     rollbackConversation: () => unsupported(),
-    streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+    get streamEvents() {
+      return Stream.fromPubSub(runtimeEventPubSub);
+    },
   };
 
   const setSession = (session: ProviderSession): void => {

@@ -10,7 +10,7 @@ import path from "node:path";
 
 import type { ThreadId } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
-import { Effect, Exit, Logger, Scope } from "effect";
+import { Effect, Exit, Logger, Scope, SynchronizedRef } from "effect";
 
 import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 
@@ -38,6 +38,11 @@ export interface EventNdjsonLoggerOptions {
 interface ThreadWriter {
   writeMessage: (message: string) => Effect.Effect<void>;
   close: () => Effect.Effect<void>;
+}
+
+interface LoggerState {
+  readonly threadWriters: Map<string, ThreadWriter>;
+  readonly failedSegments: Set<string>;
 }
 
 function logWarning(message: string, context: Record<string, unknown>): Effect.Effect<void> {
@@ -193,34 +198,56 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
     return undefined;
   }
 
-  const threadWriters = new Map<string, ThreadWriter>();
-  const failedSegments = new Set<string>();
+  const stateRef = yield* SynchronizedRef.make<LoggerState>({
+    threadWriters: new Map(),
+    failedSegments: new Set(),
+  });
 
   const resolveThreadWriter = Effect.fn("resolveThreadWriter")(function* (
     threadSegment: string,
   ): Effect.fn.Return<ThreadWriter | undefined> {
-    if (failedSegments.has(threadSegment)) {
-      return undefined;
-    }
-    const existing = threadWriters.get(threadSegment);
-    if (existing) {
-      return existing;
-    }
+    return yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+      if (state.failedSegments.has(threadSegment)) {
+        return Effect.succeed([undefined, state] as const);
+      }
 
-    const writer = yield* makeThreadWriter({
-      filePath: path.join(path.dirname(filePath), `${threadSegment}.log`),
-      maxBytes,
-      maxFiles,
-      batchWindowMs,
-      streamLabel,
+      const existing = state.threadWriters.get(threadSegment);
+      if (existing) {
+        return Effect.succeed([existing, state] as const);
+      }
+
+      return makeThreadWriter({
+        filePath: path.join(path.dirname(filePath), `${threadSegment}.log`),
+        maxBytes,
+        maxFiles,
+        batchWindowMs,
+        streamLabel,
+      }).pipe(
+        Effect.map((writer) => {
+          if (!writer) {
+            const nextFailedSegments = new Set(state.failedSegments);
+            nextFailedSegments.add(threadSegment);
+            return [
+              undefined,
+              {
+                ...state,
+                failedSegments: nextFailedSegments,
+              },
+            ] as const;
+          }
+
+          const nextThreadWriters = new Map(state.threadWriters);
+          nextThreadWriters.set(threadSegment, writer);
+          return [
+            writer,
+            {
+              ...state,
+              threadWriters: nextThreadWriters,
+            },
+          ] as const;
+        }),
+      );
     });
-    if (!writer) {
-      failedSegments.add(threadSegment);
-      return undefined;
-    }
-
-    threadWriters.set(threadSegment, writer);
-    return writer;
   });
 
   const write = Effect.fn("write")(function* (event: unknown, threadId: ThreadId | null) {
@@ -239,10 +266,21 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
   });
 
   const close = Effect.fn("close")(function* () {
-    for (const writer of threadWriters.values()) {
-      yield* writer.close();
-    }
-    threadWriters.clear();
+    yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
+      Effect.gen(function* () {
+        for (const writer of state.threadWriters.values()) {
+          yield* writer.close();
+        }
+
+        return [
+          undefined,
+          {
+            threadWriters: new Map<string, ThreadWriter>(),
+            failedSegments: new Set<string>(),
+          },
+        ] as const;
+      }),
+    );
   });
 
   return {
