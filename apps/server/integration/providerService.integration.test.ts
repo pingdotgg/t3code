@@ -29,10 +29,6 @@ import {
   codexTurnTextFixture,
 } from "./fixtures/providerRuntime.ts";
 
-const waitForRealtimeSubscription = Effect.promise(
-  () => new Promise<void>((resolve) => setTimeout(resolve, 50)),
-);
-
 const makeWorkspaceDirectory = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
@@ -90,9 +86,7 @@ const collectEventsDuring = <A, E, R>(
       Effect.forkScoped,
     );
 
-    // `Stream.fromPubSub` subscriptions attach when the forked fiber runs, not
-    // when the stream value is constructed.
-    yield* waitForRealtimeSubscription;
+    yield* Effect.sleep("50 millis");
     yield* action;
 
     return yield* Effect.forEach(
@@ -122,7 +116,7 @@ const runTurn = (input: {
     );
   });
 
-it.effect("replays typed runtime fixture events", () =>
+it.live("replays typed runtime fixture events", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
 
@@ -155,7 +149,7 @@ it.effect("replays typed runtime fixture events", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("replays file-changing fixture turn events", () =>
+it.live("replays file-changing fixture turn events", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
     const { join } = yield* Path.Path;
@@ -194,7 +188,7 @@ it.effect("replays file-changing fixture turn events", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("runs multi-turn tool/approval flow", () =>
+it.live("runs multi-turn tool/approval flow", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
     const { join } = yield* Path.Path;
@@ -248,7 +242,7 @@ it.effect("runs multi-turn tool/approval flow", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("rolls back provider conversation state only", () =>
+it.live("rolls back provider conversation state only", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
     const { join } = yield* Path.Path;
