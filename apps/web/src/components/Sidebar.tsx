@@ -782,11 +782,12 @@ export default function Sidebar() {
     ],
     [threadGitTargets],
   );
+  const sidebarGitPollingEnabled = appSettings.gitPollingMode === "all";
   const threadGitStatusQueries = useQueries({
     queries: threadGitStatusCwds.map((cwd) => ({
-      ...gitStatusQueryOptions(cwd),
+      ...gitStatusQueryOptions(cwd, { pollingEnabled: sidebarGitPollingEnabled }),
       staleTime: 30_000,
-      refetchInterval: 60_000,
+      refetchInterval: sidebarGitPollingEnabled ? 60_000 : false,
     })),
   });
   const prByThreadId = useMemo(() => {

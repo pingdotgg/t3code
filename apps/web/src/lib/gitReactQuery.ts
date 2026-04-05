@@ -55,7 +55,11 @@ export function invalidateGitStatusQuery(queryClient: QueryClient, cwd: string |
   return queryClient.invalidateQueries({ queryKey: gitQueryKeys.status(cwd) });
 }
 
-export function gitStatusQueryOptions(cwd: string | null) {
+export function gitStatusQueryOptions(
+  cwd: string | null,
+  options?: { pollingEnabled?: boolean },
+) {
+  const polling = options?.pollingEnabled ?? true;
   return queryOptions({
     queryKey: gitQueryKeys.status(cwd),
     queryFn: async () => {
@@ -65,9 +69,9 @@ export function gitStatusQueryOptions(cwd: string | null) {
     },
     enabled: cwd !== null,
     staleTime: GIT_STATUS_STALE_TIME_MS,
-    refetchOnWindowFocus: "always",
-    refetchOnReconnect: "always",
-    refetchInterval: GIT_STATUS_REFETCH_INTERVAL_MS,
+    refetchOnWindowFocus: polling ? "always" : false,
+    refetchOnReconnect: polling ? "always" : false,
+    refetchInterval: polling ? GIT_STATUS_REFETCH_INTERVAL_MS : false,
   });
 }
 
@@ -75,8 +79,10 @@ export function gitBranchSearchInfiniteQueryOptions(input: {
   cwd: string | null;
   query: string;
   enabled?: boolean;
+  pollingEnabled?: boolean;
 }) {
   const normalizedQuery = input.query.trim();
+  const polling = input.pollingEnabled ?? true;
 
   return infiniteQueryOptions({
     queryKey: gitQueryKeys.branchSearch(input.cwd, normalizedQuery),
@@ -94,9 +100,9 @@ export function gitBranchSearchInfiniteQueryOptions(input: {
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: input.cwd !== null && (input.enabled ?? true),
     staleTime: GIT_BRANCHES_STALE_TIME_MS,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-    refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
+    refetchOnWindowFocus: polling,
+    refetchOnReconnect: polling,
+    refetchInterval: polling ? GIT_BRANCHES_REFETCH_INTERVAL_MS : false,
   });
 }
 
