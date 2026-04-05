@@ -32,7 +32,7 @@ import {
   type PtySpawnInput,
   PtySpawnError,
 } from "../Services/PTY";
-import { makeTerminalManagerWithOptions } from "./Manager";
+import { makeTerminalManagerWithOptions } from "./Manager.shared";
 
 class FakePtyProcess implements PtyProcess {
   readonly writes: string[] = [];

@@ -8,7 +8,7 @@ on:
 
 jobs:
   quality:
-    name: Format, Lint, Typecheck, Test, Browser Test, Build
+    name: Check, Test, Browser Test, Build
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
@@ -45,14 +45,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Format
-        run: bun run fmt:check
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Typecheck
-        run: bun run typecheck
+      - name: Check (format, lint, typecheck, knip)
+        run: bun run check
 
       - name: Test
         run: bun run test

@@ -1,12 +1,12 @@
 import { Debouncer } from "@tanstack/react-pacer";
 
-export interface StateStorage<R = unknown> {
+interface StateStorage<R = unknown> {
   getItem: (name: string) => string | null | Promise<string | null>;
   setItem: (name: string, value: string) => R;
   removeItem: (name: string) => R;
 }
 
-export interface DebouncedStorage<R = unknown> extends StateStorage<R> {
+interface DebouncedStorage<R = unknown> extends StateStorage<R> {
   flush: () => void;
 }
 
@@ -23,7 +23,7 @@ export function createMemoryStorage(): StateStorage {
   };
 }
 
-export function isStateStorage(
+function isStateStorage(
   storage: Partial<StateStorage> | null | undefined,
 ): storage is StateStorage {
   return (

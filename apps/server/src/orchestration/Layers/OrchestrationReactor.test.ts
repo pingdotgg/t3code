@@ -5,7 +5,7 @@ import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
-import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
+import { OrchestrationReactorLive } from "./OrchestrationReactor.ts";
 
 describe("OrchestrationReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<OrchestrationReactor, never> | null = null;
@@ -21,7 +21,7 @@ describe("OrchestrationReactor", () => {
     const started: string[] = [];
 
     runtime = ManagedRuntime.make(
-      Layer.effect(OrchestrationReactor, makeOrchestrationReactor).pipe(
+      OrchestrationReactorLive.pipe(
         Layer.provideMerge(
           Layer.succeed(ProviderRuntimeIngestionService, {
             start: () => {

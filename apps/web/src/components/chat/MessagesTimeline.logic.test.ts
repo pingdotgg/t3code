@@ -1,9 +1,44 @@
+import { MessageId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import { deriveMessagesTimelineRows, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+
+function deriveDurationStartByMessageId(
+  messages: ReadonlyArray<{
+    readonly id: string;
+    readonly role: "user" | "assistant" | "system";
+    readonly createdAt: string;
+    readonly completedAt?: string;
+  }>,
+) {
+  const timelineEntries: Parameters<typeof deriveMessagesTimelineRows>[0]["timelineEntries"] =
+    messages.map((message) => ({
+      id: `entry-${message.id}`,
+      kind: "message",
+      createdAt: message.createdAt,
+      message: {
+        ...message,
+        id: MessageId.makeUnsafe(message.id),
+        text: "",
+        turnId: null,
+        streaming: message.completedAt === undefined,
+      },
+    }));
+
+  return new Map(
+    deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    }).flatMap((row) =>
+      row.kind === "message" ? [[String(row.message.id), row.durationStart] as const] : [],
+    ),
+  );
+}
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
-    const result = computeMessageDurationStart([
+    const result = deriveDurationStartByMessageId([
       {
         id: "a1",
         role: "assistant",
@@ -15,7 +50,7 @@ describe("computeMessageDurationStart", () => {
   });
 
   it("uses the user message createdAt for the first assistant response", () => {
-    const result = computeMessageDurationStart([
+    const result = deriveDurationStartByMessageId([
       { id: "u1", role: "user", createdAt: "2026-01-01T00:00:00Z" },
       {
         id: "a1",
@@ -34,7 +69,7 @@ describe("computeMessageDurationStart", () => {
   });
 
   it("uses the previous assistant completedAt for subsequent assistant responses", () => {
-    const result = computeMessageDurationStart([
+    const result = deriveDurationStartByMessageId([
       { id: "u1", role: "user", createdAt: "2026-01-01T00:00:00Z" },
       {
         id: "a1",
@@ -60,7 +95,7 @@ describe("computeMessageDurationStart", () => {
   });
 
   it("does not advance the boundary for a streaming message without completedAt", () => {
-    const result = computeMessageDurationStart([
+    const result = deriveDurationStartByMessageId([
       { id: "u1", role: "user", createdAt: "2026-01-01T00:00:00Z" },
       { id: "a1", role: "assistant", createdAt: "2026-01-01T00:00:30Z" },
       {
@@ -81,7 +116,7 @@ describe("computeMessageDurationStart", () => {
   });
 
   it("resets the boundary on a new user message", () => {
-    const result = computeMessageDurationStart([
+    const result = deriveDurationStartByMessageId([
       { id: "u1", role: "user", createdAt: "2026-01-01T00:00:00Z" },
       {
         id: "a1",
@@ -109,7 +144,7 @@ describe("computeMessageDurationStart", () => {
   });
 
   it("handles system messages without affecting the boundary", () => {
-    const result = computeMessageDurationStart([
+    const result = deriveDurationStartByMessageId([
       { id: "u1", role: "user", createdAt: "2026-01-01T00:00:00Z" },
       { id: "s1", role: "system", createdAt: "2026-01-01T00:00:01Z" },
       {
@@ -130,7 +165,7 @@ describe("computeMessageDurationStart", () => {
   });
 
   it("returns empty map for empty input", () => {
-    expect(computeMessageDurationStart([])).toEqual(new Map());
+    expect(deriveDurationStartByMessageId([])).toEqual(new Map());
   });
 });
 

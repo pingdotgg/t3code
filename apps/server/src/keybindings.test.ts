@@ -1,20 +1,22 @@
-import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/contracts";
+import {
+  KeybindingCommand,
+  KeybindingRule,
+  KeybindingsConfig,
+  KeybindingsConfigError,
+} from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
-import { Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
+import { Effect, FileSystem, Layer, Logger, Option, Path, Schema } from "effect";
 import { ServerConfig } from "./config";
 
 import {
   DEFAULT_KEYBINDINGS,
-  Keybindings,
-  KeybindingsLive,
   ResolvedKeybindingFromConfig,
-  compileResolvedKeybindingRule,
   compileResolvedKeybindingsConfig,
   parseKeybindingShortcut,
-} from "./keybindings";
-import { KeybindingsConfigError } from "@t3tools/contracts";
+} from "./keybindings.logic";
+import { Keybindings, KeybindingsLive } from "./keybindings";
 
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
 const makeKeybindingsLayer = () => {
@@ -34,6 +36,9 @@ const toDetailResult = <A, R>(effect: Effect.Effect<A, KeybindingsConfigError, R
     Effect.mapError((error) => error.detail),
     Effect.result,
   );
+
+const compileResolvedKeybindingRule = (rule: KeybindingRule) =>
+  Option.getOrNull(Schema.decodeUnknownOption(ResolvedKeybindingFromConfig)(rule));
 
 const writeKeybindingsConfig = (configPath: string, rules: readonly KeybindingRule[]) =>
   Effect.gen(function* () {
@@ -70,6 +75,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         altKey: false,
         modKey: true,
       });
+      assert.deepEqual(parseKeybindingShortcut("   "), null);
     }),
   );
 

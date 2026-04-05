@@ -6,7 +6,7 @@ import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect"
 import { NetService } from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "./config";
-import { resolveServerConfig } from "./cli";
+import { resolveServerConfig } from "./cli.logic";
 
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
   const defaultObservabilityConfig = {
@@ -155,6 +155,68 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect("uses explicit false CLI boolean flags over env and bootstrap values", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(os.tmpdir(), "t3-cli-config-false-flags-base");
+      const fd = yield* openBootstrapFd({
+        noBrowser: true,
+        autoBootstrapProjectFromCwd: true,
+        logWebSocketEvents: true,
+      });
+      const derivedPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:4173"));
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(8788),
+          host: Option.some("127.0.0.1"),
+          baseDir: Option.some(baseDir),
+          devUrl: Option.some(new URL("http://127.0.0.1:4173")),
+          noBrowser: Option.some(false),
+          authToken: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.some(false),
+          logWebSocketEvents: Option.some(false),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  T3CODE_BOOTSTRAP_FD: String(fd),
+                  T3CODE_NO_BROWSER: "true",
+                  T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  T3CODE_LOG_WS_EVENTS: "true",
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved).toEqual({
+        logLevel: "Info",
+        ...defaultObservabilityConfig,
+        mode: "web",
+        port: 8788,
+        cwd: process.cwd(),
+        baseDir,
+        ...derivedPaths,
+        host: "127.0.0.1",
+        staticDir: undefined,
+        devUrl: new URL("http://127.0.0.1:4173"),
+        noBrowser: false,
+        authToken: undefined,
+        autoBootstrapProjectFromCwd: false,
+        logWebSocketEvents: false,
+      });
+    }),
+  );
+
   it.effect("uses bootstrap envelope values as fallbacks when flags and env are absent", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
@@ -271,6 +333,37 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         expect(yield* fs.exists(directory)).toBe(true);
       }
       expect(resolved.cwd).toBe(path.resolve(customCwd));
+    }),
+  );
+
+  it.effect("expands and trims a cwd passed with a home-directory prefix", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("desktop"),
+          port: Option.some(4888),
+          host: Option.none(),
+          baseDir: Option.none(),
+          cwd: Option.some("  ~/t3-cli-home-cwd  "),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          authToken: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.cwd).toBe(path.resolve(path.join(os.homedir(), "t3-cli-home-cwd")));
     }),
   );
 

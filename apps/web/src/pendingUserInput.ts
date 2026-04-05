@@ -1,11 +1,15 @@
 import type { UserInputQuestion } from "@t3tools/contracts";
+import {
+  countAnsweredPendingUserInputQuestions,
+  resolvePendingUserInputAnswer,
+} from "./pendingUserInput.shared";
 
 export interface PendingUserInputDraftAnswer {
   selectedOptionLabel?: string;
   customAnswer?: string;
 }
 
-export interface PendingUserInputProgress {
+interface PendingUserInputProgress {
   questionIndex: number;
   activeQuestion: UserInputQuestion | null;
   activeDraft: PendingUserInputDraftAnswer | undefined;
@@ -17,26 +21,6 @@ export interface PendingUserInputProgress {
   isLastQuestion: boolean;
   isComplete: boolean;
   canAdvance: boolean;
-}
-
-function normalizeDraftAnswer(value: string | undefined): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-export function resolvePendingUserInputAnswer(
-  draft: PendingUserInputDraftAnswer | undefined,
-): string | null {
-  const customAnswer = normalizeDraftAnswer(draft?.customAnswer);
-  if (customAnswer) {
-    return customAnswer;
-  }
-
-  return normalizeDraftAnswer(draft?.selectedOptionLabel);
 }
 
 export function setPendingUserInputCustomAnswer(
@@ -67,26 +51,6 @@ export function buildPendingUserInputAnswers(
   }
 
   return answers;
-}
-
-export function countAnsweredPendingUserInputQuestions(
-  questions: ReadonlyArray<UserInputQuestion>,
-  draftAnswers: Record<string, PendingUserInputDraftAnswer>,
-): number {
-  return questions.reduce((count, question) => {
-    return resolvePendingUserInputAnswer(draftAnswers[question.id]) ? count + 1 : count;
-  }, 0);
-}
-
-export function findFirstUnansweredPendingUserInputQuestionIndex(
-  questions: ReadonlyArray<UserInputQuestion>,
-  draftAnswers: Record<string, PendingUserInputDraftAnswer>,
-): number {
-  const unansweredIndex = questions.findIndex(
-    (question) => !resolvePendingUserInputAnswer(draftAnswers[question.id]),
-  );
-
-  return unansweredIndex === -1 ? Math.max(questions.length - 1, 0) : unansweredIndex;
 }
 
 export function derivePendingUserInputProgress(

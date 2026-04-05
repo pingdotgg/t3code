@@ -23,7 +23,8 @@ import {
 import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
 import { GitCoreLive } from "./GitCore.ts";
 import { GitCore } from "../Services/GitCore.ts";
-import { makeGitManager } from "./GitManager.ts";
+import { GitManagerLive } from "./GitManager.ts";
+import { GitManager } from "../Services/GitManager.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
@@ -639,10 +640,10 @@ function makeManager(input?: {
     serverSettingsLayer,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 
-  return makeGitManager().pipe(
-    Effect.provide(managerLayer),
-    Effect.map((manager) => ({ manager, ghCalls })),
-  );
+  return Effect.gen(function* () {
+    const manager = yield* GitManager;
+    return { manager, ghCalls };
+  }).pipe(Effect.provide(Layer.provideMerge(GitManagerLive, managerLayer)));
 }
 
 const asThreadId = (threadId: string) => threadId as ThreadId;

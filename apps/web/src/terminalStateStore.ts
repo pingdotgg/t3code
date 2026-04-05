@@ -27,12 +27,12 @@ interface ThreadTerminalState {
   activeTerminalGroupId: string;
 }
 
-export interface ThreadTerminalLaunchContext {
+interface ThreadTerminalLaunchContext {
   cwd: string;
   worktreePath: string | null;
 }
 
-export interface TerminalEventEntry {
+interface TerminalEventEntry {
   id: number;
   event: TerminalEvent;
 }

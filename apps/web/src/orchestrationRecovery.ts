@@ -1,15 +1,11 @@
-export type OrchestrationRecoveryReason =
-  | "bootstrap"
-  | "sequence-gap"
-  | "resubscribe"
-  | "replay-failed";
+type OrchestrationRecoveryReason = "bootstrap" | "sequence-gap" | "resubscribe" | "replay-failed";
 
-export interface OrchestrationRecoveryPhase {
+interface OrchestrationRecoveryPhase {
   kind: "snapshot" | "replay";
   reason: OrchestrationRecoveryReason;
 }
 
-export interface OrchestrationRecoveryState {
+interface OrchestrationRecoveryState {
   latestSequence: number;
   highestObservedSequence: number;
   bootstrapped: boolean;
@@ -17,7 +13,7 @@ export interface OrchestrationRecoveryState {
   inFlight: OrchestrationRecoveryPhase | null;
 }
 
-export interface ReplayRecoveryCompletion {
+interface ReplayRecoveryCompletion {
   replayMadeProgress: boolean;
   shouldReplay: boolean;
 }
@@ -28,7 +24,7 @@ export interface ReplayRetryTracker {
   highestObservedSequence: number;
 }
 
-export interface ReplayRetryDecision {
+interface ReplayRetryDecision {
   shouldRetry: boolean;
   delayMs: number;
   tracker: ReplayRetryTracker | null;

@@ -960,7 +960,7 @@ export const TurnCountRange = Schema.Struct({
   ),
 );
 
-export const ThreadTurnDiff = TurnCountRange.mapFields(
+const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     diff: Schema.String,

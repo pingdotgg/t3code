@@ -2,7 +2,7 @@
 
 ## Task Completion Requirements
 
-- All of `bun fmt`, `bun lint`, and `bun typecheck` must pass before considering tasks completed.
+- Run `bun run check` before considering tasks completed. It runs `fmt:check`, `lint`, `typecheck`, and `knip` in parallel; all must succeed.
 - NEVER run `bun test`. Always use `bun run test` (runs Vitest).
 
 ## Project Snapshot

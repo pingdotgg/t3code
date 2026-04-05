@@ -17,21 +17,18 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   type ServerProvider,
+  type ServerSettingsPatch,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { deepMerge } from "@t3tools/shared/Struct";
 
-import {
-  checkCodexProviderStatus,
-  hasCustomModelProvider,
-  parseAuthStatusFromOutput,
-  readCodexConfigModelProvider,
-} from "./CodexProvider";
-import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
-import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
-import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
+import { checkCodexProviderStatus } from "./CodexProvider.shared";
+import { checkClaudeProviderStatus } from "./ClaudeProvider.logic";
+import { ProviderRegistryLive } from "./ProviderRegistry";
+import { haveProvidersChanged } from "./ProviderRegistry.shared";
+import { ServerSettingsService } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
 
 // ── Test helpers ────────────────────────────────────────────────────
@@ -107,7 +104,7 @@ function makeMutableServerSettingsService(
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
-      updateSettings: (patch) =>
+      updateSettings: (patch: ServerSettingsPatch) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);
           const next = Schema.decodeSync(ServerSettings)(deepMerge(current, patch));
@@ -115,10 +112,8 @@ function makeMutableServerSettingsService(
           yield* PubSub.publish(changes, next);
           return next;
         }),
-      get streamChanges() {
-        return Stream.fromPubSub(changes);
-      },
-    } satisfies ServerSettingsShape;
+      streamChanges: Stream.fromPubSub(changes),
+    };
   });
 }
 
@@ -484,6 +479,62 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           ),
         ),
       );
+
+      it.effect("treats login status JSON with authenticated=false as unauthenticated", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus();
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.auth.status, "unauthenticated");
+          assert.strictEqual(
+            status.message,
+            "Codex CLI is not authenticated. Run `codex login` and try again.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") {
+                return {
+                  stdout: '[{"authenticated":false}]\n',
+                  stderr: "",
+                  code: 0,
+                };
+              }
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("treats login status JSON without auth markers as a warning", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus();
+          assert.strictEqual(status.status, "warning");
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(
+            status.message,
+            "Could not verify Codex authentication status from JSON output (missing auth marker).",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") {
+                return {
+                  stdout: '[{"ok":true}]\n',
+                  stderr: "",
+                  code: 0,
+                };
+              }
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
     });
 
     describe("ProviderRegistryLive", () => {
@@ -520,7 +571,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
-            Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+            Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings as never)),
             Layer.provideMerge(
               mockCommandSpawnerLayer((command, args) => {
                 const joined = args.join(" ");
@@ -539,7 +590,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           );
           const runtimeServices = yield* Layer.build(
             Layer.mergeAll(
-              Layer.succeed(ServerSettingsService, serverSettings),
+              Layer.succeed(ServerSettingsService, serverSettings as never),
               providerRegistryLayer,
             ),
           ).pipe(Scope.provide(scope));
@@ -640,6 +691,57 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           ),
       );
 
+      it.effect("parses commented and whitespace-padded custom model_provider values", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome(
+            [
+              "# This is a comment",
+              "",
+              '  model_provider = "azure"  ',
+              "",
+              "[profiles.deep-review]",
+              'model = "gpt-5-pro"',
+            ].join("\n"),
+          );
+          const status = yield* checkCodexProviderStatus();
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(
+            status.message,
+            "Using a custom Codex model provider; OpenAI login check skipped.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Auth probe should have been skipped but got args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("parses single-quoted custom model_provider values", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome("model_provider = 'mistral'\n");
+          const status = yield* checkCodexProviderStatus();
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(
+            status.message,
+            "Using a custom Codex model provider; OpenAI login check skipped.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Auth probe should have been skipped but got args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("still reports error when codex CLI is missing even with custom provider", () =>
         Effect.gen(function* () {
           yield* withTempCodexHome(
@@ -678,70 +780,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           ),
         ),
       );
-    });
 
-    // ── parseAuthStatusFromOutput pure tests ──────────────────────────
-
-    describe("parseAuthStatusFromOutput", () => {
-      it("exit code 0 with no auth markers is ready", () => {
-        const parsed = parseAuthStatusFromOutput({ stdout: "OK\n", stderr: "", code: 0 });
-        assert.strictEqual(parsed.status, "ready");
-        assert.strictEqual(parsed.auth.status, "authenticated");
-      });
-
-      it("JSON with authenticated=false is unauthenticated", () => {
-        const parsed = parseAuthStatusFromOutput({
-          stdout: '[{"authenticated":false}]\n',
-          stderr: "",
-          code: 0,
-        });
-        assert.strictEqual(parsed.status, "error");
-        assert.strictEqual(parsed.auth.status, "unauthenticated");
-      });
-
-      it("JSON without auth marker is warning", () => {
-        const parsed = parseAuthStatusFromOutput({
-          stdout: '[{"ok":true}]\n',
-          stderr: "",
-          code: 0,
-        });
-        assert.strictEqual(parsed.status, "warning");
-        assert.strictEqual(parsed.auth.status, "unknown");
-      });
-    });
-
-    // ── readCodexConfigModelProvider tests ─────────────────────────────
-
-    describe("readCodexConfigModelProvider", () => {
-      it.effect("returns undefined when config file does not exist", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome();
-          assert.strictEqual(yield* readCodexConfigModelProvider(), undefined);
-        }),
-      );
-
-      it.effect("returns undefined when config has no model_provider key", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome('model = "gpt-5-codex"\n');
-          assert.strictEqual(yield* readCodexConfigModelProvider(), undefined);
-        }),
-      );
-
-      it.effect("returns the provider when model_provider is set at top level", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome('model = "gpt-5-codex"\nmodel_provider = "portkey"\n');
-          assert.strictEqual(yield* readCodexConfigModelProvider(), "portkey");
-        }),
-      );
-
-      it.effect("returns openai when model_provider is openai", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome('model_provider = "openai"\n');
-          assert.strictEqual(yield* readCodexConfigModelProvider(), "openai");
-        }),
-      );
-
-      it.effect("ignores model_provider inside section headers", () =>
+      it.effect("ignores model_provider declarations inside TOML sections", () =>
         Effect.gen(function* () {
           yield* withTempCodexHome(
             [
@@ -753,84 +793,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               "",
             ].join("\n"),
           );
-          assert.strictEqual(yield* readCodexConfigModelProvider(), undefined);
-        }),
-      );
-
-      it.effect("handles comments and whitespace", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome(
-            [
-              "# This is a comment",
-              "",
-              '  model_provider = "azure"  ',
-              "",
-              "[profiles.deep-review]",
-              'model = "gpt-5-pro"',
-            ].join("\n"),
-          );
-          assert.strictEqual(yield* readCodexConfigModelProvider(), "azure");
-        }),
-      );
-
-      it.effect("handles single-quoted values in TOML", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome("model_provider = 'mistral'\n");
-          assert.strictEqual(yield* readCodexConfigModelProvider(), "mistral");
-        }),
-      );
-    });
-
-    // ── hasCustomModelProvider tests ───────────────────────────────────
-
-    describe("hasCustomModelProvider", () => {
-      it.effect("returns false when no config file exists", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome();
-          assert.strictEqual(yield* hasCustomModelProvider, false);
-        }),
-      );
-
-      it.effect("returns false when model_provider is not set", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome('model = "gpt-5-codex"\n');
-          assert.strictEqual(yield* hasCustomModelProvider, false);
-        }),
-      );
-
-      it.effect("returns false when model_provider is openai", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome('model_provider = "openai"\n');
-          assert.strictEqual(yield* hasCustomModelProvider, false);
-        }),
-      );
-
-      it.effect("returns true when model_provider is portkey", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome('model_provider = "portkey"\n');
-          assert.strictEqual(yield* hasCustomModelProvider, true);
-        }),
-      );
-
-      it.effect("returns true when model_provider is azure", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome('model_provider = "azure"\n');
-          assert.strictEqual(yield* hasCustomModelProvider, true);
-        }),
-      );
-
-      it.effect("returns true when model_provider is ollama", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome('model_provider = "ollama"\n');
-          assert.strictEqual(yield* hasCustomModelProvider, true);
-        }),
-      );
-
-      it.effect("returns true when model_provider is a custom proxy", () =>
-        Effect.gen(function* () {
-          yield* withTempCodexHome('model_provider = "my-company-proxy"\n');
-          assert.strictEqual(yield* hasCustomModelProvider, true);
-        }),
+          const status = yield* checkCodexProviderStatus();
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.auth.status, "unauthenticated");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status")
+                return { stdout: "Not logged in\n", stderr: "", code: 1 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
       );
     });
 
@@ -1014,46 +990,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           ),
         ),
       );
-    });
 
-    // ── parseClaudeAuthStatusFromOutput pure tests ────────────────────
-
-    describe("parseClaudeAuthStatusFromOutput", () => {
-      it("exit code 0 with no auth markers is ready", () => {
-        const parsed = parseClaudeAuthStatusFromOutput({ stdout: "OK\n", stderr: "", code: 0 });
-        assert.strictEqual(parsed.status, "ready");
-        assert.strictEqual(parsed.auth.status, "authenticated");
-      });
-
-      it("JSON with loggedIn=true is authenticated", () => {
-        const parsed = parseClaudeAuthStatusFromOutput({
-          stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-          stderr: "",
-          code: 0,
-        });
-        assert.strictEqual(parsed.status, "ready");
-        assert.strictEqual(parsed.auth.status, "authenticated");
-      });
-
-      it("JSON with loggedIn=false is unauthenticated", () => {
-        const parsed = parseClaudeAuthStatusFromOutput({
-          stdout: '{"loggedIn":false}\n',
-          stderr: "",
-          code: 0,
-        });
-        assert.strictEqual(parsed.status, "error");
-        assert.strictEqual(parsed.auth.status, "unauthenticated");
-      });
-
-      it("JSON without auth marker is warning", () => {
-        const parsed = parseClaudeAuthStatusFromOutput({
-          stdout: '{"ok":true}\n',
-          stderr: "",
-          code: 0,
-        });
-        assert.strictEqual(parsed.status, "warning");
-        assert.strictEqual(parsed.auth.status, "unknown");
-      });
+      it.effect("returns warning when auth status emits malformed json", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus();
+          assert.strictEqual(status.provider, "claudeAgent");
+          assert.strictEqual(status.status, "warning");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(
+            status.message,
+            "Could not verify Claude authentication status from JSON output (missing auth marker).",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
     });
   },
 );

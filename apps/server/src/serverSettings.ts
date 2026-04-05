@@ -43,7 +43,7 @@ import { ServerConfig } from "./config";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 
-export interface ServerSettingsShape {
+interface ServerSettingsShape {
   /** Start the settings runtime and attach file watching. */
   readonly start: Effect.Effect<void, ServerSettingsError>;
 

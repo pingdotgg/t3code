@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getTimestampFormatOptions } from "./timestampFormat";
+import { getTimestampFormatOptions } from "./timestampFormat.shared";
 
 describe("getTimestampFormatOptions", () => {
   it("omits hour12 when locale formatting is requested", () => {

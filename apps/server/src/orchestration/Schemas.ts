@@ -15,11 +15,6 @@ import {
   ThreadTurnDiffCompletedPayload as ContractsThreadTurnDiffCompletedPayloadSchema,
   ThreadRevertedPayload as ContractsThreadRevertedPayloadSchema,
   ThreadActivityAppendedPayload as ContractsThreadActivityAppendedPayloadSchema,
-  ThreadTurnStartRequestedPayload as ContractsThreadTurnStartRequestedPayloadSchema,
-  ThreadTurnInterruptRequestedPayload as ContractsThreadTurnInterruptRequestedPayloadSchema,
-  ThreadApprovalResponseRequestedPayload as ContractsThreadApprovalResponseRequestedPayloadSchema,
-  ThreadCheckpointRevertRequestedPayload as ContractsThreadCheckpointRevertRequestedPayloadSchema,
-  ThreadSessionStopRequestedPayload as ContractsThreadSessionStopRequestedPayloadSchema,
 } from "@t3tools/contracts";
 
 // Server-internal alias surface, backed by contract schemas as the source of truth.
@@ -41,12 +36,3 @@ export const ThreadSessionSetPayload = ContractsThreadSessionSetPayloadSchema;
 export const ThreadTurnDiffCompletedPayload = ContractsThreadTurnDiffCompletedPayloadSchema;
 export const ThreadRevertedPayload = ContractsThreadRevertedPayloadSchema;
 export const ThreadActivityAppendedPayload = ContractsThreadActivityAppendedPayloadSchema;
-
-export const ThreadTurnStartRequestedPayload = ContractsThreadTurnStartRequestedPayloadSchema;
-export const ThreadTurnInterruptRequestedPayload =
-  ContractsThreadTurnInterruptRequestedPayloadSchema;
-export const ThreadApprovalResponseRequestedPayload =
-  ContractsThreadApprovalResponseRequestedPayloadSchema;
-export const ThreadCheckpointRevertRequestedPayload =
-  ContractsThreadCheckpointRevertRequestedPayloadSchema;
-export const ThreadSessionStopRequestedPayload = ContractsThreadSessionStopRequestedPayloadSchema;

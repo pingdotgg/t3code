@@ -21,9 +21,6 @@ import {
   ClientSettingsSchema,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
-  SidebarProjectSortOrder,
-  SidebarThreadSortOrder,
-  TimestampFormat,
   UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { ensureNativeApi } from "~/nativeApi";
@@ -32,6 +29,7 @@ import { normalizeCustomModelSlugs } from "~/modelSelection";
 import { Predicate, Schema, Struct } from "effect";
 import { DeepMutable } from "effect/Types";
 import { deepMerge } from "@t3tools/shared/Struct";
+import { buildLegacyClientSettingsMigrationPatch } from "./useSettings.shared";
 import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
 
 const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
@@ -91,7 +89,7 @@ export function useSettings<T extends UnifiedSettings = UnifiedSettings>(
 /**
  * Returns an updater that routes each key to the correct backing store.
  *
- * Server keys are optimistically patched in atom-backed server state, then
+ * Server keys are optimistically patched in the React Query cache, then
  * persisted via RPC. Client keys go straight to localStorage.
  */
 export function useUpdateSettings() {
@@ -133,7 +131,7 @@ export function useUpdateSettings() {
 
 // ── One-time migration from localStorage ─────────────────────────────
 
-export function buildLegacyServerSettingsMigrationPatch(legacySettings: Record<string, unknown>) {
+function buildLegacyServerSettingsMigrationPatch(legacySettings: Record<string, unknown>) {
   const patch: DeepMutable<ServerSettingsPatch> = {};
 
   if (Predicate.isBoolean(legacySettings.enableAssistantStreaming)) {
@@ -184,38 +182,6 @@ export function buildLegacyServerSettingsMigrationPatch(legacySettings: Record<s
       new Set<string>(),
       "claudeAgent",
     );
-  }
-
-  return patch;
-}
-
-export function buildLegacyClientSettingsMigrationPatch(
-  legacySettings: Record<string, unknown>,
-): Partial<DeepMutable<ClientSettings>> {
-  const patch: Partial<DeepMutable<ClientSettings>> = {};
-
-  if (Predicate.isBoolean(legacySettings.confirmThreadArchive)) {
-    patch.confirmThreadArchive = legacySettings.confirmThreadArchive;
-  }
-
-  if (Predicate.isBoolean(legacySettings.confirmThreadDelete)) {
-    patch.confirmThreadDelete = legacySettings.confirmThreadDelete;
-  }
-
-  if (Predicate.isBoolean(legacySettings.diffWordWrap)) {
-    patch.diffWordWrap = legacySettings.diffWordWrap;
-  }
-
-  if (Schema.is(SidebarProjectSortOrder)(legacySettings.sidebarProjectSortOrder)) {
-    patch.sidebarProjectSortOrder = legacySettings.sidebarProjectSortOrder;
-  }
-
-  if (Schema.is(SidebarThreadSortOrder)(legacySettings.sidebarThreadSortOrder)) {
-    patch.sidebarThreadSortOrder = legacySettings.sidebarThreadSortOrder;
-  }
-
-  if (Schema.is(TimestampFormat)(legacySettings.timestampFormat)) {
-    patch.timestampFormat = legacySettings.timestampFormat;
   }
 
   return patch;

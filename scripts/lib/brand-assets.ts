@@ -13,7 +13,7 @@ export const BRAND_ASSET_PATHS = {
   developmentWebAppleTouchIconPng: "assets/dev/blueprint-web-apple-touch-180.png",
 } as const;
 
-export interface IconOverride {
+interface IconOverride {
   readonly sourceRelativePath: string;
   readonly targetRelativePath: string;
 }

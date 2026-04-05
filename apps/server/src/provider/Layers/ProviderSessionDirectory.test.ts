@@ -12,7 +12,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
+} from "../../persistence/Layers/Sqlite.testing.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionDirectoryPersistenceError } from "../Errors.ts";

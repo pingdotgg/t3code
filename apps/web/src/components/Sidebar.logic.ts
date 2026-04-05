@@ -3,10 +3,16 @@ import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/c
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+import {
+  createThreadJumpHintVisibilityController,
+  getProjectSortTimestamp,
+  hasUnseenCompletion,
+  THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  type ThreadJumpHintVisibilityController,
+} from "./Sidebar.logic.shared";
 
-export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
-export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
-export type SidebarNewThreadEnvMode = "local" | "worktree";
+const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
+type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
   name: string;
@@ -18,9 +24,9 @@ type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
   messages?: Pick<Thread["messages"][number], "createdAt" | "role">[];
 };
 
-export type ThreadTraversalDirection = "previous" | "next";
+type ThreadTraversalDirection = "previous" | "next";
 
-export interface ThreadStatusPill {
+interface ThreadStatusPill {
   label:
     | "Working"
     | "Connecting"
@@ -54,57 +60,6 @@ type ThreadStatusInput = Pick<
   lastVisitedAt?: string | undefined;
 };
 
-export interface ThreadJumpHintVisibilityController {
-  sync: (shouldShow: boolean) => void;
-  dispose: () => void;
-}
-
-export function createThreadJumpHintVisibilityController(input: {
-  delayMs: number;
-  onVisibilityChange: (visible: boolean) => void;
-  setTimeoutFn?: typeof globalThis.setTimeout;
-  clearTimeoutFn?: typeof globalThis.clearTimeout;
-}): ThreadJumpHintVisibilityController {
-  const setTimeoutFn = input.setTimeoutFn ?? globalThis.setTimeout;
-  const clearTimeoutFn = input.clearTimeoutFn ?? globalThis.clearTimeout;
-  let isVisible = false;
-  let timeoutId: NodeJS.Timeout | null = null;
-
-  const clearPendingShow = () => {
-    if (timeoutId === null) {
-      return;
-    }
-    clearTimeoutFn(timeoutId);
-    timeoutId = null;
-  };
-
-  return {
-    sync: (shouldShow) => {
-      if (!shouldShow) {
-        clearPendingShow();
-        if (isVisible) {
-          isVisible = false;
-          input.onVisibilityChange(false);
-        }
-        return;
-      }
-
-      if (isVisible || timeoutId !== null) {
-        return;
-      }
-
-      timeoutId = setTimeoutFn(() => {
-        timeoutId = null;
-        isVisible = true;
-        input.onVisibilityChange(true);
-      }, input.delayMs);
-    },
-    dispose: () => {
-      clearPendingShow();
-    },
-  };
-}
-
 export function useThreadJumpHintVisibility(): {
   showThreadJumpHints: boolean;
   updateThreadJumpHintsVisibility: (shouldShow: boolean) => void;
@@ -137,17 +92,6 @@ export function useThreadJumpHintVisibility(): {
     showThreadJumpHints,
     updateThreadJumpHintsVisibility,
   };
-}
-
-export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
-  if (!thread.latestTurn?.completedAt) return false;
-  const completedAt = Date.parse(thread.latestTurn.completedAt);
-  if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return true;
-
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
@@ -519,24 +463,6 @@ export function getFallbackThreadIdAfterDelete<
       sortOrder,
     )[0]?.id ?? null
   );
-}
-
-export function getProjectSortTimestamp(
-  project: SidebarProject,
-  projectThreads: readonly SidebarThreadSortInput[],
-  sortOrder: Exclude<SidebarProjectSortOrder, "manual">,
-): number {
-  if (projectThreads.length > 0) {
-    return projectThreads.reduce(
-      (latest, thread) => Math.max(latest, getThreadSortTimestamp(thread, sortOrder)),
-      Number.NEGATIVE_INFINITY,
-    );
-  }
-
-  if (sortOrder === "created_at") {
-    return toSortableTimestamp(project.createdAt) ?? Number.NEGATIVE_INFINITY;
-  }
-  return toSortableTimestamp(project.updatedAt ?? project.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
 export function sortProjectsForSidebar<

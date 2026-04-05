@@ -24,7 +24,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
-import { makeClaudeAdapterLive, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import { makeClaudeAdapterLive } from "./ClaudeAdapter.ts";
 
 class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   private readonly queue: Array<SDKMessage> = [];
@@ -132,7 +132,9 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
 function makeHarness(config?: {
   readonly nativeEventLogPath?: string;
-  readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
+  readonly nativeEventLogger?: NonNullable<
+    Parameters<typeof makeClaudeAdapterLive>[0]
+  >["nativeEventLogger"];
   readonly cwd?: string;
   readonly baseDir?: string;
 }) {
@@ -144,7 +146,7 @@ function makeHarness(config?: {
       }
     | undefined;
 
-  const adapterOptions: ClaudeAdapterLiveOptions = {
+  const adapterOptions: NonNullable<Parameters<typeof makeClaudeAdapterLive>[0]> = {
     createQuery: (input) => {
       createInput = input;
       return query;

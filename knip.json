@@ -1,0 +1,54 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    "apps/desktop": {
+      "entry": ["src/**/*.test.ts", "scripts/**/*.mjs"],
+      "project": ["src/**/*.ts!", "!src/**/*.test.ts!", "scripts/**/*.mjs"]
+    },
+    "apps/marketing": {
+      "entry": ["src/pages/**/*.{astro,mdx}!"],
+      "project": ["src/**/*.{astro,mdx,ts,tsx,js,jsx}!"]
+    },
+    "apps/server": {
+      "entry": [
+        "src/**/*.test.ts",
+        "src/**/*.testing.ts",
+        "integration/**/*.integration.ts",
+        "scripts/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts!",
+        "!src/**/*.test.ts!",
+        "!src/**/*.testing.ts!",
+        "integration/**/*.ts",
+        "scripts/**/*.ts"
+      ]
+    },
+    "apps/web": {
+      "entry": [
+        "index.html!",
+        "src/**/*.test.{ts,tsx}",
+        "src/**/*.browser.tsx",
+        "public/mockServiceWorker.js"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}!",
+        "!src/**/*.test.{ts,tsx}!",
+        "!src/**/*.testing.{ts,tsx}!",
+        "!src/**/*.browser.tsx!"
+      ]
+    },
+    "packages/contracts": {
+      "entry": ["src/**/*.test.ts"],
+      "project": ["src/**/*.ts!", "!src/**/*.test.ts!"]
+    },
+    "packages/shared": {
+      "entry": ["src/*.ts!", "!src/*.test.ts!", "src/**/*.test.ts"],
+      "project": ["src/**/*.ts!", "!src/**/*.test.ts!"]
+    },
+    "scripts": {
+      "entry": ["*.ts"],
+      "project": ["**/*.ts"]
+    }
+  }
+}

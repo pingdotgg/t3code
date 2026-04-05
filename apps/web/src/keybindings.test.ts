@@ -7,16 +7,8 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
-  formatShortcutLabel,
-  isChatNewShortcut,
-  isChatNewLocalShortcut,
-  isDiffToggleShortcut,
   isOpenFavoriteEditorShortcut,
   isTerminalClearShortcut,
-  isTerminalCloseShortcut,
-  isTerminalNewShortcut,
-  isTerminalSplitShortcut,
-  isTerminalToggleShortcut,
   resolveShortcutCommand,
   shouldShowThreadJumpHints,
   shortcutLabelForCommand,
@@ -24,8 +16,18 @@ import {
   threadJumpCommandForIndex,
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
-  type ShortcutEventLike,
 } from "./keybindings";
+import {
+  formatShortcutLabel,
+  isChatNewShortcut,
+  isChatNewLocalShortcut,
+  isDiffToggleShortcut,
+  isTerminalCloseShortcut,
+  isTerminalNewShortcut,
+  isTerminalSplitShortcut,
+  isTerminalToggleShortcut,
+  type ShortcutEventLike,
+} from "./keybindings.testing";
 
 function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
   return {

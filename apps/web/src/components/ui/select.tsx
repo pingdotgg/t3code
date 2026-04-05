@@ -1,11 +1,8 @@
 "use client";
 
-import { mergeProps } from "@base-ui/react/merge-props";
 import { Select as SelectPrimitive } from "@base-ui/react/select";
-import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import { ChevronDownIcon, ChevronsUpDownIcon, ChevronUpIcon } from "lucide-react";
-import type * as React from "react";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
@@ -34,43 +31,6 @@ const selectTriggerVariants = cva(
     },
   },
 );
-
-const selectTriggerIconClassName = "-me-1 size-4.5 opacity-80 sm:size-4";
-
-interface SelectButtonProps extends useRender.ComponentProps<"button"> {
-  size?: VariantProps<typeof selectTriggerVariants>["size"];
-  variant?: VariantProps<typeof selectTriggerVariants>["variant"];
-}
-
-function SelectButton({ className, size, variant, render, children, ...props }: SelectButtonProps) {
-  const typeValue: React.ButtonHTMLAttributes<HTMLButtonElement>["type"] = render
-    ? undefined
-    : "button";
-
-  const defaultProps = {
-    children: (
-      <>
-        <span className="flex-1 truncate in-data-placeholder:text-muted-foreground/72">
-          {children}
-        </span>
-        {variant === "ghost" ? (
-          <ChevronDownIcon className="size-3 opacity-50" />
-        ) : (
-          <ChevronsUpDownIcon className={selectTriggerIconClassName} />
-        )}
-      </>
-    ),
-    className: cn(selectTriggerVariants({ size, variant }), "min-w-none", className),
-    "data-slot": "select-button",
-    type: typeValue,
-  };
-
-  return useRender({
-    defaultTagName: "button",
-    props: mergeProps<"button">(defaultProps, props),
-    render,
-  });
-}
 
 function SelectTrigger({
   className,
@@ -209,40 +169,4 @@ function SelectItem({
   );
 }
 
-function SelectSeparator({ className, ...props }: SelectPrimitive.Separator.Props) {
-  return (
-    <SelectPrimitive.Separator
-      className={cn("mx-2 my-1 h-px bg-border", className)}
-      data-slot="select-separator"
-      {...props}
-    />
-  );
-}
-
-function SelectGroup(props: SelectPrimitive.Group.Props) {
-  return <SelectPrimitive.Group data-slot="select-group" {...props} />;
-}
-
-function SelectGroupLabel(props: SelectPrimitive.GroupLabel.Props) {
-  return (
-    <SelectPrimitive.GroupLabel
-      className="px-2 py-1.5 font-medium text-muted-foreground text-xs"
-      data-slot="select-group-label"
-      {...props}
-    />
-  );
-}
-
-export {
-  Select,
-  SelectTrigger,
-  SelectButton,
-  selectTriggerVariants,
-  SelectValue,
-  SelectPopup,
-  SelectPopup as SelectContent,
-  SelectItem,
-  SelectSeparator,
-  SelectGroup,
-  SelectGroupLabel,
-};
+export { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem };

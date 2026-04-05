@@ -30,8 +30,10 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
-
-export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+import {
+  COMPOSER_DRAFT_STORAGE_KEY,
+  type ComposerThreadDraftState,
+} from "./composerDraftStore.shared";
 const COMPOSER_DRAFT_STORAGE_VERSION = 3;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
@@ -155,18 +157,6 @@ const PersistedComposerDraftStoreStorage = Schema.Struct({
   state: PersistedComposerDraftStoreState,
 });
 
-export interface ComposerThreadDraftState {
-  prompt: string;
-  images: ComposerImageAttachment[];
-  nonPersistedImageIds: string[];
-  persistedAttachments: PersistedComposerImageAttachment[];
-  terminalContexts: TerminalContextDraft[];
-  modelSelectionByProvider: Partial<Record<ProviderKind, ModelSelection>>;
-  activeProvider: ProviderKind | null;
-  runtimeMode: RuntimeMode | null;
-  interactionMode: ProviderInteractionMode | null;
-}
-
 export interface DraftThreadState {
   projectId: ProjectId;
   createdAt: string;
@@ -262,7 +252,7 @@ interface ComposerDraftStoreState {
   clearComposerContent: (threadId: ThreadId) => void;
 }
 
-export interface EffectiveComposerModelState {
+interface EffectiveComposerModelState {
   selectedModel: string;
   modelOptions: ProviderModelOptions | null;
 }
@@ -615,7 +605,7 @@ function legacyToModelSelectionByProvider(
   return result;
 }
 
-export function deriveEffectiveComposerModelState(input: {
+function deriveEffectiveComposerModelState(input: {
   draft:
     | Pick<ComposerThreadDraftState, "modelSelectionByProvider" | "activeProvider">
     | null

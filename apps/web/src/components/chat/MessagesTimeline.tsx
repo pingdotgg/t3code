@@ -870,7 +870,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       </div>
       {hasChangedFiles && !previewIsChangedFiles && (
         <div className="mt-1 flex flex-wrap gap-1 pl-6">
-          {workEntry.changedFiles?.slice(0, 4).map((filePath) => (
+          {workEntry.changedFiles?.slice(0, 4).map((filePath: string) => (
             <span
               key={`${workEntry.id}:${filePath}`}
               className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"

@@ -28,6 +28,8 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
     "@pierre/diffs": "^1.1.0-beta.16",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
     "effect": "catalog:",
     "node-pty": "^1.1.0",
     "open": "^10.1.0"
@@ -35,9 +37,6 @@
   "devDependencies": {
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
-    "@t3tools/web": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "tsdown": "catalog:",

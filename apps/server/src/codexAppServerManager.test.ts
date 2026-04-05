@@ -5,17 +5,17 @@ import os from "node:os";
 import path from "node:path";
 import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 
+import { CodexAppServerManager } from "./codexAppServerManager";
 import {
   buildCodexInitializeParams,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
-  CodexAppServerManager,
   classifyCodexStderrLine,
   isRecoverableThreadResumeError,
   normalizeCodexModelSlug,
   readCodexAccountSnapshot,
   resolveCodexModelForAccount,
-} from "./codexAppServerManager";
+} from "./codexAppServerManager.testing";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 

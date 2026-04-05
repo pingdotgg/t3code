@@ -27,7 +27,7 @@ import { checkpointRefForThreadTurn } from "../src/checkpointing/Utils.ts";
 import type {
   CheckpointDiffFinalizedReceipt,
   TurnProcessingQuiescedReceipt,
-} from "../src/orchestration/Services/RuntimeReceiptBus.ts";
+} from "../src/orchestration/Services/RuntimeReceiptBus.shared.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);

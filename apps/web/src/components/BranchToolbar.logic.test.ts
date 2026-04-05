@@ -1,7 +1,7 @@
 import type { GitBranch } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
+import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
-  dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,

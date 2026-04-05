@@ -1,6 +1,6 @@
 import type { OrchestrationEvent, ThreadId } from "@t3tools/contracts";
 
-export interface OrchestrationBatchEffects {
+interface OrchestrationBatchEffects {
   clearPromotedDraftThreadIds: ThreadId[];
   clearDeletedThreadIds: ThreadId[];
   removeTerminalStateThreadIds: ThreadId[];

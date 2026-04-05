@@ -1,17 +1,55 @@
 import { OrchestrationCheckpointFile } from "@t3tools/contracts";
+import { Effect, Layer, Option, Schema, ServiceMap, Struct } from "effect";
+import type { Effect as EffectType } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer, Option, Schema, Struct } from "effect";
 
-import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
-import {
-  DeleteByThreadIdInput,
-  GetByThreadAndTurnCountInput,
-  ListByThreadIdInput,
-  ProjectionCheckpoint,
+import { NonNegativeInt, ThreadId } from "@t3tools/contracts";
+import type { ProjectionRepositoryError } from "../../src/persistence/Errors.ts";
+import { toPersistenceDecodeError, toPersistenceSqlError } from "../../src/persistence/Errors.ts";
+import { ProjectionCheckpoint } from "../../src/persistence/Services/ProjectionCheckpoints.ts";
+
+const ListByThreadIdInput = Schema.Struct({
+  threadId: ThreadId,
+});
+type ListByThreadIdInput = typeof ListByThreadIdInput.Type;
+
+const GetByThreadAndTurnCountInput = Schema.Struct({
+  threadId: ThreadId,
+  checkpointTurnCount: NonNegativeInt,
+});
+type GetByThreadAndTurnCountInput = typeof GetByThreadAndTurnCountInput.Type;
+
+const DeleteByThreadIdInput = Schema.Struct({
+  threadId: ThreadId,
+});
+type DeleteByThreadIdInput = typeof DeleteByThreadIdInput.Type;
+
+interface ProjectionCheckpointRepositoryShape {
+  readonly upsert: (
+    row: typeof ProjectionCheckpoint.Type,
+  ) => EffectType.Effect<void, ProjectionRepositoryError>;
+  readonly listByThreadId: (
+    input: ListByThreadIdInput,
+  ) => EffectType.Effect<
+    ReadonlyArray<typeof ProjectionCheckpoint.Type>,
+    ProjectionRepositoryError
+  >;
+  readonly getByThreadAndTurnCount: (
+    input: GetByThreadAndTurnCountInput,
+  ) => EffectType.Effect<
+    Option.Option<typeof ProjectionCheckpoint.Type>,
+    ProjectionRepositoryError
+  >;
+  readonly deleteByThreadId: (
+    input: DeleteByThreadIdInput,
+  ) => EffectType.Effect<void, ProjectionRepositoryError>;
+}
+
+export class ProjectionCheckpointRepository extends ServiceMap.Service<
   ProjectionCheckpointRepository,
-  type ProjectionCheckpointRepositoryShape,
-} from "../Services/ProjectionCheckpoints.ts";
+  ProjectionCheckpointRepositoryShape
+>()("t3/integration/support/ProjectionCheckpoints/ProjectionCheckpointRepository") {}
 
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
@@ -170,7 +208,7 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           "ProjectionCheckpointRepository.listByThreadId:decodeRows",
         ),
       ),
-      Effect.map((rows) => rows as ReadonlyArray<Schema.Schema.Type<typeof ProjectionCheckpoint>>),
+      Effect.map((rows) => rows as ReadonlyArray<typeof ProjectionCheckpoint.Type>),
     );
 
   const getByThreadAndTurnCount: ProjectionCheckpointRepositoryShape["getByThreadAndTurnCount"] = (
@@ -186,8 +224,7 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
           onNone: () => Effect.succeed(Option.none()),
-          onSome: (row) =>
-            Effect.succeed(Option.some(row as Schema.Schema.Type<typeof ProjectionCheckpoint>)),
+          onSome: (row) => Effect.succeed(Option.some(row as typeof ProjectionCheckpoint.Type)),
         }),
       ),
     );

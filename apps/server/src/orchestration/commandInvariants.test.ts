@@ -10,13 +10,12 @@ import {
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 
+import { requireThread, requireThreadAbsent } from "./commandInvariants.ts";
 import {
   findThreadById,
   listThreadsByProjectId,
   requireNonNegativeInteger,
-  requireThread,
-  requireThreadAbsent,
-} from "./commandInvariants.ts";
+} from "./commandInvariants.testing.ts";
 
 const now = new Date().toISOString();
 

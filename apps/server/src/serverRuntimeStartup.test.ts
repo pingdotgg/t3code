@@ -7,7 +7,7 @@ import {
   launchStartupHeartbeat,
   makeCommandGate,
   ServerRuntimeStartupError,
-} from "./serverRuntimeStartup.ts";
+} from "./serverRuntimeStartup.logic.ts";
 
 it.effect("enqueueCommand waits for readiness and then drains queued work", () =>
   Effect.scoped(

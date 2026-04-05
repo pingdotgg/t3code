@@ -37,7 +37,9 @@
     "build:marketing": "turbo run build --filter=@t3tools/marketing",
     "build:desktop": "turbo run build --filter=@t3tools/desktop --filter=t3",
     "typecheck": "turbo run typecheck",
+    "check": "concurrently -n fmt,lint,tc,knip -c auto \"bun run fmt:check\" \"bun run lint\" \"bun run typecheck\" \"bun run knip\"",
     "lint": "oxlint --report-unused-disable-directives",
+    "knip": "knip",
     "test": "turbo run test",
     "test:desktop-smoke": "turbo run smoke-test --filter=@t3tools/desktop",
     "fmt": "oxfmt",
@@ -53,11 +55,15 @@
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
+  "dependencies": {
+    "turbo": "^2.3.3"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
+    "concurrently": "^9.2.1",
+    "knip": "^6.3.0",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.55.0",
-    "turbo": "^2.3.3",
     "vitest": "catalog:"
   },
   "overrides": {

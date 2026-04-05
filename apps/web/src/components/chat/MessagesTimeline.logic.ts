@@ -1,12 +1,14 @@
 import { type MessageId } from "@t3tools/contracts";
-import { type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { estimateTimelineMessageHeight } from "../timelineHeight";
 
+type TimelineEntry = ReturnType<typeof import("../../session-logic").deriveTimelineEntries>[number];
+type WorkLogEntry = Extract<TimelineEntry, { kind: "work" }>["entry"];
+
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 
-export interface TimelineDurationMessage {
+interface TimelineDurationMessage {
   id: string;
   role: "user" | "assistant" | "system";
   createdAt: string;
@@ -36,7 +38,7 @@ export type MessagesTimelineRow =
     }
   | { kind: "working"; id: string; createdAt: string | null };
 
-export function computeMessageDurationStart(
+function computeMessageDurationStart(
   messages: ReadonlyArray<TimelineDurationMessage>,
 ): Map<string, string> {
   const result = new Map<string, string>();

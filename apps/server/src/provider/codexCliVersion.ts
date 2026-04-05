@@ -1,6 +1,6 @@
 const CODEX_VERSION_PATTERN = /\bv?(\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?)\b/;
 
-export const MINIMUM_CODEX_CLI_VERSION = "0.37.0";
+const MINIMUM_CODEX_CLI_VERSION = "0.37.0";
 
 interface ParsedSemver {
   readonly major: number;
@@ -71,7 +71,7 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
   return left.localeCompare(right);
 }
 
-export function compareCodexCliVersions(left: string, right: string): number {
+function compareCodexCliVersions(left: string, right: string): number {
   const parsedLeft = parseSemver(left);
   const parsedRight = parseSemver(right);
   if (!parsedLeft || !parsedRight) {

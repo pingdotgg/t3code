@@ -4265,7 +4265,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               <>
                                 <Separator
                                   orientation="vertical"
-                                  className="mx-0.5 hidden h-4 sm:block"
+                                  className="mx-0 hidden h-4 sm:block"
                                 />
                                 {providerTraitsPicker}
                               </>
@@ -4273,12 +4273,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
                             <Separator
                               orientation="vertical"
-                              className="mx-0.5 hidden h-4 sm:block"
+                              className="mx-0 hidden h-4 sm:block"
                             />
 
                             <Button
                               variant="ghost"
-                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-2"
                               size="sm"
                               type="button"
                               onClick={toggleInteractionMode}
@@ -4296,12 +4296,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
                             <Separator
                               orientation="vertical"
-                              className="mx-0.5 hidden h-4 sm:block"
+                              className="mx-0 hidden h-4 sm:block"
                             />
 
                             <Button
                               variant="ghost"
-                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-2"
                               size="sm"
                               type="button"
                               onClick={() =>
@@ -4327,12 +4327,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               <>
                                 <Separator
                                   orientation="vertical"
-                                  className="mx-0.5 hidden h-4 sm:block"
+                                  className="mx-0 hidden h-4 sm:block"
                                 />
                                 <Button
                                   variant="ghost"
                                   className={cn(
-                                    "shrink-0 whitespace-nowrap px-2 sm:px-3",
+                                    "shrink-0 whitespace-nowrap px-2 sm:px-2",
                                     planSidebarOpen
                                       ? "text-blue-400 hover:text-blue-300"
                                       : "text-muted-foreground/70 hover:text-foreground/80",

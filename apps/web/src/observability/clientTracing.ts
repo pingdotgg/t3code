@@ -29,7 +29,7 @@ let activeConfigKey: string | null = null;
 let configurationGeneration = 0;
 let pendingConfiguration = Promise.resolve();
 
-export interface ClientTracingConfig {
+interface ClientTracingConfig {
   readonly exportIntervalMs?: number;
 }
 

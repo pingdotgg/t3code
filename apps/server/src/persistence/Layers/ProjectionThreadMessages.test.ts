@@ -4,7 +4,7 @@ import { Effect, Layer } from "effect";
 
 import { ProjectionThreadMessageRepository } from "../Services/ProjectionThreadMessages.ts";
 import { ProjectionThreadMessageRepositoryLive } from "./ProjectionThreadMessages.ts";
-import { SqlitePersistenceMemory } from "./Sqlite.ts";
+import { SqlitePersistenceMemory } from "./Sqlite.testing.ts";
 
 const layer = it.layer(
   ProjectionThreadMessageRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),

@@ -45,7 +45,7 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
-export interface ProviderServiceLiveOptions {
+interface ProviderServiceLiveOptions {
   readonly canonicalEventLogPath?: string;
   readonly canonicalEventLogger?: EventNdjsonLogger;
 }
@@ -201,11 +201,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly binding: ProviderRuntimeBinding;
     readonly operation: string;
   }) {
-    yield* Effect.annotateCurrentSpan({
-      "provider.operation": "recover-session",
-      "provider.kind": input.binding.provider,
-      "provider.thread_id": input.binding.threadId,
-    });
     return yield* Effect.gen(function* () {
       const adapter = yield* registry.getByProvider(input.binding.provider);
       const hasResumeCursor =
@@ -310,12 +305,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId,
         provider: parsed.provider ?? "codex",
       };
-      yield* Effect.annotateCurrentSpan({
-        "provider.operation": "start-session",
-        "provider.kind": input.provider,
-        "provider.thread_id": threadId,
-        "provider.runtime_mode": input.runtimeMode,
-      });
       return yield* Effect.gen(function* () {
         const settings = yield* serverSettings.getSettings.pipe(
           Effect.mapError((error) =>
@@ -393,12 +382,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "Either input text or at least one attachment is required",
       );
     }
-    yield* Effect.annotateCurrentSpan({
-      "provider.operation": "send-turn",
-      "provider.thread_id": input.threadId,
-      "provider.interaction_mode": input.interactionMode,
-      "provider.attachment_count": input.attachments.length,
-    });
     let metricProvider = "unknown";
     let metricModel = input.modelSelection?.model;
     return yield* Effect.gen(function* () {
@@ -409,10 +392,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       metricProvider = routed.adapter.provider;
       metricModel = input.modelSelection?.model;
-      yield* Effect.annotateCurrentSpan({
-        "provider.kind": routed.adapter.provider,
-        ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
-      });
       const turn = yield* routed.adapter.sendTurn(input);
       yield* directory.upsert({
         threadId: input.threadId,
@@ -465,12 +444,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           allowRecovery: true,
         });
         metricProvider = routed.adapter.provider;
-        yield* Effect.annotateCurrentSpan({
-          "provider.operation": "interrupt-turn",
-          "provider.kind": routed.adapter.provider,
-          "provider.thread_id": input.threadId,
-          "provider.turn_id": input.turnId,
-        });
         yield* routed.adapter.interruptTurn(routed.threadId, input.turnId);
         yield* analytics.record("provider.turn.interrupted", {
           provider: routed.adapter.provider,
@@ -502,12 +475,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           allowRecovery: true,
         });
         metricProvider = routed.adapter.provider;
-        yield* Effect.annotateCurrentSpan({
-          "provider.operation": "respond-to-request",
-          "provider.kind": routed.adapter.provider,
-          "provider.thread_id": input.threadId,
-          "provider.request_id": input.requestId,
-        });
         yield* routed.adapter.respondToRequest(routed.threadId, input.requestId, input.decision);
         yield* analytics.record("provider.request.responded", {
           provider: routed.adapter.provider,
@@ -541,12 +508,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         allowRecovery: true,
       });
       metricProvider = routed.adapter.provider;
-      yield* Effect.annotateCurrentSpan({
-        "provider.operation": "respond-to-user-input",
-        "provider.kind": routed.adapter.provider,
-        "provider.thread_id": input.threadId,
-        "provider.request_id": input.requestId,
-      });
       yield* routed.adapter.respondToUserInput(routed.threadId, input.requestId, input.answers);
     }).pipe(
       withMetrics({
@@ -574,11 +535,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           allowRecovery: false,
         });
         metricProvider = routed.adapter.provider;
-        yield* Effect.annotateCurrentSpan({
-          "provider.operation": "stop-session",
-          "provider.kind": routed.adapter.provider,
-          "provider.thread_id": input.threadId,
-        });
         if (routed.isActive) {
           yield* routed.adapter.stopSession(routed.threadId);
         }
@@ -668,12 +624,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         allowRecovery: true,
       });
       metricProvider = routed.adapter.provider;
-      yield* Effect.annotateCurrentSpan({
-        "provider.operation": "rollback-conversation",
-        "provider.kind": routed.adapter.provider,
-        "provider.thread_id": input.threadId,
-        "provider.rollback_turns": input.numTurns,
-      });
       yield* routed.adapter.rollbackThread(routed.threadId, input.numTurns);
       yield* analytics.record("provider.conversation.rolled_back", {
         provider: routed.adapter.provider,
@@ -748,8 +698,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   } satisfies ProviderServiceShape;
 });
-
-export const ProviderServiceLive = Layer.effect(ProviderService, makeProviderService());
 
 export function makeProviderServiceLive(options?: ProviderServiceLiveOptions) {
   return Layer.effect(ProviderService, makeProviderService(options));

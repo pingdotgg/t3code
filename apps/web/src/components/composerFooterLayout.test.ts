@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX,
-  COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
-  COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX,
-  measureComposerFooterOverflowPx,
   resolveComposerFooterContentWidth,
   shouldForceCompactComposerFooterForFit,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
 } from "./composerFooterLayout";
+
+const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
+const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 780;
+const COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX =
+  COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX;
 
 describe("shouldUseCompactComposerFooter", () => {
   it("stays expanded without a measured width", () => {
@@ -58,24 +59,14 @@ describe("shouldUseCompactComposerPrimaryActions", () => {
 });
 
 describe("measureComposerFooterOverflowPx", () => {
-  it("returns the overflow amount when content exceeds the footer width", () => {
+  it("keeps the footer expanded when content still fits", () => {
     expect(
-      measureComposerFooterOverflowPx({
-        footerContentWidth: 500,
-        leadingContentWidth: 340,
-        actionsWidth: 180,
-      }),
-    ).toBe(28);
-  });
-
-  it("returns zero when content fits", () => {
-    expect(
-      measureComposerFooterOverflowPx({
+      shouldForceCompactComposerFooterForFit({
         footerContentWidth: 500,
         leadingContentWidth: 320,
         actionsWidth: 160,
       }),
-    ).toBe(0);
+    ).toBe(false);
   });
 });
 

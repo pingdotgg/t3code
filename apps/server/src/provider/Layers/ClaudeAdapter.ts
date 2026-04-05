@@ -173,7 +173,7 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly close: () => void;
 }
 
-export interface ClaudeAdapterLiveOptions {
+interface ClaudeAdapterLiveOptions {
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
@@ -3059,9 +3059,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   } satisfies ClaudeAdapterShape;
 });
-
-export const ClaudeAdapterLive = Layer.effect(ClaudeAdapter, makeClaudeAdapter());
-
 export function makeClaudeAdapterLive(options?: ClaudeAdapterLiveOptions) {
   return Layer.effect(ClaudeAdapter, makeClaudeAdapter(options));
 }

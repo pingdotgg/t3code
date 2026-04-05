@@ -5,9 +5,10 @@ import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-import { __resetNativeApiForTests } from "../../nativeApi";
+import { resetNativeApiForTests } from "../../nativeApi.testing";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
-import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
+import { resetAppAtomRegistryForTests } from "../../rpc/atomRegistry.testing";
+import { startServerStateSync } from "../../rpc/serverState";
 import { GeneralSettingsPanel } from "./SettingsPanels";
 
 function createBaseServerConfig(): ServerConfig {
@@ -29,28 +30,40 @@ function createBaseServerConfig(): ServerConfig {
   };
 }
 
+function seedServerConfig(config: ServerConfig) {
+  return startServerStateSync({
+    getConfig: () => Promise.resolve(config),
+    subscribeConfig: (listener) => {
+      listener({ version: 1, type: "snapshot", config });
+      return () => undefined;
+    },
+    subscribeLifecycle: () => () => undefined,
+  });
+}
+
 describe("GeneralSettingsPanel observability", () => {
   beforeEach(() => {
-    resetServerStateForTests();
-    __resetNativeApiForTests();
+    resetAppAtomRegistryForTests();
+    resetNativeApiForTests();
     localStorage.clear();
     document.body.innerHTML = "";
   });
 
   afterEach(() => {
-    resetServerStateForTests();
-    __resetNativeApiForTests();
+    resetAppAtomRegistryForTests();
+    resetNativeApiForTests();
     document.body.innerHTML = "";
   });
 
   it("shows diagnostics inside About with a single logs-folder action", async () => {
-    setServerConfigSnapshot(createBaseServerConfig());
+    const stopServerStateSync = seedServerConfig(createBaseServerConfig());
 
     await render(
       <AppAtomRegistryProvider>
         <GeneralSettingsPanel />
       </AppAtomRegistryProvider>,
     );
+    stopServerStateSync();
 
     await expect.element(page.getByText("About")).toBeInTheDocument();
     await expect.element(page.getByText("Diagnostics")).toBeInTheDocument();
@@ -75,13 +88,14 @@ describe("GeneralSettingsPanel observability", () => {
       },
     } as unknown as NativeApi;
 
-    setServerConfigSnapshot(createBaseServerConfig());
+    const stopServerStateSync = seedServerConfig(createBaseServerConfig());
 
     await render(
       <AppAtomRegistryProvider>
         <GeneralSettingsPanel />
       </AppAtomRegistryProvider>,
     );
+    stopServerStateSync();
 
     const openLogsButton = page.getByText("Open logs folder");
     await openLogsButton.click();

@@ -56,16 +56,13 @@ const selectProviders = (config: ServerConfig | null) =>
 const selectSettings = (config: ServerConfig | null): ServerSettings =>
   config?.settings ?? DEFAULT_SERVER_SETTINGS;
 
-export const welcomeAtom = makeStateAtom<ServerLifecycleWelcomePayload | null>(
-  "server-welcome",
-  null,
-);
-export const serverConfigAtom = makeStateAtom<ServerConfig | null>("server-config", null);
-export const serverConfigUpdatedAtom = makeStateAtom<ServerConfigUpdatedNotification | null>(
+const welcomeAtom = makeStateAtom<ServerLifecycleWelcomePayload | null>("server-welcome", null);
+const serverConfigAtom = makeStateAtom<ServerConfig | null>("server-config", null);
+const serverConfigUpdatedAtom = makeStateAtom<ServerConfigUpdatedNotification | null>(
   "server-config-updated",
   null,
 );
-export const providersUpdatedAtom = makeStateAtom<ServerProviderUpdatedPayload | null>(
+const providersUpdatedAtom = makeStateAtom<ServerProviderUpdatedPayload | null>(
   "server-providers-updated",
   null,
 );
@@ -78,13 +75,13 @@ export function getServerConfigUpdatedNotification(): ServerConfigUpdatedNotific
   return appAtomRegistry.get(serverConfigUpdatedAtom);
 }
 
-export function setServerConfigSnapshot(config: ServerConfig): void {
+function setServerConfigSnapshot(config: ServerConfig): void {
   resolveServerConfig(config);
   emitProvidersUpdated({ providers: config.providers });
   emitServerConfigUpdated(toServerConfigUpdatedPayload(config), "snapshot");
 }
 
-export function applyServerConfigEvent(event: ServerConfigStreamEvent): void {
+function applyServerConfigEvent(event: ServerConfigStreamEvent): void {
   switch (event.type) {
     case "snapshot": {
       setServerConfigSnapshot(event.config);
@@ -114,7 +111,7 @@ export function applyServerConfigEvent(event: ServerConfigStreamEvent): void {
   }
 }
 
-export function applyProvidersUpdated(payload: ServerProviderUpdatedPayload): void {
+function applyProvidersUpdated(payload: ServerProviderUpdatedPayload): void {
   const latestServerConfig = getServerConfig();
   emitProvidersUpdated(payload);
 
@@ -144,7 +141,7 @@ export function applySettingsUpdated(settings: ServerSettings): void {
   emitServerConfigUpdated(toServerConfigUpdatedPayload(nextConfig), "settingsUpdated");
 }
 
-export function emitWelcome(payload: ServerLifecycleWelcomePayload): void {
+function emitWelcome(payload: ServerLifecycleWelcomePayload): void {
   appAtomRegistry.set(welcomeAtom, payload);
 }
 
@@ -158,12 +155,6 @@ export function onServerConfigUpdated(
   return subscribeLatest(serverConfigUpdatedAtom, (notification) => {
     listener(notification.payload, notification.source);
   });
-}
-
-export function onProvidersUpdated(
-  listener: (payload: ServerProviderUpdatedPayload) => void,
-): () => void {
-  return subscribeLatest(providersUpdatedAtom, listener);
 }
 
 export function startServerStateSync(client: ServerStateClient): () => void {

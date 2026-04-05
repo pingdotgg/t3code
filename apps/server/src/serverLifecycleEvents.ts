@@ -10,7 +10,7 @@ interface SnapshotState {
   readonly events: ReadonlyArray<ServerLifecycleStreamEvent>;
 }
 
-export interface ServerLifecycleEventsShape {
+interface ServerLifecycleEventsShape {
   readonly publish: (event: LifecycleEventInput) => Effect.Effect<ServerLifecycleStreamEvent>;
   readonly snapshot: Effect.Effect<SnapshotState>;
   readonly stream: Stream.Stream<ServerLifecycleStreamEvent>;

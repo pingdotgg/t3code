@@ -1,6 +1,6 @@
-export const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
-export const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 780;
-export const COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX =
+const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
+const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 780;
+const COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX =
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX;
 const COMPOSER_FOOTER_CONTENT_GAP_PX = 8;
 const COMPOSER_PRIMARY_ACTIONS_COMPACT_RECOVERY_PX = 120;
@@ -25,7 +25,7 @@ export function shouldUseCompactComposerPrimaryActions(
   return width !== null && width < COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX;
 }
 
-export function measureComposerFooterOverflowPx(input: {
+function measureComposerFooterOverflowPx(input: {
   footerContentWidth: number | null;
   leadingContentWidth: number | null;
   actionsWidth: number | null;

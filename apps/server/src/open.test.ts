@@ -3,12 +3,8 @@ import { assert, it } from "@effect/vitest";
 import { assertSuccess } from "@effect/vitest/utils";
 import { FileSystem, Path, Effect } from "effect";
 
-import {
-  isCommandAvailable,
-  launchDetached,
-  resolveAvailableEditors,
-  resolveEditorLaunch,
-} from "./open";
+import { launchDetached, resolveAvailableEditors, resolveEditorLaunch } from "./open.logic";
+import { isCommandAvailable } from "./open.shared";
 
 it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
   it.effect("returns commands for command-based editors", () =>

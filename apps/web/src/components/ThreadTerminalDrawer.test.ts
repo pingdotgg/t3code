@@ -6,7 +6,7 @@ import {
   selectTerminalEventEntriesAfterSnapshot,
   shouldHandleTerminalSelectionMouseUp,
   terminalSelectionActionDelayForClickCount,
-} from "./ThreadTerminalDrawer";
+} from "./ThreadTerminalDrawer.logic";
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {

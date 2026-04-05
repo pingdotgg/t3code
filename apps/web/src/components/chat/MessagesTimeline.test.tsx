@@ -2,6 +2,10 @@ import { MessageId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+vi.mock("../ChatMarkdown", () => ({
+  default: ({ text }: { text: string }) => <div data-chat-markdown="mock">{text}</div>,
+}));
+
 function matchMedia() {
   return {
     matches: false,
@@ -9,6 +13,8 @@ function matchMedia() {
     removeEventListener: () => {},
   };
 }
+
+let MessagesTimeline: (typeof import("./MessagesTimeline"))["MessagesTimeline"];
 
 beforeAll(() => {
   const classList = {
@@ -42,9 +48,12 @@ beforeAll(() => {
   });
 });
 
+beforeAll(async () => {
+  ({ MessagesTimeline } = await import("./MessagesTimeline"));
+});
+
 describe("MessagesTimeline", () => {
-  it("renders inline terminal labels with the composer chip UI", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
+  it("renders inline terminal labels with the composer chip UI", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         hasMessages
@@ -97,8 +106,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("yoo what&#x27;s ");
   });
 
-  it("renders context compaction entries in the normal work log", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
+  it("renders context compaction entries in the normal work log", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         hasMessages

@@ -41,7 +41,7 @@ import { ProviderSessionRuntimeRepository } from "../../persistence/Services/Pro
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
+} from "../../persistence/Layers/Sqlite.testing.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
 

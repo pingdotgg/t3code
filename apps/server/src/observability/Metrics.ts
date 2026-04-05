@@ -54,22 +54,6 @@ export const providerRuntimeEventsTotal = Metric.counter("t3_provider_runtime_ev
   description: "Total canonical provider runtime events processed.",
 });
 
-export const gitCommandsTotal = Metric.counter("t3_git_commands_total", {
-  description: "Total git commands executed by the server runtime.",
-});
-
-export const gitCommandDuration = Metric.timer("t3_git_command_duration", {
-  description: "Git command execution duration.",
-});
-
-export const terminalSessionsTotal = Metric.counter("t3_terminal_sessions_total", {
-  description: "Total terminal sessions started.",
-});
-
-export const terminalRestartsTotal = Metric.counter("t3_terminal_restarts_total", {
-  description: "Total terminal restart requests handled.",
-});
-
 export const metricAttributes = (
   attributes: Readonly<Record<string, unknown>>,
 ): ReadonlyArray<[string, string]> => Object.entries(compactMetricAttributes(attributes));
@@ -80,7 +64,7 @@ export const increment = (
   amount = 1,
 ) => Metric.update(Metric.withAttributes(metric, metricAttributes(attributes)), amount);
 
-export interface WithMetricsOptions {
+interface WithMetricsOptions {
   readonly counter?: Metric.Metric<number, unknown>;
   readonly timer?: Metric.Metric<Duration.Duration, unknown>;
   readonly attributes?:

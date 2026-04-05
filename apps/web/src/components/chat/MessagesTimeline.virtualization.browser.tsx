@@ -6,7 +6,7 @@ import { useCallback, useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-import { deriveTimelineEntries, type WorkLogEntry } from "../../session-logic";
+import { deriveTimelineEntries } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { MessagesTimeline } from "./MessagesTimeline";
 import {
@@ -19,6 +19,8 @@ const DEFAULT_VIEWPORT = {
   height: 1_100,
 };
 const MARKDOWN_CWD = "/repo/project";
+
+type WorkLogEntry = Parameters<typeof deriveTimelineEntries>[2][number];
 
 interface RowMeasurement {
   actualHeightPx: number;

@@ -1,9 +1,7 @@
 import { Cause, Exit } from "effect";
 
-export type MetricAttributeValue = string;
-export type MetricAttributes = Readonly<Record<string, MetricAttributeValue>>;
-export type TraceAttributes = Readonly<Record<string, unknown>>;
-export type ObservabilityOutcome = "success" | "failure" | "interrupt";
+type MetricAttributes = Readonly<Record<string, string>>;
+type ObservabilityOutcome = "success" | "failure" | "interrupt";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -76,7 +74,7 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
 
 export function compactTraceAttributes(
   attributes: Readonly<Record<string, unknown>>,
-): TraceAttributes {
+): Readonly<Record<string, unknown>> {
   return Object.fromEntries(
     Object.entries(attributes)
       .filter(([, value]) => value !== undefined)

@@ -5,8 +5,9 @@ import { commandForProjectScript } from "../projectScripts";
 import {
   decodeProjectScriptKeybindingRule,
   keybindingValueForCommand,
-  PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE,
 } from "./projectScriptKeybindings";
+
+const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE = "Invalid keybinding.";
 
 describe("projectScriptKeybindings", () => {
   it("decodes and trims valid keybinding rules", () => {

@@ -36,7 +36,7 @@ import { vi } from "vitest";
 
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
-import { makeRoutesLayer } from "./server.ts";
+import { makeRoutesLayer } from "./server.routes.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
 import {
   CheckpointDiffQuery,
@@ -44,8 +44,8 @@ import {
 } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { GitCore, type GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
-import { Keybindings, type KeybindingsShape } from "./keybindings.ts";
-import { Open, type OpenShape } from "./open.ts";
+import { Keybindings } from "./keybindings.ts";
+import { Open } from "./open.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -60,9 +60,9 @@ import {
   ProviderRegistry,
   type ProviderRegistryShape,
 } from "./provider/Services/ProviderRegistry.ts";
-import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
-import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
-import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
+import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
+import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
 import {
   BrowserTraceCollector,
@@ -246,10 +246,10 @@ const makeBrowserOtlpPayload = (spanName: string) =>
 const buildAppUnderTest = (options?: {
   config?: Partial<ServerConfigShape>;
   layers?: {
-    keybindings?: Partial<KeybindingsShape>;
+    keybindings?: Partial<typeof Keybindings.Service>;
     providerRegistry?: Partial<ProviderRegistryShape>;
-    serverSettings?: Partial<ServerSettingsShape>;
-    open?: Partial<OpenShape>;
+    serverSettings?: Partial<typeof ServerSettingsService.Service>;
+    open?: Partial<typeof Open.Service>;
     gitCore?: Partial<GitCoreShape>;
     gitManager?: Partial<GitManagerShape>;
     projectSetupScriptRunner?: Partial<ProjectSetupScriptRunnerShape>;
@@ -258,8 +258,8 @@ const buildAppUnderTest = (options?: {
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
-    serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
-    serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    serverLifecycleEvents?: Partial<typeof ServerLifecycleEvents.Service>;
+    serverRuntimeStartup?: Partial<typeof ServerRuntimeStartup.Service>;
   };
 }) =>
   Effect.gen(function* () {

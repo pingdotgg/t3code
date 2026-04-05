@@ -89,7 +89,6 @@ const rpcClientMock = {
 vi.mock("./wsRpcClient", () => {
   return {
     getWsRpcClient: () => rpcClientMock,
-    __resetWsRpcClientForTests: vi.fn(),
   };
 });
 

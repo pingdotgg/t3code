@@ -9,7 +9,7 @@ import {
   syncProjects,
   syncThreads,
   type UiState,
-} from "./uiStateStore";
+} from "./uiStateStore.logic";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {

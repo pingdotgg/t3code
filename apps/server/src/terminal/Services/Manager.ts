@@ -19,10 +19,8 @@ import {
   TerminalRestartInput,
   TerminalSessionSnapshot,
   TerminalSessionLookupError,
-  TerminalSessionStatus,
   TerminalWriteInput,
 } from "@t3tools/contracts";
-import { PtyProcess } from "./PTY";
 import { Effect, ServiceMap } from "effect";
 
 export {
@@ -32,37 +30,6 @@ export {
   TerminalNotRunningError,
   TerminalSessionLookupError,
 };
-
-export interface TerminalSessionState {
-  threadId: string;
-  terminalId: string;
-  cwd: string;
-  worktreePath: string | null;
-  status: TerminalSessionStatus;
-  pid: number | null;
-  history: string;
-  pendingHistoryControlSequence: string;
-  exitCode: number | null;
-  exitSignal: number | null;
-  updatedAt: string;
-  cols: number;
-  rows: number;
-  process: PtyProcess | null;
-  unsubscribeData: (() => void) | null;
-  unsubscribeExit: (() => void) | null;
-  hasRunningSubprocess: boolean;
-  runtimeEnv: Record<string, string> | null;
-}
-
-export interface ShellCandidate {
-  shell: string;
-  args?: string[];
-}
-
-export interface TerminalStartInput extends TerminalOpenInput {
-  cols: number;
-  rows: number;
-}
 
 /**
  * TerminalManagerShape - Service API for terminal session lifecycle operations.

@@ -26,7 +26,7 @@ export function fixPath(
   }
 }
 
-export const expandHomePath = Effect.fn(function* (input: string) {
+const expandHomePath = Effect.fn(function* (input: string) {
   const { join } = yield* Path.Path;
   if (input === "~") {
     return OS.homedir();
@@ -37,10 +37,15 @@ export const expandHomePath = Effect.fn(function* (input: string) {
   return input;
 });
 
+export const resolveCliPath = Effect.fn(function* (raw: string) {
+  const { resolve } = yield* Path.Path;
+  return resolve(yield* expandHomePath(raw.trim()));
+});
+
 export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
-  const { join, resolve } = yield* Path.Path;
+  const { join } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
     return join(OS.homedir(), ".t3");
   }
-  return resolve(yield* expandHomePath(raw.trim()));
+  return yield* resolveCliPath(raw);
 });

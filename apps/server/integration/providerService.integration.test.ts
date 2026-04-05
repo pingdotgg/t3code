@@ -15,7 +15,7 @@ import {
 } from "../src/provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
-import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
+import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.testing.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
 
 import {
