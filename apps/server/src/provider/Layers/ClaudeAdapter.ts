@@ -684,6 +684,36 @@ function extractContentBlockText(block: unknown): string {
   return candidate.type === "text" && typeof candidate.text === "string" ? candidate.text : "";
 }
 
+type DocumentedClaudeToolUseStartBlock = {
+  readonly type: "tool_use" | "server_tool_use";
+  readonly id: string;
+  readonly name: string;
+  readonly input?: unknown;
+};
+
+function isDocumentedClaudeToolUseStartBlock(
+  block: unknown,
+): block is DocumentedClaudeToolUseStartBlock {
+  if (!block || typeof block !== "object") {
+    return false;
+  }
+
+  const candidate = block as {
+    type?: unknown;
+    id?: unknown;
+    name?: unknown;
+    input?: unknown;
+  };
+
+  // Anthropic documents streamed server_tool_use blocks, but the current SDK
+  // declarations still type content_block_start more narrowly.
+  return (
+    (candidate.type === "tool_use" || candidate.type === "server_tool_use") &&
+    typeof candidate.id === "string" &&
+    typeof candidate.name === "string"
+  );
+}
+
 function extractTextContent(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -1623,33 +1653,23 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (event.type === "content_block_start") {
       const { index, content_block: block } = event;
-      const blockType = (block as { type?: string }).type;
-      if (blockType === "text") {
+      if (block.type === "text") {
         yield* ensureAssistantTextBlock(context, index, {
           fallbackText: extractContentBlockText(block),
         });
         return;
       }
-      if (
-        blockType !== "tool_use" &&
-        blockType !== "server_tool_use" &&
-        blockType !== "mcp_tool_use"
-      ) {
+      if (!isDocumentedClaudeToolUseStartBlock(block)) {
         return;
       }
 
-      const toolBlock = block as {
-        readonly id: string;
-        readonly name: string;
-        readonly input?: unknown;
-      };
-      const toolName = toolBlock.name;
+      const toolName = block.name;
       const itemType = classifyToolItemType(toolName);
       const toolInput =
-        typeof toolBlock.input === "object" && toolBlock.input !== null
-          ? (toolBlock.input as Record<string, unknown>)
+        typeof block.input === "object" && block.input !== null
+          ? (block.input as Record<string, unknown>)
           : {};
-      const itemId = toolBlock.id;
+      const itemId = block.id;
       const detail = summarizeToolRequest(toolName, toolInput);
       const inputFingerprint =
         Object.keys(toolInput).length > 0 ? toolInputFingerprint(toolInput) : undefined;
