@@ -19,6 +19,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
 } from "./session-logic";
+import { sanitizeThreadErrorMessage } from "./rpc/transportError";
 import { type ChatMessage, type Project, type SidebarThreadSummary, type Thread } from "./types";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -165,7 +166,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     session: thread.session ? mapSession(thread.session) : null,
     messages: thread.messages.map(mapMessage),
     proposedPlans: thread.proposedPlans.map(mapProposedPlan),
-    error: thread.session?.lastError ?? null,
+    error: sanitizeThreadErrorMessage(thread.session?.lastError),
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
     updatedAt: thread.updatedAt,
@@ -894,7 +895,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       return updateThreadState(state, event.payload.threadId, (thread) => ({
         ...thread,
         session: mapSession(event.payload.session),
-        error: event.payload.session.lastError ?? null,
+        error: sanitizeThreadErrorMessage(event.payload.session.lastError),
         latestTurn:
           event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
             ? buildLatestTurn({

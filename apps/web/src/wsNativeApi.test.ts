@@ -243,6 +243,20 @@ describe("wsNativeApi", () => {
     expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
   });
 
+  it("forwards orchestration stream subscription options to the RPC client", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const onDomainEvent = vi.fn();
+    const onResubscribe = vi.fn();
+
+    api.orchestration.onDomainEvent(onDomainEvent, { onResubscribe });
+
+    expect(rpcClientMock.orchestration.onDomainEvent).toHaveBeenCalledWith(onDomainEvent, {
+      onResubscribe,
+    });
+  });
+
   it("sends orchestration dispatch commands as the direct RPC payload", async () => {
     rpcClientMock.orchestration.dispatchCommand.mockResolvedValue({ sequence: 1 });
     const { createWsNativeApi } = await import("./wsNativeApi");

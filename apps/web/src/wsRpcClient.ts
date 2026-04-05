@@ -10,11 +10,16 @@ import {
 import { Effect, Stream } from "effect";
 
 import { type WsRpcProtocolClient } from "./rpc/protocol";
+import { resetWsReconnectBackoff } from "./rpc/wsConnectionState";
 import { WsTransport } from "./wsTransport";
 
 type RpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends RpcTag> = WsRpcProtocolClient[TTag];
 type RpcInput<TTag extends RpcTag> = Parameters<RpcMethod<TTag>>[0];
+
+interface StreamSubscriptionOptions {
+  readonly onResubscribe?: () => void;
+}
 
 type RpcUnaryMethod<TTag extends RpcTag> =
   RpcMethod<TTag> extends (input: any, options?: any) => Effect.Effect<infer TSuccess, any, any>
@@ -28,7 +33,7 @@ type RpcUnaryNoArgMethod<TTag extends RpcTag> =
 
 type RpcStreamMethod<TTag extends RpcTag> =
   RpcMethod<TTag> extends (input: any, options?: any) => Stream.Stream<infer TEvent, any, any>
-    ? (listener: (event: TEvent) => void) => () => void
+    ? (listener: (event: TEvent) => void, options?: StreamSubscriptionOptions) => () => void
     : never;
 
 interface GitRunStackedActionOptions {
@@ -37,6 +42,7 @@ interface GitRunStackedActionOptions {
 
 export interface WsRpcClient {
   readonly dispose: () => Promise<void>;
+  readonly reconnect: () => Promise<void>;
   readonly terminal: {
     readonly open: RpcUnaryMethod<typeof WS_METHODS.terminalOpen>;
     readonly write: RpcUnaryMethod<typeof WS_METHODS.terminalWrite>;
@@ -113,6 +119,10 @@ export async function __resetWsRpcClientForTests() {
 export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
   return {
     dispose: () => transport.dispose(),
+    reconnect: async () => {
+      resetWsReconnectBackoff();
+      await transport.reconnect();
+    },
     terminal: {
       open: (input) => transport.request((client) => client[WS_METHODS.terminalOpen](input)),
       write: (input) => transport.request((client) => client[WS_METHODS.terminalWrite](input)),
@@ -120,8 +130,12 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
       clear: (input) => transport.request((client) => client[WS_METHODS.terminalClear](input)),
       restart: (input) => transport.request((client) => client[WS_METHODS.terminalRestart](input)),
       close: (input) => transport.request((client) => client[WS_METHODS.terminalClose](input)),
-      onEvent: (listener) =>
-        transport.subscribe((client) => client[WS_METHODS.subscribeTerminalEvents]({}), listener),
+      onEvent: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeTerminalEvents]({}),
+          listener,
+          options,
+        ),
     },
     projects: {
       searchEntries: (input) =>
@@ -179,10 +193,18 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
       getSettings: () => transport.request((client) => client[WS_METHODS.serverGetSettings]({})),
       updateSettings: (patch) =>
         transport.request((client) => client[WS_METHODS.serverUpdateSettings]({ patch })),
-      subscribeConfig: (listener) =>
-        transport.subscribe((client) => client[WS_METHODS.subscribeServerConfig]({}), listener),
-      subscribeLifecycle: (listener) =>
-        transport.subscribe((client) => client[WS_METHODS.subscribeServerLifecycle]({}), listener),
+      subscribeConfig: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeServerConfig]({}),
+          listener,
+          options,
+        ),
+      subscribeLifecycle: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+          listener,
+          options,
+        ),
     },
     orchestration: {
       getSnapshot: () =>
@@ -197,10 +219,11 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
         transport
           .request((client) => client[ORCHESTRATION_WS_METHODS.replayEvents](input))
           .then((events) => [...events]),
-      onDomainEvent: (listener) =>
+      onDomainEvent: (listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribeOrchestrationDomainEvents]({}),
           listener,
+          options,
         ),
     },
   };
