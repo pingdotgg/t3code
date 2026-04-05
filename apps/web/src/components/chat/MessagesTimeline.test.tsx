@@ -43,15 +43,34 @@ beforeAll(() => {
 });
 
 describe("MessagesTimeline", () => {
+  const baseProps = {
+    hasMessages: true,
+    isWorking: false,
+    activeTurnInProgress: false,
+    activeTurnStartedAt: null,
+    scrollContainer: null,
+    completionDividerBeforeEntryId: null,
+    completionSummary: null,
+    turnDiffSummaryByAssistantMessageId: new Map(),
+    nowIso: "2026-03-17T19:12:30.000Z",
+    expandedWorkGroups: {},
+    onToggleWorkGroup: () => {},
+    onOpenTurnDiff: () => {},
+    revertTurnCountByUserMessageId: new Map(),
+    onRevertUserMessage: () => {},
+    isRevertingCheckpoint: false,
+    onImageExpand: () => {},
+    markdownCwd: undefined,
+    resolvedTheme: "light" as const,
+    timestampFormat: "locale" as const,
+    workspaceRoot: undefined,
+  };
+
   it("renders inline terminal labels with the composer chip UI", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
-        hasMessages
-        isWorking={false}
-        activeTurnInProgress={false}
-        activeTurnStartedAt={null}
-        scrollContainer={null}
+        {...baseProps}
         timelineEntries={[
           {
             id: "entry-1",
@@ -74,21 +93,6 @@ describe("MessagesTimeline", () => {
             },
           },
         ]}
-        completionDividerBeforeEntryId={null}
-        completionSummary={null}
-        turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
-        expandedWorkGroups={{}}
-        onToggleWorkGroup={() => {}}
-        onOpenTurnDiff={() => {}}
-        revertTurnCountByUserMessageId={new Map()}
-        onRevertUserMessage={() => {}}
-        isRevertingCheckpoint={false}
-        onImageExpand={() => {}}
-        markdownCwd={undefined}
-        resolvedTheme="light"
-        timestampFormat="locale"
-        workspaceRoot={undefined}
       />,
     );
 
@@ -97,47 +101,107 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("yoo what&#x27;s ");
   });
 
-  it("renders context compaction entries in the normal work log", async () => {
+  it("renders context compaction entries inside collapsible work log groups", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
+    const timelineEntries = [
+      {
+        id: "entry-1",
+        kind: "work" as const,
+        createdAt: "2026-03-17T19:12:28.000Z",
+        entry: {
+          id: "work-1",
+          createdAt: "2026-03-17T19:12:28.000Z",
+          label: "Context compacted",
+          tone: "info" as const,
+        },
+      },
+    ];
+    const collapsedMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...baseProps} timelineEntries={timelineEntries} />,
+    );
+    const expandedMarkup = renderToStaticMarkup(
       <MessagesTimeline
-        hasMessages
-        isWorking={false}
-        activeTurnInProgress={false}
-        activeTurnStartedAt={null}
-        scrollContainer={null}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-1",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Context compacted",
-              tone: "info",
-            },
-          },
-        ]}
-        completionDividerBeforeEntryId={null}
-        completionSummary={null}
-        turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
-        expandedWorkGroups={{}}
-        onToggleWorkGroup={() => {}}
-        onOpenTurnDiff={() => {}}
-        revertTurnCountByUserMessageId={new Map()}
-        onRevertUserMessage={() => {}}
-        isRevertingCheckpoint={false}
-        onImageExpand={() => {}}
-        markdownCwd={undefined}
-        resolvedTheme="light"
-        timestampFormat="locale"
-        workspaceRoot={undefined}
+        {...baseProps}
+        expandedWorkGroups={{ "entry-1": true }}
+        timelineEntries={timelineEntries}
       />,
     );
 
-    expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work log");
+    expect(collapsedMarkup).toContain("Work log (1)");
+    expect(collapsedMarkup).toContain("lucide-chevron-down");
+    expect(collapsedMarkup).not.toContain("Context compacted");
+
+    expect(expandedMarkup).toContain("Work log (1)");
+    expect(expandedMarkup).toContain("Context compacted");
+  });
+
+  it("renders tool call groups collapsed by default", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...baseProps}
+        timelineEntries={[
+          {
+            id: "work-group-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-entry-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Ran command",
+              tone: "tool",
+              command: "bun lint",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Tool calls (1)");
+    expect(markup).toContain("lucide-chevron-down");
+    expect(markup).not.toContain("Ran command");
+    expect(markup).not.toContain("bun lint");
+  });
+
+  it("renders expanded work log groups with their entries", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...baseProps}
+        expandedWorkGroups={{ "work-group-1": true }}
+        timelineEntries={[
+          {
+            id: "work-group-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-entry-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Approval resolved",
+              tone: "info",
+              detail: "Command approved",
+            },
+          },
+          {
+            id: "work-group-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-entry-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Tool call",
+              tone: "tool",
+              detail: "Read: /tmp/app.ts",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Work log (2)");
+    expect(markup).toContain("Approval resolved");
+    expect(markup).toContain("Command approved");
+    expect(markup).toContain("Tool call");
+    expect(markup).toContain("Read: /tmp/app.ts");
   });
 });
