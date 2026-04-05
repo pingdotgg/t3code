@@ -1399,7 +1399,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
-  const gitStatusQuery = useQuery(gitStatusQueryOptions(gitCwd));
+  const gitPollingEnabled = settings.gitPollingMode !== "disabled";
+  const gitStatusQuery = useQuery(
+    gitStatusQueryOptions(gitCwd, { pollingEnabled: gitPollingEnabled }),
+  );
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   const modelOptionsByProvider = useMemo(

@@ -36,6 +36,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../remoteRefs.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -74,6 +75,7 @@ interface ExecuteGitOptions {
   maxOutputBytes?: number | undefined;
   truncateOutputAtMaxBytes?: boolean | undefined;
   progress?: ExecuteGitProgress | undefined;
+  env?: Record<string, string> | undefined;
 }
 
 function parseBranchAb(value: string): { ahead: number; behind: number } {
@@ -632,6 +634,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { worktreesDir } = yield* ServerConfig;
+  const serverSettings = yield* ServerSettingsService;
 
   let executeRaw: GitCoreShape["execute"];
 
@@ -770,6 +773,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       cwd,
       args,
       ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
+      ...(options.env !== undefined ? { env: options.env } : {}),
       allowNonZeroExit: true,
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
@@ -893,20 +897,35 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   const fetchUpstreamRefForStatus = (
     gitCommonDir: string,
     upstream: { upstreamRef: string; remoteName: string; upstreamBranch: string },
-  ): Effect.Effect<void, GitCommandError> => {
-    const refspec = `+refs/heads/${upstream.upstreamBranch}:refs/remotes/${upstream.upstreamRef}`;
-    const fetchCwd =
-      path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-    return executeGit(
-      "GitCore.fetchUpstreamRefForStatus",
-      fetchCwd,
-      ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", upstream.remoteName, refspec],
-      {
-        allowNonZeroExit: true,
-        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
-      },
-    ).pipe(Effect.asVoid);
-  };
+  ): Effect.Effect<void, GitCommandError> =>
+    Effect.gen(function* () {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.catch(() => Effect.succeed(null)),
+      );
+      const quietEnv: Record<string, string> =
+        settings?.gitQuietBackgroundChecks
+          ? {
+              GIT_TERMINAL_PROMPT: "0",
+              SSH_ASKPASS: "",
+              GIT_ASKPASS: "",
+              GCM_INTERACTIVE: "never",
+            }
+          : {};
+
+      const refspec = `+refs/heads/${upstream.upstreamBranch}:refs/remotes/${upstream.upstreamRef}`;
+      const fetchCwd =
+        path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+      yield* executeGit(
+        "GitCore.fetchUpstreamRefForStatus",
+        fetchCwd,
+        ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", upstream.remoteName, refspec],
+        {
+          allowNonZeroExit: true,
+          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+          env: quietEnv,
+        },
+      );
+    }).pipe(Effect.asVoid);
 
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
     const gitCommonDir = yield* runGitStdout("GitCore.resolveGitCommonDir", cwd, [
@@ -940,6 +959,11 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
     cwd: string,
   ) {
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
+    if (settings?.gitPollingMode === "disabled") return;
+
     const upstream = yield* resolveCurrentUpstream(cwd);
     if (!upstream) return;
     const gitCommonDir = yield* resolveGitCommonDir(cwd);

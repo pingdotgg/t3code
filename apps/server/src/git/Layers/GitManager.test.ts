@@ -624,6 +624,7 @@ function makeManager(input?: {
   const gitCoreLayer = GitCoreLive.pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(ServerConfigLayer),
+    Layer.provideMerge(serverSettingsLayer),
   );
 
   const managerLayer = Layer.mergeAll(
@@ -649,6 +650,7 @@ const asThreadId = (threadId: string) => threadId as ThreadId;
 
 const GitManagerTestLayer = GitCoreLive.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
+  Layer.provide(ServerSettingsService.layerTest()),
   Layer.provideMerge(NodeServices.layer),
 );
 

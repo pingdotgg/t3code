@@ -44,6 +44,9 @@ export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientS
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 
+export const GitPollingMode = Schema.Literals(["all", "active-session", "disabled"]);
+export type GitPollingMode = typeof GitPollingMode.Type;
+
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
@@ -95,6 +98,12 @@ export const ServerSettings = Schema.Struct({
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   }).pipe(Schema.withDecodingDefault(() => ({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(() => ({}))),
+
+  // Git sync settings
+  gitPollingMode: GitPollingMode.pipe(
+    Schema.withDecodingDefault(() => "all" as const satisfies GitPollingMode),
+  ),
+  gitQuietBackgroundChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -177,5 +186,7 @@ export const ServerSettingsPatch = Schema.Struct({
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
     }),
   ),
+  gitPollingMode: Schema.optionalKey(GitPollingMode),
+  gitQuietBackgroundChecks: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;

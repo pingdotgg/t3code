@@ -12,6 +12,7 @@ import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ThreadId } from "@t3tools/contracts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -19,6 +20,7 @@ const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
 });
 const GitCoreTestLayer = GitCoreLive.pipe(
   Layer.provide(ServerConfigLayer),
+  Layer.provide(ServerSettingsService.layerTest()),
   Layer.provide(NodeServices.layer),
 );
 const CheckpointStoreTestLayer = CheckpointStoreLive.pipe(

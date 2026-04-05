@@ -20,6 +20,7 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "../lib/gitReactQuery";
+import { useSettings } from "../hooks/useSettings";
 import { readNativeApi } from "../nativeApi";
 import { parsePullRequestReference } from "../pullRequestReference";
 import {
@@ -89,16 +90,24 @@ export function BranchToolbarBranchSelector({
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
-  const branchStatusQuery = useQuery(gitStatusQueryOptions(branchCwd));
+  const { gitPollingMode } = useSettings();
+  const gitPollingEnabled = gitPollingMode !== "disabled";
+  const branchStatusQuery = useQuery(
+    gitStatusQueryOptions(branchCwd, { pollingEnabled: gitPollingEnabled }),
+  );
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
 
   useEffect(() => {
     if (!branchCwd) return;
     void queryClient.prefetchInfiniteQuery(
-      gitBranchSearchInfiniteQueryOptions({ cwd: branchCwd, query: "" }),
+      gitBranchSearchInfiniteQueryOptions({
+        cwd: branchCwd,
+        query: "",
+        pollingEnabled: gitPollingEnabled,
+      }),
     );
-  }, [branchCwd, queryClient]);
+  }, [branchCwd, queryClient, gitPollingEnabled]);
 
   const {
     data: branchesSearchData,
@@ -111,6 +120,7 @@ export function BranchToolbarBranchSelector({
       cwd: branchCwd,
       query: deferredTrimmedBranchQuery,
       enabled: isBranchMenuOpen,
+      pollingEnabled: gitPollingEnabled,
     }),
   );
   const branches = useMemo(

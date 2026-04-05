@@ -86,6 +86,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const GIT_POLLING_MODE_LABELS = {
+  all: "All sessions",
+  "active-session": "Active session only",
+  disabled: "Disabled",
+} as const;
+
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
@@ -1409,6 +1415,80 @@ export function GeneralSettingsPanel() {
             </div>
           );
         })}
+      </SettingsSection>
+
+      <SettingsSection title="Git Sync">
+        <SettingsRow
+          title="Background git polling"
+          description="Controls how t3code automatically fetches from remote and refreshes git status. Disabling stops all automatic git sync, including ahead/behind counts."
+          resetAction={
+            settings.gitPollingMode !== DEFAULT_UNIFIED_SETTINGS.gitPollingMode ? (
+              <SettingResetButton
+                label="background git polling"
+                onClick={() =>
+                  updateSettings({
+                    gitPollingMode: DEFAULT_UNIFIED_SETTINGS.gitPollingMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.gitPollingMode}
+              onValueChange={(value) => {
+                if (value === "all" || value === "active-session" || value === "disabled") {
+                  updateSettings({ gitPollingMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-48" aria-label="Git polling mode">
+                <SelectValue>
+                  {GIT_POLLING_MODE_LABELS[settings.gitPollingMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="all">
+                  {GIT_POLLING_MODE_LABELS.all}
+                </SelectItem>
+                <SelectItem hideIndicator value="active-session">
+                  {GIT_POLLING_MODE_LABELS["active-session"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="disabled">
+                  {GIT_POLLING_MODE_LABELS.disabled}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Quiet background fetches"
+          description="Suppress credential prompts during automatic git fetches. Useful with SSH agents like 1Password that require interactive confirmation per request."
+          resetAction={
+            settings.gitQuietBackgroundChecks !==
+            DEFAULT_UNIFIED_SETTINGS.gitQuietBackgroundChecks ? (
+              <SettingResetButton
+                label="quiet background fetches"
+                onClick={() =>
+                  updateSettings({
+                    gitQuietBackgroundChecks: DEFAULT_UNIFIED_SETTINGS.gitQuietBackgroundChecks,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.gitQuietBackgroundChecks}
+              disabled={settings.gitPollingMode === "disabled"}
+              onCheckedChange={(checked) =>
+                updateSettings({ gitQuietBackgroundChecks: Boolean(checked) })
+              }
+              aria-label="Suppress credential prompts during background fetches"
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection title="Advanced">
