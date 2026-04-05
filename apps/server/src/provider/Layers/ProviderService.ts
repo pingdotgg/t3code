@@ -194,7 +194,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     }).pipe(Effect.andThen(publishRuntimeEvent(event)));
 
   yield* Effect.forEach(adapters, (adapter) =>
-    Stream.runForEach(adapter.streamEvents, processRuntimeEvent).pipe(Effect.forkScoped),
+    Effect.gen(function* () {
+      const pull = yield* Stream.toPull(adapter.streamEvents);
+      yield* Stream.fromPull(Effect.succeed(pull)).pipe(
+        Stream.runForEach(processRuntimeEvent),
+        Effect.forkScoped,
+      );
+    }),
   ).pipe(Effect.asVoid);
 
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {

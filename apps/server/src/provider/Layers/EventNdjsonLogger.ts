@@ -266,14 +266,21 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
   });
 
   const close = Effect.fn("close")(function* () {
-    const state = yield* SynchronizedRef.get(stateRef);
-    for (const writer of state.threadWriters.values()) {
-      yield* writer.close();
-    }
-    yield* SynchronizedRef.set(stateRef, {
-      threadWriters: new Map<string, ThreadWriter>(),
-      failedSegments: new Set<string>(),
-    });
+    yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
+      Effect.gen(function* () {
+        for (const writer of state.threadWriters.values()) {
+          yield* writer.close();
+        }
+
+        return [
+          undefined,
+          {
+            threadWriters: new Map<string, ThreadWriter>(),
+            failedSegments: new Set<string>(),
+          },
+        ] as const;
+      }),
+    );
   });
 
   return {

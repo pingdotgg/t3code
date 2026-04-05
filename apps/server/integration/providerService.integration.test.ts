@@ -29,6 +29,10 @@ import {
   codexTurnTextFixture,
 } from "./fixtures/providerRuntime.ts";
 
+const waitForRealtimeSubscription = Effect.promise(
+  () => new Promise<void>((resolve) => setTimeout(resolve, 50)),
+);
+
 const makeWorkspaceDirectory = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
@@ -86,6 +90,9 @@ const collectEventsDuring = <A, E, R>(
       Effect.forkScoped,
     );
 
+    // `Stream.fromPubSub` subscriptions attach when the forked fiber runs, not
+    // when the stream value is constructed.
+    yield* waitForRealtimeSubscription;
     yield* action;
 
     return yield* Effect.forEach(
@@ -104,7 +111,6 @@ const runTurn = (input: {
 }) =>
   Effect.gen(function* () {
     yield* input.harness.queueTurnResponse(input.threadId, input.response);
-
     return yield* collectEventsDuring(
       input.provider.streamEvents,
       input.response.events.length,
