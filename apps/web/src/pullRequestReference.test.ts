@@ -14,7 +14,7 @@ describe("parsePullRequestReference", () => {
   });
 
   it("accepts #number references", () => {
-    expect(parsePullRequestReference("#42")).toBe("#42");
+    expect(parsePullRequestReference("#42")).toBe("42");
   });
 
   it("accepts gh pr checkout commands with raw numbers", () => {
@@ -22,7 +22,7 @@ describe("parsePullRequestReference", () => {
   });
 
   it("accepts gh pr checkout commands with #number references", () => {
-    expect(parsePullRequestReference("gh pr checkout #42")).toBe("#42");
+    expect(parsePullRequestReference("gh pr checkout #42")).toBe("42");
   });
 
   it("accepts gh pr checkout commands with GitHub pull request URLs", () => {
