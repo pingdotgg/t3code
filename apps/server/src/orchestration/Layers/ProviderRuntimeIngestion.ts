@@ -545,6 +545,7 @@ function runtimeEventToActivities(
           kind: "tool.updated",
           summary: event.payload.title ?? "Tool updated",
           payload: {
+            ...(event.itemId ? { itemId: event.itemId } : {}),
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
@@ -568,6 +569,7 @@ function runtimeEventToActivities(
           kind: "tool.completed",
           summary: event.payload.title ?? "Tool",
           payload: {
+            ...(event.itemId ? { itemId: event.itemId } : {}),
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: event.payload.detail } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
@@ -588,8 +590,9 @@ function runtimeEventToActivities(
           createdAt: event.createdAt,
           tone: "tool",
           kind: "tool.started",
-          summary: `${event.payload.title ?? "Tool"} started`,
+          summary: event.payload.title ?? "Tool started",
           payload: {
+            ...(event.itemId ? { itemId: event.itemId } : {}),
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: event.payload.detail } : {}),
           },
