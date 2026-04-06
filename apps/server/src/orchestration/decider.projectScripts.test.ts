@@ -68,7 +68,7 @@ async function withThreadReadModel(input: {
       payload: {
         threadId: asThreadId(input.threadId),
         projectId: asProjectId(input.projectId),
-        parentThreadId: input.parentThreadId ?? null,
+        parentThreadId: input.parentThreadId === undefined ? null : asThreadId(input.parentThreadId),
         title: `Thread ${input.threadId}`,
         modelSelection: {
           provider: "codex",

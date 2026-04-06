@@ -75,6 +75,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       yield* threads.upsert({
         threadId: ThreadId.makeUnsafe("thread-null-options"),
         projectId: ProjectId.makeUnsafe("project-null-options"),
+        parentThreadId: ThreadId.makeUnsafe("thread-parent"),
         title: "Null options thread",
         modelSelection: {
           provider: "claudeAgent",
@@ -93,8 +94,11 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
 
       const rows = yield* sql<{
         readonly modelSelection: string | null;
+        readonly parentThreadId: string | null;
       }>`
-        SELECT model_selection_json AS "modelSelection"
+        SELECT
+          model_selection_json AS "modelSelection",
+          parent_thread_id AS "parentThreadId"
         FROM projection_threads
         WHERE thread_id = 'thread-null-options'
       `;
@@ -110,10 +114,12 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           model: "claude-opus-4-6",
         }),
       );
+      assert.strictEqual(row.parentThreadId, "thread-parent");
 
       const persisted = yield* threads.getById({
         threadId: ThreadId.makeUnsafe("thread-null-options"),
       });
+      assert.strictEqual(Option.getOrNull(persisted)?.parentThreadId, "thread-parent");
       assert.deepStrictEqual(Option.getOrNull(persisted)?.modelSelection, {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
