@@ -709,6 +709,97 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBe("bun run lint");
   });
 
+  it("unwraps PowerShell command wrappers for displayed command text", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-windows-wrapper",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'bun run lint'",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe("bun run lint");
+    expect(entry?.rawCommand).toBe(
+      "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'bun run lint'",
+    );
+  });
+
+  it("unwraps PowerShell command wrappers from argv-style command payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-windows-wrapper-argv",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "-Command", "rg -n foo ."],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe("rg -n foo .");
+    expect(entry?.rawCommand).toBe(
+      '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "rg -n foo ."',
+    );
+  });
+
+  it("extracts command text from command detail when structured command metadata is missing", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-windows-detail-fallback",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          detail:
+            '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command \'rg -n -F "new Date()" .\' <exited with exit code 0>',
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe('rg -n -F "new Date()" .');
+    expect(entry?.rawCommand).toBe(
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command 'rg -n -F "new Date()" .'`,
+    );
+  });
+
+  it("does not unwrap shell commands when no wrapper flag is present", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-shell-script",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: "bash script.sh",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe("bash script.sh");
+    expect(entry?.rawCommand).toBeUndefined();
+  });
+
   it("keeps compact Codex tool metadata used for icons and labels", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
