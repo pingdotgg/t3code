@@ -30,6 +30,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { GitCoreLive } from "./git/Layers/GitCore";
 import { GitHubCliLive } from "./git/Layers/GitHubCli";
+import { GitStatusBroadcasterLive } from "./git/Layers/GitStatusBroadcaster";
 import { RoutingTextGenerationLive } from "./git/Layers/RoutingTextGeneration";
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
 import { GitManagerLive } from "./git/Layers/GitManager";
@@ -161,15 +162,16 @@ const ProviderLayerLive = Layer.unwrap(
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
+const GitManagerLayerLive = GitManagerLive.pipe(
+  Layer.provideMerge(ProjectSetupScriptRunnerLive),
+  Layer.provideMerge(GitCoreLive),
+  Layer.provideMerge(GitHubCliLive),
+  Layer.provideMerge(RoutingTextGenerationLive),
+);
+
 const GitLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(
-    GitManagerLive.pipe(
-      Layer.provideMerge(ProjectSetupScriptRunnerLive),
-      Layer.provideMerge(GitCoreLive),
-      Layer.provideMerge(GitHubCliLive),
-      Layer.provideMerge(RoutingTextGenerationLive),
-    ),
-  ),
+  Layer.provideMerge(GitManagerLayerLive),
+  Layer.provideMerge(GitStatusBroadcasterLive.pipe(Layer.provide(GitManagerLayerLive))),
   Layer.provideMerge(GitCoreLive),
 );
 

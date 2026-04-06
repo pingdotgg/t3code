@@ -8,9 +8,13 @@ import {
   GitCommandError,
   GitRunStackedActionResult,
   GitStackedAction,
+  type GitStatusLocalResult,
+  type GitStatusRemoteResult,
   ModelSelection,
 } from "@t3tools/contracts";
 import {
+  detectGitHostingProviderFromRemoteUrl,
+  mergeGitStatusParts,
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
@@ -695,26 +699,55 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
 
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
   const normalizeStatusCacheKey = (cwd: string) => canonicalizeExistingPath(cwd);
-  const readStatus = Effect.fn("readStatus")(function* (cwd: string) {
-    const details = yield* gitCore.statusDetails(cwd).pipe(
-      Effect.catchIf(isNotGitRepositoryError, () =>
-        Effect.succeed({
-          isRepo: false,
-          hasOriginRemote: false,
-          isDefaultBranch: false,
-          branch: null,
-          upstreamRef: null,
-          hasWorkingTreeChanges: false,
-          workingTree: { files: [], insertions: 0, deletions: 0 },
-          hasUpstream: false,
-          aheadCount: 0,
-          behindCount: 0,
-        } satisfies GitStatusDetails),
-      ),
-    );
+  const nonRepositoryStatusDetails = {
+    isRepo: false,
+    hasOriginRemote: false,
+    isDefaultBranch: false,
+    branch: null,
+    upstreamRef: null,
+    hasWorkingTreeChanges: false,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+    hasUpstream: false,
+    aheadCount: 0,
+    behindCount: 0,
+  } satisfies GitStatusDetails;
+  const readLocalStatus = Effect.fn("readLocalStatus")(function* (cwd: string) {
+    const details = yield* gitCore
+      .statusDetailsLocal(cwd)
+      .pipe(
+        Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
+      );
+    const hostingProvider = details.isRepo
+      ? yield* resolveHostingProvider(cwd, details.branch)
+      : null;
+
+    return {
+      isRepo: details.isRepo,
+      ...(hostingProvider ? { hostingProvider } : {}),
+      hasOriginRemote: details.hasOriginRemote,
+      isDefaultBranch: details.isDefaultBranch,
+      branch: details.branch,
+      hasWorkingTreeChanges: details.hasWorkingTreeChanges,
+      workingTree: details.workingTree,
+    } satisfies GitStatusLocalResult;
+  });
+  const localStatusResultCache = yield* Cache.makeWith({
+    capacity: STATUS_RESULT_CACHE_CAPACITY,
+    lookup: readLocalStatus,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
+  });
+  const invalidateLocalStatusResultCache = (cwd: string) =>
+    Cache.invalidate(localStatusResultCache, normalizeStatusCacheKey(cwd));
+  const readRemoteStatus = Effect.fn("readRemoteStatus")(function* (cwd: string) {
+    const details = yield* gitCore
+      .statusDetails(cwd)
+      .pipe(Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(null)));
+    if (details === null || !details.isRepo) {
+      return null;
+    }
 
     const pr =
-      details.isRepo && details.branch !== null
+      details.branch !== null
         ? yield* findLatestPr(cwd, {
             branch: details.branch,
             upstreamRef: details.upstreamRef,
@@ -725,28 +758,37 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         : null;
 
     return {
-      isRepo: details.isRepo,
-      hasOriginRemote: details.hasOriginRemote,
-      isDefaultBranch: details.isDefaultBranch,
-      branch: details.branch,
-      hasWorkingTreeChanges: details.hasWorkingTreeChanges,
-      workingTree: details.workingTree,
       hasUpstream: details.hasUpstream,
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
       pr,
-    };
+    } satisfies GitStatusRemoteResult;
   });
-  const statusResultCache = yield* Cache.makeWith({
+  const remoteStatusResultCache = yield* Cache.makeWith({
     capacity: STATUS_RESULT_CACHE_CAPACITY,
-    lookup: readStatus,
+    lookup: readRemoteStatus,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
   });
-  const invalidateStatusResultCache = (cwd: string) =>
-    Cache.invalidate(statusResultCache, normalizeStatusCacheKey(cwd));
+  const invalidateRemoteStatusResultCache = (cwd: string) =>
+    Cache.invalidate(remoteStatusResultCache, normalizeStatusCacheKey(cwd));
 
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.catch(() => Effect.succeed(null)));
+
+  const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
+    cwd: string,
+    branch: string | null,
+  ) {
+    const preferredRemoteName =
+      branch === null
+        ? "origin"
+        : ((yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ?? "origin");
+    const remoteUrl =
+      (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
+      (yield* readConfigValueNullable(cwd, "remote.origin.url"));
+
+    return remoteUrl ? detectGitHostingProviderFromRemoteUrl(remoteUrl) : null;
+  });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
     cwd: string,
@@ -1311,9 +1353,34 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     };
   });
 
-  const status: GitManagerShape["status"] = Effect.fn("status")(function* (input) {
-    return yield* Cache.get(statusResultCache, normalizeStatusCacheKey(input.cwd));
+  const localStatus: GitManagerShape["localStatus"] = Effect.fn("localStatus")(function* (input) {
+    return yield* Cache.get(localStatusResultCache, normalizeStatusCacheKey(input.cwd));
   });
+  const remoteStatus: GitManagerShape["remoteStatus"] = Effect.fn("remoteStatus")(
+    function* (input) {
+      return yield* Cache.get(remoteStatusResultCache, normalizeStatusCacheKey(input.cwd));
+    },
+  );
+  const status: GitManagerShape["status"] = Effect.fn("status")(function* (input) {
+    const [local, remote] = yield* Effect.all([localStatus(input), remoteStatus(input)]);
+    return mergeGitStatusParts(local, remote);
+  });
+  const invalidateLocalStatus: GitManagerShape["invalidateLocalStatus"] = Effect.fn(
+    "invalidateLocalStatus",
+  )(function* (cwd) {
+    yield* invalidateLocalStatusResultCache(cwd);
+  });
+  const invalidateRemoteStatus: GitManagerShape["invalidateRemoteStatus"] = Effect.fn(
+    "invalidateRemoteStatus",
+  )(function* (cwd) {
+    yield* invalidateRemoteStatusResultCache(cwd);
+  });
+  const invalidateStatus: GitManagerShape["invalidateStatus"] = Effect.fn("invalidateStatus")(
+    function* (cwd) {
+      yield* invalidateLocalStatusResultCache(cwd);
+      yield* invalidateRemoteStatusResultCache(cwd);
+    },
+  );
 
   const resolvePullRequest: GitManagerShape["resolvePullRequest"] = Effect.fn("resolvePullRequest")(
     function* (input) {
@@ -1488,7 +1555,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         branch: worktree.worktree.branch,
         worktreePath: worktree.worktree.path,
       };
-    }).pipe(Effect.ensuring(invalidateStatusResultCache(input.cwd)));
+    }).pipe(Effect.ensuring(invalidateStatus(input.cwd)));
   });
 
   const runFeatureBranchStep = Effect.fn("runFeatureBranchStep")(function* (
@@ -1692,7 +1759,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       });
 
       return yield* runAction().pipe(
-        Effect.ensuring(invalidateStatusResultCache(input.cwd)),
+        Effect.ensuring(invalidateStatus(input.cwd)),
         Effect.tapError((error) =>
           Effect.flatMap(Ref.get(currentPhase), (phase) =>
             progress.emit({
@@ -1707,7 +1774,12 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   );
 
   return {
+    localStatus,
+    remoteStatus,
     status,
+    invalidateLocalStatus,
+    invalidateRemoteStatus,
+    invalidateStatus,
     resolvePullRequest,
     preparePullRequestThread,
     runStackedAction,

@@ -19,7 +19,7 @@ import {
   useState,
 } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
-import { gitStatusQueryOptions } from "~/lib/gitReactQuery";
+import { useGitStatus } from "~/lib/gitStatusState";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
@@ -189,7 +189,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
-  const gitStatusQuery = useQuery(gitStatusQueryOptions(activeCwd ?? null));
+  const gitStatusQuery = useGitStatus(activeCwd ?? null);
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);

@@ -1,6 +1,8 @@
 import { type ContextMenuItem, type NativeApi } from "@t3tools/contracts";
 
+import { resetGitStatusStateForTests } from "./lib/gitStatusState";
 import { showContextMenuFallback } from "./contextMenuFallback";
+import { __resetWsRpcAtomClientForTests } from "./rpc/client";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { resetServerStateForTests } from "./rpc/serverState";
 import { resetWsConnectionStateForTests } from "./rpc/wsConnectionState";
@@ -8,9 +10,11 @@ import { __resetWsRpcClientForTests, getWsRpcClient } from "./wsRpcClient";
 
 let instance: { api: NativeApi } | null = null;
 
-export function __resetWsNativeApiForTests() {
+export async function __resetWsNativeApiForTests() {
   instance = null;
-  __resetWsRpcClientForTests();
+  await __resetWsRpcAtomClientForTests();
+  await __resetWsRpcClientForTests();
+  resetGitStatusStateForTests();
   resetRequestLatencyStateForTests();
   resetServerStateForTests();
   resetWsConnectionStateForTests();
@@ -65,7 +69,8 @@ export function createWsNativeApi(): NativeApi {
     },
     git: {
       pull: rpcClient.git.pull,
-      status: rpcClient.git.status,
+      refreshStatus: rpcClient.git.refreshStatus,
+      onStatus: (input, callback, options) => rpcClient.git.onStatus(input, callback, options),
       listBranches: rpcClient.git.listBranches,
       createWorktree: rpcClient.git.createWorktree,
       removeWorktree: rpcClient.git.removeWorktree,
