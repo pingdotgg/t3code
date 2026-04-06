@@ -4185,8 +4185,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       onPaste={onComposerPaste}
                       placeholder={
                         isComposerApprovalState
-                          ? (activePendingApproval?.detail ??
-                            "Resolve this approval request to continue")
+                          ? "Resolve this approval request to continue"
                           : activePendingProgress
                             ? "Type your own answer, or leave this blank to use the selected option"
                             : showPlanFollowUpPrompt && activeProposedPlan

@@ -606,6 +606,51 @@ function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithPendingApproval(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-pending-approval-target" as MessageId,
+    targetText: "approval thread",
+  });
+  const approvalDetail = [
+    '"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command',
+    '"ssh pipe-[REDACTED] \\"vdpkg -l localepurge 2>/dev/null || true; printf \\\\\\"\\\\n--- localepurge --\\\\n\\\\\\"; sed -n 1,80p /etc/locale.nopurge\\""',
+  ].join(" ");
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? Object.assign({}, thread, {
+            runtimeMode: "approval-required",
+            activities: [
+              {
+                id: EventId.makeUnsafe("activity-approval-requested"),
+                tone: "approval",
+                kind: "approval.requested",
+                summary: "Command approval requested",
+                payload: {
+                  requestId: "req-browser-approval",
+                  requestKind: "command",
+                  detail: approvalDetail,
+                },
+                turnId: null,
+                sequence: 1,
+                createdAt: isoAt(1_000),
+              },
+            ],
+            session: {
+              ...thread.session,
+              runtimeMode: "approval-required",
+              status: "ready",
+              updatedAt: isoAt(1_000),
+            },
+            updatedAt: isoAt(1_000),
+          })
+        : thread,
+    ),
+  };
+}
+
 function createSnapshotWithPlanFollowUpPrompt(): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-plan-follow-up-target" as MessageId,
@@ -2897,6 +2942,33 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await mounted.setContainerSize(COMPACT_FOOTER_VIEWPORT);
       await expectComposerActionsContained();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders pending approval commands in a readable wrapped block", async () => {
+    const mounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPendingApproval(),
+    });
+
+    try {
+      await waitForButtonByText("Approve once");
+      const detail = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-testid="pending-approval-detail"]'),
+        "Unable to find pending approval detail block.",
+      );
+      const detailStyle = getComputedStyle(detail);
+
+      expect(detail.textContent).toContain("powershell.exe");
+      expect(detail.textContent).toContain("localepurge");
+      expect(detail.textContent).not.toContain("...");
+      expect(detailStyle.whiteSpace).toBe("pre-wrap");
+      expect(detailStyle.userSelect).toBe("text");
+      expect(detailStyle.color).not.toBe("rgba(0, 0, 0, 0)");
+      expect(detail.getBoundingClientRect().height).toBeGreaterThan(32);
+      expect(document.body.textContent).toContain("Resolve this approval request to continue");
     } finally {
       await mounted.cleanup();
     }
