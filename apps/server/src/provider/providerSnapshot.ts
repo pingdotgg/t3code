@@ -1,4 +1,5 @@
 import type {
+  ModelCapabilities,
   ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
@@ -102,6 +103,7 @@ export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   provider: ServerProvider["provider"],
   customModels: ReadonlyArray<string>,
+  customModelCapabilities: ModelCapabilities,
 ): ReadonlyArray<ServerProviderModel> {
   const resolvedBuiltInModels = [...builtInModels];
   const seen = new Set(resolvedBuiltInModels.map((model) => model.slug));
@@ -117,7 +119,7 @@ export function providerModelsFromSettings(
       slug: normalized,
       name: normalized,
       isCustom: true,
-      capabilities: null,
+      capabilities: customModelCapabilities,
     });
   }
 
