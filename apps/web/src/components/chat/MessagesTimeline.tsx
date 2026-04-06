@@ -520,6 +520,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   );
                 })()}
                 <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <p className="text-[10px] text-muted-foreground/30">
+                    {formatMessageMeta(
+                      row.message.createdAt,
+                      row.message.streaming
+                        ? formatElapsed(row.durationStart, nowIso)
+                        : formatElapsed(row.durationStart, row.message.completedAt),
+                      timestampFormat,
+                    )}
+                  </p>
                   <div className="flex items-center gap-1.5">
                     {assistantCopyState.visible ? (
                       <MessageCopyButton
@@ -546,15 +555,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       />
                     ) : null}
                   </div>
-                  <p className="text-[10px] text-muted-foreground/30">
-                    {formatMessageMeta(
-                      row.message.createdAt,
-                      row.message.streaming
-                        ? formatElapsed(row.durationStart, nowIso)
-                        : formatElapsed(row.durationStart, row.message.completedAt),
-                      timestampFormat,
-                    )}
-                  </p>
                 </div>
               </div>
             </>
