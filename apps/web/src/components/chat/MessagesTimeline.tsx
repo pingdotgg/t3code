@@ -385,7 +385,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                               <img
                                 src={image.previewUrl}
                                 alt={image.name}
-                                className="h-full max-h-[220px] w-full object-cover"
+                                className="block h-auto max-h-[220px] w-full object-cover"
                                 onLoad={onTimelineImageLoad}
                                 onError={onTimelineImageLoad}
                               />

@@ -27,6 +27,7 @@ import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuer
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore";
 import { GitManager } from "./git/Services/GitManager";
+import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster";
 import { Keybindings } from "./keybindings";
 import { Open, resolveAvailableEditors } from "./open";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer";
@@ -56,6 +57,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const open = yield* Open;
     const gitManager = yield* GitManager;
     const git = yield* GitCore;
+    const gitStatusBroadcaster = yield* GitStatusBroadcaster;
     const terminalManager = yield* TerminalManager;
     const providerRegistry = yield* ProviderRegistry;
     const config = yield* ServerConfig;
@@ -65,7 +67,6 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
     const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
-
     const serverCommandId = (tag: string) =>
       CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -348,6 +349,11 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       };
     });
 
+    const refreshGitStatus = (cwd: string) =>
+      gitStatusBroadcaster
+        .refreshStatus(cwd)
+        .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+
     return WsRpcGroup.of({
       [ORCHESTRATION_WS_METHODS.getSnapshot]: (_input) =>
         observeRpcEffect(
@@ -559,14 +565,30 @@ const WsRpcLayer = WsRpcGroup.toLayer(
         observeRpcEffect(WS_METHODS.shellOpenInEditor, open.openInEditor(input), {
           "rpc.aggregate": "workspace",
         }),
-      [WS_METHODS.gitStatus]: (input) =>
-        observeRpcEffect(WS_METHODS.gitStatus, gitManager.status(input), {
+      [WS_METHODS.subscribeGitStatus]: (input) =>
+        observeRpcStream(WS_METHODS.subscribeGitStatus, gitStatusBroadcaster.streamStatus(input), {
           "rpc.aggregate": "git",
         }),
+      [WS_METHODS.gitRefreshStatus]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.gitRefreshStatus,
+          gitStatusBroadcaster.refreshStatus(input.cwd),
+          {
+            "rpc.aggregate": "git",
+          },
+        ),
       [WS_METHODS.gitPull]: (input) =>
-        observeRpcEffect(WS_METHODS.gitPull, git.pullCurrentBranch(input.cwd), {
-          "rpc.aggregate": "git",
-        }),
+        observeRpcEffect(
+          WS_METHODS.gitPull,
+          git.pullCurrentBranch(input.cwd).pipe(
+            Effect.matchCauseEffect({
+              onFailure: (cause) => Effect.failCause(cause),
+              onSuccess: (result) =>
+                refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
+            }),
+          ),
+          { "rpc.aggregate": "git" },
+        ),
       [WS_METHODS.gitRunStackedAction]: (input) =>
         observeRpcStream(
           WS_METHODS.gitRunStackedAction,
@@ -581,7 +603,10 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               .pipe(
                 Effect.matchCauseEffect({
                   onFailure: (cause) => Queue.failCause(queue, cause),
-                  onSuccess: () => Queue.end(queue).pipe(Effect.asVoid),
+                  onSuccess: () =>
+                    refreshGitStatus(input.cwd).pipe(
+                      Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
+                    ),
                 }),
               ),
           ),
@@ -594,7 +619,9 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       [WS_METHODS.gitPreparePullRequestThread]: (input) =>
         observeRpcEffect(
           WS_METHODS.gitPreparePullRequestThread,
-          gitManager.preparePullRequestThread(input),
+          gitManager
+            .preparePullRequestThread(input)
+            .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
           { "rpc.aggregate": "git" },
         ),
       [WS_METHODS.gitListBranches]: (input) =>
@@ -602,23 +629,37 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           "rpc.aggregate": "git",
         }),
       [WS_METHODS.gitCreateWorktree]: (input) =>
-        observeRpcEffect(WS_METHODS.gitCreateWorktree, git.createWorktree(input), {
-          "rpc.aggregate": "git",
-        }),
+        observeRpcEffect(
+          WS_METHODS.gitCreateWorktree,
+          git.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          { "rpc.aggregate": "git" },
+        ),
       [WS_METHODS.gitRemoveWorktree]: (input) =>
-        observeRpcEffect(WS_METHODS.gitRemoveWorktree, git.removeWorktree(input), {
-          "rpc.aggregate": "git",
-        }),
+        observeRpcEffect(
+          WS_METHODS.gitRemoveWorktree,
+          git.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          { "rpc.aggregate": "git" },
+        ),
       [WS_METHODS.gitCreateBranch]: (input) =>
-        observeRpcEffect(WS_METHODS.gitCreateBranch, git.createBranch(input), {
-          "rpc.aggregate": "git",
-        }),
+        observeRpcEffect(
+          WS_METHODS.gitCreateBranch,
+          git.createBranch(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          { "rpc.aggregate": "git" },
+        ),
       [WS_METHODS.gitCheckout]: (input) =>
-        observeRpcEffect(WS_METHODS.gitCheckout, Effect.scoped(git.checkoutBranch(input)), {
-          "rpc.aggregate": "git",
-        }),
+        observeRpcEffect(
+          WS_METHODS.gitCheckout,
+          Effect.scoped(git.checkoutBranch(input)).pipe(
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
+          { "rpc.aggregate": "git" },
+        ),
       [WS_METHODS.gitInit]: (input) =>
-        observeRpcEffect(WS_METHODS.gitInit, git.initRepo(input), { "rpc.aggregate": "git" }),
+        observeRpcEffect(
+          WS_METHODS.gitInit,
+          git.initRepo(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          { "rpc.aggregate": "git" },
+        ),
       [WS_METHODS.terminalOpen]: (input) =>
         observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
           "rpc.aggregate": "terminal",

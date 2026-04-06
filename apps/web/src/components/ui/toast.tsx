@@ -23,6 +23,7 @@ export type ThreadToastData = {
   threadId?: ThreadId | null;
   tooltipStyle?: boolean;
   dismissAfterVisibleMs?: number;
+  hideCopyButton?: boolean;
 };
 
 const toastManager = Toast.createToastManager<ThreadToastData>();
@@ -308,15 +309,15 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <div className="flex items-center justify-between gap-1">
                       <Toast.Title
-                        className="min-w-0 break-words font-medium"
+                        className="min-w-0 wrap-break-word font-medium"
                         data-slot="toast-title"
                       />
-                      {toast.type === "error" && typeof toast.description === "string" && (
-                        <CopyErrorButton text={toast.description} />
-                      )}
+                      {toast.type === "error" &&
+                        typeof toast.description === "string" &&
+                        !toast.data?.hideCopyButton && <CopyErrorButton text={toast.description} />}
                     </div>
                     <Toast.Description
-                      className="min-w-0 select-text break-words text-muted-foreground"
+                      className="min-w-0 select-text wrap-break-word text-muted-foreground"
                       data-slot="toast-description"
                     />
                   </div>
@@ -402,15 +403,17 @@ function AnchoredToasts() {
                         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                           <div className="flex items-center gap-1">
                             <Toast.Title
-                              className="min-w-0 break-words font-medium"
+                              className="min-w-0 wrap-break-word font-medium"
                               data-slot="toast-title"
                             />
-                            {toast.type === "error" && typeof toast.description === "string" && (
-                              <CopyErrorButton text={toast.description} />
-                            )}
+                            {toast.type === "error" &&
+                              typeof toast.description === "string" &&
+                              !toast.data?.hideCopyButton && (
+                                <CopyErrorButton text={toast.description} />
+                              )}
                           </div>
                           <Toast.Description
-                            className="min-w-0 select-text break-words text-muted-foreground"
+                            className="min-w-0 select-text wrap-break-word text-muted-foreground"
                             data-slot="toast-description"
                           />
                         </div>

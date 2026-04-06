@@ -1177,9 +1177,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     return branchLastCommit;
   });
 
-  const statusDetails: GitCoreShape["statusDetails"] = Effect.fn("statusDetails")(function* (cwd) {
-    yield* refreshStatusUpstreamIfStale(cwd).pipe(Effect.ignoreCause({ log: true }));
-
+  const readStatusDetailsLocal = Effect.fn("readStatusDetailsLocal")(function* (cwd: string) {
     const statusResult = yield* executeGit(
       "GitCore.statusDetails.status",
       cwd,
@@ -1310,6 +1308,17 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       aheadCount,
       behindCount,
     };
+  });
+
+  const statusDetailsLocal: GitCoreShape["statusDetailsLocal"] = Effect.fn("statusDetailsLocal")(
+    function* (cwd) {
+      return yield* readStatusDetailsLocal(cwd);
+    },
+  );
+
+  const statusDetails: GitCoreShape["statusDetails"] = Effect.fn("statusDetails")(function* (cwd) {
+    yield* refreshStatusUpstreamIfStale(cwd).pipe(Effect.ignoreCause({ log: true }));
+    return yield* readStatusDetailsLocal(cwd);
   });
 
   const status: GitCoreShape["status"] = (input) =>
@@ -2000,12 +2009,6 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     return { branch: targetBranch };
   });
 
-  const createBranch: GitCoreShape["createBranch"] = (input) =>
-    executeGit("GitCore.createBranch", input.cwd, ["branch", input.branch], {
-      timeoutMs: 10_000,
-      fallbackErrorMessage: "git branch create failed",
-    }).pipe(Effect.asVoid);
-
   const checkoutBranch: GitCoreShape["checkoutBranch"] = Effect.fn("checkoutBranch")(
     function* (input) {
       const [localInputExists, remoteExists] = yield* Effect.all(
@@ -2078,8 +2081,27 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         timeoutMs: 10_000,
         fallbackErrorMessage: "git checkout failed",
       });
+
+      const branch = yield* runGitStdout("GitCore.checkoutBranch.currentBranch", input.cwd, [
+        "branch",
+        "--show-current",
+      ]).pipe(Effect.map((stdout) => stdout.trim() || null));
+
+      return { branch };
     },
   );
+
+  const createBranch: GitCoreShape["createBranch"] = Effect.fn("createBranch")(function* (input) {
+    yield* executeGit("GitCore.createBranch", input.cwd, ["branch", input.branch], {
+      timeoutMs: 10_000,
+      fallbackErrorMessage: "git branch create failed",
+    });
+    if (input.checkout) {
+      yield* checkoutBranch({ cwd: input.cwd, branch: input.branch });
+    }
+
+    return { branch: input.branch };
+  });
 
   const initRepo: GitCoreShape["initRepo"] = (input) =>
     executeGit("GitCore.initRepo", input.cwd, ["init"], {
@@ -2106,6 +2128,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     execute,
     status,
     statusDetails,
+    statusDetailsLocal,
     prepareCommitContext,
     commit,
     pushCurrentBranch,

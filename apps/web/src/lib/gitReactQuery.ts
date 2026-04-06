@@ -12,15 +12,12 @@ import {
 import { ensureNativeApi } from "../nativeApi";
 import { getWsRpcClient } from "../wsRpcClient";
 
-const GIT_STATUS_STALE_TIME_MS = 5_000;
-const GIT_STATUS_REFETCH_INTERVAL_MS = 15_000;
 const GIT_BRANCHES_STALE_TIME_MS = 15_000;
 const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
 const GIT_BRANCHES_PAGE_SIZE = 100;
 
 export const gitQueryKeys = {
   all: ["git"] as const,
-  status: (cwd: string | null) => ["git", "status", cwd] as const,
   branches: (cwd: string | null) => ["git", "branches", cwd] as const,
   branchSearch: (cwd: string | null, query: string) =>
     ["git", "branches", cwd, "search", query] as const,
@@ -38,37 +35,18 @@ export const gitMutationKeys = {
 export function invalidateGitQueries(queryClient: QueryClient, input?: { cwd?: string | null }) {
   const cwd = input?.cwd ?? null;
   if (cwd !== null) {
-    return Promise.all([
-      queryClient.invalidateQueries({ queryKey: gitQueryKeys.status(cwd) }),
-      queryClient.invalidateQueries({ queryKey: gitQueryKeys.branches(cwd) }),
-    ]);
+    return queryClient.invalidateQueries({ queryKey: gitQueryKeys.branches(cwd) });
   }
 
   return queryClient.invalidateQueries({ queryKey: gitQueryKeys.all });
 }
 
-export function invalidateGitStatusQuery(queryClient: QueryClient, cwd: string | null) {
+function invalidateGitBranchQueries(queryClient: QueryClient, cwd: string | null) {
   if (cwd === null) {
     return Promise.resolve();
   }
 
-  return queryClient.invalidateQueries({ queryKey: gitQueryKeys.status(cwd) });
-}
-
-export function gitStatusQueryOptions(cwd: string | null) {
-  return queryOptions({
-    queryKey: gitQueryKeys.status(cwd),
-    queryFn: async () => {
-      const api = ensureNativeApi();
-      if (!cwd) throw new Error("Git status is unavailable.");
-      return api.git.status({ cwd });
-    },
-    enabled: cwd !== null,
-    staleTime: GIT_STATUS_STALE_TIME_MS,
-    refetchOnWindowFocus: "always",
-    refetchOnReconnect: "always",
-    refetchInterval: GIT_STATUS_REFETCH_INTERVAL_MS,
-  });
+  return queryClient.invalidateQueries({ queryKey: gitQueryKeys.branches(cwd) });
 }
 
 export function gitBranchSearchInfiniteQueryOptions(input: {
@@ -128,8 +106,8 @@ export function gitInitMutationOptions(input: { cwd: string | null; queryClient:
       if (!input.cwd) throw new Error("Git init is unavailable.");
       return api.git.init({ cwd: input.cwd });
     },
-    onSuccess: async () => {
-      await invalidateGitQueries(input.queryClient);
+    onSettled: async () => {
+      await invalidateGitBranchQueries(input.queryClient, input.cwd);
     },
   });
 }
@@ -145,8 +123,8 @@ export function gitCheckoutMutationOptions(input: {
       if (!input.cwd) throw new Error("Git checkout is unavailable.");
       return api.git.checkout({ cwd: input.cwd, branch });
     },
-    onSuccess: async () => {
-      await invalidateGitQueries(input.queryClient);
+    onSettled: async () => {
+      await invalidateGitBranchQueries(input.queryClient, input.cwd);
     },
   });
 }
@@ -175,18 +153,18 @@ export function gitRunStackedActionMutationOptions(input: {
       if (!input.cwd) throw new Error("Git action is unavailable.");
       return getWsRpcClient().git.runStackedAction(
         {
+          action,
           actionId,
           cwd: input.cwd,
-          action,
           ...(commitMessage ? { commitMessage } : {}),
-          ...(featureBranch ? { featureBranch } : {}),
-          ...(filePaths ? { filePaths } : {}),
+          ...(featureBranch ? { featureBranch: true } : {}),
+          ...(filePaths && filePaths.length > 0 ? { filePaths } : {}),
         },
         ...(onProgress ? [{ onProgress }] : []),
       );
     },
-    onSettled: async () => {
-      await invalidateGitQueries(input.queryClient);
+    onSuccess: async () => {
+      await invalidateGitBranchQueries(input.queryClient, input.cwd);
     },
   });
 }
@@ -199,31 +177,19 @@ export function gitPullMutationOptions(input: { cwd: string | null; queryClient:
       if (!input.cwd) throw new Error("Git pull is unavailable.");
       return api.git.pull({ cwd: input.cwd });
     },
-    onSettled: async () => {
-      await invalidateGitQueries(input.queryClient);
+    onSuccess: async () => {
+      await invalidateGitBranchQueries(input.queryClient, input.cwd);
     },
   });
 }
 
 export function gitCreateWorktreeMutationOptions(input: { queryClient: QueryClient }) {
   return mutationOptions({
-    mutationFn: async ({
-      cwd,
-      branch,
-      newBranch,
-      path,
-    }: {
-      cwd: string;
-      branch: string;
-      newBranch: string;
-      path?: string | null;
-    }) => {
-      const api = ensureNativeApi();
-      if (!cwd) throw new Error("Git worktree creation is unavailable.");
-      return api.git.createWorktree({ cwd, branch, newBranch, path: path ?? null });
-    },
     mutationKey: ["git", "mutation", "create-worktree"] as const,
-    onSettled: async () => {
+    mutationFn: (
+      args: Parameters<ReturnType<typeof ensureNativeApi>["git"]["createWorktree"]>[0],
+    ) => ensureNativeApi().git.createWorktree(args),
+    onSuccess: async () => {
       await invalidateGitQueries(input.queryClient);
     },
   });
@@ -231,13 +197,11 @@ export function gitCreateWorktreeMutationOptions(input: { queryClient: QueryClie
 
 export function gitRemoveWorktreeMutationOptions(input: { queryClient: QueryClient }) {
   return mutationOptions({
-    mutationFn: async ({ cwd, path, force }: { cwd: string; path: string; force?: boolean }) => {
-      const api = ensureNativeApi();
-      if (!cwd) throw new Error("Git worktree removal is unavailable.");
-      return api.git.removeWorktree({ cwd, path, force });
-    },
     mutationKey: ["git", "mutation", "remove-worktree"] as const,
-    onSettled: async () => {
+    mutationFn: (
+      args: Parameters<ReturnType<typeof ensureNativeApi>["git"]["removeWorktree"]>[0],
+    ) => ensureNativeApi().git.removeWorktree(args),
+    onSuccess: async () => {
       await invalidateGitQueries(input.queryClient);
     },
   });
@@ -248,11 +212,8 @@ export function gitPreparePullRequestThreadMutationOptions(input: {
   queryClient: QueryClient;
 }) {
   return mutationOptions({
-    mutationFn: async ({
-      reference,
-      mode,
-      threadId,
-    }: {
+    mutationKey: gitMutationKeys.preparePullRequestThread(input.cwd),
+    mutationFn: async (args: {
       reference: string;
       mode: "local" | "worktree";
       threadId?: ThreadId;
@@ -261,14 +222,13 @@ export function gitPreparePullRequestThreadMutationOptions(input: {
       if (!input.cwd) throw new Error("Pull request thread preparation is unavailable.");
       return api.git.preparePullRequestThread({
         cwd: input.cwd,
-        reference,
-        mode,
-        ...(threadId ? { threadId } : {}),
+        reference: args.reference,
+        mode: args.mode,
+        ...(args.threadId ? { threadId: args.threadId } : {}),
       });
     },
-    mutationKey: gitMutationKeys.preparePullRequestThread(input.cwd),
-    onSettled: async () => {
-      await invalidateGitQueries(input.queryClient);
+    onSuccess: async () => {
+      await invalidateGitBranchQueries(input.queryClient, input.cwd);
     },
   });
 }
