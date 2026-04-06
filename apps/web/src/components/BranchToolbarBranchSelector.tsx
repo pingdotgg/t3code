@@ -1,5 +1,5 @@
 import type { GitBranch } from "@t3tools/contracts";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDownIcon } from "lucide-react";
 import {
@@ -14,12 +14,8 @@ import {
   useTransition,
 } from "react";
 
-import {
-  gitBranchSearchInfiniteQueryOptions,
-  gitQueryKeys,
-  gitStatusQueryOptions,
-  invalidateGitQueries,
-} from "../lib/gitReactQuery";
+import { gitBranchSearchInfiniteQueryOptions, gitQueryKeys } from "../lib/gitReactQuery";
+import { useGitStatus } from "../lib/gitStatusState";
 import { readNativeApi } from "../nativeApi";
 import { parsePullRequestReference } from "../pullRequestReference";
 import {
@@ -89,7 +85,7 @@ export function BranchToolbarBranchSelector({
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
-  const branchStatusQuery = useQuery(gitStatusQueryOptions(branchCwd));
+  const branchStatusQuery = useGitStatus(branchCwd);
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
 
@@ -110,7 +106,6 @@ export function BranchToolbarBranchSelector({
     gitBranchSearchInfiniteQueryOptions({
       cwd: branchCwd,
       query: deferredTrimmedBranchQuery,
-      enabled: isBranchMenuOpen,
     }),
   );
   const branches = useMemo(
@@ -188,7 +183,9 @@ export function BranchToolbarBranchSelector({
   const runBranchAction = (action: () => Promise<void>) => {
     startBranchActionTransition(async () => {
       await action().catch(() => undefined);
-      await invalidateGitQueries(queryClient).catch(() => undefined);
+      await queryClient
+        .invalidateQueries({ queryKey: gitQueryKeys.branches(branchCwd) })
+        .catch(() => undefined);
     });
   };
 
@@ -226,29 +223,26 @@ export function BranchToolbarBranchSelector({
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
+      const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(selectedBranchName);
       try {
-        await api.git.checkout({ cwd: selectionTarget.checkoutCwd, branch: branch.name });
-        await invalidateGitQueries(queryClient);
+        const checkoutResult = await api.git.checkout({
+          cwd: selectionTarget.checkoutCwd,
+          branch: branch.name,
+        });
+        const nextBranchName = branch.isRemote
+          ? (checkoutResult.branch ?? selectedBranchName)
+          : selectedBranchName;
+        setOptimisticBranch(nextBranchName);
+        onSetThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
       } catch (error) {
+        setOptimisticBranch(previousBranch);
         toastManager.add({
           type: "error",
           title: "Failed to checkout branch.",
           description: toBranchActionErrorMessage(error),
         });
-        return;
       }
-
-      let nextBranchName = selectedBranchName;
-      if (branch.isRemote) {
-        const status = await api.git.status({ cwd: selectionTarget.checkoutCwd }).catch(() => null);
-        if (status?.branch) {
-          nextBranchName = status.branch;
-        }
-      }
-
-      setOptimisticBranch(nextBranchName);
-      onSetThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
     });
   };
 
@@ -261,32 +255,24 @@ export function BranchToolbarBranchSelector({
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
+      const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
-
       try {
-        await api.git.createBranch({ cwd: branchCwd, branch: name });
-        try {
-          await api.git.checkout({ cwd: branchCwd, branch: name });
-        } catch (error) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to checkout branch.",
-            description: toBranchActionErrorMessage(error),
-          });
-          return;
-        }
+        const createBranchResult = await api.git.createBranch({
+          cwd: branchCwd,
+          branch: name,
+          checkout: true,
+        });
+        setOptimisticBranch(createBranchResult.branch);
+        onSetThreadBranch(createBranchResult.branch, activeWorktreePath);
       } catch (error) {
+        setOptimisticBranch(previousBranch);
         toastManager.add({
           type: "error",
-          title: "Failed to create branch.",
+          title: "Failed to create and checkout branch.",
           description: toBranchActionErrorMessage(error),
         });
-        return;
       }
-
-      setOptimisticBranch(name);
-      onSetThreadBranch(name, activeWorktreePath);
-      setBranchQuery("");
     });
   };
 

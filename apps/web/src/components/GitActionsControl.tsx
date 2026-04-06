@@ -5,7 +5,7 @@ import type {
   GitStatusResult,
   ThreadId,
 } from "@t3tools/contracts";
-import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
 import { GitHubIcon } from "./Icons";
@@ -45,9 +45,8 @@ import {
   gitMutationKeys,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
-  gitStatusQueryOptions,
-  invalidateGitStatusQuery,
 } from "~/lib/gitReactQuery";
+import { refreshGitStatus, useGitStatus } from "~/lib/gitStatusState";
 import { newCommandId, randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
@@ -91,6 +90,8 @@ interface RunGitActionWithToastInput {
   progressToastId?: GitActionToastId;
   filePaths?: string[];
 }
+
+const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
 
 function formatElapsedDescription(startedAtMs: number | null): string | undefined {
   if (startedAtMs === null) {
@@ -275,7 +276,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     [persistThreadBranchSync],
   );
 
-  const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
+  const { data: gitStatus = null, error: gitStatusError } = useGitStatus(gitCwd);
   // Default to true while loading so we don't flash init controls.
   const isRepo = gitStatus?.isRepo ?? true;
   const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
@@ -358,6 +359,39 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       window.clearInterval(interval);
     };
   }, [updateActiveProgressToast]);
+
+  useEffect(() => {
+    if (gitCwd === null) {
+      return;
+    }
+
+    let refreshTimeout: number | null = null;
+    const scheduleRefreshCurrentGitStatus = () => {
+      if (refreshTimeout !== null) {
+        window.clearTimeout(refreshTimeout);
+      }
+      refreshTimeout = window.setTimeout(() => {
+        refreshTimeout = null;
+        void refreshGitStatus(gitCwd).catch(() => undefined);
+      }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        scheduleRefreshCurrentGitStatus();
+      }
+    };
+
+    window.addEventListener("focus", scheduleRefreshCurrentGitStatus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      if (refreshTimeout !== null) {
+        window.clearTimeout(refreshTimeout);
+      }
+      window.removeEventListener("focus", scheduleRefreshCurrentGitStatus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [gitCwd]);
 
   const openExistingPr = useCallback(async () => {
     const api = readNativeApi();
@@ -801,7 +835,9 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu
             onOpenChange={(open) => {
-              if (open) void invalidateGitStatusQuery(queryClient, gitCwd);
+              if (open) {
+                void refreshGitStatus(gitCwd).catch(() => undefined);
+              }
             }}
           >
             <MenuTrigger

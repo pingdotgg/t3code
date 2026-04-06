@@ -25,7 +25,7 @@ export function ensureNativeApi(): NativeApi {
   return api;
 }
 
-export function __resetNativeApiForTests() {
+export async function __resetNativeApiForTests() {
   cachedApi = undefined;
-  __resetWsNativeApiForTests();
+  await __resetWsNativeApiForTests();
 }

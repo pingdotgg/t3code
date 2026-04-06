@@ -24,6 +24,7 @@ interface BrowserWsRpcHarnessOptions {
 
 const STREAM_METHODS = new Set<string>([
   WS_METHODS.gitRunStackedAction,
+  WS_METHODS.subscribeGitStatus,
   WS_METHODS.subscribeOrchestrationDomainEvents,
   WS_METHODS.subscribeTerminalEvents,
   WS_METHODS.subscribeServerConfig,
@@ -108,7 +109,7 @@ export class BrowserWsRpcHarness {
   async onMessage(rawData: string): Promise<void> {
     const server = await this.serverReady;
     if (!server) {
-      throw new Error("RPC test server is not connected");
+      return;
     }
     const messages = this.parser.decode(rawData);
     for (const message of messages) {

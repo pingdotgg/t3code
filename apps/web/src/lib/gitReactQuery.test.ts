@@ -15,12 +15,9 @@ import type { GitListBranchesResult } from "@t3tools/contracts";
 import {
   gitBranchSearchInfiniteQueryOptions,
   gitMutationKeys,
-  gitQueryKeys,
   gitPreparePullRequestThreadMutationOptions,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
-  invalidateGitStatusQuery,
-  gitStatusQueryOptions,
   invalidateGitQueries,
 } from "./gitReactQuery";
 
@@ -84,7 +81,6 @@ describe("invalidateGitQueries", () => {
   it("can invalidate a single cwd without blasting other git query scopes", async () => {
     const queryClient = new QueryClient();
 
-    queryClient.setQueryData(gitQueryKeys.status("/repo/a"), { ok: "a" });
     queryClient.setQueryData(
       gitBranchSearchInfiniteQueryOptions({
         cwd: "/repo/a",
@@ -92,7 +88,6 @@ describe("invalidateGitQueries", () => {
       }).queryKey,
       BRANCH_SEARCH_RESULT,
     );
-    queryClient.setQueryData(gitQueryKeys.status("/repo/b"), { ok: "b" });
     queryClient.setQueryData(
       gitBranchSearchInfiniteQueryOptions({
         cwd: "/repo/b",
@@ -104,9 +99,6 @@ describe("invalidateGitQueries", () => {
     await invalidateGitQueries(queryClient, { cwd: "/repo/a" });
 
     expect(
-      queryClient.getQueryState(gitStatusQueryOptions("/repo/a").queryKey)?.isInvalidated,
-    ).toBe(true);
-    expect(
       queryClient.getQueryState(
         gitBranchSearchInfiniteQueryOptions({
           cwd: "/repo/a",
@@ -115,33 +107,12 @@ describe("invalidateGitQueries", () => {
       )?.isInvalidated,
     ).toBe(true);
     expect(
-      queryClient.getQueryState(gitStatusQueryOptions("/repo/b").queryKey)?.isInvalidated,
-    ).toBe(false);
-    expect(
       queryClient.getQueryState(
         gitBranchSearchInfiniteQueryOptions({
           cwd: "/repo/b",
           query: "feature",
         }).queryKey,
       )?.isInvalidated,
-    ).toBe(false);
-  });
-});
-
-describe("invalidateGitStatusQuery", () => {
-  it("invalidates only status for the selected cwd", async () => {
-    const queryClient = new QueryClient();
-
-    queryClient.setQueryData(gitQueryKeys.status("/repo/a"), { ok: "a" });
-    queryClient.setQueryData(gitQueryKeys.status("/repo/b"), { ok: "b" });
-
-    await invalidateGitStatusQuery(queryClient, "/repo/a");
-
-    expect(
-      queryClient.getQueryState(gitStatusQueryOptions("/repo/a").queryKey)?.isInvalidated,
-    ).toBe(true);
-    expect(
-      queryClient.getQueryState(gitStatusQueryOptions("/repo/b").queryKey)?.isInvalidated,
     ).toBe(false);
   });
 });

@@ -1,4 +1,11 @@
-import type { GitBranch } from "@t3tools/contracts";
+import type {
+  GitBranch,
+  GitHostingProvider,
+  GitStatusLocalResult,
+  GitStatusRemoteResult,
+  GitStatusResult,
+  GitStatusStreamEvent,
+} from "@t3tools/contracts";
 
 /**
  * Sanitize an arbitrary string into a valid, lowercase git branch fragment.
@@ -118,4 +125,134 @@ export function dedupeRemoteBranchesWithLocalMatches(
     );
     return !localBranchCandidates.some((candidate) => localBranchNames.has(candidate));
   });
+}
+
+function parseGitRemoteHost(remoteUrl: string): string | null {
+  const trimmed = remoteUrl.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (trimmed.startsWith("git@")) {
+    const hostWithPath = trimmed.slice("git@".length);
+    const separatorIndex = hostWithPath.search(/[:/]/);
+    if (separatorIndex <= 0) {
+      return null;
+    }
+    return hostWithPath.slice(0, separatorIndex).toLowerCase();
+  }
+
+  try {
+    return new URL(trimmed).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function toBaseUrl(host: string): string {
+  return `https://${host}`;
+}
+
+function isGitHubHost(host: string): boolean {
+  return host === "github.com" || host.includes("github");
+}
+
+function isGitLabHost(host: string): boolean {
+  return host === "gitlab.com" || host.includes("gitlab");
+}
+
+export function detectGitHostingProviderFromRemoteUrl(
+  remoteUrl: string,
+): GitHostingProvider | null {
+  const host = parseGitRemoteHost(remoteUrl);
+  if (!host) {
+    return null;
+  }
+
+  if (isGitHubHost(host)) {
+    return {
+      kind: "github",
+      name: host === "github.com" ? "GitHub" : "GitHub Self-Hosted",
+      baseUrl: toBaseUrl(host),
+    };
+  }
+
+  if (isGitLabHost(host)) {
+    return {
+      kind: "gitlab",
+      name: host === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
+      baseUrl: toBaseUrl(host),
+    };
+  }
+
+  return {
+    kind: "unknown",
+    name: host,
+    baseUrl: toBaseUrl(host),
+  };
+}
+
+const EMPTY_GIT_STATUS_REMOTE: GitStatusRemoteResult = {
+  hasUpstream: false,
+  aheadCount: 0,
+  behindCount: 0,
+  pr: null,
+};
+
+export function mergeGitStatusParts(
+  local: GitStatusLocalResult,
+  remote: GitStatusRemoteResult | null,
+): GitStatusResult {
+  return {
+    ...local,
+    ...(remote ?? EMPTY_GIT_STATUS_REMOTE),
+  };
+}
+
+function toRemoteStatusPart(status: GitStatusResult): GitStatusRemoteResult {
+  return {
+    hasUpstream: status.hasUpstream,
+    aheadCount: status.aheadCount,
+    behindCount: status.behindCount,
+    pr: status.pr,
+  };
+}
+
+function toLocalStatusPart(status: GitStatusResult): GitStatusLocalResult {
+  return {
+    isRepo: status.isRepo,
+    ...(status.hostingProvider ? { hostingProvider: status.hostingProvider } : {}),
+    hasOriginRemote: status.hasOriginRemote,
+    isDefaultBranch: status.isDefaultBranch,
+    branch: status.branch,
+    hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+    workingTree: status.workingTree,
+  };
+}
+
+export function applyGitStatusStreamEvent(
+  current: GitStatusResult | null,
+  event: GitStatusStreamEvent,
+): GitStatusResult {
+  switch (event._tag) {
+    case "snapshot":
+      return mergeGitStatusParts(event.local, event.remote);
+    case "localUpdated":
+      return mergeGitStatusParts(event.local, current ? toRemoteStatusPart(current) : null);
+    case "remoteUpdated":
+      if (current === null) {
+        return mergeGitStatusParts(
+          {
+            isRepo: true,
+            hasOriginRemote: false,
+            isDefaultBranch: false,
+            branch: null,
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          },
+          event.remote,
+        );
+      }
+      return mergeGitStatusParts(toLocalStatusPart(current), event.remote);
+  }
 }
