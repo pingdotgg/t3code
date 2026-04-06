@@ -6,7 +6,7 @@ import { useCallback } from "react";
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "./useHandleNewThread";
-import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
+import { vcsRemoveWorktreeMutationOptions } from "../lib/vcsReactQuery";
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
@@ -29,7 +29,7 @@ export function useThreadActions() {
   const navigate = useNavigate();
   const { handleNewThread } = useHandleNewThread();
   const queryClient = useQueryClient();
-  const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
+  const removeWorktreeMutation = useMutation(vcsRemoveWorktreeMutationOptions({ queryClient }));
 
   const archiveThread = useCallback(
     async (threadId: ThreadId) => {

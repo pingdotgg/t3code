@@ -14,7 +14,7 @@ import {
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
-} from "@t3tools/shared/git";
+} from "@t3tools/shared/vcs";
 
 import { GitManagerError } from "@t3tools/contracts";
 import {

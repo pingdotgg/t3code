@@ -27,7 +27,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useQuery } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { gitStatusQueryOptions } from "~/lib/gitReactQuery";
+import { vcsStatusQueryOptions } from "~/lib/vcsReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -1399,7 +1399,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
-  const gitStatusQuery = useQuery(gitStatusQueryOptions(gitCwd));
+  const vcsStatusQuery = useQuery(vcsStatusQueryOptions(gitCwd));
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   const modelOptionsByProvider = useMemo(
@@ -1532,7 +1532,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ? terminalLaunchContext
       : (storeServerTerminalLaunchContext ?? null);
   // Default true while loading to avoid toolbar flicker.
-  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const isVersionControlledRepo = vcsStatusQuery.data?.isRepo ?? true;
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
@@ -3931,7 +3931,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
-          isGitRepo={isGitRepo}
+          isGitRepo={isVersionControlledRepo}
           openInCwd={gitCwd}
           activeProjectScripts={activeProject?.scripts}
           preferredScriptId={
@@ -4025,7 +4025,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
           </div>
 
           {/* Input bar */}
-          <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+          <div
+            className={cn(
+              "px-3 pt-1.5 sm:px-5 sm:pt-2",
+              isVersionControlledRepo ? "pb-1" : "pb-3 sm:pb-4",
+            )}
+          >
             <form
               ref={composerFormRef}
               onSubmit={onSend}
@@ -4404,7 +4409,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             </form>
           </div>
 
-          {isGitRepo && (
+          {isVersionControlledRepo && (
             <BranchToolbar
               threadId={activeThread.id}
               onEnvModeChange={onEnvModeChange}

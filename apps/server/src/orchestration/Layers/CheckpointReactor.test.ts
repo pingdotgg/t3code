@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckpointStoreLive } from "../../checkpointing/Layers/CheckpointStore.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { GitCoreLive } from "../../git/Layers/GitCore.ts";
+import { VcsCoreFromGitLive } from "../../vcs/Layers/VcsCore.ts";
 import { CheckpointReactorLive } from "./CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -270,6 +271,7 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(CheckpointStoreLive),
       Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
       Layer.provideMerge(WorkspacePathsLive),
+      Layer.provideMerge(VcsCoreFromGitLive.pipe(Layer.provideMerge(GitCoreLive))),
       Layer.provideMerge(GitCoreLive),
       Layer.provideMerge(ServerConfigLayer),
       Layer.provideMerge(NodeServices.layer),

@@ -23,8 +23,8 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
-import { isGitRepository } from "../../git/Utils.ts";
 import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
+import { isVersionControlledRepository } from "../../vcs/Utils.ts";
 
 type ReactorInput =
   | {
@@ -147,7 +147,7 @@ const make = Effect.gen(function* () {
     return Option.none();
   });
 
-  const isGitWorkspace = (cwd: string) => isGitRepository(cwd);
+  const isVersionControlledWorkspace = (cwd: string) => isVersionControlledRepository(cwd);
 
   // Resolves the workspace CWD for checkpoint operations, preferring the
   // active provider session CWD and falling back to the thread/project config.
@@ -179,7 +179,7 @@ const make = Effect.gen(function* () {
     if (!cwd) {
       return undefined;
     }
-    if (!isGitWorkspace(cwd)) {
+    if (!isVersionControlledWorkspace(cwd)) {
       return undefined;
     }
     return cwd;
@@ -586,7 +586,7 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.catch(() => Effect.void));
       return;
     }
-    if (!isGitWorkspace(sessionRuntime.value.cwd)) {
+    if (!isVersionControlledWorkspace(sessionRuntime.value.cwd)) {
       yield* appendRevertFailureActivity({
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,

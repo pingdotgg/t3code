@@ -15,11 +15,11 @@ import {
 } from "react";
 
 import {
-  gitBranchSearchInfiniteQueryOptions,
-  gitQueryKeys,
-  gitStatusQueryOptions,
-  invalidateGitQueries,
-} from "../lib/gitReactQuery";
+  invalidateVcsQueries,
+  vcsBranchSearchInfiniteQueryOptions,
+  vcsQueryKeys,
+  vcsStatusQueryOptions,
+} from "../lib/vcsReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { parsePullRequestReference } from "../pullRequestReference";
 import {
@@ -89,14 +89,14 @@ export function BranchToolbarBranchSelector({
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
-  const branchStatusQuery = useQuery(gitStatusQueryOptions(branchCwd));
+  const branchStatusQuery = useQuery(vcsStatusQueryOptions(branchCwd));
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
 
   useEffect(() => {
     if (!branchCwd) return;
     void queryClient.prefetchInfiniteQuery(
-      gitBranchSearchInfiniteQueryOptions({ cwd: branchCwd, query: "" }),
+      vcsBranchSearchInfiniteQueryOptions({ cwd: branchCwd, query: "" }),
     );
   }, [branchCwd, queryClient]);
 
@@ -107,7 +107,7 @@ export function BranchToolbarBranchSelector({
     isFetchingNextPage,
     isPending: isBranchesSearchPending,
   } = useInfiniteQuery(
-    gitBranchSearchInfiniteQueryOptions({
+    vcsBranchSearchInfiniteQueryOptions({
       cwd: branchCwd,
       query: deferredTrimmedBranchQuery,
       enabled: isBranchMenuOpen,
@@ -117,13 +117,13 @@ export function BranchToolbarBranchSelector({
     () => branchesSearchData?.pages.flatMap((page) => page.branches) ?? [],
     [branchesSearchData?.pages],
   );
-  const currentGitBranch =
+  const currentBranch =
     branchStatusQuery.data?.branch ?? branches.find((branch) => branch.current)?.name ?? null;
   const canonicalActiveBranch = resolveBranchToolbarValue({
     envMode: effectiveEnvMode,
     activeWorktreePath,
     activeThreadBranch,
-    currentGitBranch,
+    currentBranch,
   });
   const branchNames = useMemo(() => branches.map((branch) => branch.name), [branches]);
   const branchByName = useMemo(
@@ -188,7 +188,7 @@ export function BranchToolbarBranchSelector({
   const runBranchAction = (action: () => Promise<void>) => {
     startBranchActionTransition(async () => {
       await action().catch(() => undefined);
-      await invalidateGitQueries(queryClient).catch(() => undefined);
+      await invalidateVcsQueries(queryClient).catch(() => undefined);
     });
   };
 
@@ -229,7 +229,7 @@ export function BranchToolbarBranchSelector({
       setOptimisticBranch(selectedBranchName);
       try {
         await api.git.checkout({ cwd: selectionTarget.checkoutCwd, branch: branch.name });
-        await invalidateGitQueries(queryClient);
+        await invalidateVcsQueries(queryClient);
       } catch (error) {
         toastManager.add({
           type: "error",
@@ -295,18 +295,12 @@ export function BranchToolbarBranchSelector({
       effectiveEnvMode !== "worktree" ||
       activeWorktreePath ||
       activeThreadBranch ||
-      !currentGitBranch
+      !currentBranch
     ) {
       return;
     }
-    onSetThreadBranch(currentGitBranch, null);
-  }, [
-    activeThreadBranch,
-    activeWorktreePath,
-    currentGitBranch,
-    effectiveEnvMode,
-    onSetThreadBranch,
-  ]);
+    onSetThreadBranch(currentBranch, null);
+  }, [activeThreadBranch, activeWorktreePath, currentBranch, effectiveEnvMode, onSetThreadBranch]);
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -316,7 +310,7 @@ export function BranchToolbarBranchSelector({
         return;
       }
       void queryClient.invalidateQueries({
-        queryKey: gitQueryKeys.branches(branchCwd),
+        queryKey: vcsQueryKeys.branches(branchCwd),
       });
     },
     [branchCwd, queryClient],

@@ -1,9 +1,11 @@
 /**
  * CheckpointStore - Repository interface for filesystem-backed workspace checkpoints.
  *
- * Owns hidden Git-ref checkpoint capture/restore and diff computation for a
- * workspace thread timeline. It does not store user-facing checkpoint metadata
- * and does not coordinate provider conversation rollback.
+ * Owns VCS-backed checkpoint capture/restore and diff computation for a
+ * workspace thread timeline. Git repositories use hidden refs; jj repositories
+ * persist checkpoint commit ids in shared repo metadata. It does not store
+ * user-facing checkpoint metadata and does not coordinate provider
+ * conversation rollback.
  *
  * Uses Effect `ServiceMap.Service` for dependency injection and exposes typed
  * domain errors for checkpoint storage operations.
@@ -44,14 +46,12 @@ export interface DeleteCheckpointRefsInput {
  */
 export interface CheckpointStoreShape {
   /**
-   * Check whether cwd is inside a Git worktree.
+   * Check whether cwd is inside a supported version-controlled workspace.
    */
   readonly isGitRepository: (cwd: string) => Effect.Effect<boolean, CheckpointStoreError>;
 
   /**
-   * Capture a checkpoint commit and store it at the provided checkpoint ref.
-   *
-   * Uses an isolated temporary Git index and writes a hidden ref.
+   * Capture a checkpoint and store it at the provided checkpoint ref.
    */
   readonly captureCheckpoint: (
     input: CaptureCheckpointInput,

@@ -5,13 +5,13 @@ import { Cache, Duration, Effect, Exit, Layer, Option, Path } from "effect";
 
 import { type ProjectEntry } from "@t3tools/contracts";
 
-import { GitCore } from "../../git/Services/GitCore.ts";
 import {
   WorkspaceEntries,
   WorkspaceEntriesError,
   type WorkspaceEntriesShape,
 } from "../Services/WorkspaceEntries.ts";
 import { WorkspacePaths } from "../Services/WorkspacePaths.ts";
+import { VcsCore } from "../../vcs/Services/VcsCore.ts";
 
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
@@ -19,6 +19,7 @@ const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_SCAN_READDIR_CONCURRENCY = 32;
 const IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
+  ".jj",
   ".convex",
   "node_modules",
   ".next",
@@ -219,38 +220,38 @@ const processErrorDetail = (cause: unknown): string =>
 
 export const makeWorkspaceEntries = Effect.gen(function* () {
   const path = yield* Path.Path;
-  const gitOption = yield* Effect.serviceOption(GitCore);
+  const vcsOption = yield* Effect.serviceOption(VcsCore);
   const workspacePaths = yield* WorkspacePaths;
 
-  const isInsideGitWorkTree = (cwd: string): Effect.Effect<boolean> =>
-    Option.match(gitOption, {
-      onSome: (git) => git.isInsideWorkTree(cwd).pipe(Effect.catch(() => Effect.succeed(false))),
+  const isInsideVersionControlledWorkTree = (cwd: string): Effect.Effect<boolean> =>
+    Option.match(vcsOption, {
+      onSome: (vcs) => vcs.isInsideWorkTree(cwd).pipe(Effect.catch(() => Effect.succeed(false))),
       onNone: () => Effect.succeed(false),
     });
 
-  const filterGitIgnoredPaths = (
+  const filterVcsIgnoredPaths = (
     cwd: string,
     relativePaths: string[],
   ): Effect.Effect<string[], never> =>
-    Option.match(gitOption, {
-      onSome: (git) =>
-        git.filterIgnoredPaths(cwd, relativePaths).pipe(
+    Option.match(vcsOption, {
+      onSome: (vcs) =>
+        vcs.filterIgnoredPaths(cwd, relativePaths).pipe(
           Effect.map((paths) => [...paths]),
           Effect.catch(() => Effect.succeed(relativePaths)),
         ),
       onNone: () => Effect.succeed(relativePaths),
     });
 
-  const buildWorkspaceIndexFromGit = Effect.fn("WorkspaceEntries.buildWorkspaceIndexFromGit")(
+  const buildWorkspaceIndexFromVcs = Effect.fn("WorkspaceEntries.buildWorkspaceIndexFromVcs")(
     function* (cwd: string) {
-      if (Option.isNone(gitOption)) {
+      if (Option.isNone(vcsOption)) {
         return null;
       }
-      if (!(yield* isInsideGitWorkTree(cwd))) {
+      if (!(yield* isInsideVersionControlledWorkTree(cwd))) {
         return null;
       }
 
-      const listedFiles = yield* gitOption.value
+      const listedFiles = yield* vcsOption.value
         .listWorkspaceFiles(cwd)
         .pipe(Effect.catch(() => Effect.succeed(null)));
 
@@ -261,7 +262,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       const listedPaths = [...listedFiles.paths]
         .map((entry) => toPosixPath(entry))
         .filter((entry) => entry.length > 0 && !isPathInIgnoredDirectory(entry));
-      const filePaths = yield* filterGitIgnoredPaths(cwd, listedPaths);
+      const filePaths = yield* filterVcsIgnoredPaths(cwd, listedPaths);
 
       const directorySet = new Set<string>();
       for (const filePath of filePaths) {
@@ -333,7 +334,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const buildWorkspaceIndexFromFilesystem = Effect.fn(
     "WorkspaceEntries.buildWorkspaceIndexFromFilesystem",
   )(function* (cwd: string): Effect.fn.Return<WorkspaceIndex, WorkspaceEntriesError> {
-    const shouldFilterWithGitIgnore = yield* isInsideGitWorkTree(cwd);
+    const shouldFilterIgnoredPathsWithVcs = yield* isInsideVersionControlledWorkTree(cwd);
 
     let pendingDirectories: string[] = [""];
     const entries: SearchableWorkspaceEntry[] = [];
@@ -380,8 +381,8 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       const candidatePaths = candidateEntriesByDirectory.flatMap((candidateEntries) =>
         candidateEntries.map((entry) => entry.relativePath),
       );
-      const allowedPathSet = shouldFilterWithGitIgnore
-        ? new Set(yield* filterGitIgnoredPaths(cwd, candidatePaths))
+      const allowedPathSet = shouldFilterIgnoredPathsWithVcs
+        ? new Set(yield* filterVcsIgnoredPaths(cwd, candidatePaths))
         : null;
 
       for (const candidateEntries of candidateEntriesByDirectory) {
@@ -423,9 +424,9 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const buildWorkspaceIndex = Effect.fn("WorkspaceEntries.buildWorkspaceIndex")(function* (
     cwd: string,
   ): Effect.fn.Return<WorkspaceIndex, WorkspaceEntriesError> {
-    const gitIndexed = yield* buildWorkspaceIndexFromGit(cwd);
-    if (gitIndexed) {
-      return gitIndexed;
+    const vcsIndexed = yield* buildWorkspaceIndexFromVcs(cwd);
+    if (vcsIndexed) {
+      return vcsIndexed;
     }
     return yield* buildWorkspaceIndexFromFilesystem(cwd);
   });

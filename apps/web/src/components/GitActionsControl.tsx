@@ -41,13 +41,13 @@ import { Textarea } from "~/components/ui/textarea";
 import { toastManager, type ThreadToastData } from "~/components/ui/toast";
 import { openInPreferredEditor } from "~/editorPreferences";
 import {
-  gitInitMutationOptions,
-  gitMutationKeys,
-  gitPullMutationOptions,
-  gitRunStackedActionMutationOptions,
-  gitStatusQueryOptions,
-  invalidateGitStatusQuery,
-} from "~/lib/gitReactQuery";
+  invalidateVcsStatusQuery,
+  vcsInitMutationOptions,
+  vcsMutationKeys,
+  vcsPullMutationOptions,
+  vcsRunStackedActionMutationOptions,
+  vcsStatusQueryOptions,
+} from "~/lib/vcsReactQuery";
 import { newCommandId, randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
@@ -114,24 +114,24 @@ function resolveProgressDescription(progress: ActiveGitActionProgress): string |
 
 function getMenuActionDisabledReason({
   item,
-  gitStatus,
+  status,
   isBusy,
   hasOriginRemote,
 }: {
   item: GitActionMenuItem;
-  gitStatus: GitStatusResult | null;
+  status: GitStatusResult | null;
   isBusy: boolean;
   hasOriginRemote: boolean;
 }): string | null {
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
-  if (!gitStatus) return "Git status is unavailable.";
+  if (!status) return "Git status is unavailable.";
 
-  const hasBranch = gitStatus.branch !== null;
-  const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
-  const isAhead = gitStatus.aheadCount > 0;
-  const isBehind = gitStatus.behindCount > 0;
+  const hasBranch = status.branch !== null;
+  const hasChanges = status.hasWorkingTreeChanges;
+  const hasOpenPr = status.pr?.state === "open";
+  const isAhead = status.aheadCount > 0;
+  const isBehind = status.behindCount > 0;
 
   if (item.id === "commit") {
     if (!hasChanges) {
@@ -150,7 +150,7 @@ function getMenuActionDisabledReason({
     if (isBehind) {
       return "Branch is behind upstream. Pull/rebase before pushing.";
     }
-    if (!gitStatus.hasUpstream && !hasOriginRemote) {
+    if (!status.hasUpstream && !hasOriginRemote) {
       return 'Add an "origin" remote before pushing.';
     }
     if (!isAhead) {
@@ -168,7 +168,7 @@ function getMenuActionDisabledReason({
   if (hasChanges) {
     return "Commit local changes before creating a PR.";
   }
-  if (!gitStatus.hasUpstream && !hasOriginRemote) {
+  if (!status.hasUpstream && !hasOriginRemote) {
     return 'Add an "origin" remote before creating a PR.';
   }
   if (!isAhead) {
@@ -275,30 +275,30 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     [persistThreadBranchSync],
   );
 
-  const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
+  const { data: vcsStatus = null, error: vcsStatusError } = useQuery(vcsStatusQueryOptions(gitCwd));
   // Default to true while loading so we don't flash init controls.
-  const isRepo = gitStatus?.isRepo ?? true;
-  const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
-  const gitStatusForActions = gitStatus;
+  const isRepo = vcsStatus?.isRepo ?? true;
+  const hasOriginRemote = vcsStatus?.hasOriginRemote ?? false;
+  const vcsStatusForActions = vcsStatus;
 
-  const allFiles = gitStatusForActions?.workingTree.files ?? [];
+  const allFiles = vcsStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
 
-  const initMutation = useMutation(gitInitMutationOptions({ cwd: gitCwd, queryClient }));
+  const initMutation = useMutation(vcsInitMutationOptions({ cwd: gitCwd, queryClient }));
 
   const runImmediateGitActionMutation = useMutation(
-    gitRunStackedActionMutationOptions({
+    vcsRunStackedActionMutationOptions({
       cwd: gitCwd,
       queryClient,
     }),
   );
-  const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
+  const pullMutation = useMutation(vcsPullMutationOptions({ cwd: gitCwd, queryClient }));
 
   const isRunStackedActionRunning =
-    useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
-  const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
+    useIsMutating({ mutationKey: vcsMutationKeys.runStackedAction(gitCwd) }) > 0;
+  const isPullRunning = useIsMutating({ mutationKey: vcsMutationKeys.pull(gitCwd) }) > 0;
   const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
 
   useEffect(() => {
@@ -308,7 +308,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
     const branchUpdate = resolveLiveThreadBranchUpdate({
       threadBranch: activeServerThread?.branch ?? null,
-      gitStatus: gitStatusForActions,
+      gitStatus: vcsStatusForActions,
     });
     if (!branchUpdate) {
       return;
@@ -317,23 +317,23 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     persistThreadBranchSync(branchUpdate.branch);
   }, [
     activeServerThread?.branch,
-    gitStatusForActions,
+    vcsStatusForActions,
     isGitActionRunning,
     persistThreadBranchSync,
   ]);
 
   const isDefaultBranch = useMemo(() => {
-    return gitStatusForActions?.isDefaultBranch ?? false;
-  }, [gitStatusForActions?.isDefaultBranch]);
+    return vcsStatusForActions?.isDefaultBranch ?? false;
+  }, [vcsStatusForActions?.isDefaultBranch]);
 
   const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasOriginRemote),
-    [gitStatusForActions, hasOriginRemote, isGitActionRunning],
+    () => buildMenuItems(vcsStatusForActions, isGitActionRunning, hasOriginRemote),
+    [vcsStatusForActions, hasOriginRemote, isGitActionRunning],
   );
   const quickAction = useMemo(
     () =>
-      resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultBranch, hasOriginRemote),
-    [gitStatusForActions, hasOriginRemote, isDefaultBranch, isGitActionRunning],
+      resolveQuickAction(vcsStatusForActions, isGitActionRunning, isDefaultBranch, hasOriginRemote),
+    [vcsStatusForActions, hasOriginRemote, isDefaultBranch, isGitActionRunning],
   );
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
@@ -369,7 +369,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       });
       return;
     }
-    const prUrl = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr.url : null;
+    const prUrl = vcsStatusForActions?.pr?.state === "open" ? vcsStatusForActions.pr.url : null;
     if (!prUrl) {
       toastManager.add({
         type: "error",
@@ -386,7 +386,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         data: threadToastData,
       });
     });
-  }, [gitStatusForActions, threadToastData]);
+  }, [vcsStatusForActions, threadToastData]);
 
   runGitActionWithToast = useEffectEvent(
     async ({
@@ -399,7 +399,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       progressToastId,
       filePaths,
     }: RunGitActionWithToastInput) => {
-      const actionStatus = statusOverride ?? gitStatusForActions;
+      const actionStatus = statusOverride ?? vcsStatusForActions;
       const actionBranch = actionStatus?.branch ?? null;
       const actionIsDefaultBranch = featureBranch ? false : isDefaultBranch;
       const actionCanCommit =
@@ -801,7 +801,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu
             onOpenChange={(open) => {
-              if (open) void invalidateGitStatusQuery(queryClient, gitCwd);
+              if (open) void invalidateVcsStatusQuery(queryClient, gitCwd);
             }}
           >
             <MenuTrigger
@@ -814,7 +814,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
               {gitActionMenuItems.map((item) => {
                 const disabledReason = getMenuActionDisabledReason({
                   item,
-                  gitStatus: gitStatusForActions,
+                  status: vcsStatusForActions,
                   isBusy: isGitActionRunning,
                   hasOriginRemote,
                 });
@@ -851,22 +851,22 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                   </MenuItem>
                 );
               })}
-              {gitStatusForActions?.branch === null && (
+              {vcsStatusForActions?.branch === null && (
                 <p className="px-2 py-1.5 text-xs text-warning">
                   Detached HEAD: create and checkout a branch to enable push and PR actions.
                 </p>
               )}
-              {gitStatusForActions &&
-                gitStatusForActions.branch !== null &&
-                !gitStatusForActions.hasWorkingTreeChanges &&
-                gitStatusForActions.behindCount > 0 &&
-                gitStatusForActions.aheadCount === 0 && (
+              {vcsStatusForActions &&
+                vcsStatusForActions.branch !== null &&
+                !vcsStatusForActions.hasWorkingTreeChanges &&
+                vcsStatusForActions.behindCount > 0 &&
+                vcsStatusForActions.aheadCount === 0 && (
                   <p className="px-2 py-1.5 text-xs text-warning">
                     Behind upstream. Pull/rebase first.
                   </p>
                 )}
-              {gitStatusError && (
-                <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError.message}</p>
+              {vcsStatusError && (
+                <p className="px-2 py-1.5 text-xs text-destructive">{vcsStatusError.message}</p>
               )}
             </MenuPopup>
           </Menu>
@@ -895,7 +895,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                 <span className="text-muted-foreground">Branch</span>
                 <span className="flex items-center justify-between gap-2">
                   <span className="font-medium">
-                    {gitStatusForActions?.branch ?? "(detached HEAD)"}
+                    {vcsStatusForActions?.branch ?? "(detached HEAD)"}
                   </span>
                   {isDefaultBranch && (
                     <span className="text-right text-warning text-xs">Warning: default branch</span>
@@ -933,7 +933,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                     </Button>
                   )}
                 </div>
-                {!gitStatusForActions || allFiles.length === 0 ? (
+                {!vcsStatusForActions || allFiles.length === 0 ? (
                   <p className="font-medium">none</p>
                 ) : (
                   <div className="space-y-2">

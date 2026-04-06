@@ -33,6 +33,8 @@ import { GitHubCliLive } from "./git/Layers/GitHubCli";
 import { RoutingTextGenerationLive } from "./git/Layers/RoutingTextGeneration";
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
 import { GitManagerLive } from "./git/Layers/GitManager";
+import { JjCoreLive } from "./jj/Layers/JjCore";
+import { JjManagerLive } from "./jj/Layers/JjManager";
 import { KeybindingsLive } from "./keybindings";
 import { ServerRuntimeStartup, ServerRuntimeStartupLive } from "./serverRuntimeStartup";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
@@ -48,6 +50,8 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem"
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
 import { ProjectSetupScriptRunnerLive } from "./project/Layers/ProjectSetupScriptRunner";
 import { ObservabilityLive } from "./observability/Layers/Observability";
+import { VcsCoreLive } from "./vcs/Layers/VcsCore";
+import { VcsManagerLive } from "./vcs/Layers/VcsManager";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -161,7 +165,7 @@ const ProviderLayerLive = Layer.unwrap(
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
-const GitLayerLive = Layer.empty.pipe(
+const GitBackendLayerLive = Layer.empty.pipe(
   Layer.provideMerge(
     GitManagerLive.pipe(
       Layer.provideMerge(ProjectSetupScriptRunnerLive),
@@ -171,6 +175,33 @@ const GitLayerLive = Layer.empty.pipe(
     ),
   ),
   Layer.provideMerge(GitCoreLive),
+);
+
+const JjBackendLayerLive = Layer.empty.pipe(
+  Layer.provideMerge(
+    JjManagerLive.pipe(
+      Layer.provideMerge(ProjectSetupScriptRunnerLive),
+      Layer.provideMerge(JjCoreLive.pipe(Layer.provideMerge(GitCoreLive))),
+      Layer.provideMerge(GitHubCliLive),
+      Layer.provideMerge(RoutingTextGenerationLive),
+    ),
+  ),
+  Layer.provideMerge(JjCoreLive.pipe(Layer.provideMerge(GitCoreLive))),
+);
+
+const VcsLayerLive = Layer.empty.pipe(
+  Layer.provideMerge(
+    VcsCoreLive.pipe(
+      Layer.provideMerge(JjBackendLayerLive),
+      Layer.provideMerge(GitBackendLayerLive),
+    ),
+  ),
+  Layer.provideMerge(
+    VcsManagerLive.pipe(
+      Layer.provideMerge(JjBackendLayerLive),
+      Layer.provideMerge(GitBackendLayerLive),
+    ),
+  ),
 );
 
 const TerminalLayerLive = TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive));
@@ -187,7 +218,9 @@ const WorkspaceLayerLive = Layer.mergeAll(
 const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
-  Layer.provideMerge(GitLayerLive),
+  Layer.provideMerge(GitBackendLayerLive),
+  Layer.provideMerge(JjBackendLayerLive),
+  Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
   Layer.provideMerge(ProviderLayerLive),
   Layer.provideMerge(TerminalLayerLive),

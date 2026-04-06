@@ -25,8 +25,6 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { ServerConfig } from "./config";
-import { GitCore } from "./git/Services/GitCore";
-import { GitManager } from "./git/Services/GitManager";
 import { Keybindings } from "./keybindings";
 import { Open, resolveAvailableEditors } from "./open";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer";
@@ -46,6 +44,8 @@ import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner";
+import { VcsCore } from "./vcs/Services/VcsCore";
+import { VcsManager } from "./vcs/Services/VcsManager";
 
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
@@ -54,8 +54,8 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const checkpointDiffQuery = yield* CheckpointDiffQuery;
     const keybindings = yield* Keybindings;
     const open = yield* Open;
-    const gitManager = yield* GitManager;
-    const git = yield* GitCore;
+    const vcsManager = yield* VcsManager;
+    const vcs = yield* VcsCore;
     const terminalManager = yield* TerminalManager;
     const providerRegistry = yield* ProviderRegistry;
     const config = yield* ServerConfig;
@@ -269,7 +269,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           }
 
           if (bootstrap?.prepareWorktree) {
-            const worktree = yield* git.createWorktree({
+            const worktree = yield* vcs.createWorktree({
               cwd: bootstrap.prepareWorktree.projectCwd,
               branch: bootstrap.prepareWorktree.baseBranch,
               newBranch: bootstrap.prepareWorktree.branch,
@@ -560,18 +560,18 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           "rpc.aggregate": "workspace",
         }),
       [WS_METHODS.gitStatus]: (input) =>
-        observeRpcEffect(WS_METHODS.gitStatus, gitManager.status(input), {
+        observeRpcEffect(WS_METHODS.gitStatus, vcsManager.status(input), {
           "rpc.aggregate": "git",
         }),
       [WS_METHODS.gitPull]: (input) =>
-        observeRpcEffect(WS_METHODS.gitPull, git.pullCurrentBranch(input.cwd), {
+        observeRpcEffect(WS_METHODS.gitPull, vcs.pullCurrentBranch(input.cwd), {
           "rpc.aggregate": "git",
         }),
       [WS_METHODS.gitRunStackedAction]: (input) =>
         observeRpcStream(
           WS_METHODS.gitRunStackedAction,
           Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-            gitManager
+            vcsManager
               .runStackedAction(input, {
                 actionId: input.actionId,
                 progressReporter: {
@@ -588,37 +588,37 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           { "rpc.aggregate": "git" },
         ),
       [WS_METHODS.gitResolvePullRequest]: (input) =>
-        observeRpcEffect(WS_METHODS.gitResolvePullRequest, gitManager.resolvePullRequest(input), {
+        observeRpcEffect(WS_METHODS.gitResolvePullRequest, vcsManager.resolvePullRequest(input), {
           "rpc.aggregate": "git",
         }),
       [WS_METHODS.gitPreparePullRequestThread]: (input) =>
         observeRpcEffect(
           WS_METHODS.gitPreparePullRequestThread,
-          gitManager.preparePullRequestThread(input),
+          vcsManager.preparePullRequestThread(input),
           { "rpc.aggregate": "git" },
         ),
       [WS_METHODS.gitListBranches]: (input) =>
-        observeRpcEffect(WS_METHODS.gitListBranches, git.listBranches(input), {
+        observeRpcEffect(WS_METHODS.gitListBranches, vcs.listBranches(input), {
           "rpc.aggregate": "git",
         }),
       [WS_METHODS.gitCreateWorktree]: (input) =>
-        observeRpcEffect(WS_METHODS.gitCreateWorktree, git.createWorktree(input), {
+        observeRpcEffect(WS_METHODS.gitCreateWorktree, vcs.createWorktree(input), {
           "rpc.aggregate": "git",
         }),
       [WS_METHODS.gitRemoveWorktree]: (input) =>
-        observeRpcEffect(WS_METHODS.gitRemoveWorktree, git.removeWorktree(input), {
+        observeRpcEffect(WS_METHODS.gitRemoveWorktree, vcs.removeWorktree(input), {
           "rpc.aggregate": "git",
         }),
       [WS_METHODS.gitCreateBranch]: (input) =>
-        observeRpcEffect(WS_METHODS.gitCreateBranch, git.createBranch(input), {
+        observeRpcEffect(WS_METHODS.gitCreateBranch, vcs.createBranch(input), {
           "rpc.aggregate": "git",
         }),
       [WS_METHODS.gitCheckout]: (input) =>
-        observeRpcEffect(WS_METHODS.gitCheckout, Effect.scoped(git.checkoutBranch(input)), {
+        observeRpcEffect(WS_METHODS.gitCheckout, Effect.scoped(vcs.checkoutBranch(input)), {
           "rpc.aggregate": "git",
         }),
       [WS_METHODS.gitInit]: (input) =>
-        observeRpcEffect(WS_METHODS.gitInit, git.initRepo(input), { "rpc.aggregate": "git" }),
+        observeRpcEffect(WS_METHODS.gitInit, vcs.initRepo(input), { "rpc.aggregate": "git" }),
       [WS_METHODS.terminalOpen]: (input) =>
         observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
           "rpc.aggregate": "terminal",

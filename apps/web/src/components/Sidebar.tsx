@@ -70,7 +70,7 @@ import {
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
-import { gitStatusQueryOptions } from "../lib/gitReactQuery";
+import { vcsStatusQueryOptions } from "../lib/vcsReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -762,7 +762,7 @@ export default function Sidebar() {
     }),
     [platform, routeTerminalOpen],
   );
-  const threadGitTargets = useMemo(
+  const threadVcsTargets = useMemo(
     () =>
       sidebarThreads.map((thread) => ({
         threadId: thread.id,
@@ -771,44 +771,44 @@ export default function Sidebar() {
       })),
     [projectCwdById, sidebarThreads],
   );
-  const threadGitStatusCwds = useMemo(
+  const threadVcsStatusCwds = useMemo(
     () => [
       ...new Set(
-        threadGitTargets
+        threadVcsTargets
           .filter((target) => target.branch !== null)
           .map((target) => target.cwd)
           .filter((cwd): cwd is string => cwd !== null),
       ),
     ],
-    [threadGitTargets],
+    [threadVcsTargets],
   );
-  const threadGitStatusQueries = useQueries({
-    queries: threadGitStatusCwds.map((cwd) => ({
-      ...gitStatusQueryOptions(cwd),
+  const threadVcsStatusQueries = useQueries({
+    queries: threadVcsStatusCwds.map((cwd) => ({
+      ...vcsStatusQueryOptions(cwd),
       staleTime: 30_000,
       refetchInterval: 60_000,
     })),
   });
   const prByThreadId = useMemo(() => {
     const statusByCwd = new Map<string, GitStatusResult>();
-    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
-      const cwd = threadGitStatusCwds[index];
+    for (let index = 0; index < threadVcsStatusCwds.length; index += 1) {
+      const cwd = threadVcsStatusCwds[index];
       if (!cwd) continue;
-      const status = threadGitStatusQueries[index]?.data;
+      const status = threadVcsStatusQueries[index]?.data;
       if (status) {
         statusByCwd.set(cwd, status);
       }
     }
 
     const map = new Map<ThreadId, ThreadPr>();
-    for (const target of threadGitTargets) {
+    for (const target of threadVcsTargets) {
       const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
       const branchMatches =
         target.branch !== null && status?.branch !== null && status?.branch === target.branch;
       map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
     }
     return map;
-  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  }, [threadVcsStatusCwds, threadVcsStatusQueries, threadVcsTargets]);
 
   const openPrLink = useCallback((event: MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();

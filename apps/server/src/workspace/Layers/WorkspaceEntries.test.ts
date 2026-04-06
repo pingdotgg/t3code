@@ -7,6 +7,7 @@ import { Effect, FileSystem, Layer, Path, PlatformError } from "effect";
 import { ServerConfig } from "../../config.ts";
 import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
+import { VcsCoreFromGitLive } from "../../vcs/Layers/VcsCore.ts";
 import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
 import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
@@ -14,6 +15,7 @@ import { WorkspacePathsLive } from "./WorkspacePaths.ts";
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
   Layer.provideMerge(WorkspacePathsLive),
+  Layer.provideMerge(VcsCoreFromGitLive.pipe(Layer.provideMerge(GitCoreLive))),
   Layer.provideMerge(GitCoreLive),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), {

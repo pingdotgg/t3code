@@ -48,7 +48,7 @@ describe("resolveBranchToolbarValue", () => {
         envMode: "worktree",
         activeWorktreePath: null,
         activeThreadBranch: null,
-        currentGitBranch: "main",
+        currentBranch: "main",
       }),
     ).toBe("main");
   });
@@ -59,7 +59,7 @@ describe("resolveBranchToolbarValue", () => {
         envMode: "worktree",
         activeWorktreePath: null,
         activeThreadBranch: "feature/base",
-        currentGitBranch: "main",
+        currentBranch: "main",
       }),
     ).toBe("feature/base");
   });
@@ -70,7 +70,7 @@ describe("resolveBranchToolbarValue", () => {
         envMode: "local",
         activeWorktreePath: null,
         activeThreadBranch: "feature/base",
-        currentGitBranch: "main",
+        currentBranch: "main",
       }),
     ).toBe("main");
   });

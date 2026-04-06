@@ -9,8 +9,8 @@ const GIT_CWD = "/repo/project";
 const BRANCH_NAME = "feature/toast-scope";
 
 const {
-  invalidateGitQueriesSpy,
-  invalidateGitStatusQuerySpy,
+  invalidateVcsQueriesSpy,
+  invalidateVcsStatusQuerySpy,
   runStackedActionMutateAsyncSpy,
   setThreadBranchSpy,
   toastAddSpy,
@@ -18,8 +18,8 @@ const {
   toastPromiseSpy,
   toastUpdateSpy,
 } = vi.hoisted(() => ({
-  invalidateGitQueriesSpy: vi.fn(() => Promise.resolve()),
-  invalidateGitStatusQuerySpy: vi.fn(() => Promise.resolve()),
+  invalidateVcsQueriesSpy: vi.fn(() => Promise.resolve()),
+  invalidateVcsStatusQuerySpy: vi.fn(() => Promise.resolve()),
   runStackedActionMutateAsyncSpy: vi.fn(() => new Promise<never>(() => undefined)),
   setThreadBranchSpy: vi.fn(),
   toastAddSpy: vi.fn(() => "toast-1"),
@@ -109,18 +109,17 @@ vi.mock("~/editorPreferences", () => ({
   openInPreferredEditor: vi.fn(),
 }));
 
-vi.mock("~/lib/gitReactQuery", () => ({
-  gitBranchesQueryOptions: vi.fn(() => ({ queryKey: ["git-branches"] })),
-  gitInitMutationOptions: vi.fn(() => ({ __kind: "init" })),
-  gitMutationKeys: {
+vi.mock("~/lib/vcsReactQuery", () => ({
+  vcsInitMutationOptions: vi.fn(() => ({ __kind: "init" })),
+  vcsMutationKeys: {
     pull: vi.fn(() => ["pull"]),
     runStackedAction: vi.fn(() => ["run-stacked-action"]),
   },
-  gitPullMutationOptions: vi.fn(() => ({ __kind: "pull" })),
-  gitRunStackedActionMutationOptions: vi.fn(() => ({ __kind: "run-stacked-action" })),
-  gitStatusQueryOptions: vi.fn(() => ({ queryKey: ["git-status"] })),
-  invalidateGitQueries: invalidateGitQueriesSpy,
-  invalidateGitStatusQuery: invalidateGitStatusQuerySpy,
+  vcsPullMutationOptions: vi.fn(() => ({ __kind: "pull" })),
+  vcsRunStackedActionMutationOptions: vi.fn(() => ({ __kind: "run-stacked-action" })),
+  vcsStatusQueryOptions: vi.fn(() => ({ queryKey: ["git-status"] })),
+  invalidateVcsQueries: invalidateVcsQueriesSpy,
+  invalidateVcsStatusQuery: invalidateVcsStatusQuerySpy,
 }));
 
 vi.mock("~/lib/utils", async () => {

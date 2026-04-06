@@ -4,9 +4,9 @@ import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  gitPreparePullRequestThreadMutationOptions,
-  gitResolvePullRequestQueryOptions,
-} from "~/lib/gitReactQuery";
+  vcsPreparePullRequestThreadMutationOptions,
+  vcsResolvePullRequestQueryOptions,
+} from "~/lib/vcsReactQuery";
 import { cn } from "~/lib/utils";
 import { parsePullRequestReference } from "~/pullRequestReference";
 import { Button } from "./ui/button";
@@ -71,7 +71,7 @@ export function PullRequestThreadDialog({
   const parsedReference = parsePullRequestReference(reference);
   const parsedDebouncedReference = parsePullRequestReference(debouncedReference);
   const resolvePullRequestQuery = useQuery(
-    gitResolvePullRequestQueryOptions({
+    vcsResolvePullRequestQueryOptions({
       cwd,
       reference: open ? parsedDebouncedReference : null,
     }),
@@ -89,7 +89,7 @@ export function PullRequestThreadDialog({
     return cached?.pullRequest ?? null;
   }, [cwd, parsedReference, queryClient]);
   const preparePullRequestThreadMutation = useMutation(
-    gitPreparePullRequestThreadMutationOptions({ cwd, queryClient }),
+    vcsPreparePullRequestThreadMutationOptions({ cwd, queryClient }),
   );
 
   const liveResolvedPullRequest =

@@ -19,7 +19,7 @@ import {
   useState,
 } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
-import { gitStatusQueryOptions } from "~/lib/gitReactQuery";
+import { vcsStatusQueryOptions } from "~/lib/vcsReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
@@ -189,8 +189,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
-  const gitStatusQuery = useQuery(gitStatusQueryOptions(activeCwd ?? null));
-  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const vcsStatusQuery = useQuery(vcsStatusQueryOptions(activeCwd ?? null));
+  const isVersionControlledRepo = vcsStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -266,7 +266,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
-      enabled: isGitRepo,
+      enabled: isVersionControlledRepo,
     }),
   );
   const selectedTurnCheckpointDiff = selectedTurn
@@ -548,7 +548,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
-      ) : !isGitRepo ? (
+      ) : !isVersionControlledRepo ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>

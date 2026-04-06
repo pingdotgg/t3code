@@ -3,7 +3,7 @@ import { Schema } from "effect";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
-} from "@t3tools/shared/git";
+} from "@t3tools/shared/vcs";
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
@@ -38,13 +38,13 @@ export function resolveBranchToolbarValue(input: {
   envMode: EnvMode;
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
-  currentGitBranch: string | null;
+  currentBranch: string | null;
 }): string | null {
-  const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
+  const { envMode, activeWorktreePath, activeThreadBranch, currentBranch } = input;
   if (envMode === "worktree" && !activeWorktreePath) {
-    return activeThreadBranch ?? currentGitBranch;
+    return activeThreadBranch ?? currentBranch;
   }
-  return currentGitBranch ?? activeThreadBranch;
+  return currentBranch ?? activeThreadBranch;
 }
 
 export function resolveBranchSelectionTarget(input: {

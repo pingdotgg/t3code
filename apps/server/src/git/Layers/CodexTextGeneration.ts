@@ -4,7 +4,7 @@ import { Effect, FileSystem, Layer, Option, Path, Schema, Scope, Stream } from "
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { CodexModelSelection } from "@t3tools/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/vcs";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";

@@ -115,6 +115,8 @@ export interface GitFetchPullRequestBranchInput {
   cwd: string;
   prNumber: number;
   branch: string;
+  remoteName?: string;
+  remoteBranch?: string;
 }
 
 export interface GitEnsureRemoteInput {

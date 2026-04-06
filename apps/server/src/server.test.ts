@@ -73,6 +73,8 @@ import {
   ProjectSetupScriptRunner,
   type ProjectSetupScriptRunnerShape,
 } from "./project/Services/ProjectSetupScriptRunner.ts";
+import { VcsCore } from "./vcs/Services/VcsCore.ts";
+import { VcsManager } from "./vcs/Services/VcsManager.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
@@ -334,7 +336,17 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
+        Layer.mock(VcsCore)({
+          ...options?.layers?.gitCore,
+        }),
+      ),
+      Layer.provide(
         Layer.mock(GitManager)({
+          ...options?.layers?.gitManager,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(VcsManager)({
           ...options?.layers?.gitManager,
         }),
       ),
