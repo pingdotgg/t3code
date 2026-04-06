@@ -12,6 +12,7 @@ import {
   type ServerLifecycleWelcomePayload,
   type ThreadId,
   type TurnId,
+  type UserInputQuestion,
   WS_METHODS,
   OrchestrationSessionStatus,
   DEFAULT_SERVER_SETTINGS,
@@ -541,11 +542,50 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
   };
 }
 
-function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
+function createSnapshotWithPendingUserInput(options?: {
+  questions?: ReadonlyArray<UserInputQuestion>;
+}): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-pending-input-target" as MessageId,
     targetText: "question thread",
   });
+
+  const questions =
+    options?.questions ??
+    ([
+      {
+        id: "scope",
+        header: "Scope",
+        question: "What should this change cover?",
+        options: [
+          {
+            label: "Tight",
+            description: "Touch only the footer layout logic.",
+          },
+          {
+            label: "Broad",
+            description: "Also adjust the related composer controls.",
+          },
+        ],
+        multiSelect: false,
+      },
+      {
+        id: "risk",
+        header: "Risk",
+        question: "How aggressive should the imaginary plan be?",
+        options: [
+          {
+            label: "Conservative",
+            description: "Favor reliability and low-risk changes.",
+          },
+          {
+            label: "Balanced",
+            description: "Mix quick wins with one structural improvement.",
+          },
+        ],
+        multiSelect: false,
+      },
+    ] satisfies ReadonlyArray<UserInputQuestion>);
 
   return {
     ...snapshot,
@@ -561,38 +601,7 @@ function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
                 summary: "User input requested",
                 payload: {
                   requestId: "req-browser-user-input",
-                  questions: [
-                    {
-                      id: "scope",
-                      header: "Scope",
-                      question: "What should this change cover?",
-                      options: [
-                        {
-                          label: "Tight",
-                          description: "Touch only the footer layout logic.",
-                        },
-                        {
-                          label: "Broad",
-                          description: "Also adjust the related composer controls.",
-                        },
-                      ],
-                    },
-                    {
-                      id: "risk",
-                      header: "Risk",
-                      question: "How aggressive should the imaginary plan be?",
-                      options: [
-                        {
-                          label: "Conservative",
-                          description: "Favor reliability and low-risk changes.",
-                        },
-                        {
-                          label: "Balanced",
-                          description: "Mix quick wins with one structural improvement.",
-                        },
-                      ],
-                    },
-                  ],
+                  questions,
                 },
                 turnId: null,
                 sequence: 1,
@@ -2897,6 +2906,143 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await mounted.setContainerSize(COMPACT_FOOTER_VIEWPORT);
       await expectComposerActionsContained();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not trigger numeric option shortcuts while the composer is focused", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInput(),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+
+      const event = new KeyboardEvent("keydown", {
+        key: "2",
+        bubbles: true,
+        cancelable: true,
+      });
+      composerEditor.dispatchEvent(event);
+      await waitForLayout();
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(document.body.textContent).toContain("What should this change cover?");
+      expect(document.body.textContent).not.toContain(
+        "How aggressive should the imaginary plan be?",
+      );
+      await waitForButtonByText("Next question");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("submits multi-select questionnaire answers as arrays", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInput({
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which areas should this change cover?",
+            options: [
+              {
+                label: "Server",
+                description: "Touch server orchestration.",
+              },
+              {
+                label: "Web",
+                description: "Touch the browser UI.",
+              },
+            ],
+            multiSelect: true,
+          },
+          {
+            id: "risk",
+            header: "Risk",
+            question: "How aggressive should the imaginary plan be?",
+            options: [
+              {
+                label: "Balanced",
+                description: "Mix quick wins with one structural improvement.",
+              },
+            ],
+            multiSelect: false,
+          },
+        ],
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const serverOption = await waitForButtonContainingText("Server");
+      serverOption.click();
+      await waitForLayout();
+
+      expect(document.body.textContent).toContain("Which areas should this change cover?");
+
+      const webOption = await waitForButtonContainingText("Web");
+      webOption.click();
+      await waitForLayout();
+
+      expect(document.body.textContent).toContain("Which areas should this change cover?");
+
+      const nextButton = await waitForButtonByText("Next question");
+      expect(nextButton.disabled).toBe(false);
+      nextButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(
+            "How aggressive should the imaginary plan be?",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const balancedOption = await waitForButtonContainingText("Balanced");
+      balancedOption.click();
+
+      const submitButton = await waitForButtonByText("Submit answers");
+      expect(submitButton.disabled).toBe(false);
+      submitButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.user-input.respond",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                answers?: Record<string, unknown>;
+              }
+            | undefined;
+
+          expect(dispatchRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.user-input.respond",
+            answers: {
+              scope: ["Server", "Web"],
+              risk: "Balanced",
+            },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
