@@ -723,6 +723,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
                     description: "Allow workspace writes only",
                   },
                 ],
+                multiSelect: true,
               },
             ],
           },
@@ -749,6 +750,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         if (events[0]?.type === "user-input.requested") {
           assert.equal(events[0].requestId, "req-user-input-1");
           assert.equal(events[0].payload.questions[0]?.id, "sandbox_mode");
+          assert.equal(events[0].payload.questions[0]?.multiSelect, true);
         }
 
         assert.equal(events[1]?.type, "user-input.resolved");
