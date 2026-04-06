@@ -328,6 +328,27 @@ describe("incremental orchestration updates", () => {
     expect(next.bootstrapComplete).toBe(false);
   });
 
+  it("updates the existing project title when project.meta-updated arrives", () => {
+    const projectId = ProjectId.makeUnsafe("project-1");
+    const state = makeState(
+      makeThread({
+        projectId,
+      }),
+    );
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("project.meta-updated", {
+        projectId,
+        title: "Renamed Project",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+    );
+
+    expect(next.projects[0]?.name).toBe("Renamed Project");
+    expect(next.projects[0]?.updatedAt).toBe("2026-02-27T00:00:01.000Z");
+  });
+
   it("preserves state identity for no-op project and thread deletes", () => {
     const thread = makeThread();
     const state = makeState(thread);
