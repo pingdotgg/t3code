@@ -265,6 +265,7 @@ function createSnapshotForTargetUser(options: {
       {
         id: THREAD_ID,
         projectId: PROJECT_ID,
+        parentThreadId: null,
         title: "Browser test thread",
         modelSelection: {
           provider: "codex",
@@ -323,6 +324,7 @@ function addThreadToSnapshot(
       {
         id: threadId,
         projectId: PROJECT_ID,
+        parentThreadId: null,
         title: "New thread",
         modelSelection: {
           provider: "codex",
@@ -370,6 +372,7 @@ function createThreadCreatedEvent(threadId: ThreadId, sequence: number): Orchest
     payload: {
       threadId,
       projectId: PROJECT_ID,
+      parentThreadId: null,
       title: "New thread",
       modelSelection: {
         provider: "codex",

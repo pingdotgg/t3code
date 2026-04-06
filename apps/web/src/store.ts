@@ -159,6 +159,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     id: thread.id,
     codexThreadId: null,
     projectId: thread.projectId,
+    parentThreadId: thread.parentThreadId,
     title: thread.title,
     modelSelection: normalizeModelSelection(thread.modelSelection),
     runtimeMode: thread.runtimeMode,
@@ -214,6 +215,7 @@ function buildSidebarThreadSummary(thread: Thread): SidebarThreadSummary {
   return {
     id: thread.id,
     projectId: thread.projectId,
+    parentThreadId: thread.parentThreadId,
     title: thread.title,
     interactionMode: thread.interactionMode,
     session: thread.session,
@@ -240,6 +242,7 @@ function sidebarThreadSummariesEqual(
     left !== undefined &&
     left.id === right.id &&
     left.projectId === right.projectId &&
+    left.parentThreadId === right.parentThreadId &&
     left.title === right.title &&
     left.interactionMode === right.interactionMode &&
     left.session === right.session &&
@@ -647,6 +650,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       const nextThread = mapThread({
         id: event.payload.threadId,
         projectId: event.payload.projectId,
+        parentThreadId: event.payload.parentThreadId,
         title: event.payload.title,
         modelSelection: event.payload.modelSelection,
         runtimeMode: event.payload.runtimeMode,

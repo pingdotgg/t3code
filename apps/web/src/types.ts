@@ -92,6 +92,7 @@ export interface Thread {
   id: ThreadId;
   codexThreadId: string | null;
   projectId: ProjectId;
+  parentThreadId: ThreadId | null;
   title: string;
   modelSelection: ModelSelection;
   runtimeMode: RuntimeMode;
@@ -114,6 +115,7 @@ export interface Thread {
 export interface SidebarThreadSummary {
   id: ThreadId;
   projectId: ProjectId;
+  parentThreadId: ThreadId | null;
   title: string;
   interactionMode: ProviderInteractionMode;
   session: ThreadSession | null;

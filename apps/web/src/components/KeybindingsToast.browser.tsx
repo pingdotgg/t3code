@@ -98,6 +98,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
       {
         id: THREAD_ID,
         projectId: PROJECT_ID,
+        parentThreadId: null,
         title: "Test thread",
         modelSelection: {
           provider: "codex",

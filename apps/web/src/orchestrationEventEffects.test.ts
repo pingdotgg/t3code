@@ -48,6 +48,7 @@ describe("deriveOrchestrationBatchEffects", () => {
       makeEvent("thread.created", {
         threadId: createdThreadId,
         projectId: ProjectId.makeUnsafe("project-1"),
+        parentThreadId: null,
         title: "Created thread",
         modelSelection: { provider: "codex", model: "gpt-5-codex" },
         runtimeMode: "full-access",
@@ -85,6 +86,7 @@ describe("deriveOrchestrationBatchEffects", () => {
       makeEvent("thread.created", {
         threadId,
         projectId: ProjectId.makeUnsafe("project-1"),
+        parentThreadId: null,
         title: "Recreated thread",
         modelSelection: { provider: "codex", model: "gpt-5-codex" },
         runtimeMode: "full-access",

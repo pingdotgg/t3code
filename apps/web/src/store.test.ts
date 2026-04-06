@@ -24,6 +24,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     id: ThreadId.makeUnsafe("thread-1"),
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
+    parentThreadId: null,
     title: "Thread",
     modelSelection: {
       provider: "codex",
@@ -101,6 +102,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
   return {
     id: ThreadId.makeUnsafe("thread-1"),
     projectId: ProjectId.makeUnsafe("project-1"),
+    parentThreadId: null,
     title: "Thread",
     modelSelection: {
       provider: "codex",
@@ -246,6 +248,22 @@ describe("store read model sync", () => {
     );
 
     expect(next.threads[0]?.archivedAt).toBe(archivedAt);
+  });
+
+  it("maps parentThreadId from the read model", () => {
+    const initialState = makeState(makeThread());
+    const parentThreadId = ThreadId.makeUnsafe("thread-parent");
+    const next = syncServerReadModel(
+      initialState,
+      makeReadModel(
+        makeReadModelThread({
+          parentThreadId,
+        }),
+      ),
+    );
+
+    expect(next.threads[0]?.parentThreadId).toBe(parentThreadId);
+    expect(next.sidebarThreadsById[next.threads[0]!.id]?.parentThreadId).toBe(parentThreadId);
   });
 
   it("replaces projects using snapshot order during recovery", () => {
@@ -439,6 +457,7 @@ describe("incremental orchestration updates", () => {
       makeEvent("thread.created", {
         threadId,
         projectId: recreatedProjectId,
+        parentThreadId: null,
         title: "Recovered thread",
         modelSelection: {
           provider: "codex",
@@ -457,6 +476,49 @@ describe("incremental orchestration updates", () => {
     expect(next.threads[0]?.projectId).toBe(recreatedProjectId);
     expect(next.threadIdsByProjectId[originalProjectId]).toBeUndefined();
     expect(next.threadIdsByProjectId[recreatedProjectId]).toEqual([threadId]);
+  });
+
+  it("materializes parentThreadId from thread.created events", () => {
+    const parentThreadId = ThreadId.makeUnsafe("thread-parent");
+    const next = applyOrchestrationEvent(
+      {
+        projects: [
+          {
+            id: ProjectId.makeUnsafe("project-1"),
+            name: "Project",
+            cwd: "/tmp/project",
+            defaultModelSelection: {
+              provider: "codex",
+              model: DEFAULT_MODEL_BY_PROVIDER.codex,
+            },
+            scripts: [],
+          },
+        ],
+        threads: [],
+        sidebarThreadsById: {},
+        threadIdsByProjectId: {},
+        bootstrapComplete: true,
+      },
+      makeEvent("thread.created", {
+        threadId: ThreadId.makeUnsafe("thread-child"),
+        projectId: ProjectId.makeUnsafe("project-1"),
+        parentThreadId,
+        title: "Child thread",
+        modelSelection: {
+          provider: "codex",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+        },
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-02-27T00:00:01.000Z",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+    );
+
+    expect(next.threads[0]?.parentThreadId).toBe(parentThreadId);
+    expect(next.sidebarThreadsById["thread-child"]?.parentThreadId).toBe(parentThreadId);
   });
 
   it("updates only the affected thread for message events", () => {

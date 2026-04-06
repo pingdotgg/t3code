@@ -3053,6 +3053,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 ? {
                     createThread: {
                       projectId: activeProject.id,
+                      parentThreadId: null,
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
@@ -3457,6 +3458,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         commandId: newCommandId(),
         threadId: nextThreadId,
         projectId: activeProject.id,
+        parentThreadId: null,
         title: nextThreadTitle,
         modelSelection: nextThreadModelSelection,
         runtimeMode,
