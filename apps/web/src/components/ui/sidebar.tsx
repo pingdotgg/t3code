@@ -20,6 +20,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { Schema } from "effect";
+import {
+  resolveSwipeGestureState,
+  SWIPE_THRESHOLD,
+  type SwipeGestureState,
+} from "./sidebar.swipe.logic";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -83,6 +88,124 @@ function useSidebar() {
   }
 
   return context;
+}
+
+function SwipeToDismiss({
+  children,
+  onDismiss,
+  side,
+}: {
+  children: React.ReactNode;
+  onDismiss: () => void;
+  side: "left" | "right";
+}) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const touchStartRef = React.useRef<{ x: number; y: number } | null>(null);
+  const gestureStateRef = React.useRef<SwipeGestureState>("idle");
+
+  const applyTransform = React.useCallback(
+    (dx: number) => {
+      const el = containerRef.current;
+      if (!el) return;
+      // Only translate in the closing direction
+      const offset = side === "left" ? Math.min(0, dx) : Math.max(0, dx);
+      if (offset === 0) {
+        el.style.transform = "";
+        el.style.opacity = "";
+      } else {
+        el.style.transform = `translateX(${offset}px)`;
+        el.style.opacity = String(Math.max(0.4, 1 - Math.abs(offset) / 280));
+      }
+    },
+    [side],
+  );
+
+  const resetTransform = React.useCallback((animated: boolean) => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (animated) {
+      el.style.transition = "transform 0.2s ease-out, opacity 0.2s ease-out";
+      el.style.transform = "";
+      el.style.opacity = "";
+      const cleanup = () => {
+        el.style.transition = "";
+        el.removeEventListener("transitionend", cleanup);
+      };
+      el.addEventListener("transitionend", cleanup);
+    } else {
+      el.style.transition = "";
+      el.style.transform = "";
+      el.style.opacity = "";
+    }
+  }, []);
+
+  const handleTouchStart = React.useCallback((e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+    gestureStateRef.current = "idle";
+    if (containerRef.current) containerRef.current.style.transition = "";
+  }, []);
+
+  const handleTouchMove = React.useCallback(
+    (e: React.TouchEvent) => {
+      const touch = e.touches[0];
+      const start = touchStartRef.current;
+      if (!touch || !start) return;
+      const dx = touch.clientX - start.x;
+      const dy = touch.clientY - start.y;
+      gestureStateRef.current = resolveSwipeGestureState(gestureStateRef.current, { dx, dy });
+      if (gestureStateRef.current === "swiping") {
+        applyTransform(dx);
+      }
+    },
+    [applyTransform],
+  );
+
+  const handleTouchEnd = React.useCallback(
+    (e: React.TouchEvent) => {
+      const touch = e.changedTouches[0];
+      const start = touchStartRef.current;
+      touchStartRef.current = null;
+
+      if (!touch || !start || gestureStateRef.current !== "swiping") {
+        resetTransform(true);
+        return;
+      }
+
+      const dx = touch.clientX - start.x;
+      // Sidebar opens from left → swipe left (negative dx) to close
+      // Sidebar opens from right → swipe right (positive dx) to close
+      const shouldDismiss = side === "left" ? dx < -SWIPE_THRESHOLD : dx > SWIPE_THRESHOLD;
+
+      if (shouldDismiss) {
+        resetTransform(false); // Sheet handles its own close animation
+        onDismiss();
+      } else {
+        resetTransform(true); // Snap back
+      }
+    },
+    [onDismiss, resetTransform, side],
+  );
+
+  const handleTouchCancel = React.useCallback(() => {
+    touchStartRef.current = null;
+    gestureStateRef.current = "idle";
+    resetTransform(true);
+  }, [resetTransform]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="h-full w-full shadow-[1px_0_0_0_rgba(0,0,0,0.75),2px_0_4px_0px_rgba(0,0,0,0.1)]"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
+    >
+      {children}
+    </div>
+  );
 }
 
 function SidebarProvider({
@@ -245,7 +368,9 @@ function Sidebar({
               <SheetTitle>Sidebar</SheetTitle>
               <SheetDescription>Displays the mobile sidebar.</SheetDescription>
             </SheetHeader>
-            <div className="flex h-full w-full flex-col">{children}</div>
+            <SwipeToDismiss onDismiss={() => setOpenMobile(false)} side={side}>
+              <div className="flex h-full w-full flex-col">{children}</div>
+            </SwipeToDismiss>
           </SheetPopup>
         </Sheet>
       </SidebarInstanceContext.Provider>
@@ -593,7 +718,74 @@ function SidebarRail({
   );
 }
 
-function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
+const SWIPE_OPEN_EDGE_PX = 80;
+
+function SidebarInset({ className, children, ...props }: React.ComponentProps<"main">) {
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  const edgeIndicatorRef = React.useRef<HTMLDivElement>(null);
+  const touchStartRef = React.useRef<{ x: number; y: number } | null>(null);
+  const gestureStateRef = React.useRef<SwipeGestureState>("idle");
+
+  const handleTouchStart = React.useCallback(
+    (e: React.TouchEvent) => {
+      if (!isMobile) return;
+      const touch = e.touches[0];
+      if (!touch) return;
+      // Only start tracking if the touch begins near the left edge
+      if (touch.clientX > SWIPE_OPEN_EDGE_PX) return;
+      touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+      gestureStateRef.current = "idle";
+    },
+    [isMobile],
+  );
+
+  const handleTouchMove = React.useCallback((e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    const start = touchStartRef.current;
+    if (!touch || !start) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    gestureStateRef.current = resolveSwipeGestureState(gestureStateRef.current, { dx, dy });
+    const el = edgeIndicatorRef.current;
+    if (el && gestureStateRef.current === "swiping" && dx > 0) {
+      const progress = Math.min(dx / SWIPE_THRESHOLD, 1);
+      // Reach full opacity quickly so the background looks solid
+      el.style.opacity = String(Math.min(progress * 2, 1));
+      // Follow the finger directly, cap at half screen width
+      el.style.width = `${Math.min(dx, window.innerWidth * 0.5)}px`;
+    }
+  }, []);
+
+  const handleTouchEnd = React.useCallback(
+    (e: React.TouchEvent) => {
+      const touch = e.changedTouches[0];
+      const start = touchStartRef.current;
+      touchStartRef.current = null;
+      const el = edgeIndicatorRef.current;
+      if (el) {
+        el.style.opacity = "0";
+        el.style.width = "4px";
+      }
+      if (!touch || !start || gestureStateRef.current !== "swiping") return;
+      const dx = touch.clientX - start.x;
+      if (dx > SWIPE_THRESHOLD) {
+        setOpenMobile(true);
+      }
+    },
+    [setOpenMobile],
+  );
+
+  const handleTouchCancel = React.useCallback(() => {
+    touchStartRef.current = null;
+    gestureStateRef.current = "idle";
+    const el = edgeIndicatorRef.current;
+    if (el) {
+      el.style.opacity = "0";
+      el.style.width = "4px";
+    }
+  }, []);
+
   return (
     <main
       className={cn(
@@ -603,7 +795,20 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
       )}
       data-slot="sidebar-inset"
       {...props}
-    />
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
+    >
+      {/* Left-edge peek that grows while swiping to open the sidebar */}
+      <div
+        ref={edgeIndicatorRef}
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 left-0 z-10 bg-popover shadow-[inset_-1px_0_0_0_rgba(0,0,0,0.75),2px_0_4px_0_rgba(0,0,0,0.1)] transition-none"
+        style={{ opacity: 0, width: "4px" }}
+      />
+      {children}
+    </main>
   );
 }
 
