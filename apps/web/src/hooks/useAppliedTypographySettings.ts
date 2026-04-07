@@ -3,7 +3,7 @@ import { useSettings } from "./useSettings";
 import { applyTypographySettings, pickTypographySettings } from "../typography";
 
 export function useAppliedTypographySettings() {
-  const typographySettings = useSettings((settings) => pickTypographySettings(settings));
+  const typographySettings = useSettings(pickTypographySettings);
 
   useEffect(() => {
     applyTypographySettings(document.documentElement, typographySettings);

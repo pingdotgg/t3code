@@ -125,7 +125,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   workspaceRoot,
   onVirtualizerSnapshot,
 }: MessagesTimelineProps) {
-  const typography = useSettings((settings) => pickTypographySettings(settings));
+  const typography = useSettings(pickTypographySettings);
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
 
