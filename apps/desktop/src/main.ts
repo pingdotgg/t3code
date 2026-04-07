@@ -563,6 +563,7 @@ function handleCheckForUpdatesMenuClick(): void {
     platform: process.platform,
     appImage: process.env.APPIMAGE,
     disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+    hasFeedURL: typeof autoUpdater.getFeedURL() === "string",
   });
   if (disabledReason) {
     console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
@@ -786,6 +787,7 @@ function shouldEnableAutoUpdates(): boolean {
       platform: process.platform,
       appImage: process.env.APPIMAGE,
       disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+      hasFeedURL: typeof autoUpdater.getFeedURL() === "string",
     }) === null
   );
 }
@@ -869,17 +871,6 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
 }
 
 function configureAutoUpdater(): void {
-  const enabled = shouldEnableAutoUpdates();
-  setUpdateState({
-    ...createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo),
-    enabled,
-    status: enabled ? "idle" : "disabled",
-  });
-  if (!enabled) {
-    return;
-  }
-  updaterConfigured = true;
-
   const githubToken =
     process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim() || "";
   if (githubToken) {
@@ -903,6 +894,17 @@ function configureAutoUpdater(): void {
       url: `http://localhost:${process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
     });
   }
+
+  const enabled = shouldEnableAutoUpdates();
+  setUpdateState({
+    ...createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo),
+    enabled,
+    status: enabled ? "idle" : "disabled",
+  });
+  if (!enabled) {
+    return;
+  }
+  updaterConfigured = true;
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;

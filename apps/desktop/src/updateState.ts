@@ -34,7 +34,11 @@ export function getAutoUpdateDisabledReason(args: {
   platform: NodeJS.Platform;
   appImage?: string | undefined;
   disabledByEnv: boolean;
+  hasFeedURL: boolean;
 }): string | null {
+  if (!args.hasFeedURL) {
+    return "Automatic updates are not available because no update feed URL is configured.";
+  }
   if (args.isDevelopment || !args.isPackaged) {
     return "Automatic updates are only available in packaged production builds.";
   }
