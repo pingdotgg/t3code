@@ -1,0 +1,22 @@
+{
+  "name": "T3 Code Dev",
+  "image": "debian:bookworm",
+  "features": {
+    "ghcr.io/devcontainers-extra/features/bun:1": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24",
+      "nodeGypDependencies": true
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    }
+  },
+  "postCreateCommand": {
+    "bun-install": "bun install --backend=copyfile --frozen-lockfile"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["oxc.oxc-vscode"]
+    }
+  }
+}
