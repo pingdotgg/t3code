@@ -158,7 +158,6 @@ describe("resolveAssistantMessageCopyState", () => {
         streaming: false,
       }),
     ).toEqual({
-      disabled: false,
       text: "Ship it",
       visible: true,
     });
@@ -172,7 +171,6 @@ describe("resolveAssistantMessageCopyState", () => {
         streaming: true,
       }),
     ).toEqual({
-      disabled: false,
       text: "Still streaming",
       visible: false,
     });
@@ -186,7 +184,6 @@ describe("resolveAssistantMessageCopyState", () => {
         streaming: false,
       }),
     ).toEqual({
-      disabled: false,
       text: null,
       visible: false,
     });
@@ -200,7 +197,6 @@ describe("resolveAssistantMessageCopyState", () => {
         streaming: false,
       }),
     ).toEqual({
-      disabled: false,
       text: "Interim thought",
       visible: false,
     });

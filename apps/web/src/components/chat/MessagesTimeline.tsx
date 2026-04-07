@@ -534,8 +534,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       <MessageCopyButton
                         text={assistantCopyState.text ?? ""}
                         title="Copy assistant response"
-                        disabled={assistantCopyState.disabled}
-                        disabledTitle="Copy available when response completes"
                         size="icon-xs"
                         variant="outline"
                         className="border-border/50 bg-background/35 text-muted-foreground/45 shadow-none hover:border-border/70 hover:bg-background/55 hover:text-muted-foreground/70"
