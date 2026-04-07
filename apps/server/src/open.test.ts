@@ -228,7 +228,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
   it.effect("falls back to open -a on macOS when CLI is missing but .app is installed", () =>
     Effect.gen(function* () {
-      const idea = EDITORS.find(e => e.id === "idea")
+      const idea = EDITORS.find((e) => e.id === "idea");
       assert.isDefined(idea);
 
       if (!isAppInstalled(idea, "darwin")) return;
@@ -240,7 +240,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       );
       assert.deepEqual(launch, {
         command: "open",
-        args: ["-a", "IntelliJ IDEA", "/tmp/workspace"],
+        args: ["-a", "IntelliJ IDEA", "--args", "/tmp/workspace"],
       });
     }),
   );
@@ -408,7 +408,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
   );
 
   it("includes editors detected via macOS .app bundle", () => {
-    const idea = EDITORS.find(e => e.id === "idea")
+    const idea = EDITORS.find((e) => e.id === "idea");
     assert.isDefined(idea);
 
     if (!isAppInstalled(idea, "darwin")) return;

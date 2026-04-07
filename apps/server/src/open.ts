@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
-import {EDITORS, OpenError, type EditorId, EditorDefinition} from "@t3tools/contracts";
+import { EDITORS, OpenError, type EditorId, EditorDefinition } from "@t3tools/contracts";
 import { ServiceMap, Effect, Layer } from "effect";
 
 // ==============================
@@ -53,10 +53,7 @@ function parseTargetPathAndPosition(target: string): {
   };
 }
 
-function resolveCommandEditorArgs(
-  editor: (typeof EDITORS)[number],
-  target: string,
-): ReadonlyArray<string> {
+function resolveCommandEditorArgs(editor: EditorDefinition, target: string): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
 
   switch (editor.launchStyle) {
@@ -213,10 +210,10 @@ function resolveAppPaths(appName: string, platform: NodeJS.Platform): ReadonlyAr
 }
 
 export function isAppInstalled(
-    editor: EditorDefinition,
-    platform: NodeJS.Platform
-): editor is EditorDefinition & {appName: string} {
-  if (!("appName" in editor)) return false
+  editor: EditorDefinition,
+  platform: NodeJS.Platform,
+): editor is EditorDefinition & { appName: string } {
+  if (!("appName" in editor)) return false;
   for (const appPath of resolveAppPaths(editor.appName, platform)) {
     try {
       statSync(appPath);
@@ -297,24 +294,22 @@ export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   if (editorDef.commands) {
     const command = resolveAvailableCommand(editorDef.commands, { platform, env });
+    const args = resolveCommandEditorArgs(editorDef, input.cwd);
     if (command) {
-      return {
-        command,
-        args: resolveCommandEditorArgs(editorDef, input.cwd),
-      };
+      return { command, args };
     }
 
     if (isAppInstalled(editorDef, platform)) {
-      return {
-        command: "open",
-        args: ["-a", editorDef.appName, input.cwd],
-      };
+      switch (platform) {
+        case "darwin":
+          return {
+            command: "open",
+            args: ["-a", editorDef.appName, "--args", ...args],
+          };
+      }
     }
 
-    return {
-      command: editorDef.commands[0],
-      args: resolveCommandEditorArgs(editorDef, input.cwd),
-    };
+    return { command: editorDef.commands[0], args };
   }
 
   if (editorDef.id !== "file-manager") {
