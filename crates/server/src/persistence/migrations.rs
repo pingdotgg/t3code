@@ -8,12 +8,36 @@ pub struct MigrationSummary {
     pub applied: Vec<(i32, &'static str)>,
 }
 
+const MIGRATION_NAMES: [&str; 19] = [
+    "OrchestrationEvents",
+    "OrchestrationCommandReceipts",
+    "CheckpointDiffBlobs",
+    "ProviderSessionRuntime",
+    "Projections",
+    "ProjectionThreadSessionRuntimeModeColumns",
+    "ProjectionThreadMessageAttachments",
+    "ProjectionThreadActivitySequence",
+    "ProviderSessionRuntimeMode",
+    "ProjectionThreadsRuntimeMode",
+    "OrchestrationThreadCreatedRuntimeMode",
+    "ProjectionThreadsInteractionMode",
+    "ProjectionThreadProposedPlans",
+    "ProjectionThreadProposedPlanImplementation",
+    "ProjectionTurnsSourceProposedPlan",
+    "CanonicalizeModelSelections",
+    "ProjectionThreadsArchivedAt",
+    "ProjectionThreadsArchivedAtIndex",
+    "ProjectionSnapshotLookupIndexes",
+];
+
 /// Runs the full `SQLite` migration set (1-19) against `conn`.
 ///
 /// # Errors
 ///
 /// Returns an error if any migration fails to apply.
 pub fn run_migrations(conn: &mut Connection) -> anyhow::Result<MigrationSummary> {
+    use anyhow::Context;
+
     let migrations = Migrations::new(vec![
         M::up(include_str!("sql/001_orchestration_events.sql")),
         M::up(include_str!("sql/002_orchestration_command_receipts.sql")),
@@ -54,32 +78,32 @@ pub fn run_migrations(conn: &mut Connection) -> anyhow::Result<MigrationSummary>
         )),
     ]);
 
+    let previous_version = conn
+        .pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0))
+        .context("failed to read sqlite user_version before migrations")?;
+
     // Ensure the migrations bookkeeping table exists and apply pending migrations.
     migrations.to_latest(conn)?;
 
+    let current_version = conn
+        .pragma_query_value(None, "user_version", |row| row.get::<_, i32>(0))
+        .context("failed to read sqlite user_version after migrations")?;
+
+    let start = previous_version.max(0) as usize;
+    let end = current_version.max(0) as usize;
+    let applied = if end > start {
+        MIGRATION_NAMES
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .map(|(idx, name)| ((idx + 1) as i32, *name))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     Ok(MigrationSummary {
-        applied: (1..=19)
-            .zip([
-                "OrchestrationEvents",
-                "OrchestrationCommandReceipts",
-                "CheckpointDiffBlobs",
-                "ProviderSessionRuntime",
-                "Projections",
-                "ProjectionThreadSessionRuntimeModeColumns",
-                "ProjectionThreadMessageAttachments",
-                "ProjectionThreadActivitySequence",
-                "ProviderSessionRuntimeMode",
-                "ProjectionThreadsRuntimeMode",
-                "OrchestrationThreadCreatedRuntimeMode",
-                "ProjectionThreadsInteractionMode",
-                "ProjectionThreadProposedPlans",
-                "ProjectionThreadProposedPlanImplementation",
-                "ProjectionTurnsSourceProposedPlan",
-                "CanonicalizeModelSelections",
-                "ProjectionThreadsArchivedAt",
-                "ProjectionThreadsArchivedAtIndex",
-                "ProjectionSnapshotLookupIndexes",
-            ])
-            .collect(),
+        applied,
     })
 }
