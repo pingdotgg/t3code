@@ -19,6 +19,7 @@ jobs:
   preflight:
     name: Preflight
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.release_meta.outputs.version }}
       tag: ${{ steps.release_meta.outputs.tag }}
@@ -81,6 +82,7 @@ jobs:
     name: Build ${{ matrix.label }}
     needs: preflight
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -227,6 +229,7 @@ jobs:
     name: Publish CLI to npm
     needs: [preflight, build]
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -260,6 +263,7 @@ jobs:
     name: Publish GitHub Release
     needs: [preflight, build, publish_cli]
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -307,6 +311,7 @@ jobs:
     name: Finalize release
     needs: [preflight, release]
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - id: app_token
         name: Mint release app token
