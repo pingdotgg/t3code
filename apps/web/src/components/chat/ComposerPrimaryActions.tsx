@@ -27,10 +27,11 @@ interface ComposerPrimaryActionsProps {
   onImplementPlanInNewThread: () => void;
 }
 
-const formatPendingPrimaryActionLabel = (input: {
+export const formatPendingPrimaryActionLabel = (input: {
   compact: boolean;
   isLastQuestion: boolean;
   isResponding: boolean;
+  questionIndex: number;
 }) => {
   if (input.isResponding) {
     return "Submitting...";
@@ -38,7 +39,10 @@ const formatPendingPrimaryActionLabel = (input: {
   if (input.compact) {
     return input.isLastQuestion ? "Submit" : "Next";
   }
-  return input.isLastQuestion ? "Submit answers" : "Next question";
+  if (!input.isLastQuestion) {
+    return "Next question";
+  }
+  return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
 export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
@@ -95,6 +99,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             compact,
             isLastQuestion: pendingAction.isLastQuestion,
             isResponding: pendingAction.isResponding,
+            questionIndex: pendingAction.questionIndex,
           })}
         </Button>
       </div>
