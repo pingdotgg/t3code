@@ -6,6 +6,7 @@ import {
   LoaderIcon,
   PlusIcon,
   RefreshCwIcon,
+  Trash2,
   Undo2Icon,
   XIcon,
 } from "lucide-react";
@@ -49,7 +50,17 @@ import { ensureNativeApi, readNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
@@ -1481,7 +1492,11 @@ export function GeneralSettingsPanel() {
 export function ArchivedThreadsPanel() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
-  const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
+  const appSettings = useSettings();
+  const { unarchiveThread, confirmAndDeleteThread, deleteThread } = useThreadActions();
+  const [selectedArchivedIds, setSelectedArchivedIds] = useState(() => new Set<ThreadId>());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+
   const archivedGroups = useMemo(() => {
     const projectById = new Map(projects.map((project) => [project.id, project] as const));
     return [...projectById.values()]
@@ -1497,6 +1512,106 @@ export function ArchivedThreadsPanel() {
       }))
       .filter((group) => group.threads.length > 0);
   }, [projects, threads]);
+
+  const allArchivedThreadIds = useMemo(
+    () => archivedGroups.flatMap((group) => group.threads.map((thread) => thread.id)),
+    [archivedGroups],
+  );
+
+  const archivedIdsKey = useMemo(() => allArchivedThreadIds.join("\0"), [allArchivedThreadIds]);
+
+  useEffect(() => {
+    const valid = new Set(allArchivedThreadIds);
+    setSelectedArchivedIds((previous) => {
+      let changed = false;
+      const next = new Set<ThreadId>();
+      for (const id of previous) {
+        if (valid.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : previous;
+    });
+  }, [archivedIdsKey, allArchivedThreadIds]);
+
+  const selectedCount = selectedArchivedIds.size;
+  const allSelected =
+    allArchivedThreadIds.length > 0 && selectedCount === allArchivedThreadIds.length;
+  const noneSelected = selectedCount === 0;
+
+  const toggleArchivedSelected = useCallback((threadId: ThreadId, checked: boolean) => {
+    setSelectedArchivedIds((previous) => {
+      const next = new Set(previous);
+      if (checked) {
+        next.add(threadId);
+      } else {
+        next.delete(threadId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleBulkUnarchiveArchived = useCallback(async () => {
+    const ids = [...selectedArchivedIds];
+    if (ids.length === 0) return;
+    for (const threadId of ids) {
+      try {
+        await unarchiveThread(threadId);
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to unarchive thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+    }
+    setSelectedArchivedIds(new Set());
+  }, [selectedArchivedIds, unarchiveThread]);
+
+  const executeBulkDeleteArchived = useCallback(async () => {
+    const ids = [...selectedArchivedIds];
+    if (ids.length === 0) return;
+    const deletedIds = new Set<ThreadId>(ids);
+    for (const threadId of ids) {
+      try {
+        await deleteThread(threadId, { deletedThreadIds: deletedIds });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to delete thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+    }
+    setSelectedArchivedIds(new Set());
+  }, [deleteThread, selectedArchivedIds]);
+
+  const requestBulkDeleteArchived = useCallback(() => {
+    if (selectedArchivedIds.size === 0) return;
+    if (!appSettings.confirmThreadDelete) {
+      void executeBulkDeleteArchived();
+      return;
+    }
+    setBulkDeleteDialogOpen(true);
+  }, [appSettings.confirmThreadDelete, executeBulkDeleteArchived, selectedArchivedIds.size]);
+
+  const confirmBulkDeleteFromDialog = useCallback(() => {
+    void (async () => {
+      try {
+        await executeBulkDeleteArchived();
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to delete threads",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      } finally {
+        setBulkDeleteDialogOpen(false);
+      }
+    })();
+  }, [executeBulkDeleteArchived]);
 
   const handleArchivedThreadContextMenu = useCallback(
     async (threadId: ThreadId, position: { x: number; y: number }) => {
@@ -1545,54 +1660,125 @@ export function ArchivedThreadsPanel() {
           </Empty>
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ project, threads: projectThreads }) => (
-          <SettingsSection
-            key={project.id}
-            title={project.name}
-            icon={<ProjectFavicon cwd={project.cwd} />}
-          >
-            {projectThreads.map((thread) => (
-              <div
-                key={thread.id}
-                className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  void handleArchivedThreadContextMenu(thread.id, {
-                    x: event.clientX,
-                    y: event.clientY,
-                  });
-                }}
-              >
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate text-sm font-medium text-foreground">{thread.title}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
-                    {" \u00b7 Created "}
-                    {formatRelativeTimeLabel(thread.createdAt)}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
-                  onClick={() =>
-                    void unarchiveThread(thread.id).catch((error) => {
-                      toastManager.add({
-                        type: "error",
-                        title: "Failed to unarchive thread",
-                        description: error instanceof Error ? error.message : "An error occurred.",
-                      });
-                    })
+        <>
+          <div className="flex flex-wrap items-center gap-3 border-b border-border pb-4">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+              <Checkbox
+                checked={allSelected}
+                indeterminate={!allSelected && !noneSelected}
+                disabled={allArchivedThreadIds.length === 0}
+                onCheckedChange={(value) => {
+                  if (value === true) {
+                    setSelectedArchivedIds(new Set(allArchivedThreadIds));
+                  } else {
+                    setSelectedArchivedIds(new Set());
                   }
+                }}
+              />
+              <span>Select all</span>
+            </label>
+            <Button
+              type="button"
+              size="xs"
+              variant="destructive"
+              disabled={selectedCount === 0}
+              onClick={requestBulkDeleteArchived}
+            >
+              <Trash2 className="size-3.5" />
+              Delete ({selectedCount})
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              disabled={selectedCount === 0}
+              onClick={() => void handleBulkUnarchiveArchived()}
+            >
+              <ArchiveX className="size-3.5" />
+              Unarchive ({selectedCount})
+            </Button>
+          </div>
+          {archivedGroups.map(({ project, threads: projectThreads }) => (
+            <SettingsSection
+              key={project.id}
+              title={project.name}
+              icon={<ProjectFavicon cwd={project.cwd} />}
+            >
+              {projectThreads.map((thread) => (
+                <div
+                  key={thread.id}
+                  className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    void handleArchivedThreadContextMenu(thread.id, {
+                      x: event.clientX,
+                      y: event.clientY,
+                    });
+                  }}
                 >
-                  <ArchiveX className="size-3.5" />
-                  <span>Unarchive</span>
+                  <div className="flex min-w-0 flex-1 items-start gap-3">
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={selectedArchivedIds.has(thread.id)}
+                      onCheckedChange={(value) => toggleArchivedSelected(thread.id, value === true)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                      }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate text-sm font-medium text-foreground">
+                        {thread.title}
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                        {" \u00b7 Created "}
+                        {formatRelativeTimeLabel(thread.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
+                    onClick={() =>
+                      void unarchiveThread(thread.id).catch((error) => {
+                        toastManager.add({
+                          type: "error",
+                          title: "Failed to unarchive thread",
+                          description:
+                            error instanceof Error ? error.message : "An error occurred.",
+                        });
+                      })
+                    }
+                  >
+                    <ArchiveX className="size-3.5" />
+                    <span>Unarchive</span>
+                  </Button>
+                </div>
+              ))}
+            </SettingsSection>
+          ))}
+          <AlertDialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+            <AlertDialogPopup>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Delete {selectedCount} selected thread{selectedCount === 1 ? "" : "s"}?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  This permanently removes conversation history for the selected threads. This
+                  cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                <Button variant="destructive" onClick={confirmBulkDeleteFromDialog}>
+                  Delete threads
                 </Button>
-              </div>
-            ))}
-          </SettingsSection>
-        ))
+              </AlertDialogFooter>
+            </AlertDialogPopup>
+          </AlertDialog>
+        </>
       )}
     </SettingsPageContainer>
   );
