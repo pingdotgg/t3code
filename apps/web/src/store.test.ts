@@ -444,8 +444,8 @@ describe("incremental orchestration updates", () => {
       }),
     );
 
-    expect(next.projects[0]?.name).toBe("Renamed Project");
-    expect(next.projects[0]?.updatedAt).toBe("2026-02-27T00:00:01.000Z");
+    expect(next.projectById[projectId]?.name).toBe("Renamed Project");
+    expect(next.projectById[projectId]?.updatedAt).toBe("2026-02-27T00:00:01.000Z");
   });
 
   it("preserves state identity for no-op project and thread deletes", () => {
