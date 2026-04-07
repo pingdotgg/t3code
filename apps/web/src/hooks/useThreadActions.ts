@@ -23,7 +23,6 @@ export function useThreadActions() {
     (store) => store.clearProjectDraftThreadById,
   );
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
-  const pinnedThreadIds = useUiStateStore((state) => state.pinnedThreadIds);
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
@@ -113,6 +112,7 @@ export function useThreadActions() {
       }
 
       const deletedThreadIds = opts.deletedThreadIds ?? new Set<ThreadId>();
+      const pinnedThreadIds = useUiStateStore.getState().pinnedThreadIds;
       const shouldNavigateToFallback = routeThreadId === threadId;
       const fallbackThreadId = getFallbackThreadIdAfterDelete({
         threads: threads.map((entry) =>
@@ -176,7 +176,6 @@ export function useThreadActions() {
       clearTerminalState,
       appSettings.sidebarThreadSortOrder,
       navigate,
-      pinnedThreadIds,
       removeWorktreeMutation,
       routeThreadId,
     ],
