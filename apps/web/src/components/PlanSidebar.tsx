@@ -1,4 +1,12 @@
-import { memo, useState, useCallback } from "react";
+import {
+  memo,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import { Schema } from "effect";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -27,6 +35,26 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { readNativeApi } from "~/nativeApi";
 import { toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
+
+const PLAN_SIDEBAR_DEFAULT_WIDTH = 340;
+const PLAN_SIDEBAR_MIN_WIDTH = 240;
+const PLAN_SIDEBAR_MAX_WIDTH = 560;
+const PLAN_SIDEBAR_WIDTH_STORAGE_KEY = "plan-sidebar-width";
+
+function clampSidebarWidth(width: number): number {
+  return Math.max(PLAN_SIDEBAR_MIN_WIDTH, Math.min(PLAN_SIDEBAR_MAX_WIDTH, width));
+}
+
+function readStoredWidth(): number {
+  try {
+    const stored = getLocalStorageItem(PLAN_SIDEBAR_WIDTH_STORAGE_KEY, Schema.Finite);
+    return stored !== null ? clampSidebarWidth(stored) : PLAN_SIDEBAR_DEFAULT_WIDTH;
+  } catch (error) {
+    console.error("[LOCALSTORAGE] Error:", error);
+    return PLAN_SIDEBAR_DEFAULT_WIDTH;
+  }
+}
 
 function stepStatusIcon(status: string): React.ReactNode {
   if (status === "completed") {
@@ -70,6 +98,70 @@ const PlanSidebar = memo(function PlanSidebar({
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard();
+
+  // --- Resize logic (follows ThreadTerminalDrawer pointer-capture pattern) ---
+  const [sidebarWidth, setSidebarWidth] = useState(readStoredWidth);
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
+  const resizeStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+  const didResizeDuringDragRef = useRef(false);
+
+  const handleResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    didResizeDuringDragRef.current = false;
+    resizeStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: sidebarWidthRef.current,
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    // Dragging left (negative clientX delta) should widen the sidebar.
+    const nextWidth = clampSidebarWidth(
+      resizeState.startWidth + (resizeState.startX - event.clientX),
+    );
+    if (nextWidth === sidebarWidthRef.current) return;
+    didResizeDuringDragRef.current = true;
+    sidebarWidthRef.current = nextWidth;
+    setSidebarWidth(nextWidth);
+  }, []);
+
+  const handleResizePointerEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    resizeStateRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    document.body.style.removeProperty("cursor");
+    document.body.style.removeProperty("user-select");
+    if (didResizeDuringDragRef.current) {
+      setLocalStorageItem(PLAN_SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidthRef.current, Schema.Finite);
+    }
+  }, []);
+
+  // Clean up body styles if the component unmounts mid-drag (e.g. sidebar closed
+  // while resizing). Without this, cursor and user-select overrides leak permanently.
+  // Mirrors the same cleanup pattern in SidebarRail.
+  useEffect(() => {
+    return () => {
+      resizeStateRef.current = null;
+      document.body.style.removeProperty("cursor");
+      document.body.style.removeProperty("user-select");
+    };
+  }, []);
 
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
   const displayedPlanMarkdown = planMarkdown ? stripDisplayedPlanMarkdown(planMarkdown) : null;
@@ -118,7 +210,18 @@ const PlanSidebar = memo(function PlanSidebar({
   }, [planMarkdown, workspaceRoot]);
 
   return (
-    <div className="flex h-full w-[340px] shrink-0 flex-col border-l border-border/70 bg-card/50">
+    <div
+      className="relative flex h-full shrink-0 flex-col border-l border-border/70 bg-card/50"
+      style={{ width: `${sidebarWidth}px` }}
+    >
+      {/* Resize handle — fully inside sidebar bounds to avoid stealing chat scroll (see #958) */}
+      <div
+        className="absolute inset-y-0 left-0 z-10 w-2 cursor-col-resize after:absolute after:inset-y-0 after:left-0 after:w-[2px] hover:after:bg-border"
+        onPointerDown={handleResizePointerDown}
+        onPointerMove={handleResizePointerMove}
+        onPointerUp={handleResizePointerEnd}
+        onPointerCancel={handleResizePointerEnd}
+      />
       {/* Header */}
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 px-3">
         <div className="flex items-center gap-2">
