@@ -32,6 +32,8 @@ use crate::http::load_asset_response;
 use crate::persistence::SqliteDb;
 use crate::ws::handle_socket;
 
+const SQLITE_UTC_TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H:%M:%fZ";
+
 #[derive(Clone)]
 pub struct AppState {
     inner: Arc<AppStateInner>,
@@ -56,12 +58,14 @@ impl AppState {
     /// Returns an error if the `SQLite` database cannot be opened, migrations fail, or the
     /// persisted snapshot cannot be decoded.
     pub fn new(config: ServerRuntimeConfig) -> anyhow::Result<Self> {
-        let started_at = "2026-04-07T00:00:00Z".to_owned();
         let (config_events, _) = broadcast::channel(64);
         let (orchestration_events, _) = broadcast::channel(64);
         let (terminal_events, _) = broadcast::channel(64);
 
         let db = SqliteDb::open_and_migrate(&config.db_path).context("failed to open sqlite db")?;
+        let started_at = db
+            .with_conn_blocking(current_utc_timestamp)
+            .context("failed to compute startup timestamp")?;
         let snapshot = db
             .with_conn_blocking(|conn| load_snapshot_from_db(conn, &started_at))
             .context("failed to load snapshot from sqlite")?;
@@ -250,9 +254,6 @@ fn load_snapshot_from_db(
 ) -> anyhow::Result<OrchestrationReadModel> {
     use anyhow::Context;
     use rusqlite::OptionalExtension;
-    use t3code_contracts::orchestration::{
-        ModelSelection, OrchestrationProject, OrchestrationThread, ProjectScript, ProviderKind,
-    };
 
     let snapshot_sequence: u64 = conn
         .query_row(
@@ -266,86 +267,8 @@ fn load_snapshot_from_db(
         .try_into()
         .unwrap_or(0);
 
-    let mut projects_stmt = conn
-        .prepare(
-            "SELECT project_id, title, workspace_root, default_model_selection_json, scripts_json, created_at, updated_at, deleted_at
-             FROM projection_projects
-             WHERE deleted_at IS NULL
-             ORDER BY updated_at DESC",
-        )
-        .context("prepare projection_projects query failed")?;
-    let projects_iter = projects_stmt
-        .query_map([], |row| {
-            let scripts_json: String = row.get(4)?;
-            let scripts: Vec<ProjectScript> =
-                serde_json::from_str(&scripts_json).unwrap_or_default();
-            let default_model_selection_json: Option<String> = row.get(3)?;
-            let default_model_selection: Option<ModelSelection> =
-                default_model_selection_json.and_then(|raw| serde_json::from_str(&raw).ok());
-
-            Ok(OrchestrationProject {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                workspace_root: row.get(2)?,
-                default_model_selection,
-                scripts,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-                deleted_at: row.get(7)?,
-            })
-        })
-        .context("query projection_projects failed")?;
-    let mut projects = Vec::new();
-    for project in projects_iter {
-        projects.push(project.context("projection_projects row decode failed")?);
-    }
-
-    let mut threads_stmt = conn
-        .prepare(
-            "SELECT thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, branch, worktree_path, latest_turn_id, created_at, updated_at, archived_at, deleted_at
-             FROM projection_threads
-             WHERE deleted_at IS NULL
-             ORDER BY updated_at DESC",
-        )
-        .context("prepare projection_threads query failed")?;
-    let threads_iter = threads_stmt
-        .query_map([], |row| {
-            let model_selection_json: Option<String> = row.get(3)?;
-            let model_selection: ModelSelection = model_selection_json
-                .as_deref()
-                .and_then(|raw| serde_json::from_str::<ModelSelection>(raw).ok())
-                .unwrap_or(ModelSelection {
-                    provider: ProviderKind::Codex,
-                    model: "gpt-5.4".to_owned(),
-                    options: None,
-                });
-
-            Ok(OrchestrationThread {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                title: row.get(2)?,
-                model_selection,
-                runtime_mode: row.get(4)?,
-                interaction_mode: row.get(5)?,
-                branch: row.get(6)?,
-                worktree_path: row.get(7)?,
-                latest_turn: None,
-                created_at: row.get(9)?,
-                updated_at: row.get(10)?,
-                archived_at: row.get(11)?,
-                deleted_at: row.get(12)?,
-                messages: Vec::new(),
-                proposed_plans: Vec::new(),
-                activities: Vec::new(),
-                checkpoints: Vec::new(),
-                session: None,
-            })
-        })
-        .context("query projection_threads failed")?;
-    let mut threads = Vec::new();
-    for thread in threads_iter {
-        threads.push(thread.context("projection_threads row decode failed")?);
-    }
+    let projects = load_projects_from_db(conn)?;
+    let threads = load_threads_from_db(conn)?;
 
     Ok(OrchestrationReadModel {
         snapshot_sequence,
@@ -353,6 +276,124 @@ fn load_snapshot_from_db(
         threads,
         updated_at: now.to_owned(),
     })
+}
+
+fn load_projects_from_db(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<Vec<t3code_contracts::orchestration::OrchestrationProject>> {
+    use anyhow::Context;
+    use t3code_contracts::orchestration::{ModelSelection, OrchestrationProject, ProjectScript};
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT project_id, title, workspace_root, default_model_selection_json, scripts_json, created_at, updated_at, deleted_at
+             FROM projection_projects
+             WHERE deleted_at IS NULL
+             ORDER BY updated_at DESC",
+        )
+        .context("prepare projection_projects query failed")?;
+    let mut rows = stmt.query([]).context("query projection_projects failed")?;
+    let mut projects = Vec::new();
+
+    while let Some(row) = rows
+        .next()
+        .context("advance projection_projects rows failed")?
+    {
+        let scripts_json: String = row.get(4)?;
+        let scripts: Vec<ProjectScript> = serde_json::from_str(&scripts_json)
+            .context("invalid projection_projects.scripts_json")?;
+        let default_model_selection_json: Option<String> = row.get(3)?;
+        let default_model_selection = if let Some(raw) = default_model_selection_json {
+            Some(
+                serde_json::from_str::<ModelSelection>(&raw)
+                    .context("invalid projection_projects.default_model_selection_json")?,
+            )
+        } else {
+            None
+        };
+
+        projects.push(OrchestrationProject {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            workspace_root: row.get(2)?,
+            default_model_selection,
+            scripts,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+            deleted_at: row.get(7)?,
+        });
+    }
+
+    Ok(projects)
+}
+
+fn load_threads_from_db(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<Vec<t3code_contracts::orchestration::OrchestrationThread>> {
+    use anyhow::Context;
+    use t3code_contracts::orchestration::{ModelSelection, OrchestrationThread, ProviderKind};
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, branch, worktree_path, latest_turn_id, created_at, updated_at, archived_at, deleted_at
+             FROM projection_threads
+             WHERE deleted_at IS NULL
+             ORDER BY updated_at DESC",
+        )
+        .context("prepare projection_threads query failed")?;
+    let mut rows = stmt.query([]).context("query projection_threads failed")?;
+    let mut threads = Vec::new();
+
+    while let Some(row) = rows
+        .next()
+        .context("advance projection_threads rows failed")?
+    {
+        let model_selection_json: Option<String> = row.get(3)?;
+        let model_selection = if let Some(raw) = model_selection_json {
+            serde_json::from_str::<ModelSelection>(&raw)
+                .context("invalid projection_threads.model_selection_json")?
+        } else {
+            ModelSelection {
+                provider: ProviderKind::Codex,
+                model: "gpt-5.4".to_owned(),
+                options: None,
+            }
+        };
+
+        threads.push(OrchestrationThread {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            title: row.get(2)?,
+            model_selection,
+            runtime_mode: row.get(4)?,
+            interaction_mode: row.get(5)?,
+            branch: row.get(6)?,
+            worktree_path: row.get(7)?,
+            latest_turn: None,
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
+            archived_at: row.get(11)?,
+            deleted_at: row.get(12)?,
+            messages: Vec::new(),
+            proposed_plans: Vec::new(),
+            activities: Vec::new(),
+            checkpoints: Vec::new(),
+            session: None,
+        });
+    }
+
+    Ok(threads)
+}
+
+fn current_utc_timestamp(conn: &rusqlite::Connection) -> anyhow::Result<String> {
+    use anyhow::Context;
+
+    conn.query_row(
+        "SELECT strftime(?1, 'now')",
+        rusqlite::params![SQLITE_UTC_TIMESTAMP_FORMAT],
+        |row| row.get::<_, String>(0),
+    )
+    .context("failed to query sqlite utc timestamp")
 }
 
 pub struct ServerHandle {
@@ -509,6 +550,8 @@ fn merge_json(current: &mut Value, patch: Value) {
 mod tests {
     use std::path::PathBuf;
 
+    use t3code_contracts::server::ServerLifecycleStreamEvent;
+
     use super::{AppState, ServerRuntimeConfig};
 
     #[tokio::test]
@@ -542,6 +585,21 @@ mod tests {
 
         assert!(next.enable_assistant_streaming);
         assert_eq!(next.providers.codex.home_path, "/tmp/codex-home");
+    }
+
+    #[tokio::test]
+    async fn ready_event_uses_runtime_timestamp() {
+        let state = AppState::new(test_config()).expect("state should init");
+        let ready = state.ready_event();
+
+        match ready {
+            ServerLifecycleStreamEvent::Ready { payload, .. } => {
+                assert_ne!(payload.at, "2026-04-07T00:00:00Z");
+                assert!(payload.at.ends_with('Z'));
+                assert!(payload.at.contains('T'));
+            }
+            _ => panic!("expected ready event"),
+        }
     }
 
     fn test_config() -> ServerRuntimeConfig {

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use rusqlite::{Connection, OpenFlags};
 
-pub use migrations::{run_migrations, MigrationSummary};
+pub use migrations::{run_migrations, MigrationSummary, MIGRATION_COUNT};
 
 /// Thin async-friendly wrapper around a single `SQLite` connection.
 ///
