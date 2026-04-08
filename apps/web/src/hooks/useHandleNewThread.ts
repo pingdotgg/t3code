@@ -66,6 +66,13 @@ export function useHandleNewThread() {
               ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
             });
           }
+          if (stickyModel) {
+            setProvider(storedDraftThread.threadId, inferProviderForModel(stickyModel));
+            setModel(storedDraftThread.threadId, stickyModel);
+          }
+          if (Object.keys(stickyModelOptions).length > 0) {
+            setModelOptions(storedDraftThread.threadId, stickyModelOptions);
+          }
           setProjectDraftThreadId(projectId, storedDraftThread.threadId);
           if (routeThreadId === storedDraftThread.threadId) {
             return;
@@ -90,6 +97,13 @@ export function useHandleNewThread() {
             ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
             ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
           });
+        }
+        if (stickyModel) {
+          setProvider(routeThreadId, inferProviderForModel(stickyModel));
+          setModel(routeThreadId, stickyModel);
+        }
+        if (Object.keys(stickyModelOptions).length > 0) {
+          setModelOptions(routeThreadId, stickyModelOptions);
         }
         setProjectDraftThreadId(projectId, routeThreadId);
         return Promise.resolve();
