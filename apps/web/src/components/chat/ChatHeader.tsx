@@ -4,15 +4,20 @@ import {
   type ResolvedKeybindingsConfig,
   type ThreadId,
 } from "@t3tools/contracts";
-import { memo } from "react";
+import { EllipsisIcon, DiffIcon, TerminalSquareIcon, PlayIcon, FolderOpenIcon } from "lucide-react";
+import { memo, useEffect, useRef, useState } from "react";
 import GitActionsControl from "../GitActionsControl";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuSeparator as MenuDivider, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
+import { readNativeApi } from "~/nativeApi";
+
+const HEADER_ACTIONS_COMPACT_BREAKPOINT_PX = 860;
 
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
@@ -61,8 +66,35 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleTerminal,
   onToggleDiff,
 }: ChatHeaderProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [useOverflowPopover, setUseOverflowPopover] = useState(false);
+  const hasOverflowActions = activeProjectScripts !== undefined || activeProjectName !== undefined;
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateLayout = (width: number) => {
+      setUseOverflowPopover(width < HEADER_ACTIONS_COMPACT_BREAKPOINT_PX);
+    };
+
+    updateLayout(container.clientWidth);
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      updateLayout(entry.contentRect.width);
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
+    <div
+      ref={containerRef}
+      className="@container/header-actions flex min-w-0 flex-1 items-center gap-2"
+    >
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         <h2
@@ -83,7 +115,53 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
-        {activeProjectScripts && (
+        {hasOverflowActions && useOverflowPopover ? (
+          <Menu>
+            <MenuTrigger
+              render={<Button size="icon-xs" variant="outline" aria-label="More actions" />}
+            >
+              <EllipsisIcon className="size-4" />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              {activeProjectScripts && activeProjectScripts.length > 0 && (
+                <>
+                  <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+                    Run script
+                  </div>
+                  {activeProjectScripts.slice(0, 5).map((script) => (
+                    <MenuItem key={script.id} onClick={() => onRunProjectScript(script)}>
+                      <PlayIcon className="size-4 shrink-0" />
+                      {script.name}
+                    </MenuItem>
+                  ))}
+                  {activeProjectScripts.length > 5 && (
+                    <MenuItem disabled className="text-muted-foreground">
+                      +{activeProjectScripts.length - 5} more
+                    </MenuItem>
+                  )}
+                  <MenuDivider />
+                </>
+              )}
+              {activeProjectName && (
+                <>
+                  <MenuItem
+                    onClick={() => {
+                      const api = readNativeApi();
+                      if (!api || !openInCwd) return;
+                      void api.shell.openInEditor(openInCwd, "file-manager");
+                    }}
+                  >
+                    <FolderOpenIcon className="size-4 shrink-0" />
+                    Open folder
+                  </MenuItem>
+                  <MenuDivider />
+                  <GitActionsControl inMenu gitCwd={gitCwd} activeThreadId={activeThreadId} />
+                </>
+              )}
+            </MenuPopup>
+          </Menu>
+        ) : null}
+        {!useOverflowPopover && activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             keybindings={keybindings}
@@ -94,14 +172,16 @@ export const ChatHeader = memo(function ChatHeader({
             onDeleteScript={onDeleteProjectScript}
           />
         )}
-        {activeProjectName && (
+        {!useOverflowPopover && activeProjectName && (
           <OpenInPicker
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {!useOverflowPopover && activeProjectName && (
+          <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={

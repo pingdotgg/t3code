@@ -55,6 +55,7 @@ import { useStore } from "~/store";
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadId: ThreadId | null;
+  inMenu?: boolean;
 }
 
 interface PendingDefaultBranchAction {
@@ -206,7 +207,11 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+export default function GitActionsControl({
+  gitCwd,
+  activeThreadId,
+  inMenu,
+}: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -783,6 +788,53 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   );
 
   if (!gitCwd) return null;
+
+  if (inMenu) {
+    return (
+      <>
+        {gitActionMenuItems.map((item) => {
+          const disabledReason = getMenuActionDisabledReason({
+            item,
+            gitStatus: gitStatusForActions,
+            isBusy: isGitActionRunning,
+            hasOriginRemote,
+          });
+          if (item.disabled && disabledReason) {
+            return (
+              <Popover key={`${item.id}-${item.label}`}>
+                <PopoverTrigger
+                  openOnHover
+                  nativeButton={false}
+                  render={<span className="block w-max cursor-not-allowed" />}
+                >
+                  <MenuItem className="w-full" disabled>
+                    <GitActionItemIcon icon={item.icon} />
+                    {item.label}
+                  </MenuItem>
+                </PopoverTrigger>
+                <PopoverPopup tooltipStyle side="left" align="center">
+                  {disabledReason}
+                </PopoverPopup>
+              </Popover>
+            );
+          }
+
+          return (
+            <MenuItem
+              key={`${item.id}-${item.label}`}
+              disabled={item.disabled}
+              onClick={() => {
+                openDialogForMenuItem(item);
+              }}
+            >
+              <GitActionItemIcon icon={item.icon} />
+              {item.label}
+            </MenuItem>
+          );
+        })}
+      </>
+    );
+  }
 
   return (
     <>
