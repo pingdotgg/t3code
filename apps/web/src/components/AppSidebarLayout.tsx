@@ -2,6 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
+import { useLifecycleNotifications } from "../hooks/useLifecycleNotifications";
 import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
 
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
@@ -10,6 +11,7 @@ const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  useLifecycleNotifications();
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;

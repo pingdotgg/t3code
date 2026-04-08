@@ -46,6 +46,7 @@ import {
   resolveAppModelSelectionState,
 } from "../../modelSelection";
 import { ensureNativeApi, readNativeApi } from "../../nativeApi";
+import { requestLocalNotificationPermission } from "../../lib/localNotifications";
 import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
@@ -466,6 +467,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
+      ...(settings.attentionNotifications !== DEFAULT_UNIFIED_SETTINGS.attentionNotifications
+        ? ["Attention notifications"]
+        : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -486,6 +490,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       isGitWritingModelDirty,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.attentionNotifications,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
@@ -901,6 +906,54 @@ export function GeneralSettingsPanel() {
                 updateSettings({ enableAssistantStreaming: Boolean(checked) })
               }
               aria-label="Stream assistant messages"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Attention notifications"
+          description="Show a local notification when a turn finishes or the agent needs input while T3 Code is in the background."
+          resetAction={
+            settings.attentionNotifications !== DEFAULT_UNIFIED_SETTINGS.attentionNotifications ? (
+              <SettingResetButton
+                label="attention notifications"
+                onClick={() =>
+                  updateSettings({
+                    attentionNotifications: DEFAULT_UNIFIED_SETTINGS.attentionNotifications,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.attentionNotifications}
+              onCheckedChange={async (checked) => {
+                const enabled = Boolean(checked);
+                if (!enabled) {
+                  updateSettings({ attentionNotifications: false });
+                  return;
+                }
+
+                const permission = await requestLocalNotificationPermission();
+                if (permission === "granted") {
+                  updateSettings({ attentionNotifications: true });
+                  return;
+                }
+
+                toastManager.add({
+                  type: "warning",
+                  title:
+                    permission === "unsupported"
+                      ? "Notifications unavailable"
+                      : "Notifications blocked",
+                  description:
+                    permission === "unsupported"
+                      ? "This environment does not support local notifications."
+                      : "Allow notifications for T3 Code in your browser or OS settings to enable this feature.",
+                });
+              }}
+              aria-label="Enable local attention notifications"
             />
           }
         />
