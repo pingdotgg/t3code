@@ -176,6 +176,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
+    hydrated: true,
   };
 }
 
@@ -1140,6 +1141,31 @@ export function setThreadBranch(
   });
 }
 
+export function evictThreadData(state: AppState, threadId: ThreadId): AppState {
+  return updateThreadState(state, threadId, (thread) => ({
+    ...thread,
+    messages: [],
+    activities: [],
+    proposedPlans: [],
+    turnDiffSummaries: [],
+    hydrated: false,
+  }));
+}
+
+export function hydrateThread(
+  state: AppState,
+  threadId: ThreadId,
+  serverThread: OrchestrationReadModel["threads"][number],
+): AppState {
+  const fresh = mapThread(serverThread);
+  return updateThreadState(state, threadId, (existing) => ({
+    ...fresh,
+    // Preserve any client-only state
+    session: existing.session ?? fresh.session,
+    hydrated: true,
+  }));
+}
+
 // ── Zustand store ────────────────────────────────────────────────────
 
 interface AppStore extends AppState {
@@ -1148,6 +1174,11 @@ interface AppStore extends AppState {
   applyOrchestrationEvents: (events: ReadonlyArray<OrchestrationEvent>) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
+  evictThreadData: (threadId: ThreadId) => void;
+  hydrateThread: (
+    threadId: ThreadId,
+    serverThread: OrchestrationReadModel["threads"][number],
+  ) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -1158,4 +1189,7 @@ export const useStore = create<AppStore>((set) => ({
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
+  evictThreadData: (threadId) => set((state) => evictThreadData(state, threadId)),
+  hydrateThread: (threadId, serverThread) =>
+    set((state) => hydrateThread(state, threadId, serverThread)),
 }));

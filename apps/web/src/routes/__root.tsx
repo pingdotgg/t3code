@@ -49,6 +49,7 @@ import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
 import { deriveReplayRetryDecision } from "../orchestrationRecovery";
 import { getWsRpcClient } from "~/wsRpcClient";
+import { selectThreadsToEvict, type EvictableThread } from "~/lib/threadEviction";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -587,6 +588,32 @@ function EventRouter() {
 
   useServerWelcomeSubscription(handleWelcome);
   useServerConfigUpdatedSubscription(handleServerConfigUpdated);
+
+  const evictThread = useStore((store) => store.evictThreadData);
+  const allThreads = useStore((store) => store.threads);
+
+  // Evict inactive threads when navigating to keep memory bounded.
+  // This is a separate effect from the WS subscription lifecycle.
+  useEffect(() => {
+    const activeThreadId = pathname.startsWith("/chat/")
+      ? (pathname.split("/chat/")[1]?.split("/")[0] ?? null)
+      : null;
+
+    const evictable: EvictableThread[] = allThreads.map((t) => ({
+      id: t.id,
+      hydrated: t.hydrated,
+      isActive: t.id === activeThreadId,
+      hasRunningSession: t.session?.status === "running",
+      updatedAt: t.updatedAt ?? t.createdAt,
+      messageCount: t.messages.length,
+      activityCount: t.activities.length,
+    }));
+
+    const idsToEvict = selectThreadsToEvict(evictable, activeThreadId);
+    for (const id of idsToEvict) {
+      evictThread(id as any);
+    }
+  }, [pathname, evictThread, allThreads]);
 
   return null;
 }

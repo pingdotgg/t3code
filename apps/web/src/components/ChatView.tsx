@@ -578,6 +578,7 @@ function PersistentThreadTerminalDrawer({
 export default function ChatView({ threadId }: ChatViewProps) {
   const serverThread = useThreadById(threadId);
   const setStoreThreadError = useStore((store) => store.setError);
+  const hydrateThreadAction = useStore((store) => store.hydrateThread);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore(
     (store) => store.threadLastVisitedAtById[threadId],
@@ -837,6 +838,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
+
+  // Re-hydrate thread data if this thread was evicted from memory
+  useEffect(() => {
+    if (serverThread && !serverThread.hydrated) {
+      const api = readNativeApi();
+      if (!api) return;
+      api.orchestration
+        .getSnapshot()
+        .then((snapshot) => {
+          const fullThread = snapshot.threads.find((t) => t.id === serverThread.id);
+          if (fullThread) {
+            hydrateThreadAction(serverThread.id, fullThread);
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to hydrate thread", serverThread.id, err);
+        });
+    }
+  }, [serverThread?.id, serverThread?.hydrated, hydrateThreadAction]);
+
   const runtimeMode =
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
@@ -3897,6 +3918,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     void onRevertToTurnCount(targetTurnCount);
   };
+
+  // Show loading state for dehydrated threads
+  if (activeThread && !activeThread.hydrated) {
+    return (
+      <div className="flex h-full items-center justify-center text-muted-foreground">
+        Loading conversation...
+      </div>
+    );
+  }
 
   // Empty state: no active thread
   if (!activeThread) {

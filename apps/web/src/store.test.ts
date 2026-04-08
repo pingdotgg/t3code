@@ -14,6 +14,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyOrchestrationEvent,
   applyOrchestrationEvents,
+  evictThreadData,
+  hydrateThread,
   syncServerReadModel,
   type AppState,
 } from "./store";
@@ -42,6 +44,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    hydrated: true,
     ...overrides,
   };
 }
@@ -833,5 +836,65 @@ describe("incremental orchestration updates", () => {
       state: "running",
     });
     expect(next.threads[0]?.latestTurn?.sourceProposedPlan).toBeUndefined();
+  });
+});
+
+describe("thread eviction", () => {
+  it("evictThreadData clears messages and activities but preserves metadata", () => {
+    const thread = makeThread({
+      messages: [
+        {
+          id: MessageId.makeUnsafe("msg-1"),
+          role: "user",
+          text: "hello",
+          createdAt: "2026-02-27T00:00:00.000Z",
+          streaming: false,
+        },
+      ],
+      activities: [
+        {
+          id: "act-1",
+          type: "tool_use",
+          turnId: TurnId.makeUnsafe("turn-1"),
+          payload: { tool: "bash", detail: "echo big output" },
+          createdAt: "2026-02-27T00:00:00.000Z",
+        } as any,
+      ],
+    });
+    const state = makeState(thread);
+    const next = evictThreadData(state, thread.id);
+    const evicted = next.threads.find((t) => t.id === thread.id)!;
+    expect(evicted.messages).toEqual([]);
+    expect(evicted.activities).toEqual([]);
+    expect(evicted.proposedPlans).toEqual([]);
+    expect(evicted.turnDiffSummaries).toEqual([]);
+    expect(evicted.hydrated).toBe(false);
+    expect(evicted.title).toBe(thread.title);
+    expect(evicted.id).toBe(thread.id);
+  });
+
+  it("hydrateThread replaces dehydrated thread with full data", () => {
+    const thread = makeThread({ id: ThreadId.makeUnsafe("t-dry") });
+    const state = makeState(thread);
+    const dehydrated = evictThreadData(state, thread.id);
+    const fullThread = makeReadModelThread({
+      id: ThreadId.makeUnsafe("t-dry"),
+      messages: [
+        {
+          id: MessageId.makeUnsafe("msg-1"),
+          role: "user" as const,
+          text: "hello",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
+        },
+      ],
+    });
+    const next = hydrateThread(dehydrated, thread.id, fullThread);
+    const hydrated = next.threads.find((t) => t.id === thread.id)!;
+    expect(hydrated.hydrated).toBe(true);
+    expect(hydrated.messages).toHaveLength(1);
+    expect(hydrated.messages[0]!.text).toBe("hello");
   });
 });

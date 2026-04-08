@@ -287,6 +287,10 @@ function captureBackendOutput(child: ChildProcess.ChildProcess): void {
 
 initializePackagedLogging();
 
+// Cap the renderer's V8 heap to 2 GB so GC runs more aggressively
+// instead of growing to 3.7 GB+ and crashing with OOM.
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=2048");
+
 if (process.platform === "linux") {
   app.commandLine.appendSwitch("class", LINUX_WM_CLASS);
 }
@@ -1391,6 +1395,26 @@ function createWindow(): BrowserWindow {
       void shell.openExternal(externalUrl);
     }
     return { action: "deny" };
+  });
+
+  window.webContents.on("render-process-gone", (_event, details) => {
+    writeDesktopLogHeader(`renderer crashed reason=${details.reason} exitCode=${details.exitCode}`);
+    if (details.reason === "crashed" || details.reason === "oom" || details.reason === "killed") {
+      setTimeout(() => {
+        if (!window.isDestroyed()) {
+          writeDesktopLogHeader("reloading renderer after crash");
+          window.webContents.reload();
+        }
+      }, 500);
+    }
+  });
+
+  window.webContents.on("unresponsive", () => {
+    writeDesktopLogHeader("renderer became unresponsive");
+  });
+
+  window.webContents.on("responsive", () => {
+    writeDesktopLogHeader("renderer became responsive again");
   });
 
   window.on("page-title-updated", (event) => {

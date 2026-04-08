@@ -109,6 +109,8 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  /** Whether this thread's full data (messages, activities, etc.) is loaded in memory. */
+  hydrated: boolean;
 }
 
 export interface SidebarThreadSummary {
