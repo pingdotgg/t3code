@@ -2,6 +2,7 @@ import {
   ArchiveIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
+  ChevronsDownUpIcon,
   FolderIcon,
   GitPullRequestIcon,
   PlusIcon,
@@ -686,6 +687,7 @@ export default function Sidebar() {
   );
   const markThreadUnread = useUiStateStore((store) => store.markThreadUnread);
   const toggleProject = useUiStateStore((store) => store.toggleProject);
+  const setAllProjectsExpanded = useUiStateStore((store) => store.setAllProjectsExpanded);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const getDraftThreadByProjectId = useComposerDraftStore(
@@ -755,6 +757,11 @@ export default function Sidebar() {
         expanded: projectExpandedById[project.id] ?? true,
       })),
     [orderedProjects, projectExpandedById],
+  );
+  const canCollapseAllProjects = useMemo(
+    () =>
+      sidebarProjects.some((project) => project.expanded) || expandedThreadListsByProject.size > 0,
+    [expandedThreadListsByProject, sidebarProjects],
   );
   const sidebarThreads = useMemo(() => Object.values(sidebarThreadsById), [sidebarThreadsById]);
   const projectCwdById = useMemo(
@@ -2043,6 +2050,14 @@ export default function Sidebar() {
     });
   }, []);
 
+  const handleCollapseAllProjects = useCallback(() => {
+    setExpandedThreadListsByProject((current) => (current.size === 0 ? current : new Set()));
+    setAllProjectsExpanded(
+      sidebarProjects.map((project) => project.id),
+      false,
+    );
+  }, [setAllProjectsExpanded, sidebarProjects]);
+
   const wordmark = (
     <div className="flex items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
@@ -2117,6 +2132,22 @@ export default function Sidebar() {
                   Projects
                 </span>
                 <div className="flex items-center gap-1">
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label="Collapse all folders"
+                          disabled={!canCollapseAllProjects}
+                          className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground/60"
+                          onClick={handleCollapseAllProjects}
+                        />
+                      }
+                    >
+                      <ChevronsDownUpIcon className="size-3.5" />
+                    </TooltipTrigger>
+                    <TooltipPopup side="right">Collapse all folders</TooltipPopup>
+                  </Tooltip>
                   <ProjectSortMenu
                     projectSortOrder={appSettings.sidebarProjectSortOrder}
                     threadSortOrder={appSettings.sidebarThreadSortOrder}

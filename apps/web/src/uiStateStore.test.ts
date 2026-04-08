@@ -5,6 +5,7 @@ import {
   clearThreadUi,
   markThreadUnread,
   reorderProjects,
+  setAllProjectsExpanded,
   setProjectExpanded,
   syncProjects,
   syncThreads,
@@ -175,6 +176,42 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.projectExpandedById[project1]).toBe(false);
     expect(next.projectOrder).toEqual([project1]);
+  });
+
+  it("setAllProjectsExpanded collapses every project without touching order", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const initialState = makeUiState({
+      projectExpandedById: {
+        [project1]: true,
+        [project2]: true,
+      },
+      projectOrder: [project2, project1],
+    });
+
+    const next = setAllProjectsExpanded(initialState, [project1, project2], false);
+
+    expect(next.projectExpandedById).toEqual({
+      [project1]: false,
+      [project2]: false,
+    });
+    expect(next.projectOrder).toEqual([project2, project1]);
+  });
+
+  it("setAllProjectsExpanded seeds missing project expansion state for known projects", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const initialState = makeUiState({
+      projectOrder: [project2, project1],
+    });
+
+    const next = setAllProjectsExpanded(initialState, [project1, project2], false);
+
+    expect(next.projectExpandedById).toEqual({
+      [project1]: false,
+      [project2]: false,
+    });
+    expect(next.projectOrder).toEqual([project2, project1]);
   });
 
   it("clearThreadUi removes visit state for deleted threads", () => {
