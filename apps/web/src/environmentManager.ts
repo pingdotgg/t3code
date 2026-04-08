@@ -657,6 +657,13 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
+function getRuntimeErrorFields(error: unknown) {
+  return {
+    lastError: error instanceof Error ? error.message : String(error),
+    lastErrorAt: isoNow(),
+  } as const;
+}
+
 function setRuntimeConnecting(environmentId: EnvironmentId) {
   useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
     connectionState: "connecting",
@@ -693,8 +700,7 @@ function setRuntimeDisconnected(environmentId: EnvironmentId, reason?: string | 
 function setRuntimeError(environmentId: EnvironmentId, error: unknown) {
   useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
     connectionState: "error",
-    lastError: error instanceof Error ? error.message : String(error),
-    lastErrorAt: isoNow(),
+    ...getRuntimeErrorFields(error),
   });
 }
 
@@ -907,9 +913,23 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
   setRuntimeConnecting(environmentId);
   try {
     await active.client.reconnect();
-    await active.refreshMetadata();
+    useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
+      connectionState: "connected",
+      disconnectedAt: null,
+      lastError: null,
+      lastErrorAt: null,
+    });
   } catch (error) {
     setRuntimeError(environmentId, error);
+    throw error;
+  }
+
+  try {
+    await active.refreshMetadata();
+  } catch (error) {
+    useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
+      ...getRuntimeErrorFields(error),
+    });
     throw error;
   }
 }
