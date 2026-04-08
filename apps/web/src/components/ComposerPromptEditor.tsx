@@ -59,6 +59,8 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
 } from "~/composer-logic";
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { usePreventIosInputZoom } from "~/hooks/usePreventIosInputZoom";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -893,6 +895,13 @@ function ComposerPromptEditorInner({
 }: ComposerPromptEditorInnerProps) {
   const [editor] = useLexicalComposerContext();
   const onChangeRef = useRef(onChange);
+  const isCoarsePointer = useMediaQuery({ pointer: "coarse" });
+  const composerFontSizePx = isCoarsePointer ? 16 : 14;
+  const {
+    onBlur: handleEditorBlur,
+    onFocus: handleEditorFocus,
+    onTouchStartCapture: handleEditorTouchStartCapture,
+  } = usePreventIosInputZoom();
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
   const terminalContextsSignature = terminalContextSignature(terminalContexts);
   const terminalContextsSignatureRef = useRef(terminalContextsSignature);
@@ -1093,18 +1102,25 @@ function ComposerPromptEditorInner({
           contentEditable={
             <ContentEditable
               className={cn(
-                "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[14px] leading-relaxed text-foreground focus:outline-none",
+                "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent leading-relaxed text-foreground focus:outline-none",
                 className,
               )}
               data-testid="composer-editor"
               aria-placeholder={placeholder}
               placeholder={<span />}
+              style={{ fontSize: composerFontSizePx }}
+              onBlur={handleEditorBlur}
+              onFocus={handleEditorFocus}
               onPaste={onPaste}
+              onTouchStartCapture={handleEditorTouchStartCapture}
             />
           }
           placeholder={
             terminalContexts.length > 0 ? null : (
-              <div className="pointer-events-none absolute inset-0 text-[14px] leading-relaxed text-muted-foreground/35">
+              <div
+                className="pointer-events-none absolute inset-0 leading-relaxed text-muted-foreground/35"
+                style={{ fontSize: composerFontSizePx }}
+              >
                 {placeholder}
               </div>
             )
