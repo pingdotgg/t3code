@@ -7,6 +7,7 @@ import * as Path from "node:path";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -1570,6 +1571,14 @@ function createWindow(): BrowserWindow {
         menuTemplate.push({ label: "No suggestions", enabled: false });
       }
       menuTemplate.push({ type: "separator" });
+    }
+
+    const externalUrl = getSafeExternalUrl(params.linkURL);
+    if (externalUrl) {
+      menuTemplate.push(
+        { label: "Copy Link", click: () => clipboard.writeText(params.linkURL) },
+        { type: "separator" },
+      );
     }
 
     menuTemplate.push(
