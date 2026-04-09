@@ -28,15 +28,25 @@ import {
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useDebouncedValue } from "@tanstack/react-pacer";
+import { useNavigate } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
@@ -168,6 +178,7 @@ import {
   useServerKeybindings,
 } from "~/rpc/serverState";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
+import { useWorkspaceActions, useWorkspaceSecondarySurface } from "./workspace/WorkspaceProvider";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -178,6 +189,53 @@ const EMPTY_CHANGED_FILES_EXPANDED_BY_TURN_ID: Record<string, boolean> = {};
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
+
+function useToggleDiffSurface(threadRef: ScopedThreadRef, isServerThread: boolean) {
+  const secondarySurface = useWorkspaceSecondarySurface();
+  const { closeSurface, openSurface } = useWorkspaceActions();
+
+  return useCallback(() => {
+    if (!isServerThread) {
+      return;
+    }
+
+    if (secondarySurface?.id === "diff") {
+      closeSurface("secondary", { replace: true });
+      return;
+    }
+
+    openSurface(
+      "secondary",
+      {
+        id: "diff",
+        input: {
+          threadRef,
+          focus: { scope: "conversation" },
+        },
+      },
+      { replace: true },
+    );
+  }, [closeSurface, isServerThread, openSurface, secondarySurface, threadRef]);
+}
+
+type WorkspaceAwareChatHeaderProps = Omit<
+  ComponentProps<typeof ChatHeader>,
+  "diffOpen" | "onToggleDiff"
+> & {
+  isServerThread: boolean;
+  threadRef: ScopedThreadRef;
+};
+
+const WorkspaceAwareChatHeader = memo(function WorkspaceAwareChatHeader(
+  props: WorkspaceAwareChatHeaderProps,
+) {
+  const secondarySurface = useWorkspaceSecondarySurface();
+  const onToggleDiff = useToggleDiffSurface(props.threadRef, props.isServerThread);
+
+  return (
+    <ChatHeader {...props} diffOpen={secondarySurface?.id === "diff"} onToggleDiff={onToggleDiff} />
+  );
+});
 
 function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalogEntry[] {
   return useStore(
@@ -312,14 +370,12 @@ type ChatViewProps =
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
       routeKind: "server";
       draftId?: never;
     }
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -573,7 +629,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 });
 
 export default function ChatView(props: ChatViewProps) {
-  const { environmentId, threadId, routeKind, onDiffPanelOpen } = props;
+  const { environmentId, threadId, routeKind } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -608,10 +664,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
-  const rawSearch = useSearch({
-    strict: false,
-    select: (params) => parseDiffRouteSearch(params),
-  });
+  const { openSurface } = useWorkspaceActions();
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
@@ -795,7 +848,6 @@ export default function ChatView(props: ChatViewProps) {
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadRef = useMemo(
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
@@ -1471,26 +1523,7 @@ export default function ChatView(props: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "diff.toggle", nonTerminalShortcutLabelOptions),
     [keybindings, nonTerminalShortcutLabelOptions],
   );
-  const onToggleDiff = useCallback(() => {
-    if (!isServerThread) {
-      return;
-    }
-    if (!diffOpen) {
-      onDiffPanelOpen?.();
-    }
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: {
-        environmentId,
-        threadId,
-      },
-      replace: true,
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
-      },
-    });
-  }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+  const onToggleDiff = useToggleDiffSurface(routeThreadRef, isServerThread);
 
   const envLocked = Boolean(
     activeThread &&
@@ -3255,22 +3288,19 @@ export default function ChatView(props: ChatViewProps) {
       if (!isServerThread) {
         return;
       }
-      onDiffPanelOpen?.();
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: {
-          environmentId,
-          threadId,
+      openSurface(
+        "secondary",
+        {
+          id: "diff",
+          input: {
+            threadRef: routeThreadRef,
+            focus: filePath ? { scope: "turn", turnId, filePath } : { scope: "turn", turnId },
+          },
         },
-        search: (previous) => {
-          const rest = stripDiffSearchParams(previous);
-          return filePath
-            ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath }
-            : { ...rest, diff: "1", diffTurnId: turnId };
-        },
-      });
+        { replace: false },
+      );
     },
-    [environmentId, isServerThread, navigate, onDiffPanelOpen, threadId],
+    [isServerThread, openSurface, routeThreadRef],
   );
   const onRevertUserMessage = useCallback(
     (messageId: MessageId) => {
@@ -3297,7 +3327,7 @@ export default function ChatView(props: ChatViewProps) {
           isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
         )}
       >
-        <ChatHeader
+        <WorkspaceAwareChatHeader
           activeThreadEnvironmentId={activeThread.environmentId}
           activeThreadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
@@ -3316,13 +3346,15 @@ export default function ChatView(props: ChatViewProps) {
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
-          diffOpen={diffOpen}
-          onRunProjectScript={runProjectScript}
+          isServerThread={isServerThread}
+          threadRef={routeThreadRef}
+          onRunProjectScript={(script) => {
+            void runProjectScript(script);
+          }}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
-          onToggleDiff={onToggleDiff}
         />
       </header>
 

@@ -1,9 +1,7 @@
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime";
-import type { TurnId } from "@t3tools/contracts";
+import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -25,16 +23,15 @@ import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { selectProjectByRef, useStore } from "../store";
-import { createThreadSelectorByRef } from "../storeSelectors";
-import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
+import { useStore } from "../store";
+import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
+import { type DiffSurfaceFocus } from "../workspace/types";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
@@ -161,44 +158,48 @@ function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
 }
 
 interface DiffPanelProps {
+  threadRef: ScopedThreadRef;
+  focus: DiffSurfaceFocus;
   mode?: DiffPanelMode;
+  onFocusChange?: (focus: DiffSurfaceFocus) => void;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
-export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
-  const navigate = useNavigate();
+export default function DiffPanel({
+  threadRef,
+  focus,
+  mode = "inline",
+  onFocusChange,
+}: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
-  const previousDiffOpenRef = useRef(false);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
-  const routeThreadRef = useParams({
-    strict: false,
-    select: (params) => resolveThreadRouteRef(params),
-  });
-  const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
-  const diffOpen = diffSearch.diff === "1";
-  const activeThreadId = routeThreadRef?.threadId ?? null;
-  const activeThread = useStore(
-    useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
-  );
+  const activeThreadId = threadRef.threadId;
+  const activeThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
   const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useStore((store) =>
-    activeThread && activeProjectId
-      ? selectProjectByRef(store, {
-          environmentId: activeThread.environmentId,
-          projectId: activeProjectId,
-        })
-      : undefined,
+  const activeProject = useStore(
+    useMemo(
+      () =>
+        createProjectSelectorByRef(
+          activeProjectId
+            ? {
+                environmentId: threadRef.environmentId,
+                projectId: activeProjectId,
+              }
+            : null,
+        ),
+      [activeProjectId, threadRef.environmentId],
+    ),
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
   const gitStatusQuery = useGitStatus({
-    environmentId: activeThread?.environmentId ?? null,
+    environmentId: threadRef.environmentId,
     cwd: activeCwd ?? null,
   });
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
@@ -219,8 +220,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
   );
 
-  const selectedTurnId = diffSearch.diffTurnId ?? null;
-  const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
+  const selectedTurnId = focus.scope === "turn" ? focus.turnId : null;
+  const selectedFilePath = focus.scope === "turn" ? (focus.filePath ?? null) : null;
   const selectedTurn =
     selectedTurnId === null
       ? undefined
@@ -315,13 +316,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, [renderablePatch]);
 
   useEffect(() => {
-    if (diffOpen && !previousDiffOpenRef.current) {
-      setDiffWordWrap(settings.diffWordWrap);
-    }
-    previousDiffOpenRef.current = diffOpen;
-  }, [diffOpen, settings.diffWordWrap]);
-
-  useEffect(() => {
     if (!selectedFilePath || !patchViewportRef.current) {
       return;
     }
@@ -343,28 +337,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     [activeCwd],
   );
 
-  const selectTurn = (turnId: TurnId) => {
-    if (!activeThread) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1", diffTurnId: turnId };
-      },
-    });
-  };
-  const selectWholeConversation = () => {
-    if (!activeThread) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
-      },
-    });
-  };
+  const selectTurn = useCallback(
+    (turnId: TurnId) => {
+      onFocusChange?.({ scope: "turn", turnId });
+    },
+    [onFocusChange],
+  );
+  const selectWholeConversation = useCallback(() => {
+    onFocusChange?.({ scope: "conversation" });
+  }, [onFocusChange]);
   const updateTurnStripScrollState = useCallback(() => {
     const element = turnStripRef.current;
     if (!element) {
