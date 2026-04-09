@@ -88,14 +88,10 @@ describe("workspace store optimistic sync", () => {
   it("clears the optimistic transition once the router catches up", () => {
     const target = createServerTarget();
     const initialState = createDefaultWorkspaceState(target);
-    let latestRoute = { target, resolvedState: initialState };
     const navigateToState = vi.fn(
-      (nextState: WorkspaceState, _options?: WorkspaceNavigationOptions) => {
-        latestRoute = { target, resolvedState: nextState };
-      },
+      (_nextState: WorkspaceState, _options?: WorkspaceNavigationOptions) => {},
     );
     const store = createWorkspaceStore(initialState, {
-      getRouteState: () => latestRoute,
       navigateToState,
     });
 
@@ -118,7 +114,7 @@ describe("workspace store optimistic sync", () => {
 
     store.getState().syncRouteState(navigatedState ?? initialState);
 
-    expect(store.getState().optimisticTransition).toBeNull();
+    expect(store.getState().optimisticTransitions).toEqual([]);
     expect(selectResolvedWorkspaceState(store.getState())).toEqual(navigatedState);
   });
 });

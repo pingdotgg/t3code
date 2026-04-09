@@ -35,7 +35,6 @@ export function WorkspaceProvider(props: { target: WorkspaceTarget; children: Re
   const storeRef = useRef<WorkspaceStoreApi | null>(null);
   if (!storeRef.current) {
     storeRef.current = createWorkspaceStore(resolvedState, {
-      getRouteState: () => latestRouteRef.current,
       navigateToState: (nextState, options) => {
         const latestRoute = latestRouteRef.current;
 

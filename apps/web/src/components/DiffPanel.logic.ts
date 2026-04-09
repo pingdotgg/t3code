@@ -10,7 +10,8 @@ export function normalizeDiffSurfaceFocus(
     return focus;
   }
 
-  if (availableTurnIds.includes(focus.turnId)) {
+  // Preserve explicit turn deep links until we have at least one summary to validate against.
+  if (availableTurnIds.length === 0 || availableTurnIds.includes(focus.turnId)) {
     return focus;
   }
 
