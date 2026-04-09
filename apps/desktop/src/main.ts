@@ -30,6 +30,7 @@ import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { showDesktopConfirmDialog } from "./confirmDialog";
+import { normalizeDesktopUpdateError } from "./updateErrors";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
@@ -807,11 +808,16 @@ async function checkForUpdates(reason: string): Promise<boolean> {
     await autoUpdater.checkForUpdates();
     return true;
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
+    const normalizedError = normalizeDesktopUpdateError(error, "check");
     setUpdateState(
-      reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()),
+      reduceDesktopUpdateStateOnCheckFailure(
+        updateState,
+        normalizedError.message,
+        new Date().toISOString(),
+        normalizedError.toastAction,
+      ),
     );
-    console.error(`[desktop-updater] Failed to check for updates: ${message}`);
+    console.error(`[desktop-updater] Failed to check for updates: ${normalizedError.rawMessage}`);
     return true;
   } finally {
     updateCheckInFlight = false;
@@ -831,9 +837,15 @@ async function downloadAvailableUpdate(): Promise<{ accepted: boolean; completed
     await autoUpdater.downloadUpdate();
     return { accepted: true, completed: true };
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    setUpdateState(reduceDesktopUpdateStateOnDownloadFailure(updateState, message));
-    console.error(`[desktop-updater] Failed to download update: ${message}`);
+    const normalizedError = normalizeDesktopUpdateError(error, "download");
+    setUpdateState(
+      reduceDesktopUpdateStateOnDownloadFailure(
+        updateState,
+        normalizedError.message,
+        normalizedError.toastAction,
+      ),
+    );
+    console.error(`[desktop-updater] Failed to download update: ${normalizedError.rawMessage}`);
     return { accepted: true, completed: false };
   } finally {
     updateDownloadInFlight = false;
@@ -860,11 +872,17 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
     autoUpdater.quitAndInstall(true, true);
     return { accepted: true, completed: false };
   } catch (error: unknown) {
-    const message = formatErrorMessage(error);
+    const normalizedError = normalizeDesktopUpdateError(error, "install");
     updateInstallInFlight = false;
     isQuitting = false;
-    setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
-    console.error(`[desktop-updater] Failed to install update: ${message}`);
+    setUpdateState(
+      reduceDesktopUpdateStateOnInstallFailure(
+        updateState,
+        normalizedError.message,
+        normalizedError.toastAction,
+      ),
+    );
+    console.error(`[desktop-updater] Failed to install update: ${normalizedError.rawMessage}`);
     return { accepted: true, completed: false };
   }
 }
@@ -940,25 +958,33 @@ function configureAutoUpdater(): void {
     console.info("[desktop-updater] No updates available.");
   });
   autoUpdater.on("error", (error) => {
-    const message = formatErrorMessage(error);
+    const errorContext = resolveUpdaterErrorContext();
+    const normalizedError = normalizeDesktopUpdateError(error, errorContext);
     if (updateInstallInFlight) {
       updateInstallInFlight = false;
       isQuitting = false;
-      setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
-      console.error(`[desktop-updater] Updater error: ${message}`);
+      setUpdateState(
+        reduceDesktopUpdateStateOnInstallFailure(
+          updateState,
+          normalizedError.message,
+          normalizedError.toastAction,
+        ),
+      );
+      console.error(`[desktop-updater] Updater error: ${normalizedError.rawMessage}`);
       return;
     }
     if (!updateCheckInFlight && !updateDownloadInFlight) {
       setUpdateState({
         status: "error",
-        message,
+        message: normalizedError.message,
         checkedAt: new Date().toISOString(),
         downloadPercent: null,
-        errorContext: resolveUpdaterErrorContext(),
+        errorContext,
         canRetry: updateState.availableVersion !== null || updateState.downloadedVersion !== null,
+        toastAction: normalizedError.toastAction,
       });
     }
-    console.error(`[desktop-updater] Updater error: ${message}`);
+    console.error(`[desktop-updater] Updater error: ${normalizedError.rawMessage}`);
   });
   autoUpdater.on("download-progress", (progress) => {
     const percent = Math.floor(progress.percent);

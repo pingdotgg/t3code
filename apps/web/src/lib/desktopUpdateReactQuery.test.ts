@@ -21,6 +21,7 @@ const baseState: DesktopUpdateState = {
   message: null,
   errorContext: null,
   canRetry: false,
+  toastAction: null,
 };
 
 describe("desktopUpdateStateQueryOptions", () => {

@@ -6,18 +6,20 @@ import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
 } from "../../lib/desktopUpdateReactQuery";
-import { toastManager } from "../ui/toast";
 import {
   getArm64IntelBuildWarningDescription,
-  getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
-  shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
+import {
+  toastDesktopUpdateDownloadResult,
+  toastDesktopUpdateInstallResult,
+  toastDesktopUpdateUnexpectedError,
+} from "../desktopUpdateToast";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -45,28 +47,10 @@ export function SidebarUpdatePill() {
         .downloadUpdate()
         .then((result) => {
           setDesktopUpdateStateQueryData(queryClient, result.state);
-          if (result.completed) {
-            toastManager.add({
-              type: "success",
-              title: "Update downloaded",
-              description: "Restart the app from the update button to install it.",
-            });
-          }
-          if (!shouldToastDesktopUpdateActionResult(result)) return;
-          const actionError = getDesktopUpdateActionError(result);
-          if (!actionError) return;
-          toastManager.add({
-            type: "error",
-            title: "Could not download update",
-            description: actionError,
-          });
+          toastDesktopUpdateDownloadResult(result);
         })
         .catch((error) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not start update download",
-            description: error instanceof Error ? error.message : "An unexpected error occurred.",
-          });
+          toastDesktopUpdateUnexpectedError("download", error);
         });
       return;
     }
@@ -78,21 +62,10 @@ export function SidebarUpdatePill() {
         .installUpdate()
         .then((result) => {
           setDesktopUpdateStateQueryData(queryClient, result.state);
-          if (!shouldToastDesktopUpdateActionResult(result)) return;
-          const actionError = getDesktopUpdateActionError(result);
-          if (!actionError) return;
-          toastManager.add({
-            type: "error",
-            title: "Could not install update",
-            description: actionError,
-          });
+          toastDesktopUpdateInstallResult(result);
         })
         .catch((error) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not install update",
-            description: error instanceof Error ? error.message : "An unexpected error occurred.",
-          });
+          toastDesktopUpdateUnexpectedError("install", error);
         });
     }
   }, [action, disabled, queryClient, state]);

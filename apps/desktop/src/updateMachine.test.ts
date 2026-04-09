@@ -53,6 +53,7 @@ describe("updateMachine", () => {
     expect(state.status).toBe("error");
     expect(state.errorContext).toBe("check");
     expect(state.canRetry).toBe(true);
+    expect(state.toastAction).toBeNull();
   });
 
   it("preserves available version on download failure for retry", () => {
@@ -65,12 +66,20 @@ describe("updateMachine", () => {
         downloadPercent: 43,
       },
       "checksum mismatch",
+      {
+        kind: "desktop-update.retry-download",
+        label: "Retry download",
+      },
     );
 
     expect(state.status).toBe("available");
     expect(state.availableVersion).toBe("1.1.0");
     expect(state.errorContext).toBe("download");
     expect(state.canRetry).toBe(true);
+    expect(state.toastAction).toEqual({
+      kind: "desktop-update.retry-download",
+      label: "Retry download",
+    });
   });
 
   it("transitions to downloaded and then preserves install retry state", () => {
@@ -133,7 +142,9 @@ describe("updateMachine", () => {
     expect(available.status).toBe("available");
     expect(downloading.status).toBe("downloading");
     expect(downloading.downloadPercent).toBe(0);
+    expect(downloading.toastAction).toBeNull();
     expect(progress.downloadPercent).toBe(55.5);
     expect(progress.errorContext).toBeNull();
+    expect(progress.toastAction).toBeNull();
   });
 });

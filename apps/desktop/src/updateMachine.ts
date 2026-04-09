@@ -1,4 +1,8 @@
-import type { DesktopRuntimeInfo, DesktopUpdateState } from "@t3tools/contracts";
+import type {
+  DesktopRuntimeInfo,
+  DesktopToastAction,
+  DesktopUpdateState,
+} from "@t3tools/contracts";
 
 import { getCanRetryAfterDownloadFailure, nextStatusAfterDownloadFailure } from "./updateState";
 
@@ -20,6 +24,7 @@ export function createInitialDesktopUpdateState(
     message: null,
     errorContext: null,
     canRetry: false,
+    toastAction: null,
   };
 }
 
@@ -35,6 +40,7 @@ export function reduceDesktopUpdateStateOnCheckStart(
     downloadPercent: null,
     errorContext: null,
     canRetry: false,
+    toastAction: null,
   };
 }
 
@@ -42,6 +48,7 @@ export function reduceDesktopUpdateStateOnCheckFailure(
   state: DesktopUpdateState,
   message: string,
   checkedAt: string,
+  toastAction: DesktopToastAction | null = null,
 ): DesktopUpdateState {
   return {
     ...state,
@@ -51,6 +58,7 @@ export function reduceDesktopUpdateStateOnCheckFailure(
     downloadPercent: null,
     errorContext: "check",
     canRetry: true,
+    toastAction,
   };
 }
 
@@ -69,6 +77,7 @@ export function reduceDesktopUpdateStateOnUpdateAvailable(
     message: null,
     errorContext: null,
     canRetry: false,
+    toastAction: null,
   };
 }
 
@@ -86,6 +95,7 @@ export function reduceDesktopUpdateStateOnNoUpdate(
     message: null,
     errorContext: null,
     canRetry: false,
+    toastAction: null,
   };
 }
 
@@ -99,12 +109,14 @@ export function reduceDesktopUpdateStateOnDownloadStart(
     message: null,
     errorContext: null,
     canRetry: false,
+    toastAction: null,
   };
 }
 
 export function reduceDesktopUpdateStateOnDownloadFailure(
   state: DesktopUpdateState,
   message: string,
+  toastAction: DesktopToastAction | null = null,
 ): DesktopUpdateState {
   return {
     ...state,
@@ -113,6 +125,7 @@ export function reduceDesktopUpdateStateOnDownloadFailure(
     downloadPercent: null,
     errorContext: "download",
     canRetry: getCanRetryAfterDownloadFailure(state),
+    toastAction,
   };
 }
 
@@ -127,6 +140,7 @@ export function reduceDesktopUpdateStateOnDownloadProgress(
     message: null,
     errorContext: null,
     canRetry: false,
+    toastAction: null,
   };
 }
 
@@ -143,12 +157,14 @@ export function reduceDesktopUpdateStateOnDownloadComplete(
     message: null,
     errorContext: null,
     canRetry: true,
+    toastAction: null,
   };
 }
 
 export function reduceDesktopUpdateStateOnInstallFailure(
   state: DesktopUpdateState,
   message: string,
+  toastAction: DesktopToastAction | null = null,
 ): DesktopUpdateState {
   return {
     ...state,
@@ -156,5 +172,6 @@ export function reduceDesktopUpdateStateOnInstallFailure(
     message,
     errorContext: "install",
     canRetry: true,
+    toastAction,
   };
 }

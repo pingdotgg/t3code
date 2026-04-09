@@ -69,6 +69,11 @@ export type DesktopUpdateStatus =
   | "downloaded"
   | "error";
 
+export type DesktopToastAction = {
+  kind: "desktop-update.retry-download";
+  label: string;
+};
+
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
 
@@ -92,6 +97,7 @@ export interface DesktopUpdateState {
   message: string | null;
   errorContext: "check" | "download" | "install" | null;
   canRetry: boolean;
+  toastAction: DesktopToastAction | null;
 }
 
 export interface DesktopUpdateActionResult {
