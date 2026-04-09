@@ -19,6 +19,8 @@ export const ThreadId = makeEntityId("ThreadId");
 export type ThreadId = typeof ThreadId.Type;
 export const ProjectId = makeEntityId("ProjectId");
 export type ProjectId = typeof ProjectId.Type;
+export const EnvironmentId = makeEntityId("EnvironmentId");
+export type EnvironmentId = typeof EnvironmentId.Type;
 export const CommandId = makeEntityId("CommandId");
 export type CommandId = typeof CommandId.Type;
 export const EventId = makeEntityId("EventId");
@@ -27,6 +29,8 @@ export const MessageId = makeEntityId("MessageId");
 export type MessageId = typeof MessageId.Type;
 export const TurnId = makeEntityId("TurnId");
 export type TurnId = typeof TurnId.Type;
+export const AuthSessionId = makeEntityId("AuthSessionId");
+export type AuthSessionId = typeof AuthSessionId.Type;
 
 export const ProviderItemId = makeEntityId("ProviderItemId");
 export type ProviderItemId = typeof ProviderItemId.Type;

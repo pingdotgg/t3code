@@ -1,6 +1,6 @@
 import { Effect, Exit, PubSub, Scope, Stream } from "effect";
 import { WS_METHODS, WsRpcGroup } from "@t3tools/contracts";
-import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import { RpcMessage, RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 type RpcServerInstance = RpcServer.RpcServer<any>;
 
@@ -113,6 +113,13 @@ export class BrowserWsRpcHarness {
     }
     const messages = this.parser.decode(rawData);
     for (const message of messages) {
+      if (message && typeof message === "object" && "_tag" in message && message._tag === "Ping") {
+        const encoded = this.parser.encode(RpcMessage.constPong);
+        if (typeof encoded === "string") {
+          this.client?.send(encoded);
+        }
+        continue;
+      }
       await Effect.runPromise(server.write(0, message as never));
     }
   }

@@ -26,7 +26,7 @@ import {
   TimestampFormat,
   UnifiedSettings,
 } from "@t3tools/contracts/settings";
-import { ensureNativeApi } from "~/nativeApi";
+import { ensureLocalApi } from "~/localApi";
 import { useLocalStorage } from "./useLocalStorage";
 import { normalizeCustomModelSlugs } from "~/modelSelection";
 import { Predicate, Schema, Struct } from "effect";
@@ -67,9 +67,7 @@ function splitPatch(patch: Partial<UnifiedSettings>): {
  * only re-render when the slice they care about changes.
  */
 
-export function useSettings<T extends UnifiedSettings = UnifiedSettings>(
-  selector?: (s: UnifiedSettings) => T,
-): T {
+export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings) => T): T {
   const serverSettings = useServerSettings();
   const [clientSettings] = useLocalStorage(
     CLIENT_SETTINGS_STORAGE_KEY,
@@ -111,7 +109,7 @@ export function useUpdateSettings() {
           applySettingsUpdated(deepMerge(currentServerConfig.settings, serverPatch));
         }
         // Fire-and-forget RPC — push will reconcile on success
-        void ensureNativeApi().server.updateSettings(serverPatch);
+        void ensureLocalApi().server.updateSettings(serverPatch);
       }
 
       if (Object.keys(clientPatch).length > 0) {
@@ -239,7 +237,7 @@ export function migrateLocalSettingsToServer(): void {
     // Migrate server-relevant keys via RPC
     const serverPatch = buildLegacyServerSettingsMigrationPatch(old);
     if (Object.keys(serverPatch).length > 0) {
-      const api = ensureNativeApi();
+      const api = ensureLocalApi();
       void api.server.updateSettings(serverPatch);
     }
 

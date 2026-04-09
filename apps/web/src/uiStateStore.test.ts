@@ -74,9 +74,9 @@ describe("uiStateStore pure functions", () => {
     });
 
     const next = syncProjects(initialState, [
-      { id: project1, cwd: "/tmp/project-1" },
-      { id: project2, cwd: "/tmp/project-2" },
-      { id: project3, cwd: "/tmp/project-3" },
+      { key: project1, cwd: "/tmp/project-1" },
+      { key: project2, cwd: "/tmp/project-2" },
+      { key: project3, cwd: "/tmp/project-3" },
     ]);
 
     expect(next.projectOrder).toEqual([project2, project1, project3]);
@@ -96,14 +96,14 @@ describe("uiStateStore pure functions", () => {
         projectOrder: [oldProject2, oldProject1],
       }),
       [
-        { id: oldProject1, cwd: "/tmp/project-1" },
-        { id: oldProject2, cwd: "/tmp/project-2" },
+        { key: oldProject1, cwd: "/tmp/project-1" },
+        { key: oldProject2, cwd: "/tmp/project-2" },
       ],
     );
 
     const next = syncProjects(initialState, [
-      { id: oldProject1, cwd: "/tmp/project-1" },
-      { id: recreatedProject2, cwd: "/tmp/project-2" },
+      { key: oldProject1, cwd: "/tmp/project-1" },
+      { key: recreatedProject2, cwd: "/tmp/project-2" },
     ]);
 
     expect(next.projectOrder).toEqual([recreatedProject2, oldProject1]);
@@ -119,10 +119,10 @@ describe("uiStateStore pure functions", () => {
         },
         projectOrder: [project1],
       }),
-      [{ id: project1, cwd: "/tmp/project-1" }],
+      [{ key: project1, cwd: "/tmp/project-1" }],
     );
 
-    const next = syncProjects(initialState, [{ id: project1, cwd: "/tmp/project-1-renamed" }]);
+    const next = syncProjects(initialState, [{ key: project1, cwd: "/tmp/project-1-renamed" }]);
 
     expect(next).not.toBe(initialState);
     expect(next.projectOrder).toEqual([project1]);
@@ -139,7 +139,7 @@ describe("uiStateStore pure functions", () => {
       },
     });
 
-    const next = syncThreads(initialState, [{ id: thread1 }]);
+    const next = syncThreads(initialState, [{ key: thread1 }]);
 
     expect(next.threadLastVisitedAtById).toEqual({
       [thread1]: "2026-02-25T12:35:00.000Z",
@@ -152,7 +152,7 @@ describe("uiStateStore pure functions", () => {
 
     const next = syncThreads(initialState, [
       {
-        id: thread1,
+        key: thread1,
         seedVisitedAt: "2026-02-25T12:35:00.000Z",
       },
     ]);

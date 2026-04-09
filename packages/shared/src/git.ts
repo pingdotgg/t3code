@@ -80,6 +80,56 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   return branchName.slice(firstSeparatorIndex + 1);
 }
 
+/**
+ * Normalize a git remote URL into a stable comparison key.
+ */
+export function normalizeGitRemoteUrl(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/\/+$/g, "")
+    .replace(/\.git$/i, "")
+    .toLowerCase();
+
+  if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
+    try {
+      const url = new URL(normalized);
+      const repositoryPath = url.pathname
+        .split("/")
+        .filter((segment) => segment.length > 0)
+        .join("/");
+      if (url.hostname && repositoryPath.includes("/")) {
+        return `${url.hostname}/${repositoryPath}`;
+      }
+    } catch {
+      return normalized;
+    }
+  }
+
+  const scpStyleHostAndPath = /^git@([^:/\s]+)[:/]([^/\s]+(?:\/[^/\s]+)+)$/i.exec(normalized);
+  if (scpStyleHostAndPath?.[1] && scpStyleHostAndPath[2]) {
+    return `${scpStyleHostAndPath[1]}/${scpStyleHostAndPath[2]}`;
+  }
+
+  return normalized;
+}
+
+/**
+ * Best-effort parse of a GitHub `owner/repo` identifier from common remote URL shapes.
+ */
+export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
+  const trimmed = url?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const match =
+    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
+      trimmed,
+    );
+  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
+  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
+}
+
 function deriveLocalBranchNameCandidatesFromRemoteRef(
   branchName: string,
   remoteName?: string,

@@ -20,13 +20,15 @@ import {
   sortThreadsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
-import { OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
   type Thread,
 } from "../types";
+
+const localEnvironmentId = EnvironmentId.makeUnsafe("environment-local");
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -625,6 +627,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
   const { defaultModelSelection, ...rest } = overrides;
   return {
     id: ProjectId.makeUnsafe("project-1"),
+    environmentId: localEnvironmentId,
     name: "Project",
     cwd: "/tmp/project",
     defaultModelSelection: {
@@ -642,6 +645,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
     id: ThreadId.makeUnsafe("thread-1"),
+    environmentId: localEnvironmentId,
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",

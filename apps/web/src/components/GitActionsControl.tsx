@@ -1,9 +1,9 @@
+import { type ScopedThreadRef } from "@t3tools/contracts";
 import type {
   GitActionProgressEvent,
   GitRunStackedActionResult,
   GitStackedAction,
   GitStatusResult,
-  ThreadId,
 } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -49,12 +49,14 @@ import {
 import { refreshGitStatus, useGitStatus } from "~/lib/gitStatusState";
 import { newCommandId, randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
-import { readNativeApi } from "~/nativeApi";
+import { readEnvironmentApi } from "~/environmentApi";
+import { readLocalApi } from "~/localApi";
 import { useStore } from "~/store";
+import { createThreadSelectorByRef } from "~/storeSelectors";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
-  activeThreadId: ThreadId | null;
+  activeThreadRef: ScopedThreadRef | null;
 }
 
 interface PendingDefaultBranchAction {
@@ -206,14 +208,18 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+export default function GitActionsControl({ gitCwd, activeThreadRef }: GitActionsControlProps) {
+  const activeThreadId = activeThreadRef?.threadId ?? null;
+  const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
   );
-  const activeServerThread = useStore((store) =>
-    activeThreadId ? store.threads.find((thread) => thread.id === activeThreadId) : undefined,
+  const activeServerThreadSelector = useMemo(
+    () => createThreadSelectorByRef(activeThreadRef),
+    [activeThreadRef],
   );
+  const activeServerThread = useStore(activeServerThreadSelector);
   const setThreadBranch = useStore((store) => store.setThreadBranch);
   const queryClient = useQueryClient();
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
@@ -246,7 +252,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       }
 
       const worktreePath = activeServerThread.worktreePath;
-      const api = readNativeApi();
+      const api = activeEnvironmentId ? readEnvironmentApi(activeEnvironmentId) : undefined;
       if (api) {
         void api.orchestration
           .dispatchCommand({
@@ -261,7 +267,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
       setThreadBranch(activeThreadId, branch, worktreePath);
     },
-    [activeServerThread, activeThreadId, setThreadBranch],
+    [activeEnvironmentId, activeServerThread, activeThreadId, setThreadBranch],
   );
 
   const syncThreadBranchAfterGitAction = useCallback(
@@ -276,7 +282,10 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     [persistThreadBranchSync],
   );
 
-  const { data: gitStatus = null, error: gitStatusError } = useGitStatus(gitCwd);
+  const { data: gitStatus = null, error: gitStatusError } = useGitStatus({
+    environmentId: activeEnvironmentId,
+    cwd: gitCwd,
+  });
   // Default to true while loading so we don't flash init controls.
   const isRepo = gitStatus?.isRepo ?? true;
   const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
@@ -287,19 +296,27 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
 
-  const initMutation = useMutation(gitInitMutationOptions({ cwd: gitCwd, queryClient }));
+  const initMutation = useMutation(
+    gitInitMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
+  );
 
   const runImmediateGitActionMutation = useMutation(
     gitRunStackedActionMutationOptions({
+      environmentId: activeEnvironmentId,
       cwd: gitCwd,
       queryClient,
     }),
   );
-  const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
+  const pullMutation = useMutation(
+    gitPullMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
+  );
 
   const isRunStackedActionRunning =
-    useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
-  const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
+    useIsMutating({
+      mutationKey: gitMutationKeys.runStackedAction(activeEnvironmentId, gitCwd),
+    }) > 0;
+  const isPullRunning =
+    useIsMutating({ mutationKey: gitMutationKeys.pull(activeEnvironmentId, gitCwd) }) > 0;
   const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
 
   useEffect(() => {
@@ -372,7 +389,9 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       }
       refreshTimeout = window.setTimeout(() => {
         refreshTimeout = null;
-        void refreshGitStatus(gitCwd).catch(() => undefined);
+        void refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }).catch(
+          () => undefined,
+        );
       }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
     };
     const handleVisibilityChange = () => {
@@ -391,10 +410,10 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       window.removeEventListener("focus", scheduleRefreshCurrentGitStatus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [gitCwd]);
+  }, [activeEnvironmentId, gitCwd]);
 
   const openExistingPr = useCallback(async () => {
-    const api = readNativeApi();
+    const api = readLocalApi();
     if (!api) {
       toastManager.add({
         type: "error",
@@ -412,7 +431,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       });
       return;
     }
-    void api.shell.openExternal(prUrl).catch((err) => {
+    void api.shell.openExternal(prUrl).catch((err: unknown) => {
       toastManager.add({
         type: "error",
         title: "Unable to open PR link",
@@ -601,7 +620,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           toastActionProps = {
             children: toastCta.label,
             onClick: () => {
-              const api = readNativeApi();
+              const api = readLocalApi();
               if (!api) return;
               closeResultToast();
               void api.shell.openExternal(toastCta.url);
@@ -760,7 +779,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const openChangedFileInEditor = useCallback(
     (filePath: string) => {
-      const api = readNativeApi();
+      const api = readLocalApi();
       if (!api || !gitCwd) {
         toastManager.add({
           type: "error",
@@ -836,7 +855,10 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           <Menu
             onOpenChange={(open) => {
               if (open) {
-                void refreshGitStatus(gitCwd).catch(() => undefined);
+                void refreshGitStatus({
+                  environmentId: activeEnvironmentId,
+                  cwd: gitCwd,
+                }).catch(() => undefined);
               }
             }}
           >

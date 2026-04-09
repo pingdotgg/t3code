@@ -2,6 +2,7 @@ import "../index.css";
 
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
@@ -18,11 +19,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
-import { __resetNativeApiForTests } from "../nativeApi";
+import { __resetLocalApiForTests } from "../localApi";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig } from "../rpc/serverState";
+import { getWsConnectionStatus } from "../rpc/wsConnectionState";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
 import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
 
 vi.mock("../lib/gitStatusState", () => ({
@@ -34,6 +37,7 @@ vi.mock("../lib/gitStatusState", () => ({
 
 const THREAD_ID = "thread-kb-toast-test" as ThreadId;
 const PROJECT_ID = "project-1" as ProjectId;
+const LOCAL_ENVIRONMENT_ID = EnvironmentId.makeUnsafe("environment-local");
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 
 interface TestFixture {
@@ -49,6 +53,19 @@ const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
 function createBaseServerConfig(): ServerConfig {
   return {
+    environment: {
+      environmentId: LOCAL_ENVIRONMENT_ID,
+      label: "Local environment",
+      platform: { os: "darwin" as const, arch: "arm64" as const },
+      serverVersion: "0.0.0-test",
+      capabilities: { repositoryIdentity: true },
+    },
+    auth: {
+      policy: "loopback-browser",
+      bootstrapMethods: ["one-time-token"],
+      sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+      sessionCookieName: "t3_session",
+    },
     cwd: "/repo/project",
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
     keybindings: [],
@@ -155,6 +172,13 @@ function buildFixture(): TestFixture {
     snapshot: createMinimalSnapshot(),
     serverConfig: createBaseServerConfig(),
     welcome: {
+      environment: {
+        environmentId: LOCAL_ENVIRONMENT_ID,
+        label: "Local environment",
+        platform: { os: "darwin" as const, arch: "arm64" as const },
+        serverVersion: "0.0.0-test",
+        capabilities: { repositoryIdentity: true },
+      },
       cwd: "/repo/project",
       projectName: "Project",
       bootstrapProjectId: PROJECT_ID,
@@ -194,6 +218,7 @@ const worker = setupWorker(
       void rpcHarness.onMessage(rawData);
     });
   }),
+  ...createAuthenticatedSessionHandlers(() => fixture.serverConfig.auth),
   http.get("*/attachments/:attachmentId", () => new HttpResponse(null, { status: 204 })),
   http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
 );
@@ -234,6 +259,22 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
+async function waitForToastViewport(): Promise<HTMLElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLElement>('[data-slot="toast-viewport"]'),
+    "App should render the toast viewport before server config updates are pushed",
+  );
+}
+
+async function waitForWsConnection(): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(getWsConnectionStatus().phase).toBe("connected");
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+}
+
 async function waitForToast(title: string, count = 1): Promise<void> {
   await vi.waitFor(
     () => {
@@ -251,6 +292,20 @@ async function waitForNoToast(title: string): Promise<void> {
     },
     { timeout: 10_000, interval: 50 },
   );
+}
+
+async function waitForNoToasts(): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(queryToastTitles()).toHaveLength(0);
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+}
+
+async function warmServerConfigUpdateStream(): Promise<void> {
+  sendServerConfigUpdatedPush([]);
+  await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 async function waitForInitialWsSubscriptions(): Promise<void> {
@@ -286,7 +341,9 @@ async function mountApp(): Promise<{ cleanup: () => Promise<void> }> {
   host.style.overflow = "hidden";
   document.body.append(host);
 
-  const router = getRouter(createMemoryHistory({ initialEntries: [`/${THREAD_ID}`] }));
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}`] }),
+  );
 
   const screen = await render(
     <AppAtomRegistryProvider>
@@ -295,8 +352,11 @@ async function mountApp(): Promise<{ cleanup: () => Promise<void> }> {
     { container: host },
   );
   await waitForComposerEditor();
+  await waitForToastViewport();
   await waitForInitialWsSubscriptions();
+  await waitForWsConnection();
   await waitForServerConfigSnapshot();
+  await waitForNoToasts();
 
   return {
     cleanup: async () => {
@@ -347,18 +407,17 @@ describe("Keybindings update toast", () => {
         return [];
       },
     });
-    await __resetNativeApiForTests();
+    await __resetLocalApiForTests();
     localStorage.clear();
     document.body.innerHTML = "";
     useComposerDraftStore.setState({
-      draftsByThreadId: {},
-      draftThreadsByThreadId: {},
-      projectDraftThreadIdByProjectId: {},
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: {},
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
     });
     useStore.setState({
-      projects: [],
-      threads: [],
-      bootstrapComplete: false,
+      activeEnvironmentId: null,
+      environmentStateById: {},
     });
   });
 
@@ -370,6 +429,8 @@ describe("Keybindings update toast", () => {
     const mounted = await mountApp();
 
     try {
+      await warmServerConfigUpdateStream();
+
       sendServerConfigUpdatedPush([]);
       await waitForToast("Keybindings updated", 1);
 

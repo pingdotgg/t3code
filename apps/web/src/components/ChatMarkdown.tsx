@@ -22,7 +22,7 @@ import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
-import { readNativeApi } from "../nativeApi";
+import { readLocalApi } from "../localApi";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -253,7 +253,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              const api = readNativeApi();
+              const api = readLocalApi();
               if (api) {
                 void openInPreferredEditor(api, targetPath);
               } else {

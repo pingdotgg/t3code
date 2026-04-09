@@ -47,8 +47,12 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    background-color: var(--app-chrome-background);
+  }
   body {
-    @apply bg-background text-foreground relative;
+    @apply text-foreground relative;
+    background-color: var(--app-chrome-background);
   }
 }
 
@@ -65,6 +69,7 @@
   color-scheme: light;
   --radius: 0.625rem;
   --background: var(--color-white);
+  --app-chrome-background: var(--background);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
   --card-foreground: var(--color-neutral-800);
@@ -93,6 +98,7 @@
   @variant dark {
     color-scheme: dark;
     --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
+    --app-chrome-background: var(--background);
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
@@ -157,9 +163,7 @@ body::after {
 }
 
 pre,
-code,
-textarea,
-input {
+code {
   font-family: "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 

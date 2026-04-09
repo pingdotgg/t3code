@@ -13,10 +13,12 @@ import {
   TraeIcon,
   IntelliJIdeaIcon,
   VisualStudioCode,
+  VisualStudioCodeInsiders,
+  VSCodium,
   Zed,
 } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
-import { readNativeApi } from "~/nativeApi";
+import { readLocalApi } from "~/localApi";
 
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
@@ -37,12 +39,12 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
     },
     {
       label: "VS Code Insiders",
-      Icon: VisualStudioCode,
+      Icon: VisualStudioCodeInsiders,
       value: "vscode-insiders",
     },
     {
       label: "VSCodium",
-      Icon: VisualStudioCode,
+      Icon: VSCodium,
       value: "vscodium",
     },
     {
@@ -91,7 +93,7 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
-      const api = readNativeApi();
+      const api = readLocalApi();
       if (!api || !openInCwd) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
@@ -108,7 +110,7 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   useEffect(() => {
     const handler = (e: globalThis.KeyboardEvent) => {
-      const api = readNativeApi();
+      const api = readLocalApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!api || !openInCwd) return;
       if (!preferredEditor) return;

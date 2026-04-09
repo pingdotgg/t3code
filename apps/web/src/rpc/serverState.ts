@@ -13,7 +13,7 @@ import {
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useRef } from "react";
 
-import type { WsRpcClient } from "../wsRpcClient";
+import type { WsRpcClient } from "./wsRpcClient";
 import { appAtomRegistry, resetAppAtomRegistryForTests } from "./atomRegistry";
 
 export type ServerConfigUpdateSource = ServerConfigStreamEvent["type"];

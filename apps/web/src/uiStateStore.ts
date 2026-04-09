@@ -1,5 +1,4 @@
 import { Debouncer } from "@tanstack/react-pacer";
-import { type ProjectId, type ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 
 const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
@@ -23,7 +22,7 @@ interface PersistedUiState {
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
-  projectOrder: ProjectId[];
+  projectOrder: string[];
 }
 
 export interface UiThreadState {
@@ -33,12 +32,12 @@ export interface UiThreadState {
 export interface UiState extends UiProjectState, UiThreadState {}
 
 export interface SyncProjectInput {
-  id: ProjectId;
+  key: string;
   cwd: string;
 }
 
 export interface SyncThreadInput {
-  id: ThreadId;
+  key: string;
   seedVisitedAt?: string | undefined;
 }
 
@@ -50,7 +49,7 @@ const initialState: UiState = {
 
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
-const currentProjectCwdById = new Map<ProjectId, string>();
+const currentProjectCwdById = new Map<string, string>();
 let legacyKeysCleanedUp = false;
 
 function readPersistedState(): UiState {
@@ -100,7 +99,7 @@ function persistState(state: UiState): void {
     const expandedProjectCwds = Object.entries(state.projectExpandedById)
       .filter(([, expanded]) => expanded)
       .flatMap(([projectId]) => {
-        const cwd = currentProjectCwdById.get(projectId as ProjectId);
+        const cwd = currentProjectCwdById.get(projectId);
         return cwd ? [cwd] : [];
       });
     const projectOrderCwds = state.projectOrder.flatMap((projectId) => {
@@ -141,7 +140,7 @@ function recordsEqual<T>(left: Record<string, T>, right: Record<string, T>): boo
   return true;
 }
 
-function projectOrdersEqual(left: readonly ProjectId[], right: readonly ProjectId[]): boolean {
+function projectOrdersEqual(left: readonly string[], right: readonly string[]): boolean {
   return (
     left.length === right.length && left.every((projectId, index) => projectId === right[index])
   );
@@ -154,11 +153,11 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   );
   currentProjectCwdById.clear();
   for (const project of projects) {
-    currentProjectCwdById.set(project.id, project.cwd);
+    currentProjectCwdById.set(project.key, project.cwd);
   }
   const cwdMappingChanged =
     previousProjectCwdById.size !== currentProjectCwdById.size ||
-    projects.some((project) => previousProjectCwdById.get(project.id) !== project.cwd);
+    projects.some((project) => previousProjectCwdById.get(project.key) !== project.cwd);
 
   const nextExpandedById: Record<string, boolean> = {};
   const previousExpandedById = state.projectExpandedById;
@@ -168,14 +167,14 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   const mappedProjects = projects.map((project, index) => {
     const previousProjectIdForCwd = previousProjectIdByCwd.get(project.cwd);
     const expanded =
-      previousExpandedById[project.id] ??
+      previousExpandedById[project.key] ??
       (previousProjectIdForCwd ? previousExpandedById[previousProjectIdForCwd] : undefined) ??
       (persistedExpandedProjectCwds.size > 0
         ? persistedExpandedProjectCwds.has(project.cwd)
         : true);
-    nextExpandedById[project.id] = expanded;
+    nextExpandedById[project.key] = expanded;
     return {
-      id: project.id,
+      id: project.key,
       cwd: project.cwd,
       incomingIndex: index,
     };
@@ -187,8 +186,8 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
           const nextProjectIdByCwd = new Map(
             mappedProjects.map((project) => [project.cwd, project.id] as const),
           );
-          const usedProjectIds = new Set<ProjectId>();
-          const orderedProjectIds: ProjectId[] = [];
+          const usedProjectIds = new Set<string>();
+          const orderedProjectIds: string[] = [];
 
           for (const projectId of state.projectOrder) {
             const matchedProjectId =
@@ -246,19 +245,19 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
 }
 
 export function syncThreads(state: UiState, threads: readonly SyncThreadInput[]): UiState {
-  const retainedThreadIds = new Set(threads.map((thread) => thread.id));
+  const retainedThreadIds = new Set(threads.map((thread) => thread.key));
   const nextThreadLastVisitedAtById = Object.fromEntries(
     Object.entries(state.threadLastVisitedAtById).filter(([threadId]) =>
-      retainedThreadIds.has(threadId as ThreadId),
+      retainedThreadIds.has(threadId),
     ),
   );
   for (const thread of threads) {
     if (
-      nextThreadLastVisitedAtById[thread.id] === undefined &&
+      nextThreadLastVisitedAtById[thread.key] === undefined &&
       thread.seedVisitedAt !== undefined &&
       thread.seedVisitedAt.length > 0
     ) {
-      nextThreadLastVisitedAtById[thread.id] = thread.seedVisitedAt;
+      nextThreadLastVisitedAtById[thread.key] = thread.seedVisitedAt;
     }
   }
   if (recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById)) {
@@ -270,7 +269,7 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
   };
 }
 
-export function markThreadVisited(state: UiState, threadId: ThreadId, visitedAt?: string): UiState {
+export function markThreadVisited(state: UiState, threadId: string, visitedAt?: string): UiState {
   const at = visitedAt ?? new Date().toISOString();
   const visitedAtMs = Date.parse(at);
   const previousVisitedAt = state.threadLastVisitedAtById[threadId];
@@ -293,7 +292,7 @@ export function markThreadVisited(state: UiState, threadId: ThreadId, visitedAt?
 
 export function markThreadUnread(
   state: UiState,
-  threadId: ThreadId,
+  threadId: string,
   latestTurnCompletedAt: string | null | undefined,
 ): UiState {
   if (!latestTurnCompletedAt) {
@@ -316,7 +315,7 @@ export function markThreadUnread(
   };
 }
 
-export function clearThreadUi(state: UiState, threadId: ThreadId): UiState {
+export function clearThreadUi(state: UiState, threadId: string): UiState {
   if (!(threadId in state.threadLastVisitedAtById)) {
     return state;
   }
@@ -328,7 +327,7 @@ export function clearThreadUi(state: UiState, threadId: ThreadId): UiState {
   };
 }
 
-export function toggleProject(state: UiState, projectId: ProjectId): UiState {
+export function toggleProject(state: UiState, projectId: string): UiState {
   const expanded = state.projectExpandedById[projectId] ?? true;
   return {
     ...state,
@@ -339,11 +338,7 @@ export function toggleProject(state: UiState, projectId: ProjectId): UiState {
   };
 }
 
-export function setProjectExpanded(
-  state: UiState,
-  projectId: ProjectId,
-  expanded: boolean,
-): UiState {
+export function setProjectExpanded(state: UiState, projectId: string, expanded: boolean): UiState {
   if ((state.projectExpandedById[projectId] ?? true) === expanded) {
     return state;
   }
@@ -358,8 +353,8 @@ export function setProjectExpanded(
 
 export function reorderProjects(
   state: UiState,
-  draggedProjectId: ProjectId,
-  targetProjectId: ProjectId,
+  draggedProjectId: string,
+  targetProjectId: string,
 ): UiState {
   if (draggedProjectId === targetProjectId) {
     return state;
@@ -384,12 +379,12 @@ export function reorderProjects(
 interface UiStateStore extends UiState {
   syncProjects: (projects: readonly SyncProjectInput[]) => void;
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
-  markThreadVisited: (threadId: ThreadId, visitedAt?: string) => void;
-  markThreadUnread: (threadId: ThreadId, latestTurnCompletedAt: string | null | undefined) => void;
-  clearThreadUi: (threadId: ThreadId) => void;
-  toggleProject: (projectId: ProjectId) => void;
-  setProjectExpanded: (projectId: ProjectId, expanded: boolean) => void;
-  reorderProjects: (draggedProjectId: ProjectId, targetProjectId: ProjectId) => void;
+  markThreadVisited: (threadId: string, visitedAt?: string) => void;
+  markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
+  clearThreadUi: (threadId: string) => void;
+  toggleProject: (projectId: string) => void;
+  setProjectExpanded: (projectId: string, expanded: boolean) => void;
+  reorderProjects: (draggedProjectId: string, targetProjectId: string) => void;
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
@@ -410,7 +405,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
 
-if (typeof window !== "undefined") {
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {
     debouncedPersistState.flush();
   });

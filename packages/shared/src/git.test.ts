@@ -1,7 +1,54 @@
 import type { GitStatusRemoteResult, GitStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { applyGitStatusStreamEvent } from "./git";
+import {
+  applyGitStatusStreamEvent,
+  normalizeGitRemoteUrl,
+  parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+} from "./git";
+
+describe("normalizeGitRemoteUrl", () => {
+  it("canonicalizes equivalent GitHub remotes across protocol variants", () => {
+    expect(normalizeGitRemoteUrl("git@github.com:T3Tools/T3Code.git")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@github.com/T3Tools/T3Code")).toBe(
+      "github.com/t3tools/t3code",
+    );
+  });
+
+  it("preserves nested group paths for providers like GitLab", () => {
+    expect(normalizeGitRemoteUrl("git@gitlab.com:T3Tools/platform/T3Code.git")).toBe(
+      "gitlab.com/t3tools/platform/t3code",
+    );
+    expect(normalizeGitRemoteUrl("https://gitlab.com/T3Tools/platform/T3Code.git")).toBe(
+      "gitlab.com/t3tools/platform/t3code",
+    );
+  });
+
+  it("drops explicit ports from URL-shaped remotes", () => {
+    expect(normalizeGitRemoteUrl("https://gitlab.company.com:8443/team/project.git")).toBe(
+      "gitlab.company.com/team/project",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@gitlab.company.com:2222/team/project.git")).toBe(
+      "gitlab.company.com/team/project",
+    );
+  });
+});
+
+describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
+  it("extracts the owner and repository from common GitHub remote shapes", () => {
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com:T3Tools/T3Code.git"),
+    ).toBe("T3Tools/T3Code");
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/T3Tools/T3Code.git"),
+    ).toBe("T3Tools/T3Code");
+  });
+});
 
 describe("applyGitStatusStreamEvent", () => {
   it("treats a remote-only update as a repository when local state is missing", () => {
