@@ -46,15 +46,23 @@ export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }
 
+export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
+  return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
+}
+
 export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;
   draftThreadEnvMode: EnvMode | undefined;
 }): EnvMode {
   const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
-  return activeWorktreePath || (!hasServerThread && draftThreadEnvMode === "worktree")
-    ? "worktree"
-    : "local";
+  if (!hasServerThread) {
+    if (activeWorktreePath) {
+      return "local";
+    }
+    return draftThreadEnvMode === "worktree" ? "worktree" : "local";
+  }
+  return activeWorktreePath ? "worktree" : "local";
 }
 
 export function resolveDraftEnvModeAfterBranchChange(input: {

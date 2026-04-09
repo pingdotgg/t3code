@@ -1993,7 +1993,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
+      viewport: WIDE_FOOTER_VIEWPORT,
       snapshot: withProjectScripts(createDraftOnlySnapshot(), [
         {
           id: "setup",

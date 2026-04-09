@@ -1,7 +1,11 @@
 import { FolderIcon, GitForkIcon } from "lucide-react";
 import { memo } from "react";
 
-import { resolveEnvModeLabel, type EnvMode } from "./BranchToolbar.logic";
+import {
+  resolveCurrentWorkspaceLabel,
+  resolveEnvModeLabel,
+  type EnvMode,
+} from "./BranchToolbar.logic";
 import {
   Select,
   SelectGroup,
@@ -30,18 +34,18 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   activeWorktreePath,
   onEnvModeChange,
 }: BranchToolbarEnvModeSelectorProps) {
-  if (envLocked || activeWorktreePath) {
+  if (envLocked) {
     return (
       <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
         {activeWorktreePath ? (
           <>
             <GitForkIcon className="size-3" />
-            Worktree
+            {resolveCurrentWorkspaceLabel(activeWorktreePath)}
           </>
         ) : (
           <>
             <FolderIcon className="size-3" />
-            {resolveEnvModeLabel("local")}
+            {resolveCurrentWorkspaceLabel(activeWorktreePath)}
           </>
         )}
       </span>
@@ -55,7 +59,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       items={envModeItems}
     >
       <SelectTrigger variant="ghost" size="xs" className="font-medium" aria-label="Workspace">
-        {effectiveEnvMode === "worktree" ? (
+        {effectiveEnvMode === "worktree" || activeWorktreePath ? (
           <GitForkIcon className="size-3" />
         ) : (
           <FolderIcon className="size-3" />
@@ -67,8 +71,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           <SelectGroupLabel>Workspace</SelectGroupLabel>
           <SelectItem value="local">
             <span className="inline-flex items-center gap-1.5">
-              <FolderIcon className="size-3" />
-              {resolveEnvModeLabel("local")}
+              {activeWorktreePath ? (
+                <GitForkIcon className="size-3" />
+              ) : (
+                <FolderIcon className="size-3" />
+              )}
+              {resolveCurrentWorkspaceLabel(activeWorktreePath)}
             </span>
           </SelectItem>
           <SelectItem value="worktree">
