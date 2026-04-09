@@ -21,6 +21,7 @@ interface StoredBootstrapGrant extends BootstrapGrant {
 type ConsumeResult =
   | {
       readonly _tag: "error";
+      readonly reason: "not-found" | "expired";
       readonly error: BootstrapCredentialError;
     }
   | {
@@ -178,6 +179,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
             return [
               {
                 _tag: "error",
+                reason: "not-found",
                 error: invalidBootstrapCredentialError("Unknown bootstrap credential."),
               },
               current,
@@ -190,6 +192,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
             return [
               {
                 _tag: "error",
+                reason: "expired",
                 error: invalidBootstrapCredentialError("Bootstrap credential expired."),
               },
               next,
@@ -227,7 +230,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
       if (seededResult._tag === "success") {
         return seededResult.grant;
       }
-      if (seededResult.error.message !== "Unknown bootstrap credential.") {
+      if (seededResult.reason !== "not-found") {
         return yield* seededResult.error;
       }
 
