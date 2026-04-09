@@ -1657,7 +1657,7 @@ function verifyPersistedAttachments(
   });
 }
 
-function hydreatePersistedComposerImageAttachment(
+function hydratePersistedComposerImageAttachment(
   attachment: PersistedComposerImageAttachment,
 ): File | null {
   const commaIndex = attachment.dataUrl.indexOf(",");
@@ -1693,7 +1693,7 @@ function hydrateImagesFromPersisted(
   attachments: ReadonlyArray<PersistedComposerImageAttachment>,
 ): ComposerImageAttachment[] {
   return attachments.flatMap((attachment) => {
-    const file = hydreatePersistedComposerImageAttachment(attachment);
+    const file = hydratePersistedComposerImageAttachment(attachment);
     if (!file) return [];
 
     return [
