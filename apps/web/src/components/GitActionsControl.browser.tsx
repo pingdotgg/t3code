@@ -44,8 +44,12 @@ const {
   toastUpdateSpy: vi.fn(),
 }));
 
-vi.mock("@tanstack/react-query", () => {
+vi.mock("@tanstack/react-query", async () => {
+  const actual =
+    await vi.importActual<typeof import("@tanstack/react-query")>("@tanstack/react-query");
+
   return {
+    ...actual,
     useIsMutating: vi.fn(() => 0),
     useMutation: vi.fn((options: { __kind?: string }) => {
       if (options.__kind === "run-stacked-action") {

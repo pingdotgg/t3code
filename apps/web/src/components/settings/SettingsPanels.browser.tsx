@@ -112,31 +112,38 @@ const authAccessHarness = vi.hoisted(() => {
   };
 });
 
-vi.mock("../../environments/runtime", () => ({
-  getPrimaryEnvironmentConnection: () => ({
-    kind: "primary" as const,
-    knownEnvironment: {
-      id: "environment-local",
-      label: "Local environment",
-      source: "manual" as const,
+vi.mock("../../environments/runtime", async () => {
+  const actual = await vi.importActual<typeof import("../../environments/runtime")>(
+    "../../environments/runtime",
+  );
+
+  return {
+    ...actual,
+    getPrimaryEnvironmentConnection: () => ({
+      kind: "primary" as const,
+      knownEnvironment: {
+        id: "environment-local",
+        label: "Local environment",
+        source: "manual" as const,
+        environmentId: EnvironmentId.makeUnsafe("environment-local"),
+        target: {
+          httpBaseUrl: "http://localhost:3000",
+          wsBaseUrl: "ws://localhost:3000",
+        },
+      },
       environmentId: EnvironmentId.makeUnsafe("environment-local"),
-      target: {
-        httpBaseUrl: "http://localhost:3000",
-        wsBaseUrl: "ws://localhost:3000",
+      client: {
+        server: {
+          subscribeAuthAccess: (listener: Parameters<typeof authAccessHarness.subscribe>[0]) =>
+            authAccessHarness.subscribe(listener),
+        },
       },
-    },
-    environmentId: EnvironmentId.makeUnsafe("environment-local"),
-    client: {
-      server: {
-        subscribeAuthAccess: (listener: Parameters<typeof authAccessHarness.subscribe>[0]) =>
-          authAccessHarness.subscribe(listener),
-      },
-    },
-    ensureBootstrapped: async () => undefined,
-    reconnect: async () => undefined,
-    dispose: async () => undefined,
-  }),
-}));
+      ensureBootstrapped: async () => undefined,
+      reconnect: async () => undefined,
+      dispose: async () => undefined,
+    }),
+  };
+});
 
 function createBaseServerConfig(): ServerConfig {
   return {
