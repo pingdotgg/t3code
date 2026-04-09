@@ -50,6 +50,7 @@ export class WsTransport {
   private readonly url: WsRpcProtocolSocketUrlProvider;
   private readonly lifecycleHandlers: WsProtocolLifecycleHandlers | undefined;
   private disposed = false;
+  private hasReportedTransportDisconnect = false;
   private reconnectChain: Promise<void> = Promise.resolve();
   private session: TransportSession;
 
@@ -136,6 +137,7 @@ export class WsTransport {
             listener,
             () => active,
             () => {
+              this.hasReportedTransportDisconnect = false;
               hasReceivedValue = true;
             },
           );
@@ -156,9 +158,12 @@ export class WsTransport {
             return;
           }
 
-          console.warn("WebSocket RPC subscription disconnected", {
-            error: formattedError,
-          });
+          if (!this.hasReportedTransportDisconnect) {
+            console.warn("WebSocket RPC subscription disconnected", {
+              error: formattedError,
+            });
+          }
+          this.hasReportedTransportDisconnect = true;
           await sleep(retryDelayMs);
         }
       }
