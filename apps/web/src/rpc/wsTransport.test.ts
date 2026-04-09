@@ -707,6 +707,39 @@ describe("WsTransport", () => {
     await transport.dispose();
   });
 
+  it("logs a transport disconnect once even when multiple subscriptions fail together", async () => {
+    const transport = new WsTransport("ws://localhost:3020");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const unsubscribeA = transport.subscribe(
+      () => Stream.fail(new Error("SocketCloseError: 1006")),
+      vi.fn(),
+      { retryDelay: 10 },
+    );
+    const unsubscribeB = transport.subscribe(
+      () => Stream.fail(new Error("SocketCloseError: 1006")),
+      vi.fn(),
+      { retryDelay: 10 },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    getSocket().open();
+
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(warnSpy).toHaveBeenCalledWith("WebSocket RPC subscription disconnected", {
+      error: "SocketCloseError: 1006",
+    });
+
+    unsubscribeA();
+    unsubscribeB();
+    await transport.dispose();
+  });
+
   it("streams finite request events without re-subscribing", async () => {
     const transport = new WsTransport("ws://localhost:3020");
     const listener = vi.fn();

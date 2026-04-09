@@ -128,6 +128,10 @@ export function createEnvironmentConnection(
     queueMicrotask(flushPendingDomainEvents);
   };
 
+  const scheduleReplayRecovery = (reason: "sequence-gap" | "resubscribe") => {
+    void runReplayRecovery(reason).catch(() => undefined);
+  };
+
   const runReplayRecovery = async (reason: "sequence-gap" | "resubscribe"): Promise<void> => {
     if (!recovery.beginReplayRecovery(reason)) {
       return;
@@ -172,7 +176,7 @@ export function createEnvironmentConnection(
           return;
         }
       }
-      void runReplayRecovery(reason);
+      scheduleReplayRecovery(reason);
     } else if (replayCompletion.shouldReplay && import.meta.env.MODE !== "test") {
       console.warn(
         "[orchestration-recovery]",
@@ -198,7 +202,7 @@ export function createEnvironmentConnection(
       if (!disposed) {
         input.syncSnapshot(snapshot, environmentId);
         if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
-          void runReplayRecovery("sequence-gap");
+          scheduleReplayRecovery("sequence-gap");
         }
       }
     } catch (error) {
@@ -245,7 +249,7 @@ export function createEnvironmentConnection(
       }
       if (action === "recover") {
         flushPendingDomainEvents();
-        void runReplayRecovery("sequence-gap");
+        scheduleReplayRecovery("sequence-gap");
       }
     },
     {
@@ -254,7 +258,7 @@ export function createEnvironmentConnection(
           return;
         }
         flushPendingDomainEvents();
-        void runReplayRecovery("resubscribe");
+        scheduleReplayRecovery("resubscribe");
       },
     },
   );

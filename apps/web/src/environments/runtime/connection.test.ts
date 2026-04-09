@@ -6,10 +6,12 @@ import type { WsRpcClient } from "~/rpc/wsRpcClient";
 
 function createTestClient(options?: {
   readonly getSnapshot?: () => Promise<{ readonly snapshotSequence: number }>;
+  readonly replayEvents?: () => Promise<ReadonlyArray<any>>;
 }) {
   const lifecycleListeners = new Set<(event: any) => void>();
   const configListeners = new Set<(event: any) => void>();
   const terminalListeners = new Set<(event: any) => void>();
+  let domainResubscribe: (() => void) | undefined;
 
   const getSnapshot = vi.fn(
     options?.getSnapshot ??
@@ -20,6 +22,7 @@ function createTestClient(options?: {
           threads: [],
         }) as any),
   );
+  const replayEvents = vi.fn(options?.replayEvents ?? (async () => []));
 
   const client = {
     dispose: vi.fn(async () => undefined),
@@ -49,8 +52,15 @@ function createTestClient(options?: {
       dispatchCommand: vi.fn(async () => undefined),
       getTurnDiff: vi.fn(async () => undefined),
       getFullThreadDiff: vi.fn(async () => undefined),
-      replayEvents: vi.fn(async () => []),
-      onDomainEvent: () => () => undefined,
+      replayEvents,
+      onDomainEvent: vi.fn((_: (event: any) => void, options?: { onResubscribe?: () => void }) => {
+        domainResubscribe = options?.onResubscribe;
+        return () => {
+          if (domainResubscribe === options?.onResubscribe) {
+            domainResubscribe = undefined;
+          }
+        };
+      }),
     },
     terminal: {
       open: vi.fn(async () => undefined),
@@ -113,6 +123,9 @@ function createTestClient(options?: {
           },
         });
       }
+    },
+    triggerDomainResubscribe: () => {
+      domainResubscribe?.();
     },
   };
 }
@@ -210,6 +223,65 @@ describe("createEnvironmentConnection", () => {
     });
 
     await expect(connection.ensureBootstrapped()).rejects.toThrow("snapshot failed");
+
+    await connection.dispose();
+  });
+
+  it("swallows replay recovery failures triggered by resubscribe", async () => {
+    const environmentId = EnvironmentId.makeUnsafe("env-1");
+    const snapshotError = new Error("snapshot failed");
+    let snapshotCalls = 0;
+    const { client, triggerDomainResubscribe } = createTestClient({
+      getSnapshot: async () => {
+        snapshotCalls += 1;
+        if (snapshotCalls === 1) {
+          return {
+            snapshotSequence: 1,
+            projects: [],
+            threads: [],
+          } as any;
+        }
+
+        throw snapshotError;
+      },
+      replayEvents: async () => {
+        throw new Error("SocketCloseError: 1006");
+      },
+    });
+
+    const connection = createEnvironmentConnection({
+      kind: "saved",
+      knownEnvironment: {
+        id: "env-1",
+        label: "Remote env",
+        source: "manual",
+        target: {
+          httpBaseUrl: "http://example.test",
+          wsBaseUrl: "ws://example.test",
+        },
+        environmentId,
+      },
+      client,
+      applyEventBatch: vi.fn(),
+      syncSnapshot: vi.fn(),
+      applyTerminalEvent: vi.fn(),
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const onUnhandledRejection = vi.fn();
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      triggerDomainResubscribe();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+
+    expect(onUnhandledRejection).not.toHaveBeenCalled();
 
     await connection.dispose();
   });
