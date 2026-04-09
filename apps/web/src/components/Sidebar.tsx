@@ -46,6 +46,8 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
+  type ProviderKind,
+  PROVIDER_DISPLAY_NAMES,
   ThreadId,
   type GitStatusResult,
 } from "@t3tools/contracts";
@@ -129,6 +131,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
 import type { Project } from "../types";
+import { PROVIDER_ICON_BY_KIND, providerIconClassName } from "../providerPresentation";
 const THREAD_PREVIEW_LIMIT = 6;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -252,6 +255,26 @@ function resolveThreadPr(
   }
 
   return gitStatus.pr ?? null;
+}
+
+function ThreadProviderIcon(props: { provider: ProviderKind; threadId: ThreadId }) {
+  const ProviderIcon = PROVIDER_ICON_BY_KIND[props.provider];
+  const label = `${PROVIDER_DISPLAY_NAMES[props.provider]} thread`;
+
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      data-testid={`thread-provider-icon-${props.threadId}`}
+      className="inline-flex size-3 shrink-0 items-center justify-center"
+    >
+      <ProviderIcon
+        aria-hidden="true"
+        className={`size-3 ${providerIconClassName(props.provider, "text-muted-foreground/70")}`}
+      />
+    </span>
+  );
 }
 
 interface SidebarThreadRowProps {
@@ -398,6 +421,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          <ThreadProviderIcon provider={thread.provider} threadId={thread.id} />
           {props.renamingThreadId === thread.id ? (
             <input
               ref={props.onRenamingInputMount}

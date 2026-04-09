@@ -2,7 +2,7 @@ import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { memo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
+import { PROVIDER_OPTIONS } from "../../session-logic";
 import { ChevronDownIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
 import {
@@ -18,9 +18,10 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { ClaudeAI, CursorIcon, Gemini, Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import { Gemini, OpenCodeIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 import { getProviderSnapshot } from "../../providerModels";
+import { PROVIDER_ICON_BY_KIND, providerIconClassName } from "../../providerPresentation";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -30,25 +31,12 @@ function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): o
   return option.available;
 }
 
-const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
-  codex: OpenAI,
-  claudeAgent: ClaudeAI,
-  cursor: CursorIcon,
-};
-
 export const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
 const UNAVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter((option) => !option.available);
 const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
   { id: "gemini", label: "Gemini", icon: Gemini },
 ] as const;
-
-function providerIconClassName(
-  provider: ProviderKind | ProviderPickerKind,
-  fallbackClassName: string,
-): string {
-  return provider === "claudeAgent" ? "text-[#d97757]" : fallbackClassName;
-}
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
@@ -68,7 +56,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
   const selectedModelLabel =
     selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
+  const ProviderIcon = PROVIDER_ICON_BY_KIND[activeProvider];
   const handleModelChange = (provider: ProviderKind, value: string) => {
     if (props.disabled) return;
     if (!value) return;
@@ -147,7 +135,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         ) : (
           <>
             {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
-              const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
+              const OptionIcon = PROVIDER_ICON_BY_KIND[option.value];
               const liveProvider = props.providers
                 ? getProviderSnapshot(props.providers, option.value)
                 : undefined;
@@ -208,7 +196,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             })}
             {UNAVAILABLE_PROVIDER_OPTIONS.length > 0 && <MenuDivider />}
             {UNAVAILABLE_PROVIDER_OPTIONS.map((option) => {
-              const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
+              const OptionIcon = PROVIDER_ICON_BY_KIND[option.value];
               return (
                 <MenuItem key={option.value} disabled>
                   <OptionIcon

@@ -8,6 +8,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type ProjectId,
+  type ProviderKind,
   type ServerConfig,
   type ServerLifecycleWelcomePayload,
   type ThreadId,
@@ -219,7 +220,9 @@ function createSnapshotForTargetUser(options: {
   targetText: string;
   targetAttachmentCount?: number;
   sessionStatus?: OrchestrationSessionStatus;
+  provider?: ProviderKind;
 }): OrchestrationReadModel {
+  const provider = options.provider ?? "codex";
   const messages: Array<OrchestrationReadModel["threads"][number]["messages"][number]> = [];
 
   for (let index = 0; index < 22; index += 1) {
@@ -278,8 +281,8 @@ function createSnapshotForTargetUser(options: {
         projectId: PROJECT_ID,
         title: "Browser test thread",
         modelSelection: {
-          provider: "codex",
-          model: "gpt-5",
+          provider,
+          model: provider === "claudeAgent" ? "claude-sonnet-4-6" : "gpt-5",
         },
         interactionMode: "default",
         runtimeMode: "full-access",
@@ -297,7 +300,7 @@ function createSnapshotForTargetUser(options: {
         session: {
           threadId: THREAD_ID,
           status: options.sessionStatus ?? "ready",
-          providerName: "codex",
+          providerName: provider,
           runtimeMode: "full-access",
           activeTurnId: null,
           lastError: null,
@@ -2407,6 +2410,44 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 4_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders the provider icon next to the sidebar thread title", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-provider-icon-test" as MessageId,
+        targetText: "provider icon target",
+        provider: "claudeAgent",
+      }),
+      configureFixture: (fixture) => {
+        fixture.serverConfig = {
+          ...fixture.serverConfig,
+          providers: [
+            ...fixture.serverConfig.providers,
+            {
+              provider: "claudeAgent",
+              enabled: true,
+              installed: true,
+              version: "1.0.0",
+              status: "ready",
+              auth: { status: "authenticated" },
+              checkedAt: NOW_ISO,
+              models: [],
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const providerIcon = page.getByTestId(`thread-provider-icon-${THREAD_ID}`);
+
+      await expect.element(providerIcon).toBeInTheDocument();
+      await expect.element(providerIcon).toHaveAttribute("aria-label", "Claude thread");
     } finally {
       await mounted.cleanup();
     }

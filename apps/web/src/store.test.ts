@@ -292,6 +292,23 @@ describe("store read model sync", () => {
     expect(threadsOf(next)[0]?.modelSelection.model).toBe("claude-opus-4-6");
   });
 
+  it("captures the sidebar provider from the thread model selection", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-6",
+        },
+        session: null,
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.sidebarThreadsById[ThreadId.makeUnsafe("thread-1")]?.provider).toBe("claudeAgent");
+  });
+
   it("resolves claude aliases when session provider is claudeAgent", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(
@@ -739,6 +756,25 @@ describe("incremental orchestration updates", () => {
     expect(threadsOf(next)[0]?.session?.status).toBe("running");
     expect(threadsOf(next)[0]?.latestTurn?.state).toBe("completed");
     expect(threadsOf(next)[0]?.messages).toHaveLength(1);
+  });
+
+  it("updates the sidebar provider when thread model selection changes", () => {
+    const state = makeState(makeThread());
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.meta-updated", {
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-6",
+        },
+        updatedAt: "2026-02-27T00:00:02.000Z",
+      }),
+    );
+
+    expect(next.threads[0]?.modelSelection.provider).toBe("claudeAgent");
+    expect(next.sidebarThreadsById[ThreadId.makeUnsafe("thread-1")]?.provider).toBe("claudeAgent");
   });
 
   it("does not regress latestTurn when an older turn diff completes late", () => {
