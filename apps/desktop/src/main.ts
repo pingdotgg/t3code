@@ -30,6 +30,7 @@ import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { showDesktopConfirmDialog } from "./confirmDialog";
+import { getSafeOpenTarget, type DesktopOpenTarget } from "./openTarget";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
@@ -171,23 +172,33 @@ function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
-function getSafeExternalUrl(rawUrl: unknown): string | null {
-  if (typeof rawUrl !== "string" || rawUrl.length === 0) {
-    return null;
+async function openSafeTarget(target: DesktopOpenTarget | null): Promise<boolean> {
+  if (!target) {
+    return false;
   }
 
-  let parsedUrl: URL;
   try {
-    parsedUrl = new URL(rawUrl);
-  } catch {
-    return null;
-  }
+    if (target.kind === "path") {
+      const result = await shell.openPath(target.value);
+      if (result.length > 0) {
+        writeDesktopLogHeader(
+          `open target path failed path=${sanitizeLogValue(target.value)} message=${sanitizeLogValue(result)}`,
+        );
+        return false;
+      }
+      writeDesktopLogHeader(`open target path succeeded path=${sanitizeLogValue(target.value)}`);
+      return true;
+    }
 
-  if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
-    return null;
+    await shell.openExternal(target.value);
+    writeDesktopLogHeader(`open target external succeeded url=${sanitizeLogValue(target.value)}`);
+    return true;
+  } catch (error) {
+    writeDesktopLogHeader(
+      `open target failed target=${sanitizeLogValue(target.value)} message=${sanitizeLogValue(formatErrorMessage(error))}`,
+    );
+    return false;
   }
-
-  return parsedUrl.toString();
 }
 
 function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
@@ -1271,17 +1282,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(OPEN_EXTERNAL_CHANNEL);
   ipcMain.handle(OPEN_EXTERNAL_CHANNEL, async (_event, rawUrl: unknown) => {
-    const externalUrl = getSafeExternalUrl(rawUrl);
-    if (!externalUrl) {
-      return false;
-    }
-
-    try {
-      await shell.openExternal(externalUrl);
-      return true;
-    } catch {
-      return false;
-    }
+    return openSafeTarget(getSafeOpenTarget(rawUrl));
   });
 
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);
@@ -1386,10 +1387,7 @@ function createWindow(): BrowserWindow {
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    const externalUrl = getSafeExternalUrl(url);
-    if (externalUrl) {
-      void shell.openExternal(externalUrl);
-    }
+    void openSafeTarget(getSafeOpenTarget(url));
     return { action: "deny" };
   });
 
