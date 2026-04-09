@@ -1,5 +1,5 @@
 import { FolderIcon, GitForkIcon } from "lucide-react";
-import { memo } from "react";
+import { memo, useMemo } from "react";
 
 import {
   resolveCurrentWorkspaceLabel,
@@ -16,11 +16,6 @@ import {
   SelectValue,
 } from "./ui/select";
 
-const envModeItems = [
-  { value: "local", label: resolveEnvModeLabel("local") },
-  { value: "worktree", label: resolveEnvModeLabel("worktree") },
-] as const;
-
 interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
   effectiveEnvMode: EnvMode;
@@ -34,6 +29,14 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   activeWorktreePath,
   onEnvModeChange,
 }: BranchToolbarEnvModeSelectorProps) {
+  const envModeItems = useMemo(
+    () => [
+      { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
+      { value: "worktree", label: resolveEnvModeLabel("worktree") },
+    ],
+    [activeWorktreePath],
+  );
+
   if (envLocked) {
     return (
       <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
