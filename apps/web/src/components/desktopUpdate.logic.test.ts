@@ -259,17 +259,17 @@ describe("canCheckForUpdate", () => {
     expect(canCheckForUpdate({ ...baseState, status: "idle" })).toBe(true);
   });
 
-  it("returns true when up-to-date", () => {
-    expect(canCheckForUpdate({ ...baseState, status: "up-to-date" })).toBe(true);
+  it("returns false when up-to-date is still being shown", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "up-to-date" })).toBe(false);
   });
 
-  it("returns true when an update is available", () => {
+  it("returns false when an update is already available", () => {
     expect(
       canCheckForUpdate({ ...baseState, status: "available", availableVersion: "1.1.0" }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("returns true on error so the user can retry", () => {
+  it("returns false on check errors until the state returns to idle", () => {
     expect(
       canCheckForUpdate({
         ...baseState,
@@ -277,7 +277,7 @@ describe("canCheckForUpdate", () => {
         errorContext: "check",
         message: "network",
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 

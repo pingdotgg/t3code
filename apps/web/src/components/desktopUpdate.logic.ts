@@ -101,10 +101,5 @@ export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | nu
 
 export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
   if (!state || !state.enabled) return false;
-  return (
-    state.status !== "checking" &&
-    state.status !== "downloading" &&
-    state.status !== "downloaded" &&
-    state.status !== "disabled"
-  );
+  return state.status === "idle";
 }

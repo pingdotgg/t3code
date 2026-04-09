@@ -69,6 +69,17 @@ export type DesktopUpdateStatus =
   | "downloaded"
   | "error";
 
+export const DesktopUpdateStatusFriendlyLabelMap: Record<DesktopUpdateStatus, string> = {
+  disabled: "Updates Unavailable",
+  idle: "Check for Updates",
+  checking: "Checking…",
+  "up-to-date": "Up to Date",
+  available: "Update Available",
+  downloading: "Downloading…",
+  downloaded: "Update Downloaded",
+  error: "Update check failed",
+};
+
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
 

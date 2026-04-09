@@ -10,6 +10,7 @@ import {
   reduceDesktopUpdateStateOnDownloadStart,
   reduceDesktopUpdateStateOnInstallFailure,
   reduceDesktopUpdateStateOnNoUpdate,
+  reduceDesktopUpdateStateToIdle,
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 
@@ -115,6 +116,24 @@ describe("updateMachine", () => {
     expect(state.downloadedVersion).toBeNull();
     expect(state.message).toBeNull();
     expect(state.errorContext).toBeNull();
+  });
+
+  it("returns transient check results back to idle", () => {
+    const upToDate = reduceDesktopUpdateStateToIdle({
+      ...createInitialDesktopUpdateState("1.0.0", runtimeInfo),
+      enabled: true,
+      status: "up-to-date",
+      checkedAt: "2026-03-04T00:00:00.000Z",
+      message: "stale",
+      errorContext: "check",
+      canRetry: true,
+    });
+
+    expect(upToDate.status).toBe("idle");
+    expect(upToDate.checkedAt).toBe("2026-03-04T00:00:00.000Z");
+    expect(upToDate.message).toBeNull();
+    expect(upToDate.errorContext).toBeNull();
+    expect(upToDate.canRetry).toBe(false);
   });
 
   it("tracks available, download start, and progress cleanly", () => {

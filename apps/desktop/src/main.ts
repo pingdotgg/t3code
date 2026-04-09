@@ -14,6 +14,7 @@ import {
   nativeTheme,
   protocol,
   shell,
+  MenuItem,
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,7 @@ import type {
   DesktopUpdateCheckResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
+import { DesktopUpdateStatusFriendlyLabelMap } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
@@ -42,6 +44,7 @@ import {
   reduceDesktopUpdateStateOnDownloadStart,
   reduceDesktopUpdateStateOnInstallFailure,
   reduceDesktopUpdateStateOnNoUpdate,
+  reduceDesktopUpdateStateToIdle,
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
@@ -80,6 +83,7 @@ const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 const SERVER_SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const AUTO_UPDATE_TRANSIENT_IDLE_RESET_DELAY_MS = 5_000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 
@@ -320,6 +324,9 @@ let updateDownloadInFlight = false;
 let updateInstallInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
+let updateIdleResetTimer: ReturnType<typeof setTimeout> | null = null;
+const updateStateListeners = new Set<(state: DesktopUpdateState) => void>();
+updateStateListeners.add(() => emitUpdateState());
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
   if (updateInstallInFlight) return "install";
@@ -557,64 +564,113 @@ function dispatchMenuAction(action: string): void {
 }
 
 function handleCheckForUpdatesMenuClick(): void {
-  const disabledReason = getAutoUpdateDisabledReason({
-    isDevelopment,
-    isPackaged: app.isPackaged,
-    platform: process.platform,
-    appImage: process.env.APPIMAGE,
-    disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
-  });
-  if (disabledReason) {
-    console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
-    void dialog.showMessageBox({
-      type: "info",
-      title: "Updates unavailable",
-      message: "Automatic updates are not available right now.",
-      detail: disabledReason,
-      buttons: ["OK"],
-    });
-    return;
-  }
+  switch (updateState.status) {
+    case "idle":
+      {
+        const disabledReason = getAutoUpdateDisabledReason({
+          isDevelopment,
+          isPackaged: app.isPackaged,
+          platform: process.platform,
+          appImage: process.env.APPIMAGE,
+          disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+        });
+        if (disabledReason) {
+          console.info(
+            "[desktop-updater] Manual update check requested, but updates are disabled.",
+          );
+          void dialog.showMessageBox({
+            type: "info",
+            title: "Updates unavailable",
+            message: "Automatic updates are not available right now.",
+            detail: disabledReason,
+            buttons: ["OK"],
+          });
+          return;
+        }
 
-  if (!BrowserWindow.getAllWindows().length) {
-    mainWindow = createWindow();
+        if (!BrowserWindow.getAllWindows().length) {
+          mainWindow = createWindow();
+        }
+        void checkForUpdatesFromMenu();
+      }
+      break;
+    case "available":
+      void downloadAvailableUpdate();
+      break;
+    case "downloaded":
+      void installDownloadedUpdate();
+      break;
+    default:
+      break;
   }
-  void checkForUpdatesFromMenu();
 }
 
 async function checkForUpdatesFromMenu(): Promise<void> {
   await checkForUpdates("menu");
 
   if (updateState.status === "up-to-date") {
-    void dialog.showMessageBox({
+    await dialog.showMessageBox({
       type: "info",
       title: "You're up to date!",
       message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
       buttons: ["OK"],
     });
+    resetUpdateStateToIdleIfNeeded();
   } else if (updateState.status === "error") {
-    void dialog.showMessageBox({
+    await dialog.showMessageBox({
       type: "warning",
       title: "Update check failed",
       message: "Could not check for updates.",
       detail: updateState.message ?? "An unknown error occurred. Please try again later.",
       buttons: ["OK"],
     });
+    resetUpdateStateToIdleIfNeeded();
   }
 }
 
+function makeCheckForUpdatesMenuItem(): MenuItem {
+  return new MenuItem({
+    label: DesktopUpdateStatusFriendlyLabelMap["idle"],
+    click: handleCheckForUpdatesMenuClick,
+  });
+}
+const checkForUpdatesMenuItemInAppMenu = makeCheckForUpdatesMenuItem();
+const checkForUpdatesMenuItemInHelpMenu = makeCheckForUpdatesMenuItem();
+
+function updateCheckForUpdatesMenuItem(menuItem: MenuItem, state: DesktopUpdateState): void {
+  menuItem.label = DesktopUpdateStatusFriendlyLabelMap[state.status];
+  switch (state.status) {
+    case "checking":
+    case "downloading":
+    case "disabled":
+    case "error":
+    case "up-to-date":
+      menuItem.enabled = false;
+      break;
+    case "idle":
+    case "available":
+    case "downloaded":
+      menuItem.enabled = true;
+      break;
+  }
+}
+
+updateStateListeners.add((state) => {
+  updateCheckForUpdatesMenuItem(checkForUpdatesMenuItemInAppMenu, state);
+  updateCheckForUpdatesMenuItem(checkForUpdatesMenuItemInHelpMenu, state);
+});
+
+let applicationMenu: Menu | null = null;
+
 function configureApplicationMenu(): void {
-  const template: MenuItemConstructorOptions[] = [];
+  const template: (MenuItemConstructorOptions | MenuItem)[] = [];
 
   if (process.platform === "darwin") {
     template.push({
       label: app.name,
-      submenu: [
+      submenu: Menu.buildFromTemplate([
         { role: "about" },
-        {
-          label: "Check for Updates...",
-          click: () => handleCheckForUpdatesMenuClick(),
-        },
+        checkForUpdatesMenuItemInAppMenu,
         { type: "separator" },
         {
           label: "Settings...",
@@ -629,7 +685,7 @@ function configureApplicationMenu(): void {
         { role: "unhide" },
         { type: "separator" },
         { role: "quit" },
-      ],
+      ]),
     });
   }
 
@@ -669,16 +725,12 @@ function configureApplicationMenu(): void {
     { role: "windowMenu" },
     {
       role: "help",
-      submenu: [
-        {
-          label: "Check for Updates...",
-          click: () => handleCheckForUpdatesMenuClick(),
-        },
-      ],
+      submenu: Menu.buildFromTemplate([checkForUpdatesMenuItemInHelpMenu]),
     },
   );
 
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  applicationMenu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(applicationMenu);
 }
 
 function resolveResourcePath(fileName: string): string | null {
@@ -773,9 +825,46 @@ function emitUpdateState(): void {
   }
 }
 
+function shouldResetUpdateStateToIdle(state: DesktopUpdateState): boolean {
+  return state.status === "up-to-date" || state.errorContext === "check";
+}
+
+function clearUpdateIdleResetTimer(): void {
+  if (updateIdleResetTimer) {
+    clearTimeout(updateIdleResetTimer);
+    updateIdleResetTimer = null;
+  }
+}
+
+function resetUpdateStateToIdleIfNeeded(): boolean {
+  clearUpdateIdleResetTimer();
+  if (!shouldResetUpdateStateToIdle(updateState)) {
+    return false;
+  }
+  setUpdateState(reduceDesktopUpdateStateToIdle(updateState));
+  return true;
+}
+
+function scheduleUpdateStateIdleReset(delayMs = AUTO_UPDATE_TRANSIENT_IDLE_RESET_DELAY_MS): void {
+  clearUpdateIdleResetTimer();
+  if (!shouldResetUpdateStateToIdle(updateState)) {
+    return;
+  }
+  updateIdleResetTimer = setTimeout(() => {
+    updateIdleResetTimer = null;
+    resetUpdateStateToIdleIfNeeded();
+  }, delayMs);
+  updateIdleResetTimer.unref();
+}
+
 function setUpdateState(patch: Partial<DesktopUpdateState>): void {
   updateState = { ...updateState, ...patch };
-  emitUpdateState();
+  if (!shouldResetUpdateStateToIdle(updateState)) {
+    clearUpdateIdleResetTimer();
+  }
+  for (const listener of updateStateListeners) {
+    listener(updateState);
+  }
 }
 
 function shouldEnableAutoUpdates(): boolean {
@@ -810,6 +899,7 @@ async function checkForUpdates(reason: string): Promise<boolean> {
     setUpdateState(
       reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()),
     );
+    scheduleUpdateStateIdleReset();
     console.error(`[desktop-updater] Failed to check for updates: ${message}`);
     return true;
   } finally {
@@ -935,6 +1025,7 @@ function configureAutoUpdater(): void {
   });
   autoUpdater.on("update-not-available", () => {
     setUpdateState(reduceDesktopUpdateStateOnNoUpdate(updateState, new Date().toISOString()));
+    scheduleUpdateStateIdleReset();
     lastLoggedDownloadMilestone = -1;
     console.info("[desktop-updater] No updates available.");
   });
@@ -1453,6 +1544,7 @@ app.on("before-quit", () => {
   isQuitting = true;
   updateInstallInFlight = false;
   writeDesktopLogHeader("before-quit received");
+  clearUpdateIdleResetTimer();
   clearUpdatePollTimer();
   stopBackend();
   restoreStdIoCapture?.();
@@ -1491,6 +1583,7 @@ if (process.platform !== "win32") {
     if (isQuitting) return;
     isQuitting = true;
     writeDesktopLogHeader("SIGINT received");
+    clearUpdateIdleResetTimer();
     clearUpdatePollTimer();
     stopBackend();
     restoreStdIoCapture?.();
@@ -1501,6 +1594,7 @@ if (process.platform !== "win32") {
     if (isQuitting) return;
     isQuitting = true;
     writeDesktopLogHeader("SIGTERM received");
+    clearUpdateIdleResetTimer();
     clearUpdatePollTimer();
     stopBackend();
     restoreStdIoCapture?.();

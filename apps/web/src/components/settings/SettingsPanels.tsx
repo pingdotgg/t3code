@@ -17,6 +17,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   ThreadId,
+  DesktopUpdateStatusFriendlyLabelMap,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
@@ -405,13 +406,8 @@ function AboutVersionSection() {
       : isDesktopUpdateButtonDisabled(updateState);
 
   const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
-  const statusLabel: Record<string, string> = {
-    checking: "Checking…",
-    downloading: "Downloading…",
-    "up-to-date": "Up to Date",
-  };
-  const buttonLabel =
-    actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
+  const statusLabel = DesktopUpdateStatusFriendlyLabelMap;
+  const buttonLabel = actionLabel[action] ?? statusLabel[updateState?.status ?? "idle"];
   const description =
     action === "download" || action === "install"
       ? "Update available."

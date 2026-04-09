@@ -89,6 +89,19 @@ export function reduceDesktopUpdateStateOnNoUpdate(
   };
 }
 
+export function reduceDesktopUpdateStateToIdle(state: DesktopUpdateState): DesktopUpdateState {
+  return {
+    ...state,
+    status: "idle",
+    availableVersion: null,
+    downloadedVersion: null,
+    downloadPercent: null,
+    message: null,
+    errorContext: null,
+    canRetry: false,
+  };
+}
+
 export function reduceDesktopUpdateStateOnDownloadStart(
   state: DesktopUpdateState,
 ): DesktopUpdateState {
