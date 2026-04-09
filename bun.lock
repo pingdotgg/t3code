@@ -185,6 +185,7 @@
     "node-pty",
   ],
   "overrides": {
+    "@effect/platform-node-shared": "catalog:",
     "vite": "^8.0.0",
   },
   "catalog": {
@@ -192,6 +193,7 @@
     "@effect/language-service": "0.84.2",
     "@effect/platform-bun": "4.0.0-beta.43",
     "@effect/platform-node": "4.0.0-beta.43",
+    "@effect/platform-node-shared": "4.0.0-beta.43",
     "@effect/sql-sqlite-bun": "4.0.0-beta.43",
     "@effect/vitest": "4.0.0-beta.43",
     "@types/bun": "^1.3.9",
