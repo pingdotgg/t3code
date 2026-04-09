@@ -1623,27 +1623,33 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (event.type === "content_block_start") {
       const { index, content_block: block } = event;
-      if (block.type === "text") {
+      const blockType = (block as { type?: string }).type;
+      if (blockType === "text") {
         yield* ensureAssistantTextBlock(context, index, {
           fallbackText: extractContentBlockText(block),
         });
         return;
       }
       if (
-        block.type !== "tool_use" &&
-        block.type !== "server_tool_use" &&
-        block.type !== "mcp_tool_use"
+        blockType !== "tool_use" &&
+        blockType !== "server_tool_use" &&
+        blockType !== "mcp_tool_use"
       ) {
         return;
       }
 
-      const toolName = block.name;
+      const toolBlock = block as {
+        readonly id: string;
+        readonly name: string;
+        readonly input?: unknown;
+      };
+      const toolName = toolBlock.name;
       const itemType = classifyToolItemType(toolName);
       const toolInput =
-        typeof block.input === "object" && block.input !== null
-          ? (block.input as Record<string, unknown>)
+        typeof toolBlock.input === "object" && toolBlock.input !== null
+          ? (toolBlock.input as Record<string, unknown>)
           : {};
-      const itemId = block.id;
+      const itemId = toolBlock.id;
       const detail = summarizeToolRequest(toolName, toolInput);
       const inputFingerprint =
         Object.keys(toolInput).length > 0 ? toolInputFingerprint(toolInput) : undefined;

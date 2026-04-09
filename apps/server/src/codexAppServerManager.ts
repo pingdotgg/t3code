@@ -289,13 +289,13 @@ The \`request_user_input\` tool is unavailable in Default mode. If you call it w
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
 </collaboration_mode>`;
 
-function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
-  readonly approvalPolicy: "on-request" | "never";
+export function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
+  readonly approvalPolicy: "untrusted" | "never";
   readonly sandbox: "workspace-write" | "danger-full-access";
 } {
   if (runtimeMode === "approval-required") {
     return {
-      approvalPolicy: "on-request",
+      approvalPolicy: "untrusted",
       sandbox: "workspace-write",
     };
   }

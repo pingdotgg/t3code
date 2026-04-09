@@ -12,6 +12,7 @@ import {
   CodexAppServerManager,
   classifyCodexStderrLine,
   isRecoverableThreadResumeError,
+  mapCodexRuntimeMode,
   normalizeCodexModelSlug,
   readCodexAccountSnapshot,
   resolveCodexModelForAccount,
@@ -369,6 +370,13 @@ describe("resolveCodexModelForAccount", () => {
 });
 
 describe("startSession", () => {
+  it("maps approval-required runtime mode to untrusted Codex approvals", () => {
+    expect(mapCodexRuntimeMode("approval-required")).toEqual({
+      approvalPolicy: "untrusted",
+      sandbox: "workspace-write",
+    });
+  });
+
   it("enables Codex experimental api capabilities during initialize", () => {
     expect(buildCodexInitializeParams()).toEqual({
       clientInfo: {
