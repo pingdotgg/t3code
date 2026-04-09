@@ -1,13 +1,20 @@
-import { FolderIcon, GitForkIcon } from "lucide-react";
-import { memo } from "react";
+import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
+import { memo, useMemo } from "react";
 
-import type { EnvMode } from "./BranchToolbar.logic";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
-
-const envModeItems = [
-  { value: "local", label: "Local" },
-  { value: "worktree", label: "New worktree" },
-] as const;
+import {
+  resolveCurrentWorkspaceLabel,
+  resolveEnvModeLabel,
+  type EnvMode,
+} from "./BranchToolbar.logic";
+import {
+  Select,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 
 interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
@@ -22,18 +29,26 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   activeWorktreePath,
   onEnvModeChange,
 }: BranchToolbarEnvModeSelectorProps) {
-  if (envLocked || activeWorktreePath) {
+  const envModeItems = useMemo(
+    () => [
+      { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
+      { value: "worktree", label: resolveEnvModeLabel("worktree") },
+    ],
+    [activeWorktreePath],
+  );
+
+  if (envLocked) {
     return (
       <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
         {activeWorktreePath ? (
           <>
-            <GitForkIcon className="size-3" />
-            Worktree
+            <FolderGitIcon className="size-3" />
+            {resolveCurrentWorkspaceLabel(activeWorktreePath)}
           </>
         ) : (
           <>
             <FolderIcon className="size-3" />
-            Local
+            {resolveCurrentWorkspaceLabel(activeWorktreePath)}
           </>
         )}
       </span>
@@ -46,27 +61,36 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       onValueChange={(value) => onEnvModeChange(value as EnvMode)}
       items={envModeItems}
     >
-      <SelectTrigger variant="ghost" size="xs" className="font-medium">
+      <SelectTrigger variant="ghost" size="xs" className="font-medium" aria-label="Workspace">
         {effectiveEnvMode === "worktree" ? (
-          <GitForkIcon className="size-3" />
+          <FolderGit2Icon className="size-3" />
+        ) : activeWorktreePath ? (
+          <FolderGitIcon className="size-3" />
         ) : (
           <FolderIcon className="size-3" />
         )}
         <SelectValue />
       </SelectTrigger>
       <SelectPopup>
-        <SelectItem value="local">
-          <span className="inline-flex items-center gap-1.5">
-            <FolderIcon className="size-3" />
-            Local
-          </span>
-        </SelectItem>
-        <SelectItem value="worktree">
-          <span className="inline-flex items-center gap-1.5">
-            <GitForkIcon className="size-3" />
-            New worktree
-          </span>
-        </SelectItem>
+        <SelectGroup>
+          <SelectGroupLabel>Workspace</SelectGroupLabel>
+          <SelectItem value="local">
+            <span className="inline-flex items-center gap-1.5">
+              {activeWorktreePath ? (
+                <FolderGitIcon className="size-3" />
+              ) : (
+                <FolderIcon className="size-3" />
+              )}
+              {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+            </span>
+          </SelectItem>
+          <SelectItem value="worktree">
+            <span className="inline-flex items-center gap-1.5">
+              <FolderGit2Icon className="size-3" />
+              {resolveEnvModeLabel("worktree")}
+            </span>
+          </SelectItem>
+        </SelectGroup>
       </SelectPopup>
     </Select>
   );

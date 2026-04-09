@@ -15,15 +15,54 @@ export interface EnvironmentOption {
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
 
+const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
+
+function normalizeDisplayLabel(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+export function resolveEnvironmentOptionLabel(input: {
+  isPrimary: boolean;
+  environmentId: EnvironmentId;
+  runtimeLabel?: string | null;
+  savedLabel?: string | null;
+}): string {
+  const runtimeLabel = normalizeDisplayLabel(input.runtimeLabel);
+  const savedLabel = normalizeDisplayLabel(input.savedLabel);
+
+  if (input.isPrimary) {
+    const preferredLocalLabel = [runtimeLabel, savedLabel].find((label) => {
+      if (!label) return false;
+      return !GENERIC_LOCAL_ENVIRONMENT_LABELS.has(label.toLowerCase());
+    });
+    return preferredLocalLabel ?? "This device";
+  }
+
+  return runtimeLabel ?? savedLabel ?? input.environmentId;
+}
+
+export function resolveEnvModeLabel(mode: EnvMode): string {
+  return mode === "worktree" ? "New worktree" : "Current checkout";
+}
+
+export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
+  return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
+}
+
 export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;
   draftThreadEnvMode: EnvMode | undefined;
 }): EnvMode {
   const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
-  return activeWorktreePath || (!hasServerThread && draftThreadEnvMode === "worktree")
-    ? "worktree"
-    : "local";
+  if (!hasServerThread) {
+    if (activeWorktreePath) {
+      return "local";
+    }
+    return draftThreadEnvMode === "worktree" ? "worktree" : "local";
+  }
+  return activeWorktreePath ? "worktree" : "local";
 }
 
 export function resolveDraftEnvModeAfterBranchChange(input: {

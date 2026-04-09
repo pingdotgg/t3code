@@ -187,6 +187,7 @@ import { ComposerPrimaryActions } from "./chat/ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
+import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
@@ -1065,9 +1066,12 @@ export default function ChatView(props: ChatViewProps) {
       const isPrimary = p.environmentId === primaryEnvironmentId;
       const savedRecord = savedEnvironmentRegistry[p.environmentId];
       const runtimeState = savedEnvironmentRuntimeById[p.environmentId];
-      const label = isPrimary
-        ? "Local"
-        : (runtimeState?.descriptor?.label ?? savedRecord?.label ?? p.environmentId);
+      const label = resolveEnvironmentOptionLabel({
+        isPrimary,
+        environmentId: p.environmentId,
+        runtimeLabel: runtimeState?.descriptor?.label ?? null,
+        savedLabel: savedRecord?.label ?? null,
+      });
       envs.push({
         environmentId: p.environmentId,
         projectId: p.id,
@@ -2890,12 +2894,12 @@ export default function ChatView(props: ChatViewProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeExpandedImage, expandedImage, navigateExpandedImage]);
 
-  const activeWorktreePath = activeThread?.worktreePath;
-  const envMode: DraftThreadEnvMode = activeWorktreePath
-    ? "worktree"
-    : isLocalDraftThread
-      ? (draftThread?.envMode ?? "local")
-      : "local";
+  const activeWorktreePath = activeThread?.worktreePath ?? null;
+  const envMode: DraftThreadEnvMode = resolveEffectiveEnvMode({
+    activeWorktreePath,
+    hasServerThread: isServerThread,
+    draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
+  });
 
   useEffect(() => {
     if (!activeThreadId) {
@@ -4031,11 +4035,20 @@ export default function ChatView(props: ChatViewProps) {
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
       if (isLocalDraftThread) {
-        setDraftThreadContext(composerDraftTarget, { envMode: mode });
+        setDraftThreadContext(composerDraftTarget, {
+          envMode: mode,
+          ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+        });
       }
       scheduleComposerFocus();
     },
-    [composerDraftTarget, isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext],
+    [
+      composerDraftTarget,
+      draftThread?.worktreePath,
+      isLocalDraftThread,
+      scheduleComposerFocus,
+      setDraftThreadContext,
+    ],
   );
 
   const applyPromptReplacement = useCallback(

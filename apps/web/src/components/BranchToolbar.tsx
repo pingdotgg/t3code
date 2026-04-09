@@ -62,6 +62,7 @@ export function BranchToolbar({
     hasServerThread: serverThread !== undefined,
     draftThreadEnvMode: draftThread?.envMode,
   });
+  const envModeLocked = envLocked || (serverThread !== undefined && activeWorktreePath !== null);
 
   const showEnvironmentPicker =
     availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange;
@@ -83,7 +84,7 @@ export function BranchToolbar({
           </>
         )}
         <BranchToolbarEnvModeSelector
-          envLocked={envLocked}
+          envLocked={envModeLocked}
           effectiveEnvMode={effectiveEnvMode}
           activeWorktreePath={activeWorktreePath}
           onEnvModeChange={onEnvModeChange}
