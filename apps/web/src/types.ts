@@ -111,6 +111,27 @@ export interface Thread {
   activities: OrchestrationThreadActivity[];
 }
 
+export interface ThreadShell {
+  id: ThreadId;
+  codexThreadId: string | null;
+  projectId: ProjectId;
+  title: string;
+  modelSelection: ModelSelection;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+  error: string | null;
+  createdAt: string;
+  archivedAt: string | null;
+  updatedAt?: string | undefined;
+  branch: string | null;
+  worktreePath: string | null;
+}
+
+export interface ThreadTurnState {
+  latestTurn: OrchestrationLatestTurn | null;
+  pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
+}
+
 export interface SidebarThreadSummary {
   id: ThreadId;
   projectId: ProjectId;

@@ -128,7 +128,6 @@ import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
-import { useSidebarThreadSummaryById } from "../storeSelectors";
 import type { Project } from "../types";
 const THREAD_PREVIEW_LIMIT = 6;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
@@ -292,7 +291,7 @@ interface SidebarThreadRowProps {
 }
 
 function SidebarThreadRow(props: SidebarThreadRowProps) {
-  const thread = useSidebarThreadSummaryById(props.threadId);
+  const thread = useStore((state) => state.sidebarThreadSummaryById[props.threadId]);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[props.threadId]);
   const runningTerminalIds = useTerminalStateStore(
     (state) =>
@@ -674,8 +673,9 @@ function SortableProjectItem({
 }
 
 export default function Sidebar() {
-  const projects = useStore((store) => store.projects);
-  const sidebarThreadsById = useStore((store) => store.sidebarThreadsById);
+  const projectIds = useStore((store) => store.projectIds);
+  const projectById = useStore((store) => store.projectById);
+  const sidebarThreadsById = useStore((store) => store.sidebarThreadSummaryById);
   const threadIdsByProjectId = useStore((store) => store.threadIdsByProjectId);
   const { projectExpandedById, projectOrder, threadLastVisitedAtById } = useUiStateStore(
     useShallow((store) => ({
@@ -741,6 +741,14 @@ export default function Sidebar() {
   const platform = navigator.platform;
   const shouldBrowseForProjectImmediately = isElectron && !isLinuxDesktop;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
+  const projects = useMemo(
+    () =>
+      projectIds.flatMap((projectId) => {
+        const project = projectById[projectId];
+        return project ? [project] : [];
+      }),
+    [projectById, projectIds],
+  );
   const orderedProjects = useMemo(() => {
     return orderItemsByPreferredIds({
       items: projects,

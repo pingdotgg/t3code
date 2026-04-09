@@ -212,7 +212,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     [activeThreadId],
   );
   const activeServerThread = useStore((store) =>
-    activeThreadId ? store.threads.find((thread) => thread.id === activeThreadId) : undefined,
+    activeThreadId ? store.threadShellById[activeThreadId] : undefined,
   );
   const setThreadBranch = useStore((store) => store.setThreadBranch);
   const queryClient = useQueryClient();

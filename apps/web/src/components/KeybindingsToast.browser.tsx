@@ -356,8 +356,22 @@ describe("Keybindings update toast", () => {
       projectDraftThreadIdByProjectId: {},
     });
     useStore.setState({
-      projects: [],
-      threads: [],
+      projectIds: [],
+      projectById: {},
+      threadIds: [],
+      threadIdsByProjectId: {},
+      threadShellById: {},
+      threadSessionById: {},
+      threadTurnStateById: {},
+      messageIdsByThreadId: {},
+      messageByThreadId: {},
+      activityIdsByThreadId: {},
+      activityByThreadId: {},
+      proposedPlanIdsByThreadId: {},
+      proposedPlanByThreadId: {},
+      turnDiffIdsByThreadId: {},
+      turnDiffSummaryByThreadId: {},
+      sidebarThreadSummaryById: {},
       bootstrapComplete: false,
     });
   });

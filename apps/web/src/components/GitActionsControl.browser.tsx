@@ -141,10 +141,10 @@ vi.mock("~/store", () => ({
   useStore: (selector: (state: unknown) => unknown) =>
     selector({
       setThreadBranch: setThreadBranchSpy,
-      threads: [
-        { id: THREAD_A, branch: BRANCH_NAME, worktreePath: null },
-        { id: THREAD_B, branch: BRANCH_NAME, worktreePath: null },
-      ],
+      threadShellById: {
+        [THREAD_A]: { id: THREAD_A, branch: BRANCH_NAME, worktreePath: null },
+        [THREAD_B]: { id: THREAD_B, branch: BRANCH_NAME, worktreePath: null },
+      },
     }),
 }));
 

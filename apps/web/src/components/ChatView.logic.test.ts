@@ -1,6 +1,7 @@
 import { ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../store";
+import { type Thread } from "../types";
 
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -178,7 +179,7 @@ const makeThread = (input?: {
     startedAt: string | null;
     completedAt: string | null;
   } | null;
-}) => ({
+}): Thread => ({
   id: input?.id ?? ThreadId.makeUnsafe("thread-1"),
   codexThreadId: null,
   projectId: ProjectId.makeUnsafe("project-1"),
@@ -205,94 +206,172 @@ const makeThread = (input?: {
   activities: [],
 });
 
+function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) {
+  const projectId = ProjectId.makeUnsafe("project-1");
+  useStore.setState({
+    projectIds: [projectId],
+    projectById: {
+      [projectId]: {
+        id: projectId,
+        name: "Project",
+        cwd: "/tmp/project",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+        createdAt: "2026-03-29T00:00:00.000Z",
+        updatedAt: "2026-03-29T00:00:00.000Z",
+        scripts: [],
+      },
+    },
+    threadIds: threads.map((thread) => thread.id),
+    threadIdsByProjectId: {
+      [projectId]: threads.map((thread) => thread.id),
+    },
+    threadShellById: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        {
+          id: thread.id,
+          codexThreadId: thread.codexThreadId,
+          projectId: thread.projectId,
+          title: thread.title,
+          modelSelection: thread.modelSelection,
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          error: thread.error,
+          createdAt: thread.createdAt,
+          archivedAt: thread.archivedAt,
+          updatedAt: thread.updatedAt,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+        },
+      ]),
+    ),
+    threadSessionById: Object.fromEntries(threads.map((thread) => [thread.id, thread.session])),
+    threadTurnStateById: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        {
+          latestTurn: thread.latestTurn,
+          ...(thread.pendingSourceProposedPlan
+            ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
+            : {}),
+        },
+      ]),
+    ),
+    messageIdsByThreadId: Object.fromEntries(
+      threads.map((thread) => [thread.id, thread.messages.map((message) => message.id)]),
+    ),
+    messageByThreadId: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        Object.fromEntries(thread.messages.map((message) => [message.id, message])),
+      ]),
+    ),
+    activityIdsByThreadId: Object.fromEntries(
+      threads.map((thread) => [thread.id, thread.activities.map((activity) => activity.id)]),
+    ),
+    activityByThreadId: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        Object.fromEntries(thread.activities.map((activity) => [activity.id, activity])),
+      ]),
+    ),
+    proposedPlanIdsByThreadId: Object.fromEntries(
+      threads.map((thread) => [thread.id, thread.proposedPlans.map((plan) => plan.id)]),
+    ),
+    proposedPlanByThreadId: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        Object.fromEntries(thread.proposedPlans.map((plan) => [plan.id, plan])),
+      ]),
+    ),
+    turnDiffIdsByThreadId: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        thread.turnDiffSummaries.map((summary) => summary.turnId),
+      ]),
+    ),
+    turnDiffSummaryByThreadId: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        Object.fromEntries(thread.turnDiffSummaries.map((summary) => [summary.turnId, summary])),
+      ]),
+    ),
+    sidebarThreadSummaryById: {},
+    bootstrapComplete: true,
+  });
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  useStore.setState((state) => ({
-    ...state,
-    projects: [],
-    threads: [],
-    bootstrapComplete: true,
-  }));
+  setStoreThreads([]);
 });
 
 describe("waitForStartedServerThread", () => {
   it("resolves immediately when the thread is already started", async () => {
     const threadId = ThreadId.makeUnsafe("thread-started");
-    useStore.setState((state) => ({
-      ...state,
-      threads: [
-        makeThread({
-          id: threadId,
-          latestTurn: {
-            turnId: TurnId.makeUnsafe("turn-started"),
-            state: "running",
-            requestedAt: "2026-03-29T00:00:01.000Z",
-            startedAt: "2026-03-29T00:00:01.000Z",
-            completedAt: null,
-          },
-        }),
-      ],
-    }));
+    setStoreThreads([
+      makeThread({
+        id: threadId,
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-started"),
+          state: "running",
+          requestedAt: "2026-03-29T00:00:01.000Z",
+          startedAt: "2026-03-29T00:00:01.000Z",
+          completedAt: null,
+        },
+      }),
+    ]);
 
     await expect(waitForStartedServerThread(threadId)).resolves.toBe(true);
   });
 
   it("waits for the thread to start via subscription updates", async () => {
     const threadId = ThreadId.makeUnsafe("thread-wait");
-    useStore.setState((state) => ({
-      ...state,
-      threads: [makeThread({ id: threadId })],
-    }));
+    setStoreThreads([makeThread({ id: threadId })]);
 
     const promise = waitForStartedServerThread(threadId, 500);
 
-    useStore.setState((state) => ({
-      ...state,
-      threads: [
-        makeThread({
-          id: threadId,
-          latestTurn: {
-            turnId: TurnId.makeUnsafe("turn-started"),
-            state: "running",
-            requestedAt: "2026-03-29T00:00:01.000Z",
-            startedAt: "2026-03-29T00:00:01.000Z",
-            completedAt: null,
-          },
-        }),
-      ],
-    }));
+    setStoreThreads([
+      makeThread({
+        id: threadId,
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-started"),
+          state: "running",
+          requestedAt: "2026-03-29T00:00:01.000Z",
+          startedAt: "2026-03-29T00:00:01.000Z",
+          completedAt: null,
+        },
+      }),
+    ]);
 
     await expect(promise).resolves.toBe(true);
   });
 
   it("handles the thread starting between the initial read and subscription setup", async () => {
     const threadId = ThreadId.makeUnsafe("thread-race");
-    useStore.setState((state) => ({
-      ...state,
-      threads: [makeThread({ id: threadId })],
-    }));
+    setStoreThreads([makeThread({ id: threadId })]);
 
     const originalSubscribe = useStore.subscribe.bind(useStore);
     let raced = false;
     vi.spyOn(useStore, "subscribe").mockImplementation((listener) => {
       if (!raced) {
         raced = true;
-        useStore.setState((state) => ({
-          ...state,
-          threads: [
-            makeThread({
-              id: threadId,
-              latestTurn: {
-                turnId: TurnId.makeUnsafe("turn-race"),
-                state: "running",
-                requestedAt: "2026-03-29T00:00:01.000Z",
-                startedAt: "2026-03-29T00:00:01.000Z",
-                completedAt: null,
-              },
-            }),
-          ],
-        }));
+        setStoreThreads([
+          makeThread({
+            id: threadId,
+            latestTurn: {
+              turnId: TurnId.makeUnsafe("turn-race"),
+              state: "running",
+              requestedAt: "2026-03-29T00:00:01.000Z",
+              startedAt: "2026-03-29T00:00:01.000Z",
+              completedAt: null,
+            },
+          }),
+        ]);
       }
       return originalSubscribe(listener);
     });
@@ -304,10 +383,7 @@ describe("waitForStartedServerThread", () => {
     vi.useFakeTimers();
 
     const threadId = ThreadId.makeUnsafe("thread-timeout");
-    useStore.setState((state) => ({
-      ...state,
-      threads: [makeThread({ id: threadId })],
-    }));
+    setStoreThreads([makeThread({ id: threadId })]);
     const promise = waitForStartedServerThread(threadId, 500);
 
     await vi.advanceTimersByTimeAsync(500);

@@ -14,6 +14,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyOrchestrationEvent,
   applyOrchestrationEvents,
+  selectProjects,
+  selectThreads,
   syncServerReadModel,
   type AppState,
 } from "./store";
@@ -47,27 +49,123 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 function makeState(thread: Thread): AppState {
+  const projectId = ProjectId.makeUnsafe("project-1");
+  const project = {
+    id: projectId,
+    name: "Project",
+    cwd: "/tmp/project",
+    defaultModelSelection: {
+      provider: "codex" as const,
+      model: "gpt-5-codex",
+    },
+    createdAt: "2026-02-13T00:00:00.000Z",
+    updatedAt: "2026-02-13T00:00:00.000Z",
+    scripts: [],
+  };
   const threadIdsByProjectId: AppState["threadIdsByProjectId"] = {
     [thread.projectId]: [thread.id],
   };
   return {
-    projects: [
-      {
-        id: ProjectId.makeUnsafe("project-1"),
-        name: "Project",
-        cwd: "/tmp/project",
-        defaultModelSelection: {
-          provider: "codex",
-          model: "gpt-5-codex",
-        },
-        scripts: [],
-      },
-    ],
-    threads: [thread],
-    sidebarThreadsById: {},
+    projectIds: [projectId],
+    projectById: {
+      [projectId]: project,
+    },
+    threadIds: [thread.id],
     threadIdsByProjectId,
+    threadShellById: {
+      [thread.id]: {
+        id: thread.id,
+        codexThreadId: thread.codexThreadId,
+        projectId: thread.projectId,
+        title: thread.title,
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        error: thread.error,
+        createdAt: thread.createdAt,
+        archivedAt: thread.archivedAt,
+        updatedAt: thread.updatedAt,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+      },
+    },
+    threadSessionById: {
+      [thread.id]: thread.session,
+    },
+    threadTurnStateById: {
+      [thread.id]: {
+        latestTurn: thread.latestTurn,
+        ...(thread.pendingSourceProposedPlan
+          ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
+          : {}),
+      },
+    },
+    messageIdsByThreadId: {
+      [thread.id]: thread.messages.map((message) => message.id),
+    },
+    messageByThreadId: {
+      [thread.id]: Object.fromEntries(
+        thread.messages.map((message) => [message.id, message] as const),
+      ) as AppState["messageByThreadId"][ThreadId],
+    },
+    activityIdsByThreadId: {
+      [thread.id]: thread.activities.map((activity) => activity.id),
+    },
+    activityByThreadId: {
+      [thread.id]: Object.fromEntries(
+        thread.activities.map((activity) => [activity.id, activity] as const),
+      ) as AppState["activityByThreadId"][ThreadId],
+    },
+    proposedPlanIdsByThreadId: {
+      [thread.id]: thread.proposedPlans.map((plan) => plan.id),
+    },
+    proposedPlanByThreadId: {
+      [thread.id]: Object.fromEntries(
+        thread.proposedPlans.map((plan) => [plan.id, plan] as const),
+      ) as AppState["proposedPlanByThreadId"][ThreadId],
+    },
+    turnDiffIdsByThreadId: {
+      [thread.id]: thread.turnDiffSummaries.map((summary) => summary.turnId),
+    },
+    turnDiffSummaryByThreadId: {
+      [thread.id]: Object.fromEntries(
+        thread.turnDiffSummaries.map((summary) => [summary.turnId, summary] as const),
+      ) as AppState["turnDiffSummaryByThreadId"][ThreadId],
+    },
+    sidebarThreadSummaryById: {},
     bootstrapComplete: true,
   };
+}
+
+function makeEmptyState(overrides: Partial<AppState> = {}): AppState {
+  return {
+    projectIds: [],
+    projectById: {},
+    threadIds: [],
+    threadIdsByProjectId: {},
+    threadShellById: {},
+    threadSessionById: {},
+    threadTurnStateById: {},
+    messageIdsByThreadId: {},
+    messageByThreadId: {},
+    activityIdsByThreadId: {},
+    activityByThreadId: {},
+    proposedPlanIdsByThreadId: {},
+    proposedPlanByThreadId: {},
+    turnDiffIdsByThreadId: {},
+    turnDiffSummaryByThreadId: {},
+    sidebarThreadSummaryById: {},
+    bootstrapComplete: true,
+    ...overrides,
+  };
+}
+
+function projectsOf(state: AppState) {
+  return selectProjects(state);
+}
+
+function threadsOf(state: AppState) {
+  return selectThreads(state);
 }
 
 function makeEvent<T extends OrchestrationEvent["type"]>(
@@ -191,7 +289,7 @@ describe("store read model sync", () => {
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.threads[0]?.modelSelection.model).toBe("claude-opus-4-6");
+    expect(threadsOf(next)[0]?.modelSelection.model).toBe("claude-opus-4-6");
   });
 
   it("resolves claude aliases when session provider is claudeAgent", () => {
@@ -216,7 +314,7 @@ describe("store read model sync", () => {
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.threads[0]?.modelSelection.model).toBe("claude-sonnet-4-6");
+    expect(threadsOf(next)[0]?.modelSelection.model).toBe("claude-sonnet-4-6");
   });
 
   it("preserves project and thread updatedAt timestamps from the read model", () => {
@@ -229,8 +327,8 @@ describe("store read model sync", () => {
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.projects[0]?.updatedAt).toBe("2026-02-27T00:00:00.000Z");
-    expect(next.threads[0]?.updatedAt).toBe("2026-02-27T00:05:00.000Z");
+    expect(projectsOf(next)[0]?.updatedAt).toBe("2026-02-27T00:00:00.000Z");
+    expect(threadsOf(next)[0]?.updatedAt).toBe("2026-02-27T00:05:00.000Z");
   });
 
   it("maps archivedAt from the read model", () => {
@@ -245,16 +343,17 @@ describe("store read model sync", () => {
       ),
     );
 
-    expect(next.threads[0]?.archivedAt).toBe(archivedAt);
+    expect(threadsOf(next)[0]?.archivedAt).toBe(archivedAt);
   });
 
   it("replaces projects using snapshot order during recovery", () => {
     const project1 = ProjectId.makeUnsafe("project-1");
     const project2 = ProjectId.makeUnsafe("project-2");
     const project3 = ProjectId.makeUnsafe("project-3");
-    const initialState: AppState = {
-      projects: [
-        {
+    const initialState: AppState = makeEmptyState({
+      projectIds: [project2, project1],
+      projectById: {
+        [project2]: {
           id: project2,
           name: "Project 2",
           cwd: "/tmp/project-2",
@@ -262,9 +361,11 @@ describe("store read model sync", () => {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
           },
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
           scripts: [],
         },
-        {
+        [project1]: {
           id: project1,
           name: "Project 1",
           cwd: "/tmp/project-1",
@@ -272,14 +373,12 @@ describe("store read model sync", () => {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
           },
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
           scripts: [],
         },
-      ],
-      threads: [],
-      sidebarThreadsById: {},
-      threadIdsByProjectId: {},
-      bootstrapComplete: true,
-    };
+      },
+    });
     const readModel: OrchestrationReadModel = {
       snapshotSequence: 2,
       updatedAt: "2026-02-27T00:00:00.000Z",
@@ -305,7 +404,7 @@ describe("store read model sync", () => {
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.projects.map((project) => project.id)).toEqual([project1, project2, project3]);
+    expect(projectsOf(next).map((project) => project.id)).toEqual([project1, project2, project3]);
   });
 });
 
@@ -345,8 +444,8 @@ describe("incremental orchestration updates", () => {
       }),
     );
 
-    expect(next.projects[0]?.name).toBe("Renamed Project");
-    expect(next.projects[0]?.updatedAt).toBe("2026-02-27T00:00:01.000Z");
+    expect(next.projectById[projectId]?.name).toBe("Renamed Project");
+    expect(next.projectById[projectId]?.updatedAt).toBe("2026-02-27T00:00:01.000Z");
   });
 
   it("preserves state identity for no-op project and thread deletes", () => {
@@ -375,9 +474,10 @@ describe("incremental orchestration updates", () => {
   it("reuses an existing project row when project.created arrives with a new id for the same cwd", () => {
     const originalProjectId = ProjectId.makeUnsafe("project-1");
     const recreatedProjectId = ProjectId.makeUnsafe("project-2");
-    const state: AppState = {
-      projects: [
-        {
+    const state: AppState = makeEmptyState({
+      projectIds: [originalProjectId],
+      projectById: {
+        [originalProjectId]: {
           id: originalProjectId,
           name: "Project",
           cwd: "/tmp/project",
@@ -385,14 +485,12 @@ describe("incremental orchestration updates", () => {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
           },
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
           scripts: [],
         },
-      ],
-      threads: [],
-      sidebarThreadsById: {},
-      threadIdsByProjectId: {},
-      bootstrapComplete: true,
-    };
+      },
+    });
 
     const next = applyOrchestrationEvent(
       state,
@@ -410,10 +508,13 @@ describe("incremental orchestration updates", () => {
       }),
     );
 
-    expect(next.projects).toHaveLength(1);
-    expect(next.projects[0]?.id).toBe(recreatedProjectId);
-    expect(next.projects[0]?.cwd).toBe("/tmp/project");
-    expect(next.projects[0]?.name).toBe("Project Recreated");
+    expect(projectsOf(next)).toHaveLength(1);
+    expect(projectsOf(next)[0]?.id).toBe(recreatedProjectId);
+    expect(projectsOf(next)[0]?.cwd).toBe("/tmp/project");
+    expect(projectsOf(next)[0]?.name).toBe("Project Recreated");
+    expect(next.projectIds).toEqual([recreatedProjectId]);
+    expect(next.projectById[originalProjectId]).toBeUndefined();
+    expect(next.projectById[recreatedProjectId]?.id).toBe(recreatedProjectId);
   });
 
   it("removes stale project index entries when thread.created recreates a thread under a new project", () => {
@@ -425,8 +526,10 @@ describe("incremental orchestration updates", () => {
       projectId: originalProjectId,
     });
     const state: AppState = {
-      projects: [
-        {
+      ...makeState(thread),
+      projectIds: [originalProjectId, recreatedProjectId],
+      projectById: {
+        [originalProjectId]: {
           id: originalProjectId,
           name: "Project 1",
           cwd: "/tmp/project-1",
@@ -434,9 +537,11 @@ describe("incremental orchestration updates", () => {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
           },
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
           scripts: [],
         },
-        {
+        [recreatedProjectId]: {
           id: recreatedProjectId,
           name: "Project 2",
           cwd: "/tmp/project-2",
@@ -444,15 +549,11 @@ describe("incremental orchestration updates", () => {
             provider: "codex",
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
           },
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
           scripts: [],
         },
-      ],
-      threads: [thread],
-      sidebarThreadsById: {},
-      threadIdsByProjectId: {
-        [originalProjectId]: [threadId],
       },
-      bootstrapComplete: true,
     };
 
     const next = applyOrchestrationEvent(
@@ -474,8 +575,8 @@ describe("incremental orchestration updates", () => {
       }),
     );
 
-    expect(next.threads).toHaveLength(1);
-    expect(next.threads[0]?.projectId).toBe(recreatedProjectId);
+    expect(threadsOf(next)).toHaveLength(1);
+    expect(threadsOf(next)[0]?.projectId).toBe(recreatedProjectId);
     expect(next.threadIdsByProjectId[originalProjectId]).toBeUndefined();
     expect(next.threadIdsByProjectId[recreatedProjectId]).toEqual([threadId]);
   });
@@ -498,7 +599,73 @@ describe("incremental orchestration updates", () => {
     const thread2 = makeThread({ id: ThreadId.makeUnsafe("thread-2") });
     const state: AppState = {
       ...makeState(thread1),
-      threads: [thread1, thread2],
+      threadIds: [thread1.id, thread2.id],
+      threadShellById: {
+        ...makeState(thread1).threadShellById,
+        [thread2.id]: {
+          id: thread2.id,
+          codexThreadId: thread2.codexThreadId,
+          projectId: thread2.projectId,
+          title: thread2.title,
+          modelSelection: thread2.modelSelection,
+          runtimeMode: thread2.runtimeMode,
+          interactionMode: thread2.interactionMode,
+          error: thread2.error,
+          createdAt: thread2.createdAt,
+          archivedAt: thread2.archivedAt,
+          updatedAt: thread2.updatedAt,
+          branch: thread2.branch,
+          worktreePath: thread2.worktreePath,
+        },
+      },
+      threadSessionById: {
+        ...makeState(thread1).threadSessionById,
+        [thread2.id]: thread2.session,
+      },
+      threadTurnStateById: {
+        ...makeState(thread1).threadTurnStateById,
+        [thread2.id]: {
+          latestTurn: thread2.latestTurn,
+        },
+      },
+      messageIdsByThreadId: {
+        ...makeState(thread1).messageIdsByThreadId,
+        [thread2.id]: [],
+      },
+      messageByThreadId: {
+        ...makeState(thread1).messageByThreadId,
+        [thread2.id]: {},
+      },
+      activityIdsByThreadId: {
+        ...makeState(thread1).activityIdsByThreadId,
+        [thread2.id]: [],
+      },
+      activityByThreadId: {
+        ...makeState(thread1).activityByThreadId,
+        [thread2.id]: {},
+      },
+      proposedPlanIdsByThreadId: {
+        ...makeState(thread1).proposedPlanIdsByThreadId,
+        [thread2.id]: [],
+      },
+      proposedPlanByThreadId: {
+        ...makeState(thread1).proposedPlanByThreadId,
+        [thread2.id]: {},
+      },
+      turnDiffIdsByThreadId: {
+        ...makeState(thread1).turnDiffIdsByThreadId,
+        [thread2.id]: [],
+      },
+      turnDiffSummaryByThreadId: {
+        ...makeState(thread1).turnDiffSummaryByThreadId,
+        [thread2.id]: {},
+      },
+      sidebarThreadSummaryById: {
+        ...makeState(thread1).sidebarThreadSummaryById,
+      },
+      threadIdsByProjectId: {
+        [thread1.projectId]: [thread1.id, thread2.id],
+      },
     };
 
     const next = applyOrchestrationEvent(
@@ -515,9 +682,12 @@ describe("incremental orchestration updates", () => {
       }),
     );
 
-    expect(next.threads[0]?.messages[0]?.text).toBe("hello world");
-    expect(next.threads[0]?.latestTurn?.state).toBe("running");
-    expect(next.threads[1]).toBe(thread2);
+    expect(threadsOf(next)[0]?.messages[0]?.text).toBe("hello world");
+    expect(threadsOf(next)[0]?.latestTurn?.state).toBe("running");
+    expect(next.threadShellById[thread2.id]).toBe(state.threadShellById[thread2.id]);
+    expect(next.threadSessionById[thread2.id]).toBe(state.threadSessionById[thread2.id]);
+    expect(next.messageIdsByThreadId[thread2.id]).toBe(state.messageIdsByThreadId[thread2.id]);
+    expect(next.messageByThreadId[thread2.id]).toBe(state.messageByThreadId[thread2.id]);
   });
 
   it("applies replay batches in sequence and updates session state", () => {
@@ -566,9 +736,9 @@ describe("incremental orchestration updates", () => {
       ),
     ]);
 
-    expect(next.threads[0]?.session?.status).toBe("running");
-    expect(next.threads[0]?.latestTurn?.state).toBe("completed");
-    expect(next.threads[0]?.messages).toHaveLength(1);
+    expect(threadsOf(next)[0]?.session?.status).toBe("running");
+    expect(threadsOf(next)[0]?.latestTurn?.state).toBe("completed");
+    expect(threadsOf(next)[0]?.messages).toHaveLength(1);
   });
 
   it("does not regress latestTurn when an older turn diff completes late", () => {
@@ -599,8 +769,8 @@ describe("incremental orchestration updates", () => {
       }),
     );
 
-    expect(next.threads[0]?.turnDiffSummaries).toHaveLength(1);
-    expect(next.threads[0]?.latestTurn).toEqual(state.threads[0]?.latestTurn);
+    expect(threadsOf(next)[0]?.turnDiffSummaries).toHaveLength(1);
+    expect(threadsOf(next)[0]?.latestTurn).toEqual(threadsOf(state)[0]?.latestTurn);
   });
 
   it("rebinds live turn diffs to the authoritative assistant message when it arrives later", () => {
@@ -643,10 +813,10 @@ describe("incremental orchestration updates", () => {
       }),
     );
 
-    expect(next.threads[0]?.turnDiffSummaries[0]?.assistantMessageId).toBe(
+    expect(threadsOf(next)[0]?.turnDiffSummaries[0]?.assistantMessageId).toBe(
       MessageId.makeUnsafe("assistant-real"),
     );
-    expect(next.threads[0]?.latestTurn?.assistantMessageId).toBe(
+    expect(threadsOf(next)[0]?.latestTurn?.assistantMessageId).toBe(
       MessageId.makeUnsafe("assistant-real"),
     );
   });
@@ -752,15 +922,15 @@ describe("incremental orchestration updates", () => {
       }),
     );
 
-    expect(next.threads[0]?.messages.map((message) => message.id)).toEqual([
+    expect(threadsOf(next)[0]?.messages.map((message) => message.id)).toEqual([
       "user-1",
       "assistant-1",
     ]);
-    expect(next.threads[0]?.proposedPlans.map((plan) => plan.id)).toEqual(["plan-1"]);
-    expect(next.threads[0]?.activities.map((activity) => activity.id)).toEqual([
+    expect(threadsOf(next)[0]?.proposedPlans.map((plan) => plan.id)).toEqual(["plan-1"]);
+    expect(threadsOf(next)[0]?.activities.map((activity) => activity.id)).toEqual([
       EventId.makeUnsafe("activity-1"),
     ]);
-    expect(next.threads[0]?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual([
+    expect(threadsOf(next)[0]?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual([
       TurnId.makeUnsafe("turn-1"),
     ]);
   });
@@ -810,7 +980,7 @@ describe("incremental orchestration updates", () => {
       }),
     );
 
-    expect(reverted.threads[0]?.pendingSourceProposedPlan).toBeUndefined();
+    expect(threadsOf(reverted)[0]?.pendingSourceProposedPlan).toBeUndefined();
 
     const next = applyOrchestrationEvent(
       reverted,
@@ -828,10 +998,10 @@ describe("incremental orchestration updates", () => {
       }),
     );
 
-    expect(next.threads[0]?.latestTurn).toMatchObject({
+    expect(threadsOf(next)[0]?.latestTurn).toMatchObject({
       turnId: TurnId.makeUnsafe("turn-3"),
       state: "running",
     });
-    expect(next.threads[0]?.latestTurn?.sourceProposedPlan).toBeUndefined();
+    expect(threadsOf(next)[0]?.latestTurn?.sourceProposedPlan).toBeUndefined();
   });
 });

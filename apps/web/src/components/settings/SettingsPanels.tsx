@@ -1479,12 +1479,21 @@ export function GeneralSettingsPanel() {
 }
 
 export function ArchivedThreadsPanel() {
-  const projects = useStore((store) => store.projects);
-  const threads = useStore((store) => store.threads);
+  const projectIds = useStore((store) => store.projectIds);
+  const projectById = useStore((store) => store.projectById);
+  const threadIds = useStore((store) => store.threadIds);
+  const threadShellById = useStore((store) => store.threadShellById);
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const archivedGroups = useMemo(() => {
-    const projectById = new Map(projects.map((project) => [project.id, project] as const));
-    return [...projectById.values()]
+    const projects = projectIds.flatMap((projectId) => {
+      const project = projectById[projectId];
+      return project ? [project] : [];
+    });
+    const threads = threadIds.flatMap((threadId) => {
+      const thread = threadShellById[threadId];
+      return thread ? [thread] : [];
+    });
+    return projects
       .map((project) => ({
         project,
         threads: threads
@@ -1496,7 +1505,7 @@ export function ArchivedThreadsPanel() {
           }),
       }))
       .filter((group) => group.threads.length > 0);
-  }, [projects, threads]);
+  }, [projectById, projectIds, threadIds, threadShellById]);
 
   const handleArchivedThreadContextMenu = useCallback(
     async (threadId: ThreadId, position: { x: number; y: number }) => {

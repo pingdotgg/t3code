@@ -10,18 +10,20 @@ import {
 import { newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import { useStore } from "../store";
-import { useThreadById } from "../storeSelectors";
+import { createThreadSelector } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 
 export function useHandleNewThread() {
-  const projectIds = useStore(useShallow((store) => store.projects.map((project) => project.id)));
+  const projectIds = useStore(useShallow((store) => store.projectIds));
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const navigate = useNavigate();
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
-  const activeThread = useThreadById(routeThreadId);
+  const activeThread = useStore(
+    useMemo(() => createThreadSelector(routeThreadId), [routeThreadId]),
+  );
   const activeDraftThread = useComposerDraftStore((store) =>
     routeThreadId ? (store.draftThreadsByThreadId[routeThreadId] ?? null) : null,
   );

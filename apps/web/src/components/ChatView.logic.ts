@@ -3,7 +3,7 @@ import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } 
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
-import { useStore } from "../store";
+import { selectThreadById, useStore } from "../store";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -202,7 +202,7 @@ export async function waitForStartedServerThread(
   threadId: ThreadId,
   timeoutMs = 1_000,
 ): Promise<boolean> {
-  const getThread = () => useStore.getState().threads.find((thread) => thread.id === threadId);
+  const getThread = () => selectThreadById(threadId)(useStore.getState());
   const thread = getThread();
 
   if (threadHasStarted(thread)) {
@@ -225,7 +225,7 @@ export async function waitForStartedServerThread(
     };
 
     const unsubscribe = useStore.subscribe((state) => {
-      if (!threadHasStarted(state.threads.find((thread) => thread.id === threadId))) {
+      if (!threadHasStarted(selectThreadById(threadId)(state))) {
         return;
       }
       finish(true);
