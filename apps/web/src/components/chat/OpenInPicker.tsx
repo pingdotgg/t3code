@@ -13,6 +13,7 @@ import {
   TraeIcon,
   IntelliJIdeaIcon,
   VisualStudioCode,
+  VisualStudioCodeInsiders,
   Zed,
 } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
@@ -37,7 +38,7 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
     },
     {
       label: "VS Code Insiders",
-      Icon: VisualStudioCode,
+      Icon: VisualStudioCodeInsiders,
       value: "vscode-insiders",
     },
     {
