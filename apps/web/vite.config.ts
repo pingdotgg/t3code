@@ -39,6 +39,7 @@ function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
 }
 
 const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
+
 export default defineConfig({
   plugins: [
     tanstackRouter(),
