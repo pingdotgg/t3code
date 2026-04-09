@@ -56,6 +56,7 @@ const rpcClientMock = {
   },
   git: {
     pull: vi.fn(),
+    diff: vi.fn(),
     refreshStatus: vi.fn(),
     onStatus: vi.fn((input: { cwd: string }, listener: (event: GitStatusResult) => void) =>
       registerListener(gitStatusListeners, listener),
@@ -340,6 +341,16 @@ describe("wsNativeApi", () => {
       relativePath: "plan.md",
       contents: "# Plan\n",
     });
+  });
+
+  it("forwards git diff requests directly to the RPC client", async () => {
+    rpcClientMock.git.diff.mockResolvedValue({ diff: "patch" });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.git.diff({ cwd: "/repo" });
+
+    expect(rpcClientMock.git.diff).toHaveBeenCalledWith({ cwd: "/repo" });
   });
 
   it("forwards full-thread diff requests to the orchestration RPC", async () => {

@@ -1594,6 +1594,83 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    describe("readWorkingTreeDiff", () => {
+      it.effect("returns an empty diff for a clean repo", () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          yield* initRepoWithCommit(tmp);
+          const diff = yield* (yield* GitCore).readWorkingTreeDiff(tmp);
+          expect(diff).toEqual({ diff: "" });
+        }),
+      );
+
+      it.effect("returns a patch for tracked modifications", () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          yield* initRepoWithCommit(tmp);
+
+          yield* writeTextFile(path.join(tmp, "README.md"), "# test\ntracked change\n");
+
+          const diff = yield* (yield* GitCore).readWorkingTreeDiff(tmp);
+          expect(diff.diff).toContain("diff --git a/README.md b/README.md");
+          expect(diff.diff).toContain("tracked change");
+        }),
+      );
+
+      it.effect("returns a new-file patch for untracked files", () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          yield* initRepoWithCommit(tmp);
+
+          yield* writeTextFile(path.join(tmp, "notes.txt"), "hello\n");
+
+          const diff = yield* (yield* GitCore).readWorkingTreeDiff(tmp);
+          expect(diff.diff).toContain("diff --git a/notes.txt b/notes.txt");
+          expect(diff.diff).toContain("new file mode");
+          expect(diff.diff).toContain("+++ b/notes.txt");
+        }),
+      );
+
+      it.effect("includes combined staged and unstaged changes against HEAD", () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          yield* initRepoWithCommit(tmp);
+
+          yield* writeTextFile(path.join(tmp, "README.md"), "# test\nstaged change\n");
+          yield* git(tmp, ["add", "README.md"]);
+          yield* writeTextFile(
+            path.join(tmp, "README.md"),
+            "# test\nstaged change\nunstaged change\n",
+          );
+
+          const diff = yield* (yield* GitCore).readWorkingTreeDiff(tmp);
+          expect(diff.diff).toContain("diff --git a/README.md b/README.md");
+          expect(diff.diff).toContain("staged change");
+          expect(diff.diff).toContain("unstaged change");
+        }),
+      );
+
+      it.effect("includes staged and untracked changes before the first commit", () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          const core = yield* GitCore;
+          yield* core.initRepo({ cwd: tmp });
+          yield* git(tmp, ["config", "user.email", "test@test.com"]);
+          yield* git(tmp, ["config", "user.name", "Test"]);
+
+          yield* writeTextFile(path.join(tmp, "staged.txt"), "staged\n");
+          yield* writeTextFile(path.join(tmp, "untracked.txt"), "untracked\n");
+          yield* git(tmp, ["add", "staged.txt"]);
+
+          const diff = yield* core.readWorkingTreeDiff(tmp);
+          expect(diff.diff).toContain("diff --git a/staged.txt b/staged.txt");
+          expect(diff.diff).toContain("diff --git a/untracked.txt b/untracked.txt");
+          expect(diff.diff).toContain("+++ b/staged.txt");
+          expect(diff.diff).toContain("+++ b/untracked.txt");
+        }),
+      );
+    });
+
     it.effect("computes ahead count against base branch when no upstream is configured", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

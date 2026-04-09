@@ -589,6 +589,10 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           ),
           { "rpc.aggregate": "git" },
         ),
+      [WS_METHODS.gitDiff]: (input) =>
+        observeRpcEffect(WS_METHODS.gitDiff, git.readWorkingTreeDiff(input.cwd), {
+          "rpc.aggregate": "git",
+        }),
       [WS_METHODS.gitRunStackedAction]: (input) =>
         observeRpcStream(
           WS_METHODS.gitRunStackedAction,

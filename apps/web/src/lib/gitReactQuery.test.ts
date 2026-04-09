@@ -14,9 +14,11 @@ import type { GitListBranchesResult } from "@t3tools/contracts";
 
 import {
   gitBranchSearchInfiniteQueryOptions,
+  gitDiffQueryOptions,
   gitMutationKeys,
   gitPreparePullRequestThreadMutationOptions,
   gitPullMutationOptions,
+  gitQueryKeys,
   gitRunStackedActionMutationOptions,
   invalidateGitQueries,
 } from "./gitReactQuery";
@@ -33,6 +35,12 @@ const BRANCH_SEARCH_RESULT: InfiniteData<GitListBranchesResult, number> = {
   pages: [BRANCH_QUERY_RESULT],
   pageParams: [0],
 };
+
+describe("gitQueryKeys", () => {
+  it("scopes diff keys by cwd", () => {
+    expect(gitQueryKeys.diff("/repo/a")).not.toEqual(gitQueryKeys.diff("/repo/b"));
+  });
+});
 
 describe("gitMutationKeys", () => {
   it("scopes stacked action keys by cwd", () => {
@@ -114,5 +122,12 @@ describe("invalidateGitQueries", () => {
         }).queryKey,
       )?.isInvalidated,
     ).toBe(false);
+  });
+});
+
+describe("git query options", () => {
+  it("attaches cwd-scoped query key for diff", () => {
+    const options = gitDiffQueryOptions("/repo/a");
+    expect(options.queryKey).toEqual(gitQueryKeys.diff("/repo/a"));
   });
 });

@@ -12,12 +12,15 @@ import {
 import { ensureNativeApi } from "../nativeApi";
 import { getWsRpcClient } from "../wsRpcClient";
 
+const GIT_STATUS_STALE_TIME_MS = 5_000;
+const GIT_STATUS_REFETCH_INTERVAL_MS = 15_000;
 const GIT_BRANCHES_STALE_TIME_MS = 15_000;
 const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
 const GIT_BRANCHES_PAGE_SIZE = 100;
 
 export const gitQueryKeys = {
   all: ["git"] as const,
+  diff: (cwd: string | null) => ["git", "diff", cwd] as const,
   branches: (cwd: string | null) => ["git", "branches", cwd] as const,
   branchSearch: (cwd: string | null, query: string) =>
     ["git", "branches", cwd, "search", query] as const,
@@ -47,6 +50,22 @@ function invalidateGitBranchQueries(queryClient: QueryClient, cwd: string | null
   }
 
   return queryClient.invalidateQueries({ queryKey: gitQueryKeys.branches(cwd) });
+}
+
+export function gitDiffQueryOptions(cwd: string | null) {
+  return queryOptions({
+    queryKey: gitQueryKeys.diff(cwd),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!cwd) throw new Error("Git diff is unavailable.");
+      return api.git.diff({ cwd });
+    },
+    enabled: cwd !== null,
+    staleTime: GIT_STATUS_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: GIT_STATUS_REFETCH_INTERVAL_MS,
+  });
 }
 
 export function gitBranchSearchInfiniteQueryOptions(input: {

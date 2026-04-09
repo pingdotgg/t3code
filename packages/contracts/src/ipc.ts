@@ -2,6 +2,8 @@ import type {
   GitCheckoutInput,
   GitCheckoutResult,
   GitCreateBranchInput,
+  GitDiffInput,
+  GitDiffResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
@@ -167,6 +169,7 @@ export interface NativeApi {
         onResubscribe?: () => void;
       },
     ) => () => void;
+    diff: (input: GitDiffInput) => Promise<GitDiffResult>;
   };
   contextMenu: {
     show: <T extends string>(

@@ -1,5 +1,6 @@
 import {
   type GitActionProgressEvent,
+  type GitDiffResult,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   type GitStatusResult,
@@ -67,6 +68,7 @@ export interface WsRpcClient {
   };
   readonly git: {
     readonly pull: RpcUnaryMethod<typeof WS_METHODS.gitPull>;
+    readonly diff: (input: { cwd: string }) => Promise<GitDiffResult>;
     readonly refreshStatus: RpcUnaryMethod<typeof WS_METHODS.gitRefreshStatus>;
     readonly onStatus: (
       input: RpcInput<typeof WS_METHODS.subscribeGitStatus>,
@@ -157,6 +159,7 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
     },
     git: {
       pull: (input) => transport.request((client) => client[WS_METHODS.gitPull](input)),
+      diff: (input) => transport.request((client) => client[WS_METHODS.gitDiff](input)),
       refreshStatus: (input) =>
         transport.request((client) => client[WS_METHODS.gitRefreshStatus](input)),
       onStatus: (input, listener, options) => {

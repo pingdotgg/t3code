@@ -40,6 +40,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
+const LARGE_DIFF_MAX_OUTPUT_BYTES = 5_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
@@ -185,6 +186,13 @@ function parseBranchLine(line: string): { name: string; current: boolean } | nul
     name,
     current: trimmed.startsWith("* "),
   };
+}
+
+function parseNullSeparatedLines(stdout: string): string[] {
+  return stdout
+    .split("\u0000")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
 }
 
 function filterBranchesForListQuery(
@@ -1337,6 +1345,84 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       })),
     );
 
+  const readWorkingTreeDiff: GitCoreShape["readWorkingTreeDiff"] = Effect.fn("readWorkingTreeDiff")(
+    function* (cwd) {
+      const headResult = yield* executeGit(
+        "GitCore.readWorkingTreeDiff.verifyHead",
+        cwd,
+        ["rev-parse", "--verify", "HEAD"],
+        {
+          allowNonZeroExit: true,
+        },
+      );
+      const headExists = headResult.code === 0;
+
+      const trackedPatchSegments = headExists
+        ? [
+            yield* runGitStdoutWithOptions(
+              "GitCore.readWorkingTreeDiff.trackedPatch",
+              cwd,
+              ["diff", "HEAD", "--patch", "--minimal"],
+              {
+                maxOutputBytes: LARGE_DIFF_MAX_OUTPUT_BYTES,
+              },
+            ),
+          ]
+        : yield* Effect.all(
+            [
+              runGitStdoutWithOptions(
+                "GitCore.readWorkingTreeDiff.cachedRootPatch",
+                cwd,
+                ["diff", "--cached", "--patch", "--minimal", "--root"],
+                {
+                  maxOutputBytes: LARGE_DIFF_MAX_OUTPUT_BYTES,
+                },
+              ),
+              runGitStdoutWithOptions(
+                "GitCore.readWorkingTreeDiff.workingTreePatch",
+                cwd,
+                ["diff", "--patch", "--minimal"],
+                {
+                  maxOutputBytes: LARGE_DIFF_MAX_OUTPUT_BYTES,
+                },
+              ),
+            ],
+            { concurrency: "unbounded" },
+          );
+
+      const untrackedPaths = parseNullSeparatedLines(
+        yield* runGitStdout("GitCore.readWorkingTreeDiff.untrackedFiles", cwd, [
+          "ls-files",
+          "--others",
+          "--exclude-standard",
+          "-z",
+        ]),
+      ).toSorted((left, right) => left.localeCompare(right));
+
+      const untrackedPatches = yield* Effect.forEach(
+        untrackedPaths,
+        (relativePath) =>
+          runGitStdoutWithOptions(
+            "GitCore.readWorkingTreeDiff.untrackedPatch",
+            cwd,
+            ["diff", "--no-index", "--patch", "--minimal", "--", "/dev/null", relativePath],
+            {
+              allowNonZeroExit: true,
+              maxOutputBytes: LARGE_DIFF_MAX_OUTPUT_BYTES,
+            },
+          ).pipe(Effect.map((patch) => patch.trim())),
+        { concurrency: "unbounded" },
+      );
+
+      const diff = [...trackedPatchSegments, ...untrackedPatches]
+        .map((segment) => segment.trim())
+        .filter((segment) => segment.length > 0)
+        .join("\n\n");
+
+      return { diff };
+    },
+  );
+
   const prepareCommitContext: GitCoreShape["prepareCommitContext"] = Effect.fn(
     "prepareCommitContext",
   )(function* (cwd, filePaths) {
@@ -2127,6 +2213,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   return {
     execute,
     status,
+    readWorkingTreeDiff,
     statusDetails,
     statusDetailsLocal,
     prepareCommitContext,
