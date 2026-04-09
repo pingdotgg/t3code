@@ -2,6 +2,7 @@ import {
   ArchiveIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
+  FoldVerticalIcon,
   FolderIcon,
   GitPullRequestIcon,
   PlusIcon,
@@ -115,6 +116,7 @@ import {
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
+  collectSidebarNonIdleProjectIds,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -152,7 +154,6 @@ interface TerminalStatusIndicator {
   colorClass: string;
   pulse: boolean;
 }
-
 interface PrStatusIndicator {
   label: "PR open" | "PR closed" | "PR merged";
   colorClass: string;
@@ -212,7 +213,6 @@ function terminalStatusFromRunningIds(
     pulse: true,
   };
 }
-
 function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (!pr) return null;
 
@@ -685,6 +685,7 @@ export default function Sidebar() {
     })),
   );
   const markThreadUnread = useUiStateStore((store) => store.markThreadUnread);
+  const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
   const toggleProject = useUiStateStore((store) => store.toggleProject);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
@@ -781,6 +782,41 @@ export default function Sidebar() {
       },
     }),
     [platform, routeTerminalOpen],
+  );
+  const threadStatusById = useMemo(() => {
+    const map = new Map<ThreadId, ReturnType<typeof resolveThreadStatusPill>>();
+    for (const thread of sidebarThreads) {
+      map.set(
+        thread.id,
+        resolveThreadStatusPill({
+          thread: {
+            ...thread,
+            lastVisitedAt: threadLastVisitedAtById[thread.id],
+          },
+        }),
+      );
+    }
+    return map;
+  }, [sidebarThreads, threadLastVisitedAtById]);
+  const runningTerminalThreadIds = useMemo(() => {
+    const ids = new Set<ThreadId>();
+    for (const thread of sidebarThreads) {
+      if (selectThreadTerminalState(terminalStateByThreadId, thread.id).runningTerminalIds.length) {
+        ids.add(thread.id);
+      }
+    }
+    return ids;
+  }, [sidebarThreads, terminalStateByThreadId]);
+  const activeProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
+  const nonIdleProjectIds = useMemo(
+    () =>
+      collectSidebarNonIdleProjectIds({
+        activeProjectId,
+        threads: sidebarThreads,
+        threadStatusById,
+        runningTerminalThreadIds,
+      }),
+    [activeProjectId, runningTerminalThreadIds, sidebarThreads, threadStatusById],
   );
   const openPrLink = useCallback((event: MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -1910,6 +1946,15 @@ export default function Sidebar() {
     [toggleProject],
   );
 
+  const handleCollapseIdleProjects = useCallback(() => {
+    for (const project of sidebarProjects) {
+      if (!project.expanded || nonIdleProjectIds.has(project.id)) {
+        continue;
+      }
+      setProjectExpanded(project.id, false);
+    }
+  }, [nonIdleProjectIds, setProjectExpanded, sidebarProjects]);
+
   useEffect(() => {
     const onMouseDown = (event: globalThis.MouseEvent) => {
       if (selectedThreadIds.size === 0) return;
@@ -2120,11 +2165,11 @@ export default function Sidebar() {
               </SidebarGroup>
             ) : null}
             <SidebarGroup className="px-2 py-2">
-              <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
+              <div className="mb-1 flex items-center justify-between px-2">
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
                   Projects
                 </span>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-0.5">
                   <ProjectSortMenu
                     projectSortOrder={appSettings.sidebarProjectSortOrder}
                     threadSortOrder={appSettings.sidebarThreadSortOrder}
@@ -2135,6 +2180,21 @@ export default function Sidebar() {
                       updateSettings({ sidebarThreadSortOrder: sortOrder });
                     }}
                   />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label="Collapse idle projects"
+                          className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                          onClick={handleCollapseIdleProjects}
+                        />
+                      }
+                    >
+                      <FoldVerticalIcon className="size-3.5" />
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">Collapse idle projects</TooltipPopup>
+                  </Tooltip>
                   <Tooltip>
                     <TooltipTrigger
                       render={

@@ -1,5 +1,6 @@
 import * as React from "react";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type { ProjectId, ThreadId } from "@t3tools/contracts";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
@@ -277,6 +278,26 @@ export function isContextMenuPointerDown(input: {
   return input.isMac && input.button === 0 && input.ctrlKey;
 }
 
+export function collectSidebarNonIdleProjectIds(input: {
+  activeProjectId: ProjectId | null;
+  threads: readonly Pick<Thread, "id" | "projectId">[];
+  threadStatusById: ReadonlyMap<ThreadId, ThreadStatusPill | null>;
+  runningTerminalThreadIds: ReadonlySet<ThreadId>;
+}): Set<ProjectId> {
+  const ids = new Set<ProjectId>();
+  if (input.activeProjectId) {
+    ids.add(input.activeProjectId);
+  }
+
+  for (const thread of input.threads) {
+    const threadStatus = input.threadStatusById.get(thread.id) ?? null;
+    if (threadStatus !== null || input.runningTerminalThreadIds.has(thread.id)) {
+      ids.add(thread.projectId);
+    }
+  }
+
+  return ids;
+}
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;

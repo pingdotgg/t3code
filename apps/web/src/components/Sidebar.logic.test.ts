@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  collectSidebarNonIdleProjectIds,
   createThreadJumpHintVisibilityController,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -394,6 +395,54 @@ describe("isContextMenuPointerDown", () => {
   });
 });
 
+describe("collectSidebarNonIdleProjectIds", () => {
+  const projectA = "project-a" as never;
+  const projectB = "project-b" as never;
+  const threadA = { id: "thread-a" as never, projectId: projectA };
+  const threadB = { id: "thread-b" as never, projectId: projectB };
+  const workingStatus = {
+    label: "Working" as const,
+    colorClass: "text-sky-600",
+    dotClass: "bg-sky-500",
+    pulse: true,
+  };
+
+  it("preserves a project when one of its threads has a running terminal", () => {
+    const ids = collectSidebarNonIdleProjectIds({
+      activeProjectId: null,
+      threads: [threadA],
+      threadStatusById: new Map([[threadA.id, null]]),
+      runningTerminalThreadIds: new Set([threadA.id]),
+    });
+
+    expect(ids).toEqual(new Set([projectA]));
+  });
+
+  it("excludes projects that have neither thread status nor running terminals", () => {
+    const ids = collectSidebarNonIdleProjectIds({
+      activeProjectId: null,
+      threads: [threadA, threadB],
+      threadStatusById: new Map([
+        [threadA.id, null],
+        [threadB.id, workingStatus],
+      ]),
+      runningTerminalThreadIds: new Set(),
+    });
+
+    expect(ids).toEqual(new Set([projectB]));
+  });
+
+  it("preserves the active project even without thread status or terminal activity", () => {
+    const ids = collectSidebarNonIdleProjectIds({
+      activeProjectId: projectA,
+      threads: [threadA],
+      threadStatusById: new Map([[threadA.id, null]]),
+      runningTerminalThreadIds: new Set(),
+    });
+
+    expect(ids).toEqual(new Set([projectA]));
+  });
+});
 describe("resolveThreadStatusPill", () => {
   const baseThread = {
     hasActionableProposedPlan: false,
