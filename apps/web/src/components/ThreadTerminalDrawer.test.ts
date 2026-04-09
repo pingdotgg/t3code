@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clampTerminalDockWidth,
   resolveTerminalSelectionActionPosition,
+  resolveTerminalSplitGridStyle,
   selectPendingTerminalEventEntries,
   selectTerminalEventEntriesAfterSnapshot,
   shouldHandleTerminalSelectionMouseUp,
@@ -67,6 +69,21 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(terminalSelectionActionDelayForClickCount(1)).toBe(0);
     expect(terminalSelectionActionDelayForClickCount(2)).toBe(260);
     expect(terminalSelectionActionDelayForClickCount(3)).toBe(260);
+  });
+
+  it("clamps right-docked terminal widths to the supported range", () => {
+    expect(clampTerminalDockWidth(120, 1_000)).toBe(320);
+    expect(clampTerminalDockWidth(640, 1_000)).toBe(600);
+    expect(clampTerminalDockWidth(480, 1_000)).toBe(480);
+  });
+
+  it("switches split terminals to rows when docked on the right", () => {
+    expect(resolveTerminalSplitGridStyle("bottom", 3)).toEqual({
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    });
+    expect(resolveTerminalSplitGridStyle("right", 3)).toEqual({
+      gridTemplateRows: "repeat(3, minmax(0, 1fr))",
+    });
   });
 
   it("only handles mouseup when the selection gesture started in the terminal", () => {

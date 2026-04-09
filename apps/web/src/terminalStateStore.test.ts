@@ -71,6 +71,8 @@ describe("terminalStateStore actions", () => {
     expect(terminalState).toEqual({
       terminalOpen: false,
       terminalHeight: 280,
+      terminalWidth: 420,
+      terminalDock: "bottom",
       terminalIds: ["default"],
       runningTerminalIds: [],
       activeTerminalId: "default",
@@ -94,6 +96,37 @@ describe("terminalStateStore actions", () => {
     expect(terminalState.terminalGroups).toEqual([
       { id: "group-default", terminalIds: ["default", "terminal-2"] },
     ]);
+  });
+
+  it("tracks right-docked terminal sizing per thread", () => {
+    const store = useTerminalStateStore.getState();
+    store.setTerminalDock(THREAD_ID, "right");
+    store.setTerminalWidth(THREAD_ID, 512);
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalDock).toBe("right");
+    expect(terminalState.terminalWidth).toBe(512);
+  });
+
+  it("normalizes legacy terminal state snapshots without dock metadata", () => {
+    const legacyTerminalStateByThreadId = {
+      [THREAD_ID]: {
+        terminalOpen: true,
+        terminalHeight: 320,
+        terminalIds: ["default"],
+        runningTerminalIds: [],
+        activeTerminalId: "default",
+        terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
+        activeTerminalGroupId: "group-default",
+      },
+    } as unknown as ReturnType<typeof useTerminalStateStore.getState>["terminalStateByThreadId"];
+
+    const terminalState = selectThreadTerminalState(legacyTerminalStateByThreadId, THREAD_ID);
+    expect(terminalState.terminalDock).toBe("bottom");
+    expect(terminalState.terminalWidth).toBe(420);
   });
 
   it("caps splits at four terminals per group", () => {

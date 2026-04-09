@@ -78,6 +78,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
+  type ThreadTerminalDock,
   type ChatMessage,
   type SessionPhase,
   type Thread,
@@ -393,6 +394,8 @@ function PersistentThreadTerminalDrawer({
     selectThreadTerminalState(state.terminalStateByThreadId, threadId),
   );
   const storeSetTerminalHeight = useTerminalStateStore((state) => state.setTerminalHeight);
+  const storeSetTerminalWidth = useTerminalStateStore((state) => state.setTerminalWidth);
+  const storeSetTerminalDock = useTerminalStateStore((state) => state.setTerminalDock);
   const storeSplitTerminal = useTerminalStateStore((state) => state.splitTerminal);
   const storeNewTerminal = useTerminalStateStore((state) => state.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((state) => state.setActiveTerminal);
@@ -439,6 +442,18 @@ function PersistentThreadTerminalDrawer({
       storeSetTerminalHeight(threadId, height);
     },
     [storeSetTerminalHeight, threadId],
+  );
+  const setTerminalWidth = useCallback(
+    (width: number) => {
+      storeSetTerminalWidth(threadId, width);
+    },
+    [storeSetTerminalWidth, threadId],
+  );
+  const setTerminalDock = useCallback(
+    (dock: ThreadTerminalDock) => {
+      storeSetTerminalDock(threadId, dock);
+    },
+    [storeSetTerminalDock, threadId],
   );
 
   const splitTerminal = useCallback(() => {
@@ -510,7 +525,9 @@ function PersistentThreadTerminalDrawer({
         worktreePath={effectiveWorktreePath}
         runtimeEnv={runtimeEnv}
         visible={visible}
+        dock={terminalState.terminalDock}
         height={terminalState.terminalHeight}
+        width={terminalState.terminalWidth}
         terminalIds={terminalState.terminalIds}
         activeTerminalId={terminalState.activeTerminalId}
         terminalGroups={terminalState.terminalGroups}
@@ -523,7 +540,9 @@ function PersistentThreadTerminalDrawer({
         closeShortcutLabel={visible ? closeShortcutLabel : undefined}
         onActiveTerminalChange={activateTerminal}
         onCloseTerminal={closeTerminal}
+        onDockChange={setTerminalDock}
         onHeightChange={setTerminalHeight}
+        onWidthChange={setTerminalWidth}
         onAddTerminalContext={handleAddTerminalContext}
       />
     </div>
@@ -696,8 +715,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const openTerminalThreadIds = useMemo(
     () =>
-      Object.entries(terminalStateByThreadId).flatMap(([nextThreadId, nextTerminalState]) =>
-        nextTerminalState.terminalOpen ? [nextThreadId as ThreadId] : [],
+      Object.keys(terminalStateByThreadId).flatMap((nextThreadId) =>
+        selectThreadTerminalState(terminalStateByThreadId, nextThreadId as ThreadId).terminalOpen
+          ? [nextThreadId as ThreadId]
+          : [],
       ),
     [terminalStateByThreadId],
   );
@@ -719,6 +740,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [draftThreadsByThreadId],
   );
   const [mountedTerminalThreadIds, setMountedTerminalThreadIds] = useState<ThreadId[]>([]);
+  const rightDockedMountedTerminalThreadIds = useMemo(
+    () =>
+      mountedTerminalThreadIds.filter(
+        (mountedThreadId) =>
+          selectThreadTerminalState(terminalStateByThreadId, mountedThreadId).terminalDock ===
+          "right",
+      ),
+    [mountedTerminalThreadIds, terminalStateByThreadId],
+  );
+  const bottomDockedMountedTerminalThreadIds = useMemo(
+    () =>
+      mountedTerminalThreadIds.filter(
+        (mountedThreadId) =>
+          selectThreadTerminalState(terminalStateByThreadId, mountedThreadId).terminalDock !==
+          "right",
+      ),
+    [mountedTerminalThreadIds, terminalStateByThreadId],
+  );
 
   const setPrompt = useCallback(
     (nextPrompt: string) => {
@@ -3855,6 +3894,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     void onRevertToTurnCount(targetTurnCount);
   };
+  const renderPersistentTerminalDrawer = (mountedThreadId: ThreadId) => (
+    <PersistentThreadTerminalDrawer
+      key={mountedThreadId}
+      threadId={mountedThreadId}
+      visible={mountedThreadId === activeThreadId && terminalState.terminalOpen}
+      launchContext={
+        mountedThreadId === activeThreadId ? (activeTerminalLaunchContext ?? null) : null
+      }
+      focusRequestId={mountedThreadId === activeThreadId ? terminalFocusRequestId : 0}
+      splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+      newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+      closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+      onAddTerminalContext={addTerminalContextToDraft}
+    />
+  );
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -4415,24 +4469,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
             }}
           />
         ) : null}
+
+        {rightDockedMountedTerminalThreadIds.map(renderPersistentTerminalDrawer)}
       </div>
       {/* end horizontal flex container */}
 
-      {mountedTerminalThreadIds.map((mountedThreadId) => (
-        <PersistentThreadTerminalDrawer
-          key={mountedThreadId}
-          threadId={mountedThreadId}
-          visible={mountedThreadId === activeThreadId && terminalState.terminalOpen}
-          launchContext={
-            mountedThreadId === activeThreadId ? (activeTerminalLaunchContext ?? null) : null
-          }
-          focusRequestId={mountedThreadId === activeThreadId ? terminalFocusRequestId : 0}
-          splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-          newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-          closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-          onAddTerminalContext={addTerminalContextToDraft}
-        />
-      ))}
+      {bottomDockedMountedTerminalThreadIds.map(renderPersistentTerminalDrawer)}
 
       {expandedImage && expandedImageItem && (
         <div

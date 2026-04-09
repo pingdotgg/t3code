@@ -1,5 +1,13 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
+import {
+  PanelBottomOpenIcon,
+  PanelRightOpenIcon,
+  Plus,
+  SquareSplitHorizontal,
+  TerminalSquare,
+  Trash2,
+  XIcon,
+} from "lucide-react";
 import {
   type TerminalEvent,
   type TerminalSessionSnapshot,
@@ -26,9 +34,12 @@ import {
 } from "../terminal-links";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
 import {
+  DEFAULT_THREAD_TERMINAL_DOCK,
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
+  DEFAULT_THREAD_TERMINAL_WIDTH,
   MAX_TERMINALS_PER_GROUP,
+  type ThreadTerminalDock,
   type ThreadTerminalGroup,
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
@@ -36,6 +47,8 @@ import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalSt
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
+const MIN_DRAWER_WIDTH = 320;
+const MAX_DRAWER_WIDTH_RATIO = 0.6;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 
 function maxDrawerHeight(): number {
@@ -47,6 +60,19 @@ function clampDrawerHeight(height: number): number {
   const safeHeight = Number.isFinite(height) ? height : DEFAULT_THREAD_TERMINAL_HEIGHT;
   const maxHeight = maxDrawerHeight();
   return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
+}
+
+function maxDrawerWidth(viewportWidth?: number): number {
+  const resolvedViewportWidth =
+    viewportWidth ??
+    (typeof window === "undefined" ? DEFAULT_THREAD_TERMINAL_WIDTH : window.innerWidth);
+  return Math.max(MIN_DRAWER_WIDTH, Math.floor(resolvedViewportWidth * MAX_DRAWER_WIDTH_RATIO));
+}
+
+export function clampTerminalDockWidth(width: number, viewportWidth?: number): number {
+  const safeWidth = Number.isFinite(width) ? width : DEFAULT_THREAD_TERMINAL_WIDTH;
+  const maxWidth = maxDrawerWidth(viewportWidth);
+  return Math.min(Math.max(Math.round(safeWidth), MIN_DRAWER_WIDTH), maxWidth);
 }
 
 function writeSystemMessage(terminal: Terminal, message: string): void {
@@ -72,6 +98,16 @@ export function selectPendingTerminalEventEntries(
   lastAppliedTerminalEventId: number,
 ): ReadonlyArray<{ id: number; event: TerminalEvent }> {
   return entries.filter((entry) => entry.id > lastAppliedTerminalEventId);
+}
+
+export function resolveTerminalSplitGridStyle(
+  dock: ThreadTerminalDock,
+  visibleTerminalCount: number,
+): { gridTemplateColumns?: string; gridTemplateRows?: string } {
+  const count = Math.max(1, Math.round(visibleTerminalCount));
+  return dock === "right"
+    ? { gridTemplateRows: `repeat(${count}, minmax(0, 1fr))` }
+    : { gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` };
 }
 
 function terminalThemeFromApp(): ITheme {
@@ -219,7 +255,8 @@ interface TerminalViewportProps {
   focusRequestId: number;
   autoFocus: boolean;
   resizeEpoch: number;
-  drawerHeight: number;
+  dock: ThreadTerminalDock;
+  resizeMeasure: number;
 }
 
 function TerminalViewport({
@@ -234,7 +271,8 @@ function TerminalViewport({
   focusRequestId,
   autoFocus,
   resizeEpoch,
-  drawerHeight,
+  dock,
+  resizeMeasure,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -714,7 +752,7 @@ function TerminalViewport({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [drawerHeight, resizeEpoch, terminalId, threadId]);
+  }, [dock, resizeEpoch, resizeMeasure, terminalId, threadId]);
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-[4px]" />
   );
@@ -726,7 +764,9 @@ interface ThreadTerminalDrawerProps {
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
   visible?: boolean;
+  dock: ThreadTerminalDock;
   height: number;
+  width: number;
   terminalIds: string[];
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
@@ -739,7 +779,9 @@ interface ThreadTerminalDrawerProps {
   closeShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
+  onDockChange: (dock: ThreadTerminalDock) => void;
   onHeightChange: (height: number) => void;
+  onWidthChange: (width: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
@@ -778,7 +820,9 @@ export default function ThreadTerminalDrawer({
   worktreePath,
   runtimeEnv,
   visible = true,
+  dock = DEFAULT_THREAD_TERMINAL_DOCK,
   height,
+  width,
   terminalIds,
   activeTerminalId,
   terminalGroups,
@@ -791,18 +835,25 @@ export default function ThreadTerminalDrawer({
   closeShortcutLabel,
   onActiveTerminalChange,
   onCloseTerminal,
+  onDockChange,
   onHeightChange,
+  onWidthChange,
   onAddTerminalContext,
 }: ThreadTerminalDrawerProps) {
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
+  const [drawerWidth, setDrawerWidth] = useState(() => clampTerminalDockWidth(width));
   const [resizeEpoch, setResizeEpoch] = useState(0);
   const drawerHeightRef = useRef(drawerHeight);
+  const drawerWidthRef = useRef(drawerWidth);
   const lastSyncedHeightRef = useRef(clampDrawerHeight(height));
+  const lastSyncedWidthRef = useRef(clampTerminalDockWidth(width));
   const onHeightChangeRef = useRef(onHeightChange);
+  const onWidthChangeRef = useRef(onWidthChange);
   const resizeStateRef = useRef<{
     pointerId: number;
+    startX: number;
     startY: number;
-    startHeight: number;
+    startSize: number;
   } | null>(null);
   const didResizeDuringDragRef = useRef(false);
 
@@ -911,16 +962,27 @@ export default function ThreadTerminalDrawer({
     : splitShortcutLabel
       ? `Split Terminal (${splitShortcutLabel})`
       : "Split Terminal";
+  const dockTerminalActionLabel = dock === "right" ? "Dock Terminal Below" : "Dock Terminal Right";
+  const DockTerminalActionIcon = dock === "right" ? PanelBottomOpenIcon : PanelRightOpenIcon;
   const newTerminalActionLabel = newShortcutLabel
     ? `New Terminal (${newShortcutLabel})`
     : "New Terminal";
   const closeTerminalActionLabel = closeShortcutLabel
     ? `Close Terminal (${closeShortcutLabel})`
     : "Close Terminal";
+  const resizeMeasure = dock === "right" ? drawerWidth : drawerHeight;
+  const splitGridStyle = resolveTerminalSplitGridStyle(dock, visibleTerminalIds.length);
+  const splitPaneClassName =
+    dock === "right"
+      ? "min-h-0 min-w-0 border-t first:border-t-0"
+      : "min-h-0 min-w-0 border-l first:border-l-0";
   const onSplitTerminalAction = useCallback(() => {
     if (hasReachedSplitLimit) return;
     onSplitTerminal();
   }, [hasReachedSplitLimit, onSplitTerminal]);
+  const onToggleDock = useCallback(() => {
+    onDockChange(dock === "right" ? "bottom" : "right");
+  }, [dock, onDockChange]);
   const onNewTerminalAction = useCallback(() => {
     onNewTerminal();
   }, [onNewTerminal]);
@@ -930,14 +992,29 @@ export default function ThreadTerminalDrawer({
   }, [onHeightChange]);
 
   useEffect(() => {
+    onWidthChangeRef.current = onWidthChange;
+  }, [onWidthChange]);
+
+  useEffect(() => {
     drawerHeightRef.current = drawerHeight;
   }, [drawerHeight]);
+
+  useEffect(() => {
+    drawerWidthRef.current = drawerWidth;
+  }, [drawerWidth]);
 
   const syncHeight = useCallback((nextHeight: number) => {
     const clampedHeight = clampDrawerHeight(nextHeight);
     if (lastSyncedHeightRef.current === clampedHeight) return;
     lastSyncedHeightRef.current = clampedHeight;
     onHeightChangeRef.current(clampedHeight);
+  }, []);
+
+  const syncWidth = useCallback((nextWidth: number) => {
+    const clampedWidth = clampTerminalDockWidth(nextWidth);
+    if (lastSyncedWidthRef.current === clampedWidth) return;
+    lastSyncedWidthRef.current = clampedWidth;
+    onWidthChangeRef.current(clampedWidth);
   }, []);
 
   useEffect(() => {
@@ -947,32 +1024,60 @@ export default function ThreadTerminalDrawer({
     lastSyncedHeightRef.current = clampedHeight;
   }, [height, threadId]);
 
-  const handleResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    didResizeDuringDragRef.current = false;
-    resizeStateRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startHeight: drawerHeightRef.current,
-    };
-  }, []);
+  useEffect(() => {
+    const clampedWidth = clampTerminalDockWidth(width);
+    setDrawerWidth(clampedWidth);
+    drawerWidthRef.current = clampedWidth;
+    lastSyncedWidthRef.current = clampedWidth;
+  }, [threadId, width]);
 
-  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const resizeState = resizeStateRef.current;
-    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    const clampedHeight = clampDrawerHeight(
-      resizeState.startHeight + (resizeState.startY - event.clientY),
-    );
-    if (clampedHeight === drawerHeightRef.current) {
-      return;
-    }
-    didResizeDuringDragRef.current = true;
-    drawerHeightRef.current = clampedHeight;
-    setDrawerHeight(clampedHeight);
-  }, []);
+  const handleResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      didResizeDuringDragRef.current = false;
+      resizeStateRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startSize: dock === "right" ? drawerWidthRef.current : drawerHeightRef.current,
+      };
+    },
+    [dock],
+  );
+
+  const handleResizePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+      event.preventDefault();
+
+      if (dock === "right") {
+        const clampedWidth = clampTerminalDockWidth(
+          resizeState.startSize + (resizeState.startX - event.clientX),
+        );
+        if (clampedWidth === drawerWidthRef.current) {
+          return;
+        }
+        didResizeDuringDragRef.current = true;
+        drawerWidthRef.current = clampedWidth;
+        setDrawerWidth(clampedWidth);
+        return;
+      }
+
+      const clampedHeight = clampDrawerHeight(
+        resizeState.startSize + (resizeState.startY - event.clientY),
+      );
+      if (clampedHeight === drawerHeightRef.current) {
+        return;
+      }
+      didResizeDuringDragRef.current = true;
+      drawerHeightRef.current = clampedHeight;
+      setDrawerHeight(clampedHeight);
+    },
+    [dock],
+  );
 
   const handleResizePointerEnd = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -985,10 +1090,14 @@ export default function ThreadTerminalDrawer({
       if (!didResizeDuringDragRef.current) {
         return;
       }
-      syncHeight(drawerHeightRef.current);
+      if (dock === "right") {
+        syncWidth(drawerWidthRef.current);
+      } else {
+        syncHeight(drawerHeightRef.current);
+      }
       setResizeEpoch((value) => value + 1);
     },
-    [syncHeight],
+    [dock, syncHeight, syncWidth],
   );
 
   useEffect(() => {
@@ -998,13 +1107,18 @@ export default function ThreadTerminalDrawer({
 
     const onWindowResize = () => {
       const clampedHeight = clampDrawerHeight(drawerHeightRef.current);
-      const changed = clampedHeight !== drawerHeightRef.current;
-      if (changed) {
+      const clampedWidth = clampTerminalDockWidth(drawerWidthRef.current);
+      if (clampedHeight !== drawerHeightRef.current) {
         setDrawerHeight(clampedHeight);
         drawerHeightRef.current = clampedHeight;
       }
+      if (clampedWidth !== drawerWidthRef.current) {
+        setDrawerWidth(clampedWidth);
+        drawerWidthRef.current = clampedWidth;
+      }
       if (!resizeStateRef.current) {
         syncHeight(clampedHeight);
+        syncWidth(clampedWidth);
       }
       setResizeEpoch((value) => value + 1);
     };
@@ -1012,28 +1126,35 @@ export default function ThreadTerminalDrawer({
     return () => {
       window.removeEventListener("resize", onWindowResize);
     };
-  }, [syncHeight, visible]);
+  }, [syncHeight, syncWidth, visible]);
 
   useEffect(() => {
     if (!visible) {
       return;
     }
     setResizeEpoch((value) => value + 1);
-  }, [visible]);
+  }, [dock, visible]);
 
   useEffect(() => {
     return () => {
       syncHeight(drawerHeightRef.current);
+      syncWidth(drawerWidthRef.current);
     };
-  }, [syncHeight]);
+  }, [syncHeight, syncWidth]);
 
   return (
     <aside
-      className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
-      style={{ height: `${drawerHeight}px` }}
+      className={`thread-terminal-drawer relative flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden bg-background ${
+        dock === "right" ? "h-full border-l border-border/80" : "border-t border-border/80"
+      }`}
+      style={dock === "right" ? { width: `${drawerWidth}px` } : { height: `${drawerHeight}px` }}
     >
       <div
-        className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+        className={
+          dock === "right"
+            ? "absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize"
+            : "absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+        }
         onPointerDown={handleResizePointerDown}
         onPointerMove={handleResizePointerMove}
         onPointerUp={handleResizePointerEnd}
@@ -1053,6 +1174,14 @@ export default function ThreadTerminalDrawer({
               label={splitTerminalActionLabel}
             >
               <SquareSplitHorizontal className="size-3.25" />
+            </TerminalActionButton>
+            <div className="h-4 w-px bg-border/80" />
+            <TerminalActionButton
+              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              onClick={onToggleDock}
+              label={dockTerminalActionLabel}
+            >
+              <DockTerminalActionIcon className="size-3.25" />
             </TerminalActionButton>
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
@@ -1080,14 +1209,12 @@ export default function ThreadTerminalDrawer({
             {isSplitView ? (
               <div
                 className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
-                style={{
-                  gridTemplateColumns: `repeat(${visibleTerminalIds.length}, minmax(0, 1fr))`,
-                }}
+                style={splitGridStyle}
               >
                 {visibleTerminalIds.map((terminalId) => (
                   <div
                     key={terminalId}
-                    className={`min-h-0 min-w-0 border-l first:border-l-0 ${
+                    className={`${splitPaneClassName} ${
                       terminalId === resolvedActiveTerminalId ? "border-border" : "border-border/70"
                     }`}
                     onMouseDown={() => {
@@ -1109,7 +1236,8 @@ export default function ThreadTerminalDrawer({
                         focusRequestId={focusRequestId}
                         autoFocus={terminalId === resolvedActiveTerminalId}
                         resizeEpoch={resizeEpoch}
-                        drawerHeight={drawerHeight}
+                        dock={dock}
+                        resizeMeasure={resizeMeasure}
                       />
                     </div>
                   </div>
@@ -1130,7 +1258,8 @@ export default function ThreadTerminalDrawer({
                   focusRequestId={focusRequestId}
                   autoFocus
                   resizeEpoch={resizeEpoch}
-                  drawerHeight={drawerHeight}
+                  dock={dock}
+                  resizeMeasure={resizeMeasure}
                 />
               </div>
             )}
@@ -1150,6 +1279,13 @@ export default function ThreadTerminalDrawer({
                     label={splitTerminalActionLabel}
                   >
                     <SquareSplitHorizontal className="size-3.25" />
+                  </TerminalActionButton>
+                  <TerminalActionButton
+                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                    onClick={onToggleDock}
+                    label={dockTerminalActionLabel}
+                  >
+                    <DockTerminalActionIcon className="size-3.25" />
                   </TerminalActionButton>
                   <TerminalActionButton
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
