@@ -2501,6 +2501,22 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           } satisfies PermissionResult;
         }
 
+        // Empty answers means the user dismissed the question without answering.
+        if (Object.keys(answers as Record<string, unknown>).length === 0) {
+          const dismissedAnswers: Record<string, string> = {};
+          for (const q of questions) {
+            dismissedAnswers[q.question || q.header] =
+              "[User dismissed this question without answering]";
+          }
+          return {
+            behavior: "allow",
+            updatedInput: {
+              questions: toolInput.questions,
+              answers: dismissedAnswers,
+            },
+          } satisfies PermissionResult;
+        }
+
         // Return the answers to the SDK in the expected format:
         // { questions: [...], answers: { questionText: selectedLabel } }
         return {

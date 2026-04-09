@@ -1322,6 +1322,7 @@ export default function ChatView(props: ChatViewProps) {
   const activePendingIsResponding = activePendingUserInput
     ? respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
     : false;
+
   const activeProposedPlan = useMemo(() => {
     if (!latestTurnSettled) {
       return null;
@@ -3603,6 +3604,55 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadId, environmentId, setThreadError],
   );
 
+  const onDismissUserInput = useCallback(
+    async (requestId: ApprovalRequestId) => {
+      const api = readNativeApi();
+      if (!api || !activeThreadId) return;
+
+      setRespondingUserInputRequestIds((existing) =>
+        existing.includes(requestId) ? existing : [...existing, requestId],
+      );
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.user-input.respond",
+          commandId: newCommandId(),
+          threadId: activeThreadId,
+          requestId,
+          answers: {},
+          createdAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThreadId,
+            err instanceof Error ? err.message : "Failed to dismiss user input.",
+          );
+        });
+      setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
+      setPendingUserInputAnswersByRequestId((existing) => {
+        const { [requestId]: _, ...rest } = existing;
+        return rest;
+      });
+      setPendingUserInputQuestionIndexByRequestId((existing) => {
+        const { [requestId]: _, ...rest } = existing;
+        return rest;
+      });
+    },
+    [activeThreadId, setThreadError],
+  );
+
+  // Dismiss pending user input on Escape key press.
+  useEffect(() => {
+    if (!activePendingUserInput || activePendingIsResponding) return;
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        void onDismissUserInput(activePendingUserInput.requestId);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [activePendingUserInput, activePendingIsResponding, onDismissUserInput]);
+
   const setActivePendingUserInputQuestionIndex = useCallback(
     (nextQuestionIndex: number) => {
       if (!activePendingUserInput) {
@@ -4495,6 +4545,7 @@ export default function ChatView(props: ChatViewProps) {
                         questionIndex={activePendingQuestionIndex}
                         onToggleOption={onSelectActivePendingUserInputOption}
                         onAdvance={onAdvanceActivePendingUserInput}
+                        onDismiss={onDismissUserInput}
                       />
                     </div>
                   ) : showPlanFollowUpPrompt && activeProposedPlan ? (

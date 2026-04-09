@@ -64,6 +64,7 @@ interface PendingUserInputRequest {
   threadId: ThreadId;
   turnId?: TurnId;
   itemId?: ProviderItemId;
+  questionIds?: string[];
 }
 
 interface CodexUserInputAnswer {
@@ -870,7 +871,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     context.pendingUserInputs.delete(requestId);
-    const codexAnswers = toCodexUserInputAnswers(answers);
+    const isDismissed =
+      Object.keys(answers as Record<string, unknown>).length === 0 &&
+      pendingRequest.questionIds;
+    const codexAnswers = isDismissed
+      ? Object.fromEntries(
+          pendingRequest.questionIds!.map((id) => [
+            id,
+            { answers: ["[User dismissed this question without answering]"] },
+          ]),
+        )
+      : toCodexUserInputAnswers(answers);
     this.writeMessage(context, {
       id: pendingRequest.jsonRpcId,
       result: {
@@ -1154,12 +1165,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     if (request.method === "item/tool/requestUserInput") {
       requestId = ApprovalRequestId.makeUnsafe(randomUUID());
+      const rawQuestions = Array.isArray((request.params as Record<string, unknown>)?.questions)
+        ? ((request.params as Record<string, unknown>).questions as Array<Record<string, unknown>>)
+        : [];
+      const questionIds = rawQuestions
+        .map((q) => (typeof q.id === "string" ? q.id : null))
+        .filter((id): id is string => id !== null);
       context.pendingUserInputs.set(requestId, {
         requestId,
         jsonRpcId: request.id,
         threadId: context.session.threadId,
         ...(effectiveTurnId ? { turnId: effectiveTurnId } : {}),
         ...(rawRoute.itemId ? { itemId: rawRoute.itemId } : {}),
+        ...(questionIds.length > 0 ? { questionIds } : {}),
       });
     }
 
