@@ -9,6 +9,7 @@ import {
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  shouldShowComposerRunningState,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 
@@ -453,5 +454,76 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("shouldShowComposerRunningState", () => {
+  const latestTurn = {
+    turnId: TurnId.makeUnsafe("turn-running"),
+    state: "completed" as const,
+    requestedAt: "2026-03-29T00:01:00.000Z",
+    startedAt: "2026-03-29T00:01:01.000Z",
+    completedAt: "2026-03-29T00:01:30.000Z",
+    assistantMessageId: null,
+  };
+
+  it("hides the composer stop state once the running turn has a finalized checkpoint", () => {
+    expect(
+      shouldShowComposerRunningState({
+        phase: "running",
+        latestTurn,
+        turnDiffSummaries: [
+          {
+            turnId: latestTurn.turnId,
+            completedAt: "2026-03-29T00:01:31.000Z",
+            status: "ready",
+            files: [],
+            checkpointTurnCount: 1,
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the composer in stop state while the turn is still running without a finalized checkpoint", () => {
+    expect(
+      shouldShowComposerRunningState({
+        phase: "running",
+        latestTurn,
+        turnDiffSummaries: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the composer in stop state while the latest turn has not completed yet", () => {
+    expect(
+      shouldShowComposerRunningState({
+        phase: "running",
+        latestTurn: {
+          ...latestTurn,
+          state: "running",
+          completedAt: null,
+        },
+        turnDiffSummaries: [
+          {
+            turnId: latestTurn.turnId,
+            completedAt: "2026-03-29T00:01:31.000Z",
+            status: "ready",
+            files: [],
+            checkpointTurnCount: 1,
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false when the session itself is not running", () => {
+    expect(
+      shouldShowComposerRunningState({
+        phase: "ready",
+        latestTurn,
+        turnDiffSummaries: [],
+      }),
+    ).toBe(false);
   });
 });

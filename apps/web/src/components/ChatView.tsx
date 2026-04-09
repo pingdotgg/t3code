@@ -189,6 +189,7 @@ import {
   reconcileMountedTerminalThreadIds,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldShowComposerRunningState,
   threadHasStarted,
   waitForStartedServerThread,
 } from "./ChatView.logic";
@@ -885,6 +886,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, existingOpenTerminalThreadIds, terminalState.terminalOpen]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = useProjectById(activeThread?.projectId);
+  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
+    useTurnDiffSummaries(activeThread);
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -1126,6 +1129,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     threadError: activeThread?.error,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const composerShowsRunningState = shouldShowComposerRunningState({
+    phase,
+    latestTurn: activeLatestTurn,
+    turnDiffSummaries,
+  });
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -1142,7 +1150,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (activePendingProgress) {
       return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
     }
-    if (phase === "running") {
+    if (composerShowsRunningState) {
       return "running";
     }
     if (showPlanFollowUpPrompt) {
@@ -1153,10 +1161,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activePendingIsResponding,
     activePendingProgress,
     composerSendState.hasSendableContent,
+    composerShowsRunningState,
     isConnecting,
     isPreparingWorktree,
     isSendBusy,
-    phase,
     prompt,
     showPlanFollowUpPrompt,
   ]);
@@ -1323,8 +1331,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
-  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
-    useTurnDiffSummaries(activeThread);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<MessageId, TurnDiffSummary>();
     for (const summary of turnDiffSummaries) {
@@ -4389,7 +4395,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 }
                               : null
                           }
-                          isRunning={phase === "running"}
+                          isRunning={composerShowsRunningState}
                           showPlanFollowUpPrompt={
                             pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                           }

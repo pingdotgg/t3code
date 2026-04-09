@@ -304,3 +304,20 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );
 }
+
+export function shouldShowComposerRunningState(input: {
+  phase: SessionPhase;
+  latestTurn: Thread["latestTurn"] | null;
+  turnDiffSummaries: ReadonlyArray<Thread["turnDiffSummaries"][number]>;
+}): boolean {
+  if (input.phase !== "running") {
+    return false;
+  }
+
+  const latestTurn = input.latestTurn;
+  if (!latestTurn?.completedAt) {
+    return true;
+  }
+
+  return !input.turnDiffSummaries.some((summary) => summary.turnId === latestTurn.turnId);
+}
