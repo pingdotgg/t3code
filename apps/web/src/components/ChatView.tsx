@@ -2915,14 +2915,16 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const sendCtx = composerRef.current?.getSendContext();
-      const ctxSelectedProvider = sendCtx?.selectedProvider ?? selectedProvider;
-      const ctxSelectedModel = sendCtx?.selectedModel ?? "";
-      const ctxSelectedProviderModels = sendCtx?.selectedProviderModels ?? [];
-      const ctxSelectedPromptEffort = sendCtx?.selectedPromptEffort ?? null;
-      const ctxSelectedModelSelection = sendCtx?.selectedModelSelection ?? {
-        provider: ctxSelectedProvider,
-        model: ctxSelectedModel,
-      };
+      if (!sendCtx) {
+        return;
+      }
+      const {
+        selectedProvider: ctxSelectedProvider,
+        selectedModel: ctxSelectedModel,
+        selectedProviderModels: ctxSelectedProviderModels,
+        selectedPromptEffort: ctxSelectedPromptEffort,
+        selectedModelSelection: ctxSelectedModelSelection,
+      } = sendCtx;
 
       const threadIdForSend = activeThread.id;
       const messageIdForSend = newMessageId();
@@ -3022,7 +3024,6 @@ export default function ChatView(props: ChatViewProps) {
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
-      selectedProvider,
       setComposerDraftInteractionMode,
       setThreadError,
       environmentId,
@@ -3045,14 +3046,16 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     const sendCtx = composerRef.current?.getSendContext();
-    const ctxSelectedProvider = sendCtx?.selectedProvider ?? selectedProvider;
-    const ctxSelectedModel = sendCtx?.selectedModel ?? "";
-    const ctxSelectedProviderModels = sendCtx?.selectedProviderModels ?? [];
-    const ctxSelectedPromptEffort = sendCtx?.selectedPromptEffort ?? null;
-    const ctxSelectedModelSelection = sendCtx?.selectedModelSelection ?? {
-      provider: ctxSelectedProvider,
-      model: ctxSelectedModel,
-    };
+    if (!sendCtx) {
+      return;
+    }
+    const {
+      selectedProvider: ctxSelectedProvider,
+      selectedModel: ctxSelectedModel,
+      selectedProviderModels: ctxSelectedProviderModels,
+      selectedPromptEffort: ctxSelectedPromptEffort,
+      selectedModelSelection: ctxSelectedModelSelection,
+    } = sendCtx;
 
     const createdAt = new Date().toISOString();
     const nextThreadId = newThreadId();
@@ -3152,7 +3155,6 @@ export default function ChatView(props: ChatViewProps) {
     navigate,
     resetLocalDispatch,
     runtimeMode,
-    selectedProvider,
     environmentId,
   ]);
 
