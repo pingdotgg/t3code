@@ -179,10 +179,13 @@ export const GitStatusBroadcasterLive = Layer.effect(
       return mergeGitStatusParts(local, remote);
     });
 
-    const refreshLocalStatus = Effect.fn("refreshLocalStatus")(function* (cwd: string) {
-      yield* gitManager.invalidateLocalStatus(cwd);
-      const local = yield* gitManager.localStatus({ cwd });
-      return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+    const refreshLocalStatus: GitStatusBroadcasterShape["refreshLocalStatus"] = Effect.fn(
+      "refreshLocalStatus",
+    )(function* (cwd) {
+      const normalizedCwd = normalizeCwd(cwd);
+      yield* gitManager.invalidateLocalStatus(normalizedCwd);
+      const local = yield* gitManager.localStatus({ cwd: normalizedCwd });
+      return yield* updateCachedLocalStatus(normalizedCwd, local, { publish: true });
     });
 
     const refreshRemoteStatus = Effect.fn("refreshRemoteStatus")(function* (cwd: string) {
@@ -300,6 +303,7 @@ export const GitStatusBroadcasterLive = Layer.effect(
 
     return {
       getStatus,
+      refreshLocalStatus,
       refreshStatus,
       streamStatus,
     } satisfies GitStatusBroadcasterShape;

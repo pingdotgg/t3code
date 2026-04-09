@@ -24,6 +24,7 @@ import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
+import { GitStatusBroadcaster } from "../../git/Services/GitStatusBroadcaster.ts";
 import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
 
 type ReactorInput =
@@ -69,6 +70,7 @@ const make = Effect.gen(function* () {
   const checkpointStore = yield* CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries;
+  const gitStatusBroadcaster = yield* GitStatusBroadcaster;
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -498,6 +500,26 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const refreshLocalGitStatusFromTurnCompletion = Effect.fn(
+    "refreshLocalGitStatusFromTurnCompletion",
+  )(function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) {
+    const sessionRuntime = yield* resolveSessionRuntimeForThread(event.threadId);
+    if (Option.isNone(sessionRuntime)) {
+      return;
+    }
+
+    yield* gitStatusBroadcaster.refreshLocalStatus(sessionRuntime.value.cwd).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("failed to refresh local git status after turn completion", {
+          threadId: event.threadId,
+          turnId: event.turnId ?? null,
+          cwd: sessionRuntime.value.cwd,
+          detail: error.message,
+        }),
+      ),
+    );
+  });
+
   const ensurePreTurnBaselineFromDomainTurnStart = Effect.fn(
     "ensurePreTurnBaselineFromDomainTurnStart",
   )(function* (
@@ -736,6 +758,7 @@ const make = Effect.gen(function* () {
 
     if (event.type === "turn.completed") {
       const turnId = toTurnId(event.turnId);
+      yield* refreshLocalGitStatusFromTurnCompletion(event);
       yield* captureCheckpointFromTurnCompletion(event).pipe(
         Effect.catch((error) =>
           appendCaptureFailureActivity({

@@ -956,6 +956,16 @@ async function waitForButtonContainingText(text: string): Promise<HTMLButtonElem
   );
 }
 
+async function waitForSelectItemContainingText(text: string): Promise<HTMLElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-slot="select-item"]')).find((item) =>
+        item.textContent?.includes(text),
+      ) ?? null,
+    `Unable to find select item containing "${text}".`,
+  );
+}
+
 async function expectComposerActionsContained(): Promise<void> {
   const footer = await waitForElement(
     () => document.querySelector<HTMLElement>('[data-chat-composer-footer="true"]'),
@@ -2320,6 +2330,32 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
         },
         { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows runtime mode descriptions in the desktop composer access select", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const runtimeModeSelect = await waitForButtonByText("Full access");
+      runtimeModeSelect.click();
+
+      expect((await waitForSelectItemContainingText("Supervised")).textContent).toContain(
+        "Ask before commands and file changes",
+      );
+
+      const autoAcceptItem = await waitForSelectItemContainingText("Auto-accept edits");
+      expect(autoAcceptItem.textContent).toContain("Auto-approve edits");
+      expect((await waitForSelectItemContainingText("Full access")).textContent).toContain(
+        "Allow commands and edits without prompts",
       );
     } finally {
       await mounted.cleanup();

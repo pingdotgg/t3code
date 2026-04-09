@@ -59,7 +59,11 @@ export type ClaudeModelSelection = typeof ClaudeModelSelection.Type;
 export const ModelSelection = Schema.Union([CodexModelSelection, ClaudeModelSelection]);
 export type ModelSelection = typeof ModelSelection.Type;
 
-export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);
+export const RuntimeMode = Schema.Literals([
+  "approval-required",
+  "auto-accept-edits",
+  "full-access",
+]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);

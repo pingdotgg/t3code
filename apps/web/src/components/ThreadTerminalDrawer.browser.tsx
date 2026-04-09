@@ -259,6 +259,32 @@ describe("TerminalViewport", () => {
     }
   });
 
+  it("does not reopen the terminal when the scoped thread reference values stay the same", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      });
+
+      await mounted.rerender({
+        threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+      });
+
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      });
+      expect(terminalDisposeSpy).not.toHaveBeenCalled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("uses the drawer surface colors for the terminal theme", async () => {
     const environment = createEnvironmentApi();
     environmentApiById.set("environment-a", environment);

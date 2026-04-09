@@ -52,9 +52,10 @@ import {
   revokeOtherServerClientSessions,
   revokeServerClientSession,
   revokeServerPairingLink,
+  isLoopbackHostname,
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
-} from "../../environments/primary";
+} from "~/environments/primary";
 import type { WsRpcClient } from "~/rpc/wsRpcClient";
 import {
   type SavedEnvironmentRecord,
@@ -65,7 +66,7 @@ import {
   getPrimaryEnvironmentConnection,
   reconnectSavedEnvironment,
   removeSavedEnvironment,
-} from "../../environments/runtime";
+} from "~/environments/runtime";
 
 const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -251,16 +252,6 @@ function resolveDesktopPairingUrl(endpointUrl: string, credential: string): stri
 function resolveCurrentOriginPairingUrl(credential: string): string {
   const url = new URL("/pair", window.location.href);
   return setPairingTokenOnUrl(url, credential).toString();
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase();
-  return (
-    normalized === "localhost" ||
-    normalized === "127.0.0.1" ||
-    normalized === "::1" ||
-    normalized === "[::1]"
-  );
 }
 
 type PairingLinkListRowProps = {

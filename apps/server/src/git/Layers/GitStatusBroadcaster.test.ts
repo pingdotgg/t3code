@@ -143,6 +143,42 @@ describe("GitStatusBroadcasterLive", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it.effect("refreshes only the cached local snapshot when requested", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* GitStatusBroadcaster;
+      const initial = yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      state.currentLocalStatus = {
+        ...baseLocalStatus,
+        branch: "feature/local-only-refresh",
+        hasWorkingTreeChanges: true,
+      };
+
+      const refreshedLocal = yield* broadcaster.refreshLocalStatus("/repo");
+      const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      assert.deepStrictEqual(initial, baseStatus);
+      assert.deepStrictEqual(refreshedLocal, state.currentLocalStatus);
+      assert.deepStrictEqual(cached, {
+        ...state.currentLocalStatus,
+        ...baseRemoteStatus,
+      });
+      assert.equal(state.localStatusCalls, 2);
+      assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 0);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
   it.effect("streams a local snapshot first and remote updates later", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
