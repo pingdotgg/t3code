@@ -2,6 +2,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback } from "react";
+import { useUiStateStore } from "../uiStateStore";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -112,9 +113,14 @@ export function useThreadActions() {
       }
 
       const deletedThreadIds = opts.deletedThreadIds ?? new Set<ThreadId>();
+      const pinnedThreadIds = useUiStateStore.getState().pinnedThreadIds;
       const shouldNavigateToFallback = routeThreadId === threadId;
       const fallbackThreadId = getFallbackThreadIdAfterDelete({
-        threads,
+        threads: threads.map((entry) =>
+          Object.assign({}, entry, {
+            isPinned: pinnedThreadIds.includes(entry.id),
+          }),
+        ),
         deletedThreadId: threadId,
         deletedThreadIds,
         sortOrder: appSettings.sidebarThreadSortOrder,

@@ -5,6 +5,7 @@ import {
   clearThreadUi,
   markThreadUnread,
   reorderProjects,
+  setThreadPinned,
   setProjectExpanded,
   syncProjects,
   syncThreads,
@@ -16,6 +17,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     threadLastVisitedAtById: {},
+    pinnedThreadIds: [],
     ...overrides,
   };
 }
@@ -137,6 +139,7 @@ describe("uiStateStore pure functions", () => {
         [thread1]: "2026-02-25T12:35:00.000Z",
         [thread2]: "2026-02-25T12:36:00.000Z",
       },
+      pinnedThreadIds: [thread1, thread2],
     });
 
     const next = syncThreads(initialState, [{ id: thread1 }]);
@@ -144,6 +147,7 @@ describe("uiStateStore pure functions", () => {
     expect(next.threadLastVisitedAtById).toEqual({
       [thread1]: "2026-02-25T12:35:00.000Z",
     });
+    expect(next.pinnedThreadIds).toEqual([thread1]);
   });
 
   it("syncThreads seeds visit state for unseen snapshot threads", () => {
@@ -183,10 +187,24 @@ describe("uiStateStore pure functions", () => {
       threadLastVisitedAtById: {
         [thread1]: "2026-02-25T12:35:00.000Z",
       },
+      pinnedThreadIds: [thread1],
     });
 
     const next = clearThreadUi(initialState, thread1);
 
     expect(next.threadLastVisitedAtById).toEqual({});
+    expect(next.pinnedThreadIds).toEqual([]);
+  });
+
+  it("setThreadPinned adds and removes pinned threads", () => {
+    const thread1 = ThreadId.makeUnsafe("thread-1");
+    const thread2 = ThreadId.makeUnsafe("thread-2");
+    const pinnedState = setThreadPinned(makeUiState({ pinnedThreadIds: [thread2] }), thread1, true);
+
+    expect(pinnedState.pinnedThreadIds).toEqual([thread1, thread2]);
+
+    const unpinnedState = setThreadPinned(pinnedState, thread2, false);
+
+    expect(unpinnedState.pinnedThreadIds).toEqual([thread1]);
   });
 });

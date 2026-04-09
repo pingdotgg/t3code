@@ -14,6 +14,7 @@ type SidebarProject = {
   updatedAt?: string | undefined;
 };
 type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
+  isPinned?: boolean;
   latestUserMessageAt?: string | null;
   messages?: Pick<Thread["messages"][number], "createdAt" | "role">[];
 };
@@ -485,6 +486,12 @@ export function sortThreadsForSidebar<
   T extends Pick<Thread, "id" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
 >(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
   return threads.toSorted((left, right) => {
+    const leftPinned = left.isPinned === true;
+    const rightPinned = right.isPinned === true;
+    if (leftPinned !== rightPinned) {
+      return rightPinned ? 1 : -1;
+    }
+
     const rightTimestamp = getThreadSortTimestamp(right, sortOrder);
     const leftTimestamp = getThreadSortTimestamp(left, sortOrder);
     const byTimestamp =
