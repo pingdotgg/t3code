@@ -45,6 +45,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { attachWindowStatePersistence, loadWindowState } from "./windowState";
 
 syncShellEnvironment();
 
@@ -83,6 +84,12 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
+const DEFAULT_WINDOW_BOUNDS = {
+  width: 1100,
+  height: 780,
+} as const;
+const MIN_WINDOW_WIDTH = 840;
+const MIN_WINDOW_HEIGHT = 620;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
@@ -1347,11 +1354,24 @@ function getIconOption(): { icon: string } | Record<string, never> {
 }
 
 function createWindow(): BrowserWindow {
+  const initialWindowState = loadWindowState({
+    userDataPath: app.getPath("userData"),
+    defaultBounds: {
+      x: 0,
+      y: 0,
+      width: DEFAULT_WINDOW_BOUNDS.width,
+      height: DEFAULT_WINDOW_BOUNDS.height,
+    },
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
+  });
   const window = new BrowserWindow({
-    width: 1100,
-    height: 780,
-    minWidth: 840,
-    minHeight: 620,
+    x: initialWindowState.bounds.x,
+    y: initialWindowState.bounds.y,
+    width: initialWindowState.bounds.width,
+    height: initialWindowState.bounds.height,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     show: false,
     autoHideMenuBar: true,
     ...getIconOption(),
@@ -1364,6 +1384,10 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  attachWindowStatePersistence({
+    window,
+    userDataPath: app.getPath("userData"),
   });
 
   window.webContents.on("context-menu", (event, params) => {
@@ -1411,6 +1435,13 @@ function createWindow(): BrowserWindow {
     emitUpdateState();
   });
   window.once("ready-to-show", () => {
+    if (initialWindowState.restoreMode === "fullscreen-origin") {
+      window.show();
+      return;
+    }
+    if (initialWindowState.restoreMode === "maximized") {
+      window.maximize();
+    }
     window.show();
   });
 
