@@ -42,6 +42,8 @@ beforeAll(() => {
   });
 });
 
+const ACTIVE_THREAD_ENVIRONMENT_ID = "environment-local" as never;
+
 describe("MessagesTimeline", () => {
   it("renders inline terminal labels with the composer chip UI", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
@@ -85,6 +87,7 @@ describe("MessagesTimeline", () => {
         onRevertUserMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
+        activeThreadEnvironmentId={ACTIVE_THREAD_ENVIRONMENT_ID}
         markdownCwd={undefined}
         resolvedTheme="light"
         timestampFormat="locale"
@@ -130,6 +133,7 @@ describe("MessagesTimeline", () => {
         onRevertUserMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
+        activeThreadEnvironmentId={ACTIVE_THREAD_ENVIRONMENT_ID}
         markdownCwd={undefined}
         resolvedTheme="light"
         timestampFormat="locale"

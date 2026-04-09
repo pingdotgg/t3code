@@ -1,5 +1,11 @@
-import { type MessageId, type ProjectId, type ThreadId, type TurnId } from "@t3tools/contracts";
-import { type AppState } from "./store";
+import {
+  type MessageId,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+  type ThreadId,
+  type TurnId,
+} from "@t3tools/contracts";
+import { selectEnvironmentState, type AppState, type EnvironmentState } from "./store";
 import {
   type ChatMessage,
   type Project,
@@ -30,54 +36,61 @@ function collectByIds<TKey extends string, TValue>(
   });
 }
 
-export function createProjectSelector(
-  projectId: ProjectId | null | undefined,
+export function createProjectSelectorByRef(
+  ref: ScopedProjectRef | null | undefined,
 ): (state: AppState) => Project | undefined {
-  return (state) => (projectId ? state.projectById[projectId] : undefined);
+  return (state) =>
+    ref ? selectEnvironmentState(state, ref.environmentId).projectById[ref.projectId] : undefined;
 }
 
-export function createSidebarThreadSummarySelector(
-  threadId: ThreadId | null | undefined,
+export function createSidebarThreadSummarySelectorByRef(
+  ref: ScopedThreadRef | null | undefined,
 ): (state: AppState) => SidebarThreadSummary | undefined {
-  return (state) => (threadId ? state.sidebarThreadSummaryById[threadId] : undefined);
+  return (state) =>
+    ref
+      ? selectEnvironmentState(state, ref.environmentId).sidebarThreadSummaryById[ref.threadId]
+      : undefined;
 }
 
-export function createThreadSelector(
-  threadId: ThreadId | null | undefined,
+function createScopedThreadSelector(
+  resolveRef: (state: AppState) => ScopedThreadRef | null | undefined,
 ): (state: AppState) => Thread | undefined {
-  let previousShell: AppState["threadShellById"][ThreadId] | undefined;
+  let previousShell: EnvironmentState["threadShellById"][ThreadId] | undefined;
   let previousSession: ThreadSession | null | undefined;
   let previousTurnState: ThreadTurnState | undefined;
   let previousMessageIds: MessageId[] | undefined;
-  let previousMessagesById: AppState["messageByThreadId"][ThreadId] | undefined;
+  let previousMessagesById: EnvironmentState["messageByThreadId"][ThreadId] | undefined;
   let previousActivityIds: string[] | undefined;
-  let previousActivitiesById: AppState["activityByThreadId"][ThreadId] | undefined;
+  let previousActivitiesById: EnvironmentState["activityByThreadId"][ThreadId] | undefined;
   let previousProposedPlanIds: string[] | undefined;
-  let previousProposedPlansById: AppState["proposedPlanByThreadId"][ThreadId] | undefined;
+  let previousProposedPlansById: EnvironmentState["proposedPlanByThreadId"][ThreadId] | undefined;
   let previousTurnDiffIds: TurnId[] | undefined;
-  let previousTurnDiffsById: AppState["turnDiffSummaryByThreadId"][ThreadId] | undefined;
+  let previousTurnDiffsById: EnvironmentState["turnDiffSummaryByThreadId"][ThreadId] | undefined;
   let previousThread: Thread | undefined;
 
   return (state) => {
-    if (!threadId) {
+    const ref = resolveRef(state);
+    if (!ref) {
       return undefined;
     }
 
-    const shell = state.threadShellById[threadId];
+    const environmentState = selectEnvironmentState(state, ref.environmentId);
+    const threadId = ref.threadId;
+    const shell = environmentState.threadShellById[threadId];
     if (!shell) {
       return undefined;
     }
 
-    const session = state.threadSessionById[threadId] ?? null;
-    const turnState = state.threadTurnStateById[threadId];
-    const messageIds = state.messageIdsByThreadId[threadId];
-    const messageById = state.messageByThreadId[threadId];
-    const activityIds = state.activityIdsByThreadId[threadId];
-    const activityById = state.activityByThreadId[threadId];
-    const proposedPlanIds = state.proposedPlanIdsByThreadId[threadId];
-    const proposedPlanById = state.proposedPlanByThreadId[threadId];
-    const turnDiffIds = state.turnDiffIdsByThreadId[threadId];
-    const turnDiffById = state.turnDiffSummaryByThreadId[threadId];
+    const session = environmentState.threadSessionById[threadId] ?? null;
+    const turnState = environmentState.threadTurnStateById[threadId];
+    const messageIds = environmentState.messageIdsByThreadId[threadId];
+    const messageById = environmentState.messageByThreadId[threadId];
+    const activityIds = environmentState.activityIdsByThreadId[threadId];
+    const activityById = environmentState.activityByThreadId[threadId];
+    const proposedPlanIds = environmentState.proposedPlanIdsByThreadId[threadId];
+    const proposedPlanById = environmentState.proposedPlanByThreadId[threadId];
+    const turnDiffIds = environmentState.turnDiffIdsByThreadId[threadId];
+    const turnDiffById = environmentState.turnDiffSummaryByThreadId[threadId];
 
     if (
       previousThread &&
@@ -143,4 +156,32 @@ export function createThreadSelector(
     };
     return previousThread;
   };
+}
+
+export function createThreadSelectorByRef(
+  ref: ScopedThreadRef | null | undefined,
+): (state: AppState) => Thread | undefined {
+  return createScopedThreadSelector(() => ref);
+}
+
+export function createThreadSelectorAcrossEnvironments(
+  threadId: ThreadId | null | undefined,
+): (state: AppState) => Thread | undefined {
+  return createScopedThreadSelector((state) => {
+    if (!threadId) {
+      return undefined;
+    }
+
+    for (const [environmentId, environmentState] of Object.entries(
+      state.environmentStateById,
+    ) as Array<[ScopedThreadRef["environmentId"], EnvironmentState]>) {
+      if (environmentState.threadShellById[threadId]) {
+        return {
+          environmentId,
+          threadId,
+        };
+      }
+    }
+    return undefined;
+  });
 }

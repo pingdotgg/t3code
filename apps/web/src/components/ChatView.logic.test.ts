@@ -1,6 +1,7 @@
-import { ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime";
+import { EnvironmentId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useStore } from "../store";
+import { type EnvironmentState, useStore } from "../store";
 import { type Thread } from "../types";
 
 import {
@@ -10,8 +11,11 @@ import {
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
+
+const localEnvironmentId = EnvironmentId.makeUnsafe("environment-local");
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
@@ -170,6 +174,36 @@ describe("reconcileMountedTerminalThreadIds", () => {
   });
 });
 
+describe("shouldWriteThreadErrorToCurrentServerThread", () => {
+  it("routes errors to the active server thread when route and target match", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const routeThreadRef = scopeThreadRef(localEnvironmentId, threadId);
+
+    expect(
+      shouldWriteThreadErrorToCurrentServerThread({
+        serverThread: {
+          environmentId: localEnvironmentId,
+          id: threadId,
+        },
+        routeThreadRef,
+        targetThreadId: threadId,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not route draft-thread errors into server-backed state", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+
+    expect(
+      shouldWriteThreadErrorToCurrentServerThread({
+        serverThread: undefined,
+        routeThreadRef: scopeThreadRef(localEnvironmentId, threadId),
+        targetThreadId: threadId,
+      }),
+    ).toBe(false);
+  });
+});
+
 const makeThread = (input?: {
   id?: ThreadId;
   latestTurn?: {
@@ -181,6 +215,7 @@ const makeThread = (input?: {
   } | null;
 }): Thread => ({
   id: input?.id ?? ThreadId.makeUnsafe("thread-1"),
+  environmentId: localEnvironmentId,
   codexThreadId: null,
   projectId: ProjectId.makeUnsafe("project-1"),
   title: "Thread",
@@ -208,11 +243,12 @@ const makeThread = (input?: {
 
 function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) {
   const projectId = ProjectId.makeUnsafe("project-1");
-  useStore.setState({
+  const environmentState: EnvironmentState = {
     projectIds: [projectId],
     projectById: {
       [projectId]: {
         id: projectId,
+        environmentId: localEnvironmentId,
         name: "Project",
         cwd: "/tmp/project",
         defaultModelSelection: {
@@ -233,6 +269,7 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
         thread.id,
         {
           id: thread.id,
+          environmentId: thread.environmentId,
           codexThreadId: thread.codexThreadId,
           projectId: thread.projectId,
           title: thread.title,
@@ -301,6 +338,12 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
     ),
     sidebarThreadSummaryById: {},
     bootstrapComplete: true,
+  };
+  useStore.setState({
+    activeEnvironmentId: localEnvironmentId,
+    environmentStateById: {
+      [localEnvironmentId]: environmentState,
+    },
   });
 }
 
@@ -326,14 +369,16 @@ describe("waitForStartedServerThread", () => {
       }),
     ]);
 
-    await expect(waitForStartedServerThread(threadId)).resolves.toBe(true);
+    await expect(
+      waitForStartedServerThread(scopeThreadRef(localEnvironmentId, threadId)),
+    ).resolves.toBe(true);
   });
 
   it("waits for the thread to start via subscription updates", async () => {
     const threadId = ThreadId.makeUnsafe("thread-wait");
     setStoreThreads([makeThread({ id: threadId })]);
 
-    const promise = waitForStartedServerThread(threadId, 500);
+    const promise = waitForStartedServerThread(scopeThreadRef(localEnvironmentId, threadId), 500);
 
     setStoreThreads([
       makeThread({
@@ -376,7 +421,9 @@ describe("waitForStartedServerThread", () => {
       return originalSubscribe(listener);
     });
 
-    await expect(waitForStartedServerThread(threadId, 500)).resolves.toBe(true);
+    await expect(
+      waitForStartedServerThread(scopeThreadRef(localEnvironmentId, threadId), 500),
+    ).resolves.toBe(true);
   });
 
   it("returns false after the timeout when the thread never starts", async () => {
@@ -384,7 +431,7 @@ describe("waitForStartedServerThread", () => {
 
     const threadId = ThreadId.makeUnsafe("thread-timeout");
     setStoreThreads([makeThread({ id: threadId })]);
-    const promise = waitForStartedServerThread(threadId, 500);
+    const promise = waitForStartedServerThread(scopeThreadRef(localEnvironmentId, threadId), 500);
 
     await vi.advanceTimersByTimeAsync(500);
 
@@ -414,6 +461,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
   it("does not clear local dispatch before server state changes", () => {
     const localDispatch = createLocalDispatchSnapshot({
       id: ThreadId.makeUnsafe("thread-1"),
+      environmentId: localEnvironmentId,
       codexThreadId: null,
       projectId,
       title: "Thread",
@@ -450,6 +498,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
   it("clears local dispatch when a new turn is already settled", () => {
     const localDispatch = createLocalDispatchSnapshot({
       id: ThreadId.makeUnsafe("thread-1"),
+      environmentId: localEnvironmentId,
       codexThreadId: null,
       projectId,
       title: "Thread",
@@ -495,6 +544,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
   it("clears local dispatch when the session changes without an observed running phase", () => {
     const localDispatch = createLocalDispatchSnapshot({
       id: ThreadId.makeUnsafe("thread-1"),
+      environmentId: localEnvironmentId,
       codexThreadId: null,
       projectId,
       title: "Thread",

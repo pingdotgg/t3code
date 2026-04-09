@@ -1,4 +1,4 @@
-import type { GitBranch } from "@t3tools/contracts";
+import type { EnvironmentId, GitBranch } from "@t3tools/contracts";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDownIcon } from "lucide-react";
@@ -16,7 +16,7 @@ import {
 
 import { gitBranchSearchInfiniteQueryOptions, gitQueryKeys } from "../lib/gitReactQuery";
 import { useGitStatus } from "../lib/gitStatusState";
-import { readNativeApi } from "../nativeApi";
+import { readEnvironmentApi } from "../environmentApi";
 import { parsePullRequestReference } from "../pullRequestReference";
 import {
   deriveLocalBranchNameFromRemoteRef,
@@ -39,6 +39,7 @@ import {
 import { toastManager } from "./ui/toast";
 
 interface BranchToolbarBranchSelectorProps {
+  environmentId: EnvironmentId;
   activeProjectCwd: string;
   activeThreadBranch: string | null;
   activeWorktreePath: string | null;
@@ -70,6 +71,7 @@ function getBranchTriggerLabel(input: {
 }
 
 export function BranchToolbarBranchSelector({
+  environmentId,
   activeProjectCwd,
   activeThreadBranch,
   activeWorktreePath,
@@ -85,16 +87,16 @@ export function BranchToolbarBranchSelector({
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
-  const branchStatusQuery = useGitStatus(branchCwd);
+  const branchStatusQuery = useGitStatus({ environmentId, cwd: branchCwd });
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
 
   useEffect(() => {
     if (!branchCwd) return;
     void queryClient.prefetchInfiniteQuery(
-      gitBranchSearchInfiniteQueryOptions({ cwd: branchCwd, query: "" }),
+      gitBranchSearchInfiniteQueryOptions({ environmentId, cwd: branchCwd, query: "" }),
     );
-  }, [branchCwd, queryClient]);
+  }, [branchCwd, environmentId, queryClient]);
 
   const {
     data: branchesSearchData,
@@ -104,6 +106,7 @@ export function BranchToolbarBranchSelector({
     isPending: isBranchesSearchPending,
   } = useInfiniteQuery(
     gitBranchSearchInfiniteQueryOptions({
+      environmentId,
       cwd: branchCwd,
       query: deferredTrimmedBranchQuery,
     }),
@@ -184,13 +187,13 @@ export function BranchToolbarBranchSelector({
     startBranchActionTransition(async () => {
       await action().catch(() => undefined);
       await queryClient
-        .invalidateQueries({ queryKey: gitQueryKeys.branches(branchCwd) })
+        .invalidateQueries({ queryKey: gitQueryKeys.branches(environmentId, branchCwd) })
         .catch(() => undefined);
     });
   };
 
   const selectBranch = (branch: GitBranch) => {
-    const api = readNativeApi();
+    const api = readEnvironmentApi(environmentId);
     if (!api || !branchCwd || isBranchActionPending) return;
 
     // In new-worktree mode, selecting a branch sets the base branch.
@@ -248,7 +251,7 @@ export function BranchToolbarBranchSelector({
 
   const createBranch = (rawName: string) => {
     const name = rawName.trim();
-    const api = readNativeApi();
+    const api = readEnvironmentApi(environmentId);
     if (!api || !branchCwd || !name || isBranchActionPending) return;
 
     setIsBranchMenuOpen(false);
@@ -302,10 +305,10 @@ export function BranchToolbarBranchSelector({
         return;
       }
       void queryClient.invalidateQueries({
-        queryKey: gitQueryKeys.branches(branchCwd),
+        queryKey: gitQueryKeys.branches(environmentId, branchCwd),
       });
     },
-    [branchCwd, queryClient],
+    [branchCwd, environmentId, queryClient],
   );
 
   const branchListScrollElementRef = useRef<HTMLDivElement | null>(null);

@@ -1,17 +1,29 @@
 import "../../index.css";
 
-import { DEFAULT_SERVER_SETTINGS, type NativeApi, type ServerConfig } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  type LocalApi,
+  type ServerConfig,
+} from "@t3tools/contracts";
 import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-import { __resetNativeApiForTests } from "../../nativeApi";
+import { __resetLocalApiForTests } from "../../localApi";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
 import { GeneralSettingsPanel } from "./SettingsPanels";
 
 function createBaseServerConfig(): ServerConfig {
   return {
+    environment: {
+      environmentId: EnvironmentId.makeUnsafe("environment-local"),
+      label: "Local environment",
+      platform: { os: "darwin" as const, arch: "arm64" as const },
+      serverVersion: "0.0.0-test",
+      capabilities: { repositoryIdentity: true },
+    },
     cwd: "/repo/project",
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
     keybindings: [],
@@ -32,14 +44,14 @@ function createBaseServerConfig(): ServerConfig {
 describe("GeneralSettingsPanel observability", () => {
   beforeEach(async () => {
     resetServerStateForTests();
-    await __resetNativeApiForTests();
+    await __resetLocalApiForTests();
     localStorage.clear();
     document.body.innerHTML = "";
   });
 
   afterEach(async () => {
     resetServerStateForTests();
-    await __resetNativeApiForTests();
+    await __resetLocalApiForTests();
     document.body.innerHTML = "";
   });
 
@@ -68,12 +80,12 @@ describe("GeneralSettingsPanel observability", () => {
   });
 
   it("opens the logs folder in the preferred editor", async () => {
-    const openInEditor = vi.fn<NativeApi["shell"]["openInEditor"]>().mockResolvedValue(undefined);
+    const openInEditor = vi.fn<LocalApi["shell"]["openInEditor"]>().mockResolvedValue(undefined);
     window.nativeApi = {
       shell: {
         openInEditor,
       },
-    } as unknown as NativeApi;
+    } as unknown as LocalApi;
 
     setServerConfigSnapshot(createBaseServerConfig());
 

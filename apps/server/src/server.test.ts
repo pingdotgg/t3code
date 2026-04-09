@@ -5,6 +5,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  EventId,
   GitCommandError,
   KeybindingRule,
   MessageId,
@@ -83,6 +85,14 @@ import {
   ProjectSetupScriptRunner,
   type ProjectSetupScriptRunnerShape,
 } from "./project/Services/ProjectSetupScriptRunner.ts";
+import {
+  RepositoryIdentityResolver,
+  type RepositoryIdentityResolverShape,
+} from "./project/Services/RepositoryIdentityResolver.ts";
+import {
+  ServerEnvironment,
+  type ServerEnvironmentShape,
+} from "./environment/Services/ServerEnvironment.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
@@ -93,6 +103,18 @@ const defaultModelSelection = {
   provider: "codex",
   model: "gpt-5-codex",
 } as const;
+const testEnvironmentDescriptor = {
+  environmentId: EnvironmentId.makeUnsafe("environment-test"),
+  label: "Test environment",
+  platform: {
+    os: "darwin" as const,
+    arch: "arm64" as const,
+  },
+  serverVersion: "0.0.0-test",
+  capabilities: {
+    repositoryIdentity: true,
+  },
+};
 
 const makeDefaultOrchestrationReadModel = () => {
   const now = new Date().toISOString();
@@ -270,6 +292,8 @@ const buildAppUnderTest = (options?: {
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    serverEnvironment?: Partial<ServerEnvironmentShape>;
+    repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -414,6 +438,19 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ServerEnvironment)({
+          getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
+          getDescriptor: Effect.succeed(testEnvironmentDescriptor),
+          ...options?.layers?.serverEnvironment,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(RepositoryIdentityResolver)({
+          resolve: () => Effect.succeed(null),
+          ...options?.layers?.repositoryIdentityResolver,
         }),
       ),
       Layer.provide(workspaceAndProjectServicesLayer),
@@ -1069,6 +1106,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             sequence: 1,
             type: "welcome" as const,
             payload: {
+              environment: testEnvironmentDescriptor,
               cwd: "/tmp/project",
               projectName: "project",
             },
@@ -1078,7 +1116,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           version: 1 as const,
           sequence: 2,
           type: "ready" as const,
-          payload: { at: new Date().toISOString() },
+          payload: { at: new Date().toISOString(), environment: testEnvironmentDescriptor },
         });
 
         yield* buildAppUnderTest({
@@ -1996,6 +2034,73 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("enriches replayed project events with repository identity metadata", () =>
+    Effect.gen(function* () {
+      const repositoryIdentity = {
+        canonicalKey: "github.com/t3tools/t3code",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "git@github.com:T3Tools/t3code.git",
+        },
+        displayName: "T3Tools/t3code",
+        provider: "github",
+        owner: "T3Tools",
+        name: "t3code",
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            readEvents: (_fromSequenceExclusive) =>
+              Stream.make({
+                sequence: 1,
+                eventId: EventId.makeUnsafe("event-1"),
+                aggregateKind: "project",
+                aggregateId: defaultProjectId,
+                occurredAt: "2026-04-05T00:00:00.000Z",
+                commandId: null,
+                causationEventId: null,
+                correlationId: null,
+                metadata: {},
+                type: "project.created",
+                payload: {
+                  projectId: defaultProjectId,
+                  title: "Default Project",
+                  workspaceRoot: "/tmp/default-project",
+                  defaultModelSelection,
+                  scripts: [],
+                  createdAt: "2026-04-05T00:00:00.000Z",
+                  updatedAt: "2026-04-05T00:00:00.000Z",
+                },
+              } satisfies Extract<OrchestrationEvent, { type: "project.created" }>),
+          },
+          repositoryIdentityResolver: {
+            resolve: () => Effect.succeed(repositoryIdentity),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const replayResult = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.replayEvents]({
+            fromSequenceExclusive: 0,
+          }),
+        ),
+      );
+
+      const replayedEvent = replayResult[0];
+      assert.equal(replayedEvent?.type, "project.created");
+      assert.deepEqual(
+        replayedEvent && replayedEvent.type === "project.created"
+          ? replayedEvent.payload.repositoryIdentity
+          : null,
+        repositoryIdentity,
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("closes thread terminals after a successful archive command", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.makeUnsafe("thread-archive");
@@ -2496,6 +2601,145 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           [2, 3, 4],
         );
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("enriches replayed project events only once before streaming them to subscribers", () =>
+    Effect.gen(function* () {
+      let resolveCalls = 0;
+      const repositoryIdentity = {
+        canonicalKey: "github.com/t3tools/t3code",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "git@github.com:t3tools/t3code.git",
+        },
+        displayName: "t3tools/t3code",
+        provider: "github" as const,
+        owner: "t3tools",
+        name: "t3code",
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            getReadModel: () =>
+              Effect.succeed({
+                ...makeDefaultOrchestrationReadModel(),
+                snapshotSequence: 0,
+              }),
+            readEvents: () =>
+              Stream.make({
+                sequence: 1,
+                eventId: EventId.makeUnsafe("event-1"),
+                aggregateKind: "project",
+                aggregateId: defaultProjectId,
+                occurredAt: "2026-04-06T00:00:00.000Z",
+                commandId: null,
+                causationEventId: null,
+                correlationId: null,
+                metadata: {},
+                type: "project.meta-updated",
+                payload: {
+                  projectId: defaultProjectId,
+                  title: "Replayed Project",
+                  updatedAt: "2026-04-06T00:00:00.000Z",
+                },
+              } satisfies Extract<OrchestrationEvent, { type: "project.meta-updated" }>),
+            streamDomainEvents: Stream.empty,
+          },
+          repositoryIdentityResolver: {
+            resolve: () => {
+              resolveCalls += 1;
+              return Effect.succeed(repositoryIdentity);
+            },
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeOrchestrationDomainEvents]({}).pipe(
+            Stream.take(1),
+            Stream.runCollect,
+          ),
+        ),
+      );
+
+      const event = Array.from(events)[0];
+      assert.equal(resolveCalls, 1);
+      assert.equal(event?.type, "project.meta-updated");
+      assert.deepEqual(
+        event && event.type === "project.meta-updated" ? event.payload.repositoryIdentity : null,
+        repositoryIdentity,
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("enriches subscribed project meta updates with repository identity metadata", () =>
+    Effect.gen(function* () {
+      const repositoryIdentity = {
+        canonicalKey: "github.com/t3tools/t3code",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "upstream",
+          remoteUrl: "git@github.com:T3Tools/t3code.git",
+        },
+        displayName: "T3Tools/t3code",
+        provider: "github",
+        owner: "T3Tools",
+        name: "t3code",
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            getReadModel: () =>
+              Effect.succeed({
+                ...makeDefaultOrchestrationReadModel(),
+                snapshotSequence: 0,
+              }),
+            streamDomainEvents: Stream.make({
+              sequence: 1,
+              eventId: EventId.makeUnsafe("event-1"),
+              aggregateKind: "project",
+              aggregateId: defaultProjectId,
+              occurredAt: "2026-04-05T00:00:00.000Z",
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              type: "project.meta-updated",
+              payload: {
+                projectId: defaultProjectId,
+                title: "Renamed Project",
+                updatedAt: "2026-04-05T00:00:00.000Z",
+              },
+            } satisfies Extract<OrchestrationEvent, { type: "project.meta-updated" }>),
+          },
+          repositoryIdentityResolver: {
+            resolve: () => Effect.succeed(repositoryIdentity),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeOrchestrationDomainEvents]({}).pipe(
+            Stream.take(1),
+            Stream.runCollect,
+          ),
+        ),
+      );
+
+      const event = Array.from(events)[0];
+      assert.equal(event?.type, "project.meta-updated");
+      assert.deepEqual(
+        event && event.type === "project.meta-updated" ? event.payload.repositoryIdentity : null,
+        repositoryIdentity,
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc orchestration.getSnapshot errors", () =>

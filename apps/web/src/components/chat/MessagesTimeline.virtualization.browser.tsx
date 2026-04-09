@@ -19,6 +19,7 @@ const DEFAULT_VIEWPORT = {
   height: 1_100,
 };
 const MARKDOWN_CWD = "/repo/project";
+const ACTIVE_THREAD_ENVIRONMENT_ID = "environment-local" as never;
 
 interface RowMeasurement {
   actualHeightPx: number;
@@ -31,7 +32,10 @@ interface RowMeasurement {
 interface VirtualizationScenario {
   name: string;
   targetRowId: string;
-  props: Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer">;
+  props: Omit<
+    ComponentProps<typeof MessagesTimeline>,
+    "scrollContainer" | "activeThreadEnvironmentId"
+  >;
   maxEstimateDeltaPx: number;
 }
 
@@ -48,7 +52,10 @@ interface VirtualizerSnapshot {
 }
 
 function MessagesTimelineBrowserHarness(
-  props: Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer">,
+  props: Omit<
+    ComponentProps<typeof MessagesTimeline>,
+    "scrollContainer" | "activeThreadEnvironmentId"
+  >,
 ) {
   const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>(
@@ -73,6 +80,7 @@ function MessagesTimelineBrowserHarness(
     >
       <MessagesTimeline
         {...props}
+        activeThreadEnvironmentId={ACTIVE_THREAD_ENVIRONMENT_ID}
         scrollContainer={scrollContainer}
         expandedWorkGroups={expandedWorkGroups}
         onToggleWorkGroup={handleToggleWorkGroup}
@@ -143,7 +151,7 @@ function createBaseTimelineProps(input: {
   completionDividerBeforeEntryId?: string | null;
   turnDiffSummaryByAssistantMessageId?: Map<MessageId, TurnDiffSummary>;
   onVirtualizerSnapshot?: ComponentProps<typeof MessagesTimeline>["onVirtualizerSnapshot"];
-}): Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer"> {
+}): Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer" | "activeThreadEnvironmentId"> {
   return {
     hasMessages: true,
     isWorking: false,
@@ -481,7 +489,10 @@ async function waitForElement<T extends Element>(
 
 async function measureTimelineRow(input: {
   host: HTMLElement;
-  props: Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer">;
+  props: Omit<
+    ComponentProps<typeof MessagesTimeline>,
+    "scrollContainer" | "activeThreadEnvironmentId"
+  >;
   targetRowId: string;
 }): Promise<RowMeasurement> {
   const scrollContainer = await waitForElement(
@@ -550,7 +561,10 @@ async function measureTimelineRow(input: {
 }
 
 async function mountMessagesTimeline(input: {
-  props: Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer">;
+  props: Omit<
+    ComponentProps<typeof MessagesTimeline>,
+    "scrollContainer" | "activeThreadEnvironmentId"
+  >;
   viewport?: { width: number; height: number };
 }) {
   const viewport = input.viewport ?? DEFAULT_VIEWPORT;
@@ -576,7 +590,10 @@ async function mountMessagesTimeline(input: {
   return {
     host,
     rerender: async (
-      nextProps: Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer">,
+      nextProps: Omit<
+        ComponentProps<typeof MessagesTimeline>,
+        "scrollContainer" | "activeThreadEnvironmentId"
+      >,
     ) => {
       await screen.rerender(<MessagesTimelineBrowserHarness {...nextProps} />);
       await waitForLayout();

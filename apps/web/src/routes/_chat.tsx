@@ -1,3 +1,4 @@
+import { scopeProjectRef } from "@t3tools/client-runtime";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { useEffect } from "react";
 
@@ -12,13 +13,13 @@ import { useServerKeybindings } from "~/rpc/serverState";
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
-  const selectedThreadIdsSize = useThreadSelectionStore((state) => state.selectedThreadIds.size);
-  const { activeDraftThread, activeThread, defaultProjectId, handleNewThread, routeThreadId } =
+  const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
+  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
   const keybindings = useServerKeybindings();
   const terminalOpen = useTerminalStateStore((state) =>
-    routeThreadId
-      ? selectThreadTerminalState(state.terminalStateByThreadId, routeThreadId).terminalOpen
+    routeThreadRef
+      ? selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
   const appSettings = useSettings();
@@ -27,14 +28,18 @@ function ChatRouteGlobalShortcuts() {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
 
-      if (event.key === "Escape" && selectedThreadIdsSize > 0) {
+      if (event.key === "Escape" && selectedThreadKeysSize > 0) {
         event.preventDefault();
         clearSelection();
         return;
       }
 
-      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? defaultProjectId;
-      if (!projectId) return;
+      const projectRef = activeThread
+        ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
+        : activeDraftThread && routeThreadRef
+          ? scopeProjectRef(routeThreadRef.environmentId, activeDraftThread.projectId)
+          : defaultProjectRef;
+      if (!projectRef) return;
 
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
@@ -46,7 +51,7 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.newLocal") {
         event.preventDefault();
         event.stopPropagation();
-        void handleNewThread(projectId, {
+        void handleNewThread(projectRef, {
           envMode: resolveSidebarNewThreadEnvMode({
             defaultEnvMode: appSettings.defaultThreadEnvMode,
           }),
@@ -57,7 +62,7 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.new") {
         event.preventDefault();
         event.stopPropagation();
-        void handleNewThread(projectId, {
+        void handleNewThread(projectRef, {
           branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
           worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
           envMode:
@@ -77,8 +82,9 @@ function ChatRouteGlobalShortcuts() {
     clearSelection,
     handleNewThread,
     keybindings,
-    defaultProjectId,
-    selectedThreadIdsSize,
+    defaultProjectRef,
+    routeThreadRef,
+    selectedThreadKeysSize,
     terminalOpen,
     appSettings.defaultThreadEnvMode,
   ]);

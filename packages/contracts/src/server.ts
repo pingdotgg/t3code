@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { ExecutionEnvironmentDescriptor } from "./environment";
 import {
   IsoDateTime,
   NonNegativeInt,
@@ -83,6 +84,7 @@ export const ServerObservability = Schema.Struct({
 export type ServerObservability = typeof ServerObservability.Type;
 
 export const ServerConfig = Schema.Struct({
+  environment: ExecutionEnvironmentDescriptor,
   cwd: TrimmedNonEmptyString,
   keybindingsConfigPath: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,
@@ -167,10 +169,12 @@ export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 
 export const ServerLifecycleReadyPayload = Schema.Struct({
   at: IsoDateTime,
+  environment: ExecutionEnvironmentDescriptor,
 });
 export type ServerLifecycleReadyPayload = typeof ServerLifecycleReadyPayload.Type;
 
 export const ServerLifecycleWelcomePayload = Schema.Struct({
+  environment: ExecutionEnvironmentDescriptor,
   cwd: TrimmedNonEmptyString,
   projectName: TrimmedNonEmptyString,
   bootstrapProjectId: Schema.optional(ProjectId),

@@ -1,11 +1,13 @@
-import type { ThreadId } from "@t3tools/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { FolderIcon, GitForkIcon } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
+import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { readEnvironmentApi } from "../environmentApi";
 import { newCommandId } from "../lib/utils";
-import { readNativeApi } from "../nativeApi";
-import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
+import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import {
   EnvMode,
   resolveDraftEnvModeAfterBranchChange,
@@ -20,7 +22,9 @@ const envModeItems = [
 ] as const;
 
 interface BranchToolbarProps {
+  environmentId: EnvironmentId;
   threadId: ThreadId;
+  draftId?: DraftId;
   onEnvModeChange: (mode: EnvMode) => void;
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
@@ -28,21 +32,34 @@ interface BranchToolbarProps {
 }
 
 export default function BranchToolbar({
+  environmentId,
   threadId,
+  draftId,
   onEnvModeChange,
   envLocked,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarProps) {
-  const serverThread = useStore((store) => store.threadShellById[threadId]);
-  const serverSession = useStore((store) => store.threadSessionById[threadId] ?? null);
-  const setThreadBranchAction = useStore((store) => store.setThreadBranch);
-  const draftThread = useComposerDraftStore((store) => store.getDraftThread(threadId));
-  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
-  const activeProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
-  const activeProject = useStore((store) =>
-    activeProjectId ? store.projectById[activeProjectId] : undefined,
+  const threadRef = useMemo(
+    () => scopeThreadRef(environmentId, threadId),
+    [environmentId, threadId],
   );
+  const serverThreadSelector = useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]);
+  const serverThread = useStore(serverThreadSelector);
+  const serverSession = serverThread?.session ?? null;
+  const setThreadBranchAction = useStore((store) => store.setThreadBranch);
+  const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const activeProjectRef = serverThread
+    ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+    : draftThread
+      ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
+      : null;
+  const activeProjectSelector = useMemo(
+    () => createProjectSelectorByRef(activeProjectRef),
+    [activeProjectRef],
+  );
+  const activeProject = useStore(activeProjectSelector);
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
@@ -56,8 +73,8 @@ export default function BranchToolbar({
 
   const setThreadBranch = useCallback(
     (branch: string | null, worktreePath: string | null) => {
-      if (!activeThreadId) return;
-      const api = readNativeApi();
+      if (!activeThreadId || !activeProject) return;
+      const api = readEnvironmentApi(environmentId);
       // If the effective cwd is about to change, stop the running session so the
       // next message creates a new one with the correct cwd.
       if (serverSession && worktreePath !== activeWorktreePath && api) {
@@ -88,20 +105,24 @@ export default function BranchToolbar({
         currentWorktreePath: activeWorktreePath,
         effectiveEnvMode,
       });
-      setDraftThreadContext(threadId, {
+      setDraftThreadContext(draftId ?? threadRef, {
         branch,
         worktreePath,
         envMode: nextDraftEnvMode,
+        projectRef: scopeProjectRef(environmentId, activeProject.id),
       });
     },
     [
       activeThreadId,
+      activeProject,
       serverSession,
       activeWorktreePath,
       hasServerThread,
       setThreadBranchAction,
       setDraftThreadContext,
-      threadId,
+      draftId,
+      threadRef,
+      environmentId,
       effectiveEnvMode,
     ],
   );
@@ -156,6 +177,7 @@ export default function BranchToolbar({
       )}
 
       <BranchToolbarBranchSelector
+        environmentId={environmentId}
         activeProjectCwd={activeProject.cwd}
         activeThreadBranch={activeThreadBranch}
         activeWorktreePath={activeWorktreePath}

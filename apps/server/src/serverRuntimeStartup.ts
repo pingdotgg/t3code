@@ -27,6 +27,7 @@ import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnap
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerSettingsService } from "./serverSettings";
+import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
 const isWildcardHost = (host: string | undefined): boolean =>
@@ -262,6 +263,7 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
   const orchestrationReactor = yield* OrchestrationReactor;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
+  const serverEnvironment = yield* ServerEnvironment;
 
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
@@ -308,7 +310,9 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
 
     yield* Effect.logDebug("startup phase: preparing welcome payload");
     const welcome = yield* runStartupPhase("welcome.prepare", autoBootstrapWelcome);
+    const environment = yield* serverEnvironment.getDescriptor;
     yield* Effect.logDebug("startup phase: publishing welcome event", {
+      environmentId: environment.environmentId,
       cwd: welcome.cwd,
       projectName: welcome.projectName,
       bootstrapProjectId: welcome.bootstrapProjectId,
@@ -319,7 +323,10 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
       lifecycleEvents.publish({
         version: 1,
         type: "welcome",
-        payload: welcome,
+        payload: {
+          environment,
+          ...welcome,
+        },
       }),
     );
   }).pipe(
@@ -354,7 +361,10 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
         lifecycleEvents.publish({
           version: 1,
           type: "ready",
-          payload: { at: new Date().toISOString() },
+          payload: {
+            at: new Date().toISOString(),
+            environment: yield* serverEnvironment.getDescriptor,
+          },
         }),
       );
 

@@ -47,6 +47,8 @@ import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner";
+import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver";
+import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
 
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
@@ -67,6 +69,8 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
     const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
+    const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
+    const serverEnvironment = yield* ServerEnvironment;
     const serverCommandId = (tag: string) =>
       CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -112,6 +116,49 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             cause,
           });
     };
+
+    const enrichProjectEvent = (
+      event: OrchestrationEvent,
+    ): Effect.Effect<OrchestrationEvent, never, never> => {
+      switch (event.type) {
+        case "project.created":
+          return repositoryIdentityResolver.resolve(event.payload.workspaceRoot).pipe(
+            Effect.map((repositoryIdentity) => ({
+              ...event,
+              payload: {
+                ...event.payload,
+                repositoryIdentity,
+              },
+            })),
+          );
+        case "project.meta-updated":
+          return Effect.gen(function* () {
+            const workspaceRoot =
+              event.payload.workspaceRoot ??
+              (yield* orchestrationEngine.getReadModel()).projects.find(
+                (project) => project.id === event.payload.projectId,
+              )?.workspaceRoot ??
+              null;
+            if (workspaceRoot === null) {
+              return event;
+            }
+
+            const repositoryIdentity = yield* repositoryIdentityResolver.resolve(workspaceRoot);
+            return {
+              ...event,
+              payload: {
+                ...event.payload,
+                repositoryIdentity,
+              },
+            } satisfies OrchestrationEvent;
+          });
+        default:
+          return Effect.succeed(event);
+      }
+    };
+
+    const enrichOrchestrationEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
+      Effect.forEach(events, enrichProjectEvent, { concurrency: 4 });
 
     const dispatchBootstrapTurnStart = (
       command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
@@ -329,8 +376,10 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       const keybindingsConfig = yield* keybindings.loadConfigState;
       const providers = yield* providerRegistry.getProviders;
       const settings = yield* serverSettings.getSettings;
+      const environment = yield* serverEnvironment.getDescriptor;
 
       return {
+        environment,
         cwd: config.cwd,
         keybindingsConfigPath: config.keybindingsConfigPath,
         keybindings: keybindingsConfig.keybindings,
@@ -435,6 +484,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             ),
           ).pipe(
             Effect.map((events) => Array.from(events)),
+            Effect.flatMap(enrichOrchestrationEvents),
             Effect.mapError(
               (cause) =>
                 new OrchestrationReplayEventsError({
@@ -455,10 +505,14 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               orchestrationEngine.readEvents(fromSequenceExclusive),
             ).pipe(
               Effect.map((events) => Array.from(events)),
+              Effect.flatMap(enrichOrchestrationEvents),
               Effect.catch(() => Effect.succeed([] as Array<OrchestrationEvent>)),
             );
             const replayStream = Stream.fromIterable(replayEvents);
-            const source = Stream.merge(replayStream, orchestrationEngine.streamDomainEvents);
+            const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+              Stream.mapEffect(enrichProjectEvent),
+            );
+            const source = Stream.merge(replayStream, liveStream);
             type SequenceState = {
               readonly nextSequence: number;
               readonly pendingBySequence: Map<number, OrchestrationEvent>;

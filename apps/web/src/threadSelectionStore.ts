@@ -4,121 +4,119 @@
  * Supports Cmd/Ctrl+Click (toggle individual), Shift+Click (range select),
  * and bulk actions on the selected set.
  */
-
-import type { ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 
 export interface ThreadSelectionState {
-  /** Currently selected thread IDs. */
-  selectedThreadIds: ReadonlySet<ThreadId>;
-  /** The thread ID that anchors shift-click range selection. */
-  anchorThreadId: ThreadId | null;
+  /** Currently selected scoped thread keys. */
+  selectedThreadKeys: ReadonlySet<string>;
+  /** The scoped thread key that anchors shift-click range selection. */
+  anchorThreadKey: string | null;
 }
 
 interface ThreadSelectionStore extends ThreadSelectionState {
-  /** Toggle a single thread in the selection (Cmd/Ctrl+Click). */
-  toggleThread: (threadId: ThreadId) => void;
+  /** Toggle a single scoped thread key in the selection (Cmd/Ctrl+Click). */
+  toggleThread: (threadKey: string) => void;
   /**
    * Select a range of threads (Shift+Click).
-   * Requires the ordered list of thread IDs within the same project
+   * Requires the ordered list of scoped thread keys within the same project
    * so the store can compute which threads fall between anchor and target.
    */
-  rangeSelectTo: (threadId: ThreadId, orderedThreadIds: readonly ThreadId[]) => void;
+  rangeSelectTo: (threadKey: string, orderedThreadKeys: readonly string[]) => void;
   /** Clear all selection state. */
   clearSelection: () => void;
-  /** Remove specific thread IDs from the selection (e.g. after deletion). */
-  removeFromSelection: (threadIds: readonly ThreadId[]) => void;
+  /** Remove specific scoped thread keys from the selection (e.g. after deletion). */
+  removeFromSelection: (threadKeys: readonly string[]) => void;
   /** Set the anchor thread without adding it to the selection (e.g. on plain-click navigate). */
-  setAnchor: (threadId: ThreadId) => void;
+  setAnchor: (threadKey: string) => void;
   /** Check if any threads are selected. */
   hasSelection: () => boolean;
 }
 
-const EMPTY_SET = new Set<ThreadId>();
+const EMPTY_SET = new Set<string>();
 
 export const useThreadSelectionStore = create<ThreadSelectionStore>((set, get) => ({
-  selectedThreadIds: EMPTY_SET,
-  anchorThreadId: null,
+  selectedThreadKeys: EMPTY_SET,
+  anchorThreadKey: null,
 
-  toggleThread: (threadId) => {
+  toggleThread: (threadKey) => {
     set((state) => {
-      const next = new Set(state.selectedThreadIds);
-      if (next.has(threadId)) {
-        next.delete(threadId);
+      const next = new Set(state.selectedThreadKeys);
+      if (next.has(threadKey)) {
+        next.delete(threadKey);
       } else {
-        next.add(threadId);
+        next.add(threadKey);
       }
       return {
-        selectedThreadIds: next,
-        anchorThreadId: next.has(threadId) ? threadId : state.anchorThreadId,
+        selectedThreadKeys: next,
+        anchorThreadKey: next.has(threadKey) ? threadKey : state.anchorThreadKey,
       };
     });
   },
 
-  rangeSelectTo: (threadId, orderedThreadIds) => {
+  rangeSelectTo: (threadKey, orderedThreadKeys) => {
     set((state) => {
-      const anchor = state.anchorThreadId;
+      const anchor = state.anchorThreadKey;
       if (anchor === null) {
         // No anchor yet — treat as a single toggle
-        const next = new Set(state.selectedThreadIds);
-        next.add(threadId);
-        return { selectedThreadIds: next, anchorThreadId: threadId };
+        const next = new Set(state.selectedThreadKeys);
+        next.add(threadKey);
+        return { selectedThreadKeys: next, anchorThreadKey: threadKey };
       }
 
-      const anchorIndex = orderedThreadIds.indexOf(anchor);
-      const targetIndex = orderedThreadIds.indexOf(threadId);
+      const anchorIndex = orderedThreadKeys.indexOf(anchor);
+      const targetIndex = orderedThreadKeys.indexOf(threadKey);
       if (anchorIndex === -1 || targetIndex === -1) {
         // Anchor or target not in this list (different project?) — fallback to toggle
-        const next = new Set(state.selectedThreadIds);
-        next.add(threadId);
-        return { selectedThreadIds: next, anchorThreadId: threadId };
+        const next = new Set(state.selectedThreadKeys);
+        next.add(threadKey);
+        return { selectedThreadKeys: next, anchorThreadKey: threadKey };
       }
 
       const start = Math.min(anchorIndex, targetIndex);
       const end = Math.max(anchorIndex, targetIndex);
-      const next = new Set(state.selectedThreadIds);
+      const next = new Set(state.selectedThreadKeys);
       for (let i = start; i <= end; i++) {
-        const id = orderedThreadIds[i];
-        if (id !== undefined) {
-          next.add(id);
+        const key = orderedThreadKeys[i];
+        if (key !== undefined) {
+          next.add(key);
         }
       }
       // Keep anchor stable so subsequent shift-clicks extend from the same point
-      return { selectedThreadIds: next, anchorThreadId: anchor };
+      return { selectedThreadKeys: next, anchorThreadKey: anchor };
     });
   },
 
   clearSelection: () => {
     const state = get();
-    if (state.selectedThreadIds.size === 0 && state.anchorThreadId === null) return;
-    set({ selectedThreadIds: EMPTY_SET, anchorThreadId: null });
+    if (state.selectedThreadKeys.size === 0 && state.anchorThreadKey === null) return;
+    set({ selectedThreadKeys: EMPTY_SET, anchorThreadKey: null });
   },
 
-  setAnchor: (threadId) => {
-    if (get().anchorThreadId === threadId) return;
-    set({ anchorThreadId: threadId });
+  setAnchor: (threadKey) => {
+    if (get().anchorThreadKey === threadKey) return;
+    set({ anchorThreadKey: threadKey });
   },
 
-  removeFromSelection: (threadIds) => {
+  removeFromSelection: (threadKeys) => {
     set((state) => {
-      const toRemove = new Set(threadIds);
+      const toRemove = new Set(threadKeys);
       let changed = false;
-      const next = new Set<ThreadId>();
-      for (const id of state.selectedThreadIds) {
-        if (toRemove.has(id)) {
+      const next = new Set<string>();
+      for (const key of state.selectedThreadKeys) {
+        if (toRemove.has(key)) {
           changed = true;
         } else {
-          next.add(id);
+          next.add(key);
         }
       }
       if (!changed) return state;
       const newAnchor =
-        state.anchorThreadId !== null && toRemove.has(state.anchorThreadId)
+        state.anchorThreadKey !== null && toRemove.has(state.anchorThreadKey)
           ? null
-          : state.anchorThreadId;
-      return { selectedThreadIds: next, anchorThreadId: newAnchor };
+          : state.anchorThreadKey;
+      return { selectedThreadKeys: next, anchorThreadKey: newAnchor };
     });
   },
 
-  hasSelection: () => get().selectedThreadIds.size > 0,
+  hasSelection: () => get().selectedThreadKeys.size > 0,
 }));

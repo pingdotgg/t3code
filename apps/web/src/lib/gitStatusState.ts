@@ -1,11 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type GitManagerServiceError, type GitStatusResult } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type GitManagerServiceError,
+  type GitStatusResult,
+} from "@t3tools/contracts";
 import { Cause } from "effect";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { getWsRpcClient, type WsRpcClient } from "../wsRpcClient";
+import { getWsRpcClient, getWsRpcClientForEnvironment, type WsRpcClient } from "../wsRpcClient";
 
 export type GitStatusStreamError = GitManagerServiceError;
 
@@ -21,6 +25,11 @@ type GitStatusClient = Pick<WsRpcClient["git"], "onStatus" | "refreshStatus">;
 interface WatchedGitStatus {
   refCount: number;
   unsubscribe: () => void;
+}
+
+export interface GitStatusTarget {
+  readonly environmentId: EnvironmentId | null;
+  readonly cwd: string | null;
 }
 
 const EMPTY_GIT_STATUS_STATE = Object.freeze<GitStatusState>({
@@ -40,79 +49,91 @@ const EMPTY_GIT_STATUS_ATOM = Atom.make(EMPTY_GIT_STATUS_STATE).pipe(
 
 const NOOP: () => void = () => undefined;
 const watchedGitStatuses = new Map<string, WatchedGitStatus>();
-const knownGitStatusCwds = new Set<string>();
+const knownGitStatusKeys = new Set<string>();
 const gitStatusRefreshInFlight = new Map<string, Promise<GitStatusResult>>();
-const gitStatusLastRefreshAtByCwd = new Map<string, number>();
+const gitStatusLastRefreshAtByKey = new Map<string, number>();
 
 const GIT_STATUS_REFRESH_DEBOUNCE_MS = 1_000;
 
-let sharedGitStatusClient: GitStatusClient | null = null;
-
-const gitStatusStateAtom = Atom.family((cwd: string) => {
-  knownGitStatusCwds.add(cwd);
+const gitStatusStateAtom = Atom.family((key: string) => {
+  knownGitStatusKeys.add(key);
   return Atom.make(INITIAL_GIT_STATUS_STATE).pipe(
     Atom.keepAlive,
-    Atom.withLabel(`git-status:${cwd}`),
+    Atom.withLabel(`git-status:${key}`),
   );
 });
 
-export function getGitStatusSnapshot(cwd: string | null): GitStatusState {
-  if (cwd === null) {
+function getGitStatusTargetKey(target: GitStatusTarget): string | null {
+  if (target.cwd === null) {
+    return null;
+  }
+
+  return `${target.environmentId ?? "__default__"}:${target.cwd}`;
+}
+
+function resolveGitStatusClient(target: GitStatusTarget): GitStatusClient {
+  if (target.environmentId) {
+    return getWsRpcClientForEnvironment(target.environmentId).git;
+  }
+  return getWsRpcClient().git;
+}
+
+export function getGitStatusSnapshot(target: GitStatusTarget): GitStatusState {
+  const targetKey = getGitStatusTargetKey(target);
+  if (targetKey === null) {
     return EMPTY_GIT_STATUS_STATE;
   }
 
-  return appAtomRegistry.get(gitStatusStateAtom(cwd));
+  return appAtomRegistry.get(gitStatusStateAtom(targetKey));
 }
 
 export function watchGitStatus(
-  cwd: string | null,
-  client: GitStatusClient = getWsRpcClient().git,
+  target: GitStatusTarget,
+  client: GitStatusClient = resolveGitStatusClient(target),
 ): () => void {
-  if (cwd === null) {
+  const targetKey = getGitStatusTargetKey(target);
+  if (targetKey === null) {
     return NOOP;
   }
 
-  ensureGitStatusClient(client);
-
-  const watched = watchedGitStatuses.get(cwd);
+  const watched = watchedGitStatuses.get(targetKey);
   if (watched) {
     watched.refCount += 1;
-    return () => unwatchGitStatus(cwd);
+    return () => unwatchGitStatus(targetKey);
   }
 
-  watchedGitStatuses.set(cwd, {
+  watchedGitStatuses.set(targetKey, {
     refCount: 1,
-    unsubscribe: subscribeToGitStatus(cwd),
+    unsubscribe: subscribeToGitStatus(targetKey, target.cwd!, client),
   });
 
-  return () => unwatchGitStatus(cwd);
+  return () => unwatchGitStatus(targetKey);
 }
 
 export function refreshGitStatus(
-  cwd: string | null,
-  client: GitStatusClient = getWsRpcClient().git,
+  target: GitStatusTarget,
+  client: GitStatusClient = resolveGitStatusClient(target),
 ): Promise<GitStatusResult | null> {
-  if (cwd === null) {
+  const targetKey = getGitStatusTargetKey(target);
+  if (targetKey === null || target.cwd === null) {
     return Promise.resolve(null);
   }
 
-  ensureGitStatusClient(client);
-
-  const currentInFlight = gitStatusRefreshInFlight.get(cwd);
+  const currentInFlight = gitStatusRefreshInFlight.get(targetKey);
   if (currentInFlight) {
     return currentInFlight;
   }
 
-  const lastRequestedAt = gitStatusLastRefreshAtByCwd.get(cwd) ?? 0;
+  const lastRequestedAt = gitStatusLastRefreshAtByKey.get(targetKey) ?? 0;
   if (Date.now() - lastRequestedAt < GIT_STATUS_REFRESH_DEBOUNCE_MS) {
-    return Promise.resolve(getGitStatusSnapshot(cwd).data);
+    return Promise.resolve(getGitStatusSnapshot(target).data);
   }
 
-  gitStatusLastRefreshAtByCwd.set(cwd, Date.now());
-  const refreshPromise = client.refreshStatus({ cwd }).finally(() => {
-    gitStatusRefreshInFlight.delete(cwd);
+  gitStatusLastRefreshAtByKey.set(targetKey, Date.now());
+  const refreshPromise = client.refreshStatus({ cwd: target.cwd }).finally(() => {
+    gitStatusRefreshInFlight.delete(targetKey);
   });
-  gitStatusRefreshInFlight.set(cwd, refreshPromise);
+  gitStatusRefreshInFlight.set(targetKey, refreshPromise);
   return refreshPromise;
 }
 
@@ -122,43 +143,29 @@ export function resetGitStatusStateForTests(): void {
   }
   watchedGitStatuses.clear();
   gitStatusRefreshInFlight.clear();
-  gitStatusLastRefreshAtByCwd.clear();
-  sharedGitStatusClient = null;
+  gitStatusLastRefreshAtByKey.clear();
 
-  for (const cwd of knownGitStatusCwds) {
-    appAtomRegistry.set(gitStatusStateAtom(cwd), INITIAL_GIT_STATUS_STATE);
+  for (const key of knownGitStatusKeys) {
+    appAtomRegistry.set(gitStatusStateAtom(key), INITIAL_GIT_STATUS_STATE);
   }
-  knownGitStatusCwds.clear();
+  knownGitStatusKeys.clear();
 }
 
-export function useGitStatus(cwd: string | null): GitStatusState {
-  useEffect(() => watchGitStatus(cwd), [cwd]);
+export function useGitStatus(target: GitStatusTarget): GitStatusState {
+  const targetKey = getGitStatusTargetKey(target);
+  useEffect(
+    () => watchGitStatus({ environmentId: target.environmentId, cwd: target.cwd }),
+    [target.environmentId, target.cwd],
+  );
 
-  const state = useAtomValue(cwd !== null ? gitStatusStateAtom(cwd) : EMPTY_GIT_STATUS_ATOM);
-  return cwd === null ? EMPTY_GIT_STATUS_STATE : state;
+  const state = useAtomValue(
+    targetKey !== null ? gitStatusStateAtom(targetKey) : EMPTY_GIT_STATUS_ATOM,
+  );
+  return targetKey === null ? EMPTY_GIT_STATUS_STATE : state;
 }
 
-function ensureGitStatusClient(client: GitStatusClient): void {
-  if (sharedGitStatusClient === client) {
-    return;
-  }
-
-  if (sharedGitStatusClient !== null) {
-    resetLiveGitStatusSubscriptions();
-  }
-
-  sharedGitStatusClient = client;
-}
-
-function resetLiveGitStatusSubscriptions(): void {
-  for (const watched of watchedGitStatuses.values()) {
-    watched.unsubscribe();
-  }
-  watchedGitStatuses.clear();
-}
-
-function unwatchGitStatus(cwd: string): void {
-  const watched = watchedGitStatuses.get(cwd);
+function unwatchGitStatus(targetKey: string): void {
+  const watched = watchedGitStatuses.get(targetKey);
   if (!watched) {
     return;
   }
@@ -169,20 +176,15 @@ function unwatchGitStatus(cwd: string): void {
   }
 
   watched.unsubscribe();
-  watchedGitStatuses.delete(cwd);
+  watchedGitStatuses.delete(targetKey);
 }
 
-function subscribeToGitStatus(cwd: string): () => void {
-  const client = sharedGitStatusClient;
-  if (!client) {
-    return NOOP;
-  }
-
-  markGitStatusPending(cwd);
+function subscribeToGitStatus(targetKey: string, cwd: string, client: GitStatusClient): () => void {
+  markGitStatusPending(targetKey);
   return client.onStatus(
     { cwd },
     (status) => {
-      appAtomRegistry.set(gitStatusStateAtom(cwd), {
+      appAtomRegistry.set(gitStatusStateAtom(targetKey), {
         data: status,
         error: null,
         cause: null,
@@ -191,14 +193,14 @@ function subscribeToGitStatus(cwd: string): () => void {
     },
     {
       onResubscribe: () => {
-        markGitStatusPending(cwd);
+        markGitStatusPending(targetKey);
       },
     },
   );
 }
 
-function markGitStatusPending(cwd: string): void {
-  const atom = gitStatusStateAtom(cwd);
+function markGitStatusPending(targetKey: string): void {
+  const atom = gitStatusStateAtom(targetKey);
   const current = appAtomRegistry.get(atom);
   const next =
     current.data === null
