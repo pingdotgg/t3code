@@ -64,13 +64,13 @@ function inferBrowser(userAgent: string | undefined): string | undefined {
   if (!userAgent) {
     return undefined;
   }
-  const normalized = userAgent;
-  if (/Edg\//.test(normalized)) return "Edge";
-  if (/OPR\//.test(normalized)) return "Opera";
-  if (/Firefox\//.test(normalized)) return "Firefox";
-  if (/Chrome\//.test(normalized) || /CriOS\//.test(normalized)) return "Chrome";
-  if (/Safari\//.test(normalized) && !/Chrome\//.test(normalized)) return "Safari";
-  if (/Electron\//.test(normalized)) return "Electron";
+  const normalized = userAgent.toLowerCase();
+  if (/edg\//.test(normalized)) return "Edge";
+  if (/opr\//.test(normalized)) return "Opera";
+  if (/firefox\//.test(normalized)) return "Firefox";
+  if (/chrome\//.test(normalized) || /crios\//.test(normalized)) return "Chrome";
+  if (/safari\//.test(normalized) && !/chrome\//.test(normalized)) return "Safari";
+  if (/electron\//.test(normalized)) return "Electron";
   return undefined;
 }
 
@@ -78,12 +78,12 @@ function inferOs(userAgent: string | undefined): string | undefined {
   if (!userAgent) {
     return undefined;
   }
-  const normalized = userAgent;
-  if (/iPhone|iPad|iPod/.test(normalized)) return "iOS";
-  if (/Android/.test(normalized)) return "Android";
-  if (/Mac OS X|Macintosh/.test(normalized)) return "macOS";
-  if (/Windows NT/.test(normalized)) return "Windows";
-  if (/Linux/.test(normalized)) return "Linux";
+  const normalized = userAgent.toLowerCase();
+  if (/iphone|ipad|ipod/.test(normalized)) return "iOS";
+  if (/android/.test(normalized)) return "Android";
+  if (/mac os x|macintosh/.test(normalized)) return "macOS";
+  if (/windows nt/.test(normalized)) return "Windows";
+  if (/linux/.test(normalized)) return "Linux";
   return undefined;
 }
 
