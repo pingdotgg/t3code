@@ -8,10 +8,8 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
-  useOptimistic,
   useRef,
   useState,
-  useTransition,
 } from "react";
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
@@ -102,11 +100,13 @@ function handleCheckoutError(
   error: unknown,
   ctx: {
     api: EnvironmentApi;
+    environmentId: EnvironmentId;
     cwd: string;
     branch: string;
     queryClient: QueryClient;
     onSuccess: () => void;
     fallbackTitle: string;
+    runBranchAction: (action: () => Promise<void>) => void;
   },
 ): void {
   const dirtyWorktree = parseDirtyWorktreeError(error);
@@ -117,47 +117,57 @@ function handleCheckoutError(
       description: formatDirtyWorktreeDescription(dirtyWorktree.files),
       actionProps: {
         children: "Stash & Switch",
-        onClick: async () => {
-          try {
-            await ctx.api.git.stashAndCheckout({ cwd: ctx.cwd, branch: ctx.branch });
-            await invalidateGitQueries(ctx.queryClient);
-            ctx.onSuccess();
-          } catch (stashError) {
-            if (isStashConflictError(stashError)) {
-              await invalidateGitQueries(ctx.queryClient);
+        onClick: () => {
+          ctx.runBranchAction(async () => {
+            try {
+              await ctx.api.git.stashAndCheckout({ cwd: ctx.cwd, branch: ctx.branch });
+              await invalidateGitQueries(ctx.queryClient, {
+                environmentId: ctx.environmentId,
+                cwd: ctx.cwd,
+              });
               ctx.onSuccess();
-              toastManager.add({
-                type: "warning",
-                title: "Stash could not be applied.",
-                description:
-                  "Your stashed changes could not be applied to this branch. They are saved in the stash.",
-                actionProps: {
-                  children: "Discard stash",
-                  onClick: async () => {
-                    const confirmed = await readLocalApi()?.dialogs.confirm(
-                      "Drop the most recent stash entry? This cannot be undone.",
-                    );
-                    if (!confirmed) return;
-                    try {
-                      await ctx.api.git.stashDrop({ cwd: ctx.cwd });
-                    } catch (dropError) {
-                      toastManager.add({
-                        type: "error",
-                        title: "Failed to drop stash.",
-                        description: toBranchActionErrorMessage(dropError),
+            } catch (stashError) {
+              if (isStashConflictError(stashError)) {
+                await invalidateGitQueries(ctx.queryClient, {
+                  environmentId: ctx.environmentId,
+                  cwd: ctx.cwd,
+                });
+                ctx.onSuccess();
+                toastManager.add({
+                  type: "warning",
+                  title: "Stash could not be applied.",
+                  description:
+                    "Your stashed changes could not be applied to this branch. They are saved in the stash.",
+                  actionProps: {
+                    children: "Discard stash",
+                    onClick: () => {
+                      ctx.runBranchAction(async () => {
+                        const confirmed = await readLocalApi()?.dialogs.confirm(
+                          "Drop the most recent stash entry? This cannot be undone.",
+                        );
+                        if (!confirmed) return;
+                        try {
+                          await ctx.api.git.stashDrop({ cwd: ctx.cwd });
+                        } catch (dropError) {
+                          toastManager.add({
+                            type: "error",
+                            title: "Failed to drop stash.",
+                            description: toBranchActionErrorMessage(dropError),
+                          });
+                        }
                       });
-                    }
+                    },
                   },
-                },
-              });
-            } else {
-              toastManager.add({
-                type: "error",
-                title: "Failed to stash and switch.",
-                description: toBranchActionErrorMessage(stashError),
-              });
+                });
+              } else {
+                toastManager.add({
+                  type: "error",
+                  title: "Failed to stash and switch.",
+                  description: toBranchActionErrorMessage(stashError),
+                });
+              }
             }
-          }
+          });
         },
       },
     });
@@ -396,11 +406,12 @@ export function BranchToolbarBranchSelector({
       normalizedDeferredBranchQuery,
     ],
   );
-  const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
-    canonicalActiveBranch,
-    (_currentBranch: string | null, optimisticBranch: string | null) => optimisticBranch,
-  );
-  const [isBranchActionPending, startBranchActionTransition] = useTransition();
+  const [resolvedActiveBranch, setOptimisticBranch] = useState(canonicalActiveBranch);
+  useEffect(() => {
+    setOptimisticBranch(canonicalActiveBranch);
+  }, [canonicalActiveBranch]);
+  const [isBranchActionPending, setIsBranchActionPending] = useState(false);
+  const isBranchActionPendingRef = useRef(false);
   const shouldVirtualizeBranchList = filteredBranchPickerItems.length > 40;
   const totalBranchCount = branchesSearchData?.pages[0]?.totalCount ?? 0;
   const branchStatusText = isBranchesSearchPending
@@ -415,12 +426,24 @@ export function BranchToolbarBranchSelector({
   // Branch actions
   // ---------------------------------------------------------------------------
   const runBranchAction = (action: () => Promise<void>) => {
-    startBranchActionTransition(async () => {
-      await action().catch(() => undefined);
-      await queryClient
-        .invalidateQueries({ queryKey: gitQueryKeys.branches(environmentId, branchCwd) })
-        .catch(() => undefined);
-    });
+    if (isBranchActionPendingRef.current) {
+      return;
+    }
+
+    isBranchActionPendingRef.current = true;
+    setIsBranchActionPending(true);
+
+    void (async () => {
+      try {
+        await action().catch(() => undefined);
+        await queryClient
+          .invalidateQueries({ queryKey: gitQueryKeys.branches(environmentId, branchCwd) })
+          .catch(() => undefined);
+      } finally {
+        isBranchActionPendingRef.current = false;
+        setIsBranchActionPending(false);
+      }
+    })();
   };
 
   const selectBranch = (branch: GitBranch) => {
@@ -471,6 +494,7 @@ export function BranchToolbarBranchSelector({
         setOptimisticBranch(previousBranch);
         handleCheckoutError(error, {
           api,
+          environmentId,
           cwd: selectionTarget.checkoutCwd,
           branch: branch.name,
           queryClient,
@@ -479,6 +503,7 @@ export function BranchToolbarBranchSelector({
             setThreadBranch(selectedBranchName, selectionTarget.nextWorktreePath);
           },
           fallbackTitle: "Failed to checkout branch.",
+          runBranchAction,
         });
       }
     });
@@ -507,6 +532,7 @@ export function BranchToolbarBranchSelector({
         setOptimisticBranch(previousBranch);
         handleCheckoutError(error, {
           api,
+          environmentId,
           cwd: branchCwd,
           branch: name,
           queryClient,
@@ -515,6 +541,7 @@ export function BranchToolbarBranchSelector({
             setThreadBranch(name, activeWorktreePath);
           },
           fallbackTitle: "Failed to create and checkout branch.",
+          runBranchAction,
         });
       }
     });

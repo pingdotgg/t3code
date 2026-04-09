@@ -1,5 +1,6 @@
 import {
   Cache,
+  Cause,
   Data,
   Duration,
   Effect,
@@ -393,6 +394,14 @@ function isMissingGitCwdError(error: GitCommandError): boolean {
     normalized.includes("enoent") ||
     normalized.includes("not a directory")
   );
+}
+
+function parseNonEmptyLineList(input: string): string[] {
+  return input
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 function toGitCommandError(
@@ -2202,6 +2211,41 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
 
   const stashAndCheckout: GitCoreShape["stashAndCheckout"] = (input) =>
     Effect.gen(function* () {
+      const cleanupFailedStashPop = () =>
+        Effect.gen(function* () {
+          const stashFiles = yield* executeGit(
+            "GitCore.stashAndCheckout.stashFileList",
+            input.cwd,
+            ["stash", "show", "--include-untracked", "--name-only"],
+            { timeoutMs: 5_000, allowNonZeroExit: true },
+          );
+          yield* executeGit("GitCore.stashAndCheckout.resetIndex", input.cwd, ["reset", "HEAD"], {
+            timeoutMs: 10_000,
+            allowNonZeroExit: true,
+          });
+          yield* executeGit(
+            "GitCore.stashAndCheckout.restoreWorktree",
+            input.cwd,
+            ["checkout", "--", "."],
+            { timeoutMs: 10_000, allowNonZeroExit: true },
+          );
+          if (stashFiles.code !== 0 || stashFiles.stdout.trim().length === 0) {
+            return;
+          }
+
+          const filePaths = parseNonEmptyLineList(stashFiles.stdout);
+          if (filePaths.length === 0) {
+            return;
+          }
+
+          yield* executeGit(
+            "GitCore.stashAndCheckout.cleanStashRemnants",
+            input.cwd,
+            ["clean", "-f", "--", ...filePaths],
+            { timeoutMs: 10_000, allowNonZeroExit: true },
+          );
+        });
+
       yield* executeGit(
         "GitCore.stashAndCheckout.stash",
         input.cwd,
@@ -2209,18 +2253,40 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         { timeoutMs: 15_000, fallbackErrorMessage: "git stash failed" },
       );
 
-      yield* checkoutBranch(input).pipe(
-        Effect.catchTag("GitCheckoutDirtyWorktreeError", (e) =>
-          Effect.fail(
-            createGitCommandError(
-              "GitCore.stashAndCheckout.checkout",
-              input.cwd,
-              ["checkout", input.branch],
-              e.message,
+      const checkoutExit = yield* Effect.exit(
+        checkoutBranch(input).pipe(
+          Effect.catchTag("GitCheckoutDirtyWorktreeError", (e) =>
+            Effect.fail(
+              createGitCommandError(
+                "GitCore.stashAndCheckout.checkout",
+                input.cwd,
+                ["checkout", input.branch],
+                e.message,
+              ),
             ),
           ),
         ),
       );
+      if (Exit.isFailure(checkoutExit)) {
+        const restoreResult = yield* executeGit(
+          "GitCore.stashAndCheckout.restoreOriginalBranch",
+          input.cwd,
+          ["stash", "pop"],
+          { timeoutMs: 15_000, allowNonZeroExit: true },
+        );
+        if (restoreResult.code !== 0) {
+          yield* cleanupFailedStashPop();
+          return yield* createGitCommandError(
+            "GitCore.stashAndCheckout.checkout",
+            input.cwd,
+            ["checkout", input.branch],
+            "Branch switch failed after stashing. Your changes are saved in the stash.",
+            Cause.squash(checkoutExit.cause),
+          );
+        }
+
+        return yield* Effect.failCause(checkoutExit.cause);
+      }
 
       const popResult = yield* executeGit(
         "GitCore.stashAndCheckout.stashPop",
@@ -2229,37 +2295,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         { timeoutMs: 15_000, allowNonZeroExit: true },
       );
       if (popResult.code !== 0) {
-        const stashFiles = yield* executeGit(
-          "GitCore.stashAndCheckout.stashFileList",
-          input.cwd,
-          ["stash", "show", "--name-only"],
-          { timeoutMs: 5_000, allowNonZeroExit: true },
-        );
-        yield* executeGit("GitCore.stashAndCheckout.resetIndex", input.cwd, ["reset", "HEAD"], {
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-        });
-        yield* executeGit(
-          "GitCore.stashAndCheckout.restoreWorktree",
-          input.cwd,
-          ["checkout", "--", "."],
-          { timeoutMs: 10_000, allowNonZeroExit: true },
-        );
-        if (stashFiles.code === 0 && stashFiles.stdout.trim().length > 0) {
-          const filePaths = stashFiles.stdout
-            .trim()
-            .split("\n")
-            .map((f) => f.trim())
-            .filter((f) => f.length > 0);
-          if (filePaths.length > 0) {
-            yield* executeGit(
-              "GitCore.stashAndCheckout.cleanStashRemnants",
-              input.cwd,
-              ["clean", "-f", "--", ...filePaths],
-              { timeoutMs: 10_000, allowNonZeroExit: true },
-            );
-          }
-        }
+        yield* cleanupFailedStashPop();
         return yield* createGitCommandError(
           "GitCore.stashAndCheckout.stashPop",
           input.cwd,

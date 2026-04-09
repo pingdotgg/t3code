@@ -58,6 +58,15 @@ function makeDirectory(
   });
 }
 
+function readTextFile(
+  filePath: string,
+): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem> {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem.readFileString(filePath);
+  });
+}
+
 /** Run a raw git command for test setup (not under test). */
 function git(
   cwd: string,
@@ -1650,9 +1659,6 @@ it.layer(TestLayer)("git integration", (it) => {
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
-        const core = yield* GitCore;
-
-        yield* core.createBranch({ cwd: tmp, branch: "target-branch" });
 
         yield* writeTextFile(path.join(tmp, "README.md"), "modified\n");
 
@@ -1669,6 +1675,27 @@ it.layer(TestLayer)("git integration", (it) => {
         const stashAfter = yield* git(tmp, ["stash", "list"]);
         expect(stashAfter).toContain("t3code: stash before switching to target-branch");
         yield* git(tmp, ["stash", "pop"]);
+      }),
+    );
+
+    it.effect("restores local changes when checkout fails after stashing", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* writeTextFile(path.join(tmp, "README.md"), "dirty changes\n");
+
+        const result = yield* Effect.result(
+          core.stashAndCheckout({ cwd: tmp, branch: "missing-branch" }),
+        );
+        expect(result._tag).toBe("Failure");
+
+        const readme = yield* readTextFile(path.join(tmp, "README.md"));
+        expect(readme).toContain("dirty changes");
+
+        const stashList = yield* git(tmp, ["stash", "list"]);
+        expect(stashList.trim()).toBe("");
       }),
     );
 
@@ -1697,7 +1724,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    it.effect("cleans untracked files from failed stash pop", () =>
+    it.effect("cleans untracked remnants from failed stash pop", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(tmp);
@@ -1710,13 +1737,23 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* git(tmp, ["commit", "-m", "add new file on other"]);
         yield* core.checkoutBranch({ cwd: tmp, branch: initialBranch });
 
+        yield* writeTextFile(path.join(tmp, "README.md"), "local edits that will conflict\n");
         yield* writeTextFile(path.join(tmp, "new-file.txt"), "untracked content that conflicts\n");
+        yield* writeTextFile(path.join(tmp, "leftover.txt"), "temporary untracked file\n");
 
         const result = yield* Effect.result(core.stashAndCheckout({ cwd: tmp, branch: "other" }));
         expect(result._tag).toBe("Failure");
 
         const branches = yield* core.listBranches({ cwd: tmp });
         expect(branches.branches.find((b) => b.current)!.name).toBe("other");
+
+        const status = yield* core.status({ cwd: tmp });
+        expect(status.hasWorkingTreeChanges).toBe(false);
+
+        const newFile = yield* readTextFile(path.join(tmp, "new-file.txt"));
+        expect(newFile).toBe("new file on other\n");
+
+        expect(existsSync(path.join(tmp, "leftover.txt"))).toBe(false);
       }),
     );
 
