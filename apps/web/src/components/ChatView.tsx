@@ -178,7 +178,12 @@ import {
   useServerKeybindings,
 } from "~/rpc/serverState";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
-import { useWorkspaceActions, useWorkspaceSecondarySurface } from "./workspace/WorkspaceProvider";
+import {
+  useWorkspaceActions,
+  useWorkspaceSecondarySurface,
+  useWorkspaceStoreApi,
+} from "./workspace/WorkspaceProvider";
+import { selectResolvedWorkspaceState } from "../workspace/store";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -191,7 +196,7 @@ const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnsw
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 
 function useToggleDiffSurface(threadRef: ScopedThreadRef, isServerThread: boolean) {
-  const secondarySurface = useWorkspaceSecondarySurface();
+  const workspaceStore = useWorkspaceStoreApi();
   const { closeSurface, openSurface } = useWorkspaceActions();
 
   return useCallback(() => {
@@ -199,7 +204,7 @@ function useToggleDiffSurface(threadRef: ScopedThreadRef, isServerThread: boolea
       return;
     }
 
-    if (secondarySurface?.id === "diff") {
+    if (selectResolvedWorkspaceState(workspaceStore.getState()).surfaces.secondary?.id === "diff") {
       closeSurface("secondary", { replace: true });
       return;
     }
@@ -215,7 +220,7 @@ function useToggleDiffSurface(threadRef: ScopedThreadRef, isServerThread: boolea
       },
       { replace: true },
     );
-  }, [closeSurface, isServerThread, openSurface, secondarySurface, threadRef]);
+  }, [closeSurface, isServerThread, openSurface, threadRef, workspaceStore]);
 }
 
 type WorkspaceAwareChatHeaderProps = Omit<

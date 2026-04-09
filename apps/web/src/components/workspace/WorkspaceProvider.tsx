@@ -15,6 +15,7 @@ import { buildDraftThreadRouteParams, buildThreadRouteParams } from "~/threadRou
 import { reduceWorkspaceState, type WorkspaceAction } from "~/workspace/reducer";
 import {
   createWorkspaceStore,
+  selectResolvedWorkspaceState,
   type WorkspaceStore,
   type WorkspaceStoreApi,
 } from "~/workspace/store";
@@ -85,8 +86,9 @@ export function WorkspaceProvider(props: { target: WorkspaceTarget; children: Re
   const dispatch = useCallback(
     (action: WorkspaceAction, options?: WorkspaceNavigationOptions) => {
       const currentStoreState = store.getState();
-      const nextState = reduceWorkspaceState(currentStoreState.state, action);
-      if (nextState === currentStoreState.state) {
+      const currentState = selectResolvedWorkspaceState(currentStoreState);
+      const nextState = reduceWorkspaceState(currentState, action);
+      if (nextState === currentState) {
         return;
       }
 
@@ -202,11 +204,11 @@ export function useWorkspaceStore<T>(selector: (state: WorkspaceStore) => T): T 
 }
 
 export function useWorkspaceState(): WorkspaceState {
-  return useWorkspaceStore((state) => state.state);
+  return useWorkspaceStore(selectResolvedWorkspaceState);
 }
 
 export function useWorkspaceSecondarySurface(): SecondarySurface | null {
-  return useWorkspaceStore((state) => state.state.surfaces.secondary);
+  return useWorkspaceStore((state) => selectResolvedWorkspaceState(state).surfaces.secondary);
 }
 
 export function useWorkspaceActions(): WorkspaceActionsContextValue {

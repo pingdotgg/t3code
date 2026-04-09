@@ -10,7 +10,6 @@ type WorkspaceOptimisticTransition = {
 export interface WorkspaceStoreState {
   routeState: WorkspaceState;
   optimisticTransition: WorkspaceOptimisticTransition | null;
-  state: WorkspaceState;
 }
 
 export interface WorkspaceStore extends WorkspaceStoreState {
@@ -20,11 +19,14 @@ export interface WorkspaceStore extends WorkspaceStoreState {
 
 export type WorkspaceStoreApi = ReturnType<typeof createWorkspaceStore>;
 
+export function selectResolvedWorkspaceState(state: WorkspaceStoreState): WorkspaceState {
+  return state.optimisticTransition?.nextState ?? state.routeState;
+}
+
 export function createWorkspaceStore(initialState: WorkspaceState) {
   return createStore<WorkspaceStore>()((set) => ({
     routeState: initialState,
     optimisticTransition: null,
-    state: initialState,
     setOptimisticState: (baseState, nextState) =>
       set((current) => {
         if (
@@ -40,7 +42,6 @@ export function createWorkspaceStore(initialState: WorkspaceState) {
             baseState,
             nextState,
           },
-          state: nextState,
         };
       }),
     syncRouteState: (routeState) =>
@@ -66,7 +67,6 @@ export function createWorkspaceStore(initialState: WorkspaceState) {
         return {
           routeState,
           optimisticTransition: null,
-          state: routeState,
         };
       }),
   }));
