@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
   CheckpointRef,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -17,6 +18,7 @@ import {
   applyOrchestrationEvents,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
+  setThreadBranch,
   selectThreadsAcrossEnvironments,
   syncServerReadModel,
   type AppState,
@@ -25,6 +27,7 @@ import {
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 const localEnvironmentId = EnvironmentId.makeUnsafe("environment-local");
+const remoteEnvironmentId = EnvironmentId.makeUnsafe("environment-remote");
 
 function withActiveEnvironmentState(
   environmentState: EnvironmentState,
@@ -86,7 +89,7 @@ function makeState(thread: Thread): AppState {
   const projectId = ProjectId.makeUnsafe("project-1");
   const project = {
     id: projectId,
-    environmentId: localEnvironmentId,
+    environmentId: thread.environmentId,
     name: "Project",
     cwd: "/tmp/project",
     defaultModelSelection: {
@@ -171,7 +174,9 @@ function makeState(thread: Thread): AppState {
     sidebarThreadSummaryById: {},
     bootstrapComplete: true,
   };
-  return withActiveEnvironmentState(environmentState);
+  return withActiveEnvironmentState(environmentState, {
+    activeEnvironmentId: thread.environmentId,
+  });
 }
 
 function makeEmptyState(overrides: Partial<AppState & EnvironmentState> = {}): AppState {
@@ -199,6 +204,10 @@ function makeEmptyState(overrides: Partial<AppState & EnvironmentState> = {}): A
 
 function localEnvironmentStateOf(state: AppState): EnvironmentState {
   return selectEnvironmentState(state, localEnvironmentId);
+}
+
+function environmentStateOf(state: AppState, environmentId: EnvironmentId): EnvironmentState {
+  return selectEnvironmentState(state, environmentId);
 }
 
 function projectsOf(state: AppState) {
@@ -304,6 +313,46 @@ function makeReadModelProject(
     ...overrides,
   };
 }
+
+describe("setThreadBranch", () => {
+  it("updates only the scoped thread environment", () => {
+    const sharedThreadId = ThreadId.makeUnsafe("thread-shared");
+    const localThread = makeThread({
+      id: sharedThreadId,
+      environmentId: localEnvironmentId,
+      branch: "local-branch",
+    });
+    const remoteThread = makeThread({
+      id: sharedThreadId,
+      environmentId: remoteEnvironmentId,
+      branch: "remote-branch",
+    });
+    const state: AppState = {
+      activeEnvironmentId: localEnvironmentId,
+      environmentStateById: {
+        [localEnvironmentId]: environmentStateOf(makeState(localThread), localEnvironmentId),
+        [remoteEnvironmentId]: environmentStateOf(makeState(remoteThread), remoteEnvironmentId),
+      },
+    };
+
+    const next = setThreadBranch(
+      state,
+      scopeThreadRef(remoteEnvironmentId, sharedThreadId),
+      "remote-next",
+      "/tmp/remote-worktree",
+    );
+
+    expect(
+      environmentStateOf(next, localEnvironmentId).threadShellById[sharedThreadId]?.branch,
+    ).toBe("local-branch");
+    expect(
+      environmentStateOf(next, remoteEnvironmentId).threadShellById[sharedThreadId]?.branch,
+    ).toBe("remote-next");
+    expect(
+      environmentStateOf(next, remoteEnvironmentId).threadShellById[sharedThreadId]?.worktreePath,
+    ).toBe("/tmp/remote-worktree");
+  });
+});
 
 describe("store read model sync", () => {
   it("marks bootstrap complete after snapshot sync", () => {

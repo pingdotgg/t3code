@@ -4,9 +4,9 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-const THREAD_A = ThreadId.makeUnsafe("thread-a");
-const THREAD_B = ThreadId.makeUnsafe("thread-b");
-const ENVIRONMENT_ID = "environment-local" as never;
+const SHARED_THREAD_ID = ThreadId.makeUnsafe("thread-shared");
+const ENVIRONMENT_A = "environment-local" as never;
+const ENVIRONMENT_B = "environment-remote" as never;
 const GIT_CWD = "/repo/project";
 const BRANCH_NAME = "feature/toast-scope";
 
@@ -24,9 +24,12 @@ function createDeferredPromise<T>() {
 
 const {
   activeRunStackedActionDeferredRef,
+  activeDraftThreadRef,
+  hasServerThreadRef,
   invalidateGitQueriesSpy,
   refreshGitStatusSpy,
   runStackedActionMutateAsyncSpy,
+  setDraftThreadContextSpy,
   setThreadBranchSpy,
   toastAddSpy,
   toastCloseSpy,
@@ -34,9 +37,12 @@ const {
   toastUpdateSpy,
 } = vi.hoisted(() => ({
   activeRunStackedActionDeferredRef: { current: createDeferredPromise<never>() },
+  activeDraftThreadRef: { current: null as unknown },
+  hasServerThreadRef: { current: true },
   invalidateGitQueriesSpy: vi.fn(() => Promise.resolve()),
   refreshGitStatusSpy: vi.fn(() => Promise.resolve(null)),
   runStackedActionMutateAsyncSpy: vi.fn(() => activeRunStackedActionDeferredRef.current.promise),
+  setDraftThreadContextSpy: vi.fn(),
   setThreadBranchSpy: vi.fn(),
   toastAddSpy: vi.fn(() => "toast-1"),
   toastCloseSpy: vi.fn(),
@@ -123,6 +129,36 @@ vi.mock("~/localApi", () => ({
   readLocalApi: vi.fn(() => null),
 }));
 
+vi.mock("~/composerDraftStore", async () => {
+  const draftStoreState = {
+    getDraftThreadByRef: () => activeDraftThreadRef.current,
+    getDraftSession: () => activeDraftThreadRef.current,
+    getDraftThread: () => activeDraftThreadRef.current,
+    getDraftSessionByLogicalProjectKey: () => null,
+    setDraftThreadContext: setDraftThreadContextSpy,
+    setLogicalProjectDraftThreadId: vi.fn(),
+    setProjectDraftThreadId: vi.fn(),
+    hasDraftThreadsInEnvironment: () => false,
+    clearDraftThread: vi.fn(),
+  };
+
+  return {
+    DraftId: {
+      makeUnsafe: (value: string) => value,
+    },
+    useComposerDraftStore: Object.assign(
+      (selector: (state: unknown) => unknown) => selector(draftStoreState),
+      { getState: () => draftStoreState },
+    ),
+    markPromotedDraftThread: vi.fn(),
+    markPromotedDraftThreadByRef: vi.fn(),
+    markPromotedDraftThreads: vi.fn(),
+    markPromotedDraftThreadsByRef: vi.fn(),
+    finalizePromotedDraftThreadByRef: vi.fn(),
+    finalizePromotedDraftThreadsByRef: vi.fn(),
+  };
+});
+
 vi.mock("~/store", () => ({
   selectEnvironmentState: (
     state: { environmentStateById: Record<string, unknown> },
@@ -154,11 +190,37 @@ vi.mock("~/store", () => ({
     selector({
       setThreadBranch: setThreadBranchSpy,
       environmentStateById: {
-        [ENVIRONMENT_ID]: {
-          threadShellById: {
-            [THREAD_A]: { id: THREAD_A, branch: BRANCH_NAME, worktreePath: null },
-            [THREAD_B]: { id: THREAD_B, branch: BRANCH_NAME, worktreePath: null },
-          },
+        [ENVIRONMENT_A]: {
+          threadShellById: hasServerThreadRef.current
+            ? {
+                [SHARED_THREAD_ID]: {
+                  id: SHARED_THREAD_ID,
+                  branch: BRANCH_NAME,
+                  worktreePath: null,
+                },
+              }
+            : {},
+          threadSessionById: {},
+          threadTurnStateById: {},
+          messageIdsByThreadId: {},
+          messageByThreadId: {},
+          activityIdsByThreadId: {},
+          activityByThreadId: {},
+          proposedPlanIdsByThreadId: {},
+          proposedPlanByThreadId: {},
+          turnDiffIdsByThreadId: {},
+          turnDiffSummaryByThreadId: {},
+        },
+        [ENVIRONMENT_B]: {
+          threadShellById: hasServerThreadRef.current
+            ? {
+                [SHARED_THREAD_ID]: {
+                  id: SHARED_THREAD_ID,
+                  branch: BRANCH_NAME,
+                  worktreePath: null,
+                },
+              }
+            : {},
           threadSessionById: {},
           threadTurnStateById: {},
           messageIdsByThreadId: {},
@@ -187,17 +249,19 @@ function findButtonByText(text: string): HTMLButtonElement | null {
 }
 
 function Harness() {
-  const [activeThreadId, setActiveThreadId] = useState(THREAD_A);
+  const [activeThreadRef, setActiveThreadRef] = useState(
+    scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID),
+  );
 
   return (
     <>
-      <button type="button" onClick={() => setActiveThreadId(THREAD_B)}>
-        Switch thread
+      <button
+        type="button"
+        onClick={() => setActiveThreadRef(scopeThreadRef(ENVIRONMENT_B, SHARED_THREAD_ID))}
+      >
+        Switch environment
       </button>
-      <GitActionsControl
-        gitCwd={GIT_CWD}
-        activeThreadRef={scopeThreadRef(ENVIRONMENT_ID, activeThreadId)}
-      />
+      <GitActionsControl gitCwd={GIT_CWD} activeThreadRef={activeThreadRef} />
     </>
   );
 }
@@ -207,10 +271,12 @@ describe("GitActionsControl thread-scoped progress toast", () => {
     vi.useRealTimers();
     vi.clearAllMocks();
     activeRunStackedActionDeferredRef.current = createDeferredPromise<never>();
+    activeDraftThreadRef.current = null;
+    hasServerThreadRef.current = true;
     document.body.innerHTML = "";
   });
 
-  it("keeps an in-flight git action toast pinned to the thread that started it", async () => {
+  it("keeps an in-flight git action toast pinned to the thread ref that started it", async () => {
     vi.useFakeTimers();
 
     const host = document.createElement("div");
@@ -227,7 +293,7 @@ describe("GitActionsControl thread-scoped progress toast", () => {
 
       expect(toastAddSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: { threadId: THREAD_A },
+          data: { threadRef: scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID) },
           title: "Pushing...",
           type: "loading",
         }),
@@ -238,24 +304,27 @@ describe("GitActionsControl thread-scoped progress toast", () => {
       expect(toastUpdateSpy).toHaveBeenLastCalledWith(
         "toast-1",
         expect.objectContaining({
-          data: { threadId: THREAD_A },
+          data: { threadRef: scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID) },
           title: "Pushing...",
           type: "loading",
         }),
       );
 
-      const switchThreadButton = findButtonByText("Switch thread");
-      expect(switchThreadButton, 'Unable to find button containing "Switch thread"').toBeTruthy();
-      if (!(switchThreadButton instanceof HTMLButtonElement)) {
-        throw new Error('Unable to find button containing "Switch thread"');
+      const switchEnvironmentButton = findButtonByText("Switch environment");
+      expect(
+        switchEnvironmentButton,
+        'Unable to find button containing "Switch environment"',
+      ).toBeTruthy();
+      if (!(switchEnvironmentButton instanceof HTMLButtonElement)) {
+        throw new Error('Unable to find button containing "Switch environment"');
       }
-      switchThreadButton.click();
+      switchEnvironmentButton.click();
       await vi.advanceTimersByTimeAsync(1_000);
 
       expect(toastUpdateSpy).toHaveBeenLastCalledWith(
         "toast-1",
         expect.objectContaining({
-          data: { threadId: THREAD_A },
+          data: { threadRef: scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID) },
           title: "Pushing...",
           type: "loading",
         }),
@@ -284,7 +353,7 @@ describe("GitActionsControl thread-scoped progress toast", () => {
     const screen = await render(
       <GitActionsControl
         gitCwd={GIT_CWD}
-        activeThreadRef={scopeThreadRef(ENVIRONMENT_ID, THREAD_A)}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
       />,
       {
         container: host,
@@ -304,7 +373,7 @@ describe("GitActionsControl thread-scoped progress toast", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(refreshGitStatusSpy).toHaveBeenCalledTimes(1);
       expect(refreshGitStatusSpy).toHaveBeenCalledWith({
-        environmentId: ENVIRONMENT_ID,
+        environmentId: ENVIRONMENT_A,
         cwd: GIT_CWD,
       });
     } finally {
@@ -312,6 +381,44 @@ describe("GitActionsControl thread-scoped progress toast", () => {
         Object.defineProperty(document, "visibilityState", originalVisibilityState);
       }
       vi.useRealTimers();
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("syncs the live branch into the active draft thread when no server thread exists", async () => {
+    hasServerThreadRef.current = false;
+    activeDraftThreadRef.current = {
+      threadId: SHARED_THREAD_ID,
+      environmentId: ENVIRONMENT_A,
+      branch: null,
+      worktreePath: null,
+    };
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <GitActionsControl
+        gitCwd={GIT_CWD}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
+      />,
+      {
+        container: host,
+      },
+    );
+
+    try {
+      await Promise.resolve();
+
+      expect(setDraftThreadContextSpy).toHaveBeenCalledWith(
+        scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID),
+        {
+          branch: BRANCH_NAME,
+          worktreePath: null,
+        },
+      );
+      expect(setThreadBranchSpy).not.toHaveBeenCalled();
+    } finally {
       await screen.unmount();
       host.remove();
     }

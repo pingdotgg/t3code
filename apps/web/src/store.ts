@@ -1737,17 +1737,13 @@ export function setActiveEnvironmentId(state: AppState, environmentId: Environme
 
 export function setThreadBranch(
   state: AppState,
-  threadId: ThreadId,
+  threadRef: ScopedThreadRef,
   branch: string | null,
   worktreePath: string | null,
 ): AppState {
-  if (state.activeEnvironmentId === null) {
-    return state;
-  }
-
   const nextEnvironmentState = updateThreadState(
-    getStoredEnvironmentState(state, state.activeEnvironmentId),
-    threadId,
+    getStoredEnvironmentState(state, threadRef.environmentId),
+    threadRef.threadId,
     (thread) => {
       if (thread.branch === branch && thread.worktreePath === worktreePath) return thread;
       const cwdChanged = thread.worktreePath !== worktreePath;
@@ -1759,7 +1755,7 @@ export function setThreadBranch(
       };
     },
   );
-  return commitEnvironmentState(state, state.activeEnvironmentId, nextEnvironmentState);
+  return commitEnvironmentState(state, threadRef.environmentId, nextEnvironmentState);
 }
 
 interface AppStore extends AppState {
@@ -1771,7 +1767,11 @@ interface AppStore extends AppState {
     environmentId: EnvironmentId,
   ) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
-  setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
+  setThreadBranch: (
+    threadRef: ScopedThreadRef,
+    branch: string | null,
+    worktreePath: string | null,
+  ) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -1785,6 +1785,6 @@ export const useStore = create<AppStore>((set) => ({
   applyOrchestrationEvents: (events, environmentId) =>
     set((state) => applyOrchestrationEvents(state, events, environmentId)),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
-  setThreadBranch: (threadId, branch, worktreePath) =>
-    set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
+  setThreadBranch: (threadRef, branch, worktreePath) =>
+    set((state) => setThreadBranch(state, threadRef, branch, worktreePath)),
 }));

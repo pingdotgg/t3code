@@ -144,7 +144,7 @@ export function BranchToolbarBranchSelector({
         });
       }
       if (hasServerThread) {
-        setThreadBranchAction(activeThreadId, branch, worktreePath);
+        setThreadBranchAction(threadRef, branch, worktreePath);
         return;
       }
       const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
