@@ -3,8 +3,7 @@ import type {
   GitStatusRemoteResult,
   GitStatusStreamEvent,
 } from "@t3tools/contracts";
-import { EnvironmentId } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./wsTransport", () => ({
   WsTransport: class WsTransport {
@@ -16,12 +15,7 @@ vi.mock("./wsTransport", () => ({
   },
 }));
 
-import {
-  __resetWsRpcClientForTests,
-  createWsRpcClient,
-  ensureWsRpcClientEntryForKnownEnvironment,
-  readWsRpcClientEntryForEnvironment,
-} from "./wsRpcClient";
+import { createWsRpcClient } from "./wsRpcClient";
 import { type WsTransport } from "./wsTransport";
 
 const baseLocalStatus: GitStatusLocalResult = {
@@ -41,10 +35,6 @@ const baseRemoteStatus: GitStatusRemoteResult = {
 };
 
 describe("wsRpcClient", () => {
-  afterEach(async () => {
-    await __resetWsRpcClientForTests();
-  });
-
   it("reduces git status stream events into flat status snapshots", () => {
     const subscribe = vi.fn(<TValue>(_connect: unknown, listener: (value: TValue) => void) => {
       for (const event of [
@@ -110,21 +100,5 @@ describe("wsRpcClient", () => {
         },
       ],
     ]);
-  });
-
-  it("does not fall back to the only registered client for an unbound environment", () => {
-    ensureWsRpcClientEntryForKnownEnvironment({
-      id: "known-env-a",
-      label: "Environment A",
-      source: "manual",
-      target: {
-        type: "ws",
-        wsUrl: "ws://localhost:3000",
-      },
-    });
-
-    expect(
-      readWsRpcClientEntryForEnvironment(EnvironmentId.makeUnsafe("environment-b")),
-    ).toBeNull();
   });
 });

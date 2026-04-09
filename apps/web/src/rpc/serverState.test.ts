@@ -66,6 +66,12 @@ const baseEnvironment = {
 
 const baseServerConfig: ServerConfig = {
   environment: baseEnvironment,
+  auth: {
+    policy: "loopback-browser",
+    bootstrapMethods: ["one-time-token"],
+    sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+    sessionCookieName: "t3_session",
+  },
   cwd: "/tmp/workspace",
   keybindingsConfigPath: "/tmp/workspace/.config/keybindings.json",
   keybindings: [],

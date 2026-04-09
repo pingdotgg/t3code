@@ -1,21 +1,21 @@
-import {
-  type EnvironmentId,
-  type MessageId,
-  type OrchestrationCheckpointSummary,
-  type OrchestrationEvent,
-  type OrchestrationMessage,
-  type OrchestrationProposedPlan,
-  type OrchestrationReadModel,
-  type OrchestrationSession,
-  type OrchestrationSessionStatus,
-  type OrchestrationThread,
-  type OrchestrationThreadActivity,
-  type ProjectId,
-  type ProviderKind,
-  type ScopedProjectRef,
-  type ScopedThreadRef,
+import type {
+  EnvironmentId,
+  MessageId,
+  OrchestrationCheckpointSummary,
+  OrchestrationEvent,
+  OrchestrationMessage,
+  OrchestrationProposedPlan,
+  OrchestrationReadModel,
+  OrchestrationSession,
+  OrchestrationSessionStatus,
+  OrchestrationThread,
+  OrchestrationThreadActivity,
+  ProjectId,
+  ProviderKind,
+  ScopedProjectRef,
+  ScopedThreadRef,
   ThreadId,
-  type TurnId,
+  TurnId,
 } from "@t3tools/contracts";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
@@ -36,6 +36,7 @@ import {
   type ThreadTurnState,
   type TurnDiffSummary,
 } from "./types";
+import { resolveEnvironmentHttpUrl } from "./environments/runtime";
 import { sanitizeThreadErrorMessage } from "./rpc/transportError";
 
 export interface EnvironmentState {
@@ -136,14 +137,17 @@ function mapSession(session: OrchestrationSession): ThreadSession {
   };
 }
 
-function mapMessage(message: OrchestrationMessage): ChatMessage {
+function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage): ChatMessage {
   const attachments = message.attachments?.map((attachment) => ({
     type: "image" as const,
     id: attachment.id,
     name: attachment.name,
     mimeType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
-    previewUrl: toAttachmentPreviewUrl(attachmentPreviewRoutePath(attachment.id)),
+    previewUrl: resolveEnvironmentHttpUrl({
+      environmentId,
+      pathname: attachmentPreviewRoutePath(attachment.id),
+    }),
   }));
 
   return {
@@ -212,7 +216,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     session: thread.session ? mapSession(thread.session) : null,
-    messages: thread.messages.map(mapMessage),
+    messages: thread.messages.map((message) => mapMessage(environmentId, message)),
     proposedPlans: thread.proposedPlans.map(mapProposedPlan),
     error: sanitizeThreadErrorMessage(thread.session?.lastError),
     createdAt: thread.createdAt,
@@ -883,34 +887,6 @@ function toLegacyProvider(providerName: string | null): ProviderKind {
   return "codex";
 }
 
-function resolveWsHttpOrigin(): string {
-  if (typeof window === "undefined") return "";
-  const bridgeWsUrl = window.desktopBridge?.getWsUrl?.();
-  const envWsUrl = import.meta.env.VITE_WS_URL as string | undefined;
-  const wsCandidate =
-    typeof bridgeWsUrl === "string" && bridgeWsUrl.length > 0
-      ? bridgeWsUrl
-      : typeof envWsUrl === "string" && envWsUrl.length > 0
-        ? envWsUrl
-        : null;
-  if (!wsCandidate) return window.location.origin;
-  try {
-    const wsUrl = new URL(wsCandidate);
-    const protocol =
-      wsUrl.protocol === "wss:" ? "https:" : wsUrl.protocol === "ws:" ? "http:" : wsUrl.protocol;
-    return `${protocol}//${wsUrl.host}`;
-  } catch {
-    return window.location.origin;
-  }
-}
-
-function toAttachmentPreviewUrl(rawUrl: string): string {
-  if (rawUrl.startsWith("/")) {
-    return `${resolveWsHttpOrigin()}${rawUrl}`;
-  }
-  return rawUrl;
-}
-
 function attachmentPreviewRoutePath(attachmentId: string): string {
   return `/attachments/${encodeURIComponent(attachmentId)}`;
 }
@@ -1298,7 +1274,7 @@ function applyEnvironmentOrchestrationEvent(
 
     case "thread.message-sent":
       return updateThreadState(state, event.payload.threadId, (thread) => {
-        const message = mapMessage({
+        const message = mapMessage(thread.environmentId, {
           id: event.payload.messageId,
           role: event.payload.role,
           text: event.payload.text,
@@ -1631,6 +1607,16 @@ export function selectThreadsAcrossEnvironments(state: AppState): Thread[] {
   );
 }
 
+/** Like `selectThreadsAcrossEnvironments` but returns stable `ThreadShell` references from the store (no derived data). */
+export function selectThreadShellsAcrossEnvironments(state: AppState): ThreadShell[] {
+  return getEnvironmentEntries(state).flatMap(([, environmentState]) =>
+    environmentState.threadIds.flatMap((threadId) => {
+      const shell = environmentState.threadShellById[threadId];
+      return shell ? [shell] : [];
+    }),
+  );
+}
+
 export function selectSidebarThreadsAcrossEnvironments(state: AppState): SidebarThreadSummary[] {
   return getEnvironmentEntries(state).flatMap(([environmentId, environmentState]) =>
     environmentState.threadIds.flatMap((threadId) => {
@@ -1654,6 +1640,15 @@ export function selectSidebarThreadsForProjectRef(
     const thread = environmentState.sidebarThreadSummaryById[threadId];
     return thread ? [thread] : [];
   });
+}
+
+export function selectSidebarThreadsForProjectRefs(
+  state: AppState,
+  refs: readonly ScopedProjectRef[],
+): SidebarThreadSummary[] {
+  if (refs.length === 0) return [];
+  if (refs.length === 1) return selectSidebarThreadsForProjectRef(state, refs[0]);
+  return refs.flatMap((ref) => selectSidebarThreadsForProjectRef(state, ref));
 }
 
 export function selectBootstrapCompleteForActiveEnvironment(state: AppState): boolean {

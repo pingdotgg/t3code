@@ -4,6 +4,7 @@ import { Effect, FileSystem, Layer, Path, Random } from "effect";
 import { ServerConfig } from "../../config.ts";
 import { ServerEnvironment, type ServerEnvironmentShape } from "../Services/ServerEnvironment.ts";
 import { version } from "../../../package.json" with { type: "json" };
+import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 
 function platformOs(): ExecutionEnvironmentDescriptor["platform"]["os"] {
   switch (process.platform) {
@@ -65,12 +66,9 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
 
   const environmentId = EnvironmentId.makeUnsafe(environmentIdRaw);
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label =
-    serverConfig.mode === "desktop"
-      ? "Local environment"
-      : cwdBaseName.length > 0
-        ? cwdBaseName
-        : "T3 environment";
+  const label = yield* resolveServerEnvironmentLabel({
+    cwdBaseName,
+  });
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,

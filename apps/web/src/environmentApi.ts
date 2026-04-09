@@ -1,6 +1,7 @@
 import type { EnvironmentId, EnvironmentApi } from "@t3tools/contracts";
 
-import { readWsRpcClientEntryForEnvironment, WsRpcClient } from "./wsRpcClient";
+import type { WsRpcClient } from "./rpc/wsRpcClient";
+import { readEnvironmentConnection } from "./environments/runtime";
 
 export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
   return {
@@ -54,8 +55,8 @@ export function readEnvironmentApi(environmentId: EnvironmentId): EnvironmentApi
     return undefined;
   }
 
-  const entry = readWsRpcClientEntryForEnvironment(environmentId);
-  return entry ? createEnvironmentApi(entry.client) : undefined;
+  const connection = readEnvironmentConnection(environmentId);
+  return connection ? createEnvironmentApi(connection.client) : undefined;
 }
 
 export function ensureEnvironmentApi(environmentId: EnvironmentId): EnvironmentApi {

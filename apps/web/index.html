@@ -2,9 +2,84 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#161616" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script>
+      (() => {
+        const LIGHT_BACKGROUND = "#ffffff";
+        const DARK_BACKGROUND = "#161616";
+        const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+        try {
+          const storedTheme = window.localStorage.getItem("t3code:theme");
+          const theme =
+            storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
+              ? storedTheme
+              : "system";
+          const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          const isDark = theme === "dark" || (theme === "system" && prefersDark);
+          document.documentElement.classList.toggle("dark", isDark);
+          const chromeColor = isDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
+          document.documentElement.style.backgroundColor = chromeColor;
+          themeColorMeta?.setAttribute("content", chromeColor);
+        } catch {
+          document.documentElement.classList.add("dark");
+          document.documentElement.style.backgroundColor = DARK_BACKGROUND;
+          themeColorMeta?.setAttribute("content", DARK_BACKGROUND);
+        }
+      })();
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: #ffffff;
+        color: #262626;
+        font-family:
+          "DM Sans",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+      }
+
+      html.dark body {
+        background: #161616;
+        color: #f5f5f5;
+      }
+
+      #boot-shell {
+        display: flex;
+        min-height: 100%;
+        align-items: center;
+        justify-content: center;
+        background: inherit;
+      }
+
+      #boot-shell-card {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 96px;
+        height: 96px;
+      }
+
+      #boot-shell-logo {
+        width: 64px;
+        height: 64px;
+        object-fit: contain;
+      }
+    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -12,10 +87,15 @@
       rel="stylesheet"
     />
     <title>T3 Code (Alpha)</title>
-    <script crossorigin="anonymous" src="//unpkg.com/react-scan/dist/auto.global.js"></script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-shell">
+        <div id="boot-shell-card" aria-label="T3 Code splash screen">
+          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

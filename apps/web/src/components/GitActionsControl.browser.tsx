@@ -44,8 +44,12 @@ const {
   toastUpdateSpy: vi.fn(),
 }));
 
-vi.mock("@tanstack/react-query", () => {
+vi.mock("@tanstack/react-query", async () => {
+  const actual =
+    await vi.importActual<typeof import("@tanstack/react-query")>("@tanstack/react-query");
+
   return {
+    ...actual,
     useIsMutating: vi.fn(() => 0),
     useMutation: vi.fn((options: { __kind?: string }) => {
       if (options.__kind === "run-stacked-action") {
@@ -133,6 +137,19 @@ vi.mock("~/store", () => ({
     }
     return environmentState;
   },
+  selectProjectsForEnvironment: () => [],
+  selectProjectsAcrossEnvironments: () => [],
+  selectThreadsForEnvironment: () => [],
+  selectThreadsAcrossEnvironments: () => [],
+  selectThreadShellsAcrossEnvironments: () => [],
+  selectSidebarThreadsAcrossEnvironments: () => [],
+  selectSidebarThreadsForProjectRef: () => [],
+  selectSidebarThreadsForProjectRefs: () => [],
+  selectBootstrapCompleteForActiveEnvironment: () => true,
+  selectProjectByRef: () => null,
+  selectThreadByRef: () => null,
+  selectSidebarThreadSummaryByRef: () => null,
+  selectThreadIdsByProjectRef: () => [],
   useStore: (selector: (state: unknown) => unknown) =>
     selector({
       setThreadBranch: setThreadBranchSpy,

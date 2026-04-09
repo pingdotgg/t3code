@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { ExecutionEnvironmentDescriptor } from "./environment";
+import { ServerAuthDescriptor } from "./auth";
 import {
   IsoDateTime,
   NonNegativeInt,
@@ -85,6 +86,7 @@ export type ServerObservability = typeof ServerObservability.Type;
 
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
+  auth: ServerAuthDescriptor,
   cwd: TrimmedNonEmptyString,
   keybindingsConfigPath: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,

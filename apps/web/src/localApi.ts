@@ -1,19 +1,23 @@
 import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
 import { resetGitStatusStateForTests } from "./lib/gitStatusState";
-
-import { __resetWsRpcAtomClientForTests } from "./rpc/client";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { resetServerStateForTests } from "./rpc/serverState";
 import { resetWsConnectionStateForTests } from "./rpc/wsConnectionState";
-import { getPrimaryWsRpcClientEntry, WsRpcClient, __resetWsRpcClientForTests } from "./wsRpcClient";
+import {
+  resetSavedEnvironmentRegistryStoreForTests,
+  resetSavedEnvironmentRuntimeStoreForTests,
+} from "./environments/runtime";
+import {
+  getPrimaryEnvironmentConnection,
+  resetEnvironmentServiceForTests,
+} from "./environments/runtime";
+import { type WsRpcClient } from "./rpc/wsRpcClient";
 import { showContextMenuFallback } from "./contextMenuFallback";
 
 let cachedApi: LocalApi | undefined;
 
-export function createLocalApi(
-  rpcClient: WsRpcClient = getPrimaryWsRpcClientEntry().client,
-): LocalApi {
+export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
   return {
     dialogs: {
       pickFolder: async () => {
@@ -71,7 +75,7 @@ export function readLocalApi(): LocalApi | undefined {
     return cachedApi;
   }
 
-  cachedApi = createLocalApi();
+  cachedApi = createLocalApi(getPrimaryEnvironmentConnection().client);
   return cachedApi;
 }
 
@@ -85,10 +89,11 @@ export function ensureLocalApi(): LocalApi {
 
 export async function __resetLocalApiForTests() {
   cachedApi = undefined;
-  await __resetWsRpcAtomClientForTests();
-  await __resetWsRpcClientForTests();
+  await resetEnvironmentServiceForTests();
   resetGitStatusStateForTests();
   resetRequestLatencyStateForTests();
+  resetSavedEnvironmentRegistryStoreForTests();
+  resetSavedEnvironmentRuntimeStoreForTests();
   resetServerStateForTests();
   resetWsConnectionStateForTests();
 }

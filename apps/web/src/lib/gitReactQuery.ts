@@ -11,7 +11,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { ensureEnvironmentApi } from "../environmentApi";
-import { getWsRpcClientForEnvironment } from "../wsRpcClient";
+import { requireEnvironmentConnection } from "../environments/runtime";
 
 const GIT_BRANCHES_STALE_TIME_MS = 15_000;
 const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
@@ -180,7 +180,7 @@ export function gitRunStackedActionMutationOptions(input: {
       onProgress?: (event: GitActionProgressEvent) => void;
     }) => {
       if (!input.cwd || !input.environmentId) throw new Error("Git action is unavailable.");
-      return getWsRpcClientForEnvironment(input.environmentId).git.runStackedAction(
+      return requireEnvironmentConnection(input.environmentId).client.git.runStackedAction(
         {
           action,
           actionId,

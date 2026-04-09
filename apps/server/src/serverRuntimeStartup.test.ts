@@ -1,13 +1,22 @@
+import { DEFAULT_MODEL_BY_PROVIDER } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Option, Ref } from "effect";
 
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
+  getAutoBootstrapDefaultModelSelection,
   launchStartupHeartbeat,
   makeCommandGate,
   ServerRuntimeStartupError,
 } from "./serverRuntimeStartup.ts";
+
+it("uses the canonical Codex default for auto-bootstrapped model selection", () => {
+  assert.deepStrictEqual(getAutoBootstrapDefaultModelSelection(), {
+    provider: "codex",
+    model: DEFAULT_MODEL_BY_PROVIDER.codex,
+  });
+});
 
 it.effect("enqueueCommand waits for readiness and then drains queued work", () =>
   Effect.scoped(

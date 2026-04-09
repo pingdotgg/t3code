@@ -6,20 +6,14 @@ import {
   type GitStatusStreamEvent,
   type LocalApi,
   ORCHESTRATION_WS_METHODS,
-  type EnvironmentId,
   type ServerSettingsPatch,
   WS_METHODS,
 } from "@t3tools/contracts";
-import { getKnownEnvironmentBaseUrl, type KnownEnvironment } from "@t3tools/client-runtime";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
 import { Effect, Stream } from "effect";
 
-import {
-  getPrimaryKnownEnvironment,
-  resolvePrimaryEnvironmentBootstrapUrl,
-} from "./environmentBootstrap";
-import { type WsRpcProtocolClient } from "./rpc/protocol";
-import { resetWsReconnectBackoff } from "./rpc/wsConnectionState";
+import { type WsRpcProtocolClient } from "./protocol";
+import { resetWsReconnectBackoff } from "./wsConnectionState";
 import { WsTransport } from "./wsTransport";
 
 type RpcTag = keyof WsRpcProtocolClient & string;
@@ -104,6 +98,7 @@ export interface WsRpcClient {
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateSettings>>;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
+    readonly subscribeAuthAccess: RpcStreamMethod<typeof WS_METHODS.subscribeAuthAccess>;
   };
   readonly orchestration: {
     readonly getSnapshot: RpcUnaryNoArgMethod<typeof ORCHESTRATION_WS_METHODS.getSnapshot>;
@@ -115,157 +110,7 @@ export interface WsRpcClient {
   };
 }
 
-export interface WsRpcClientEntry {
-  readonly key: string;
-  readonly knownEnvironment: KnownEnvironment;
-  readonly client: WsRpcClient;
-  readonly environmentId: EnvironmentId | null;
-}
-
-type MutableWsRpcClientEntry = {
-  key: string;
-  knownEnvironment: KnownEnvironment;
-  client: WsRpcClient;
-  environmentId: EnvironmentId | null;
-};
-
-const wsRpcClientEntriesByKey = new Map<string, MutableWsRpcClientEntry>();
-const wsRpcClientKeyByEnvironmentId = new Map<EnvironmentId, string>();
-const wsRpcClientRegistryListeners = new Set<() => void>();
-
-function emitWsRpcClientRegistryChange() {
-  for (const listener of wsRpcClientRegistryListeners) {
-    listener();
-  }
-}
-
-function toReadonlyEntry(entry: MutableWsRpcClientEntry): WsRpcClientEntry {
-  return entry;
-}
-
-function createWsRpcClientEntry(knownEnvironment: KnownEnvironment): MutableWsRpcClientEntry {
-  const baseUrl = getKnownEnvironmentBaseUrl(knownEnvironment);
-  if (!baseUrl) {
-    throw new Error(`Unable to resolve websocket bootstrap URL for ${knownEnvironment.label}.`);
-  }
-
-  return {
-    key: knownEnvironment.id,
-    knownEnvironment,
-    client: createWsRpcClient(new WsTransport(baseUrl)),
-    environmentId: knownEnvironment.environmentId ?? null,
-  };
-}
-
-export function subscribeWsRpcClientRegistry(listener: () => void): () => void {
-  wsRpcClientRegistryListeners.add(listener);
-  return () => {
-    wsRpcClientRegistryListeners.delete(listener);
-  };
-}
-
-export function listWsRpcClientEntries(): ReadonlyArray<WsRpcClientEntry> {
-  return [...wsRpcClientEntriesByKey.values()].map(toReadonlyEntry);
-}
-
-export function ensureWsRpcClientEntryForKnownEnvironment(
-  knownEnvironment: KnownEnvironment,
-): WsRpcClientEntry {
-  const existingEntry = wsRpcClientEntriesByKey.get(knownEnvironment.id);
-  if (existingEntry) {
-    return toReadonlyEntry(existingEntry);
-  }
-
-  const entry = createWsRpcClientEntry(knownEnvironment);
-  wsRpcClientEntriesByKey.set(entry.key, entry);
-  if (entry.environmentId) {
-    wsRpcClientKeyByEnvironmentId.set(entry.environmentId, entry.key);
-  }
-  emitWsRpcClientRegistryChange();
-  return toReadonlyEntry(entry);
-}
-
-export function getPrimaryWsRpcClientEntry(): WsRpcClientEntry {
-  const primaryKnownEnvironment = getPrimaryKnownEnvironment();
-  if (!primaryKnownEnvironment) {
-    throw new Error("Unable to resolve the primary websocket environment.");
-  }
-
-  return ensureWsRpcClientEntryForKnownEnvironment(primaryKnownEnvironment);
-}
-
-export function getWsRpcClient(): WsRpcClient {
-  return getPrimaryWsRpcClientEntry().client;
-}
-
-export function bindWsRpcClientEntryEnvironment(
-  clientKey: string,
-  environmentId: EnvironmentId,
-): void {
-  const entry = wsRpcClientEntriesByKey.get(clientKey);
-  if (!entry) {
-    throw new Error(`No websocket client registered for key ${clientKey}.`);
-  }
-
-  const previousBoundEnvironmentId = entry.environmentId;
-  const previousKeyForEnvironment = wsRpcClientKeyByEnvironmentId.get(environmentId);
-
-  if (previousBoundEnvironmentId === environmentId && previousKeyForEnvironment === clientKey) {
-    return;
-  }
-
-  if (previousBoundEnvironmentId) {
-    wsRpcClientKeyByEnvironmentId.delete(previousBoundEnvironmentId);
-  }
-
-  if (previousKeyForEnvironment && previousKeyForEnvironment !== clientKey) {
-    const previousEntry = wsRpcClientEntriesByKey.get(previousKeyForEnvironment);
-    if (previousEntry) {
-      previousEntry.environmentId = null;
-    }
-  }
-
-  entry.environmentId = environmentId;
-  wsRpcClientKeyByEnvironmentId.set(environmentId, clientKey);
-  emitWsRpcClientRegistryChange();
-}
-
-export function bindPrimaryWsRpcClientEnvironment(environmentId: EnvironmentId): void {
-  bindWsRpcClientEntryEnvironment(getPrimaryWsRpcClientEntry().key, environmentId);
-}
-
-export function readWsRpcClientEntryForEnvironment(
-  environmentId: EnvironmentId,
-): WsRpcClientEntry | null {
-  const clientKey = wsRpcClientKeyByEnvironmentId.get(environmentId);
-  if (clientKey) {
-    const entry = wsRpcClientEntriesByKey.get(clientKey);
-    return entry ? toReadonlyEntry(entry) : null;
-  }
-
-  return null;
-}
-
-export function getWsRpcClientForEnvironment(environmentId: EnvironmentId): WsRpcClient {
-  const entry = readWsRpcClientEntryForEnvironment(environmentId);
-  if (!entry) {
-    throw new Error(`No websocket client registered for environment ${environmentId}.`);
-  }
-  return entry.client;
-}
-
-export async function __resetWsRpcClientForTests() {
-  for (const entry of wsRpcClientEntriesByKey.values()) {
-    await entry.client.dispose();
-  }
-  wsRpcClientEntriesByKey.clear();
-  wsRpcClientKeyByEnvironmentId.clear();
-  wsRpcClientRegistryListeners.clear();
-}
-
-export function createWsRpcClient(
-  transport = new WsTransport(resolvePrimaryEnvironmentBootstrapUrl()),
-): WsRpcClient {
+export function createWsRpcClient(transport: WsTransport): WsRpcClient {
   return {
     dispose: () => transport.dispose(),
     reconnect: async () => {
@@ -363,6 +208,12 @@ export function createWsRpcClient(
       subscribeLifecycle: (listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+          listener,
+          options,
+        ),
+      subscribeAuthAccess: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeAuthAccess]({}),
           listener,
           options,
         ),

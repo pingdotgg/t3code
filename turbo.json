@@ -1,10 +1,10 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalEnv": [
+    "HOST",
     "PORT",
     "VITE_WS_URL",
     "VITE_DEV_SERVER_URL",
-    "ELECTRON_RENDERER_PORT",
     "T3CODE_LOG_WS_EVENTS",
     "T3CODE_MODE",
     "T3CODE_PORT",

@@ -1,20 +1,21 @@
 import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@t3tools/contracts";
+import { Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   __resetClientTracingForTests,
   configureClientTracing,
-} from "./observability/clientTracing";
+} from "../observability/clientTracing";
 import {
   getSlowRpcAckRequests,
   resetRequestLatencyStateForTests,
   setSlowRpcAckThresholdMsForTests,
-} from "./rpc/requestLatencyState";
+} from "../rpc/requestLatencyState";
 import {
   getWsConnectionStatus,
   getWsConnectionUiState,
   resetWsConnectionStateForTests,
-} from "./rpc/wsConnectionState";
+} from "../rpc/wsConnectionState";
 import { WsTransport } from "./wsTransport";
 
 type WsEventType = "open" | "message" | "close" | "error";
@@ -153,21 +154,36 @@ describe("WsTransport", () => {
     await transport.dispose();
   });
 
-  it("uses wss when falling back to an https page origin", async () => {
-    Object.assign(window.location, {
-      origin: "https://app.example.com",
-      hostname: "app.example.com",
-      port: "",
-      protocol: "https:",
-    });
-
-    const transport = new WsTransport();
+  it("uses an explicit secure websocket base url", async () => {
+    const transport = new WsTransport("wss://app.example.com");
 
     await waitFor(() => {
       expect(sockets).toHaveLength(1);
     });
 
     expect(getSocket().url).toBe("wss://app.example.com/ws");
+    await transport.dispose();
+  });
+
+  it("uses an explicit insecure websocket base url for remote backends", async () => {
+    const transport = new WsTransport("ws://192.168.1.44:3773");
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    expect(getSocket().url).toBe("ws://192.168.1.44:3773/ws");
+    await transport.dispose();
+  });
+
+  it("supports async websocket url providers", async () => {
+    const transport = new WsTransport(async () => "wss://remote.example.com/?wsToken=dynamic");
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    expect(getSocket().url).toBe("wss://remote.example.com/ws?wsToken=dynamic");
     await transport.dispose();
   });
 
@@ -614,6 +630,78 @@ describe("WsTransport", () => {
     });
     expect(onResubscribe).not.toHaveBeenCalled();
     expect(listener).not.toHaveBeenCalled();
+
+    unsubscribe();
+    await transport.dispose();
+  });
+
+  it("does not retry stream subscriptions after application-level failures", async () => {
+    const transport = new WsTransport("ws://localhost:3020");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let attempts = 0;
+
+    const unsubscribe = transport.subscribe(
+      () =>
+        Stream.suspend(() => {
+          attempts += 1;
+          return Stream.fail(new Error("Git command failed in GitCore.statusDetails"));
+        }),
+      vi.fn(),
+      { retryDelay: 10 },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    getSocket().open();
+
+    await waitFor(() => {
+      expect(attempts).toBe(1);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(attempts).toBe(1);
+    expect(warnSpy).toHaveBeenCalledWith("WebSocket RPC subscription failed", {
+      error: "Git command failed in GitCore.statusDetails",
+    });
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      "WebSocket RPC subscription disconnected",
+      expect.anything(),
+    );
+
+    unsubscribe();
+    await transport.dispose();
+  });
+
+  it("keeps retrying stream subscriptions after transport failures", async () => {
+    const transport = new WsTransport("ws://localhost:3020");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let attempts = 0;
+
+    const unsubscribe = transport.subscribe(
+      () =>
+        Stream.suspend(() => {
+          attempts += 1;
+          return Stream.fail(new Error("SocketCloseError: WebSocket closed"));
+        }),
+      vi.fn(),
+      { retryDelay: 10 },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    getSocket().open();
+
+    await waitFor(() => {
+      expect(attempts).toBeGreaterThanOrEqual(2);
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith("WebSocket RPC subscription disconnected", {
+      error: "SocketCloseError: WebSocket closed",
+    });
 
     unsubscribe();
     await transport.dispose();
