@@ -21,7 +21,7 @@ import { render } from "vitest-browser-react";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { __resetLocalApiForTests } from "../localApi";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
-import { getServerConfig } from "../rpc/serverState";
+import { getServerConfig, getServerConfigUpdatedNotification } from "../rpc/serverState";
 import { getWsConnectionStatus } from "../rpc/wsConnectionState";
 import { getRouter } from "../router";
 import { useStore } from "../store";
@@ -303,11 +303,6 @@ async function waitForNoToasts(): Promise<void> {
   );
 }
 
-async function warmServerConfigUpdateStream(): Promise<void> {
-  sendServerConfigUpdatedPush([]);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-}
-
 async function waitForInitialWsSubscriptions(): Promise<void> {
   await vi.waitFor(
     () => {
@@ -329,6 +324,33 @@ async function waitForServerConfigSnapshot(): Promise<void> {
     },
     { timeout: 8_000, interval: 16 },
   );
+}
+
+async function waitForServerConfigStreamReady(): Promise<void> {
+  const previousNotificationId = getServerConfigUpdatedNotification()?.id ?? 0;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    rpcHarness.emitStreamValue(WS_METHODS.subscribeServerConfig, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: { settings: fixture.serverConfig.settings },
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          const notification = getServerConfigUpdatedNotification();
+          expect(notification?.id).toBeGreaterThan(previousNotificationId);
+          expect(notification?.source).toBe("settingsUpdated");
+        },
+        { timeout: 200, interval: 16 },
+      );
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  throw new Error("Timed out waiting for the server config stream to deliver updates.");
 }
 
 async function mountApp(): Promise<{ cleanup: () => Promise<void> }> {
@@ -356,6 +378,7 @@ async function mountApp(): Promise<{ cleanup: () => Promise<void> }> {
   await waitForInitialWsSubscriptions();
   await waitForWsConnection();
   await waitForServerConfigSnapshot();
+  await waitForServerConfigStreamReady();
   await waitForNoToasts();
 
   return {
@@ -429,8 +452,6 @@ describe("Keybindings update toast", () => {
     const mounted = await mountApp();
 
     try {
-      await warmServerConfigUpdateStream();
-
       sendServerConfigUpdatedPush([]);
       await waitForToast("Keybindings updated", 1);
 
