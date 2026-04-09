@@ -79,7 +79,7 @@ import {
 import { useGitStatus } from "../lib/gitStatusState";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import {
@@ -932,7 +932,7 @@ interface SidebarProjectItemProps {
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
   newThreadShortcutLabel: string | null;
-  handleNewThread: ReturnType<typeof useHandleNewThread>["handleNewThread"];
+  handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   threadJumpLabelByKey: ReadonlyMap<string, string>;
@@ -2033,7 +2033,7 @@ interface SidebarProjectsContentProps {
   handleProjectDragStart: (event: DragStartEvent) => void;
   handleProjectDragEnd: (event: DragEndEvent) => void;
   handleProjectDragCancel: (event: DragCancelEvent) => void;
-  handleNewThread: ReturnType<typeof useHandleNewThread>["handleNewThread"];
+  handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   sortedProjects: readonly SidebarProjectSnapshot[];
@@ -2338,7 +2338,7 @@ export default function Sidebar() {
   const sidebarProjectSortOrder = useSettings((s) => s.sidebarProjectSortOrder);
   const defaultThreadEnvMode = useSettings((s) => s.defaultThreadEnvMode);
   const { updateSettings } = useUpdateSettings();
-  const { handleNewThread } = useHandleNewThread();
+  const { handleNewThread } = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
   const routeThreadRef = useParams({
     strict: false,
@@ -2827,31 +2827,62 @@ export default function Sidebar() {
   );
   const [threadJumpLabelByKey, setThreadJumpLabelByKey] =
     useState<ReadonlyMap<string, string>>(EMPTY_THREAD_JUMP_LABELS);
+  const threadJumpLabelsRef = useRef<ReadonlyMap<string, string>>(EMPTY_THREAD_JUMP_LABELS);
+  threadJumpLabelsRef.current = threadJumpLabelByKey;
+  const showThreadJumpHintsRef = useRef(showThreadJumpHints);
+  showThreadJumpHintsRef.current = showThreadJumpHints;
   const visibleThreadJumpLabelByKey = showThreadJumpHints
     ? threadJumpLabelByKey
     : EMPTY_THREAD_JUMP_LABELS;
   const orderedSidebarThreadKeys = visibleSidebarThreadKeys;
 
   useEffect(() => {
+    const clearThreadJumpHints = () => {
+      setThreadJumpLabelByKey((current) =>
+        current === EMPTY_THREAD_JUMP_LABELS ? current : EMPTY_THREAD_JUMP_LABELS,
+      );
+      updateThreadJumpHintsVisibility(false);
+    };
+    const shouldIgnoreThreadJumpHintUpdate = (event: globalThis.KeyboardEvent) =>
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key !== "Meta" &&
+      event.key !== "Control" &&
+      event.key !== "Alt" &&
+      event.key !== "Shift" &&
+      !showThreadJumpHintsRef.current &&
+      threadJumpLabelsRef.current === EMPTY_THREAD_JUMP_LABELS;
+
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (shouldIgnoreThreadJumpHintUpdate(event)) {
+        return;
+      }
       const shortcutContext = getCurrentSidebarShortcutContext();
       const shouldShowHints = shouldShowThreadJumpHints(event, keybindings, {
         platform,
         context: shortcutContext,
       });
-      setThreadJumpLabelByKey((current) => {
-        if (!shouldShowHints) {
-          return current === EMPTY_THREAD_JUMP_LABELS ? current : EMPTY_THREAD_JUMP_LABELS;
+      if (!shouldShowHints) {
+        if (
+          showThreadJumpHintsRef.current ||
+          threadJumpLabelsRef.current !== EMPTY_THREAD_JUMP_LABELS
+        ) {
+          clearThreadJumpHints();
         }
-        const nextLabelMap = buildThreadJumpLabelMap({
-          keybindings,
-          platform,
-          terminalOpen: shortcutContext.terminalOpen,
-          threadJumpCommandByKey,
+      } else {
+        setThreadJumpLabelByKey((current) => {
+          const nextLabelMap = buildThreadJumpLabelMap({
+            keybindings,
+            platform,
+            terminalOpen: shortcutContext.terminalOpen,
+            threadJumpCommandByKey,
+          });
+          return threadJumpLabelMapsEqual(current, nextLabelMap) ? current : nextLabelMap;
         });
-        return threadJumpLabelMapsEqual(current, nextLabelMap) ? current : nextLabelMap;
-      });
-      updateThreadJumpHintsVisibility(shouldShowHints);
+        updateThreadJumpHintsVisibility(true);
+      }
 
       if (event.defaultPrevented || event.repeat) {
         return;
@@ -2902,15 +2933,19 @@ export default function Sidebar() {
     };
 
     const onWindowKeyUp = (event: globalThis.KeyboardEvent) => {
+      if (shouldIgnoreThreadJumpHintUpdate(event)) {
+        return;
+      }
       const shortcutContext = getCurrentSidebarShortcutContext();
       const shouldShowHints = shouldShowThreadJumpHints(event, keybindings, {
         platform,
         context: shortcutContext,
       });
+      if (!shouldShowHints) {
+        clearThreadJumpHints();
+        return;
+      }
       setThreadJumpLabelByKey((current) => {
-        if (!shouldShowHints) {
-          return current === EMPTY_THREAD_JUMP_LABELS ? current : EMPTY_THREAD_JUMP_LABELS;
-        }
         const nextLabelMap = buildThreadJumpLabelMap({
           keybindings,
           platform,
@@ -2919,14 +2954,11 @@ export default function Sidebar() {
         });
         return threadJumpLabelMapsEqual(current, nextLabelMap) ? current : nextLabelMap;
       });
-      updateThreadJumpHintsVisibility(shouldShowHints);
+      updateThreadJumpHintsVisibility(true);
     };
 
     const onWindowBlur = () => {
-      setThreadJumpLabelByKey((current) =>
-        current === EMPTY_THREAD_JUMP_LABELS ? current : EMPTY_THREAD_JUMP_LABELS,
-      );
-      updateThreadJumpHintsVisibility(false);
+      clearThreadJumpHints();
     };
 
     window.addEventListener("keydown", onWindowKeyDown);

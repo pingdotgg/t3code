@@ -6,7 +6,7 @@ import { useCallback } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { useHandleNewThread } from "./useHandleNewThread";
+import { useNewThreadHandler } from "./useHandleNewThread";
 import { ensureEnvironmentApi, readEnvironmentApi } from "../environmentApi";
 import { invalidateGitQueries } from "../lib/gitReactQuery";
 import { newCommandId } from "../lib/utils";
@@ -32,7 +32,7 @@ export function useThreadActions() {
   );
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const router = useRouter();
-  const { handleNewThread } = useHandleNewThread();
+  const { handleNewThread } = useNewThreadHandler();
   const queryClient = useQueryClient();
 
   const resolveThreadTarget = useCallback((target: ScopedThreadRef) => {

@@ -38,6 +38,7 @@ import {
 } from "./lib/terminalContext";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { useShallow } from "zustand/react/shallow";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
@@ -378,6 +379,11 @@ export interface EffectiveComposerModelState {
   modelOptions: ProviderModelOptions | null;
 }
 
+interface ComposerDraftModelState {
+  activeProvider: ProviderKind | null;
+  modelSelectionByProvider: Partial<Record<ProviderKind, ModelSelection>>;
+}
+
 function providerModelOptionsFromSelection(
   modelSelection: ModelSelection | null | undefined,
 ): ProviderModelOptions | null {
@@ -420,6 +426,10 @@ Object.freeze(EMPTY_IDS);
 Object.freeze(EMPTY_PERSISTED_ATTACHMENTS);
 const EMPTY_MODEL_SELECTION_BY_PROVIDER: Partial<Record<ProviderKind, ModelSelection>> =
   Object.freeze({});
+const EMPTY_COMPOSER_DRAFT_MODEL_STATE = Object.freeze<ComposerDraftModelState>({
+  activeProvider: null,
+  modelSelectionByProvider: EMPTY_MODEL_SELECTION_BY_PROVIDER,
+});
 
 const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   prompt: "",
@@ -2764,6 +2774,22 @@ export function useComposerThreadDraft(threadRef: ComposerThreadTarget): Compose
   });
 }
 
+export function useComposerDraftModelState(
+  threadRef: ComposerThreadTarget,
+): ComposerDraftModelState {
+  return useComposerDraftStore(
+    useShallow((state) => {
+      const draft = getComposerDraftState(state, threadRef);
+      return draft
+        ? {
+            activeProvider: draft.activeProvider,
+            modelSelectionByProvider: draft.modelSelectionByProvider,
+          }
+        : EMPTY_COMPOSER_DRAFT_MODEL_STATE;
+    }),
+  );
+}
+
 export function useEffectiveComposerModelState(input: {
   threadRef?: ComposerThreadTarget;
   draftId?: DraftId;
@@ -2773,7 +2799,9 @@ export function useEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
-  const draft = useComposerThreadDraft(input.threadRef ?? input.draftId ?? DraftId.makeUnsafe(""));
+  const draft = useComposerDraftModelState(
+    input.threadRef ?? input.draftId ?? DraftId.makeUnsafe(""),
+  );
 
   return useMemo(
     () =>

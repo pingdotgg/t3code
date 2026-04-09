@@ -1,6 +1,6 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useStore } from "../store";
@@ -27,7 +27,7 @@ interface BranchToolbarProps {
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
 }
 
-export function BranchToolbar({
+export const BranchToolbar = memo(function BranchToolbar({
   environmentId,
   threadId,
   draftId,
@@ -101,4 +101,4 @@ export function BranchToolbar({
       />
     </div>
   );
-}
+});
