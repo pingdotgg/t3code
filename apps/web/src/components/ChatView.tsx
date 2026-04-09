@@ -31,7 +31,7 @@ import {
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -491,7 +491,7 @@ interface PersistentThreadTerminalDrawerProps {
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
-function PersistentThreadTerminalDrawer({
+const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
   threadRef,
   threadId,
   visible,
@@ -650,7 +650,7 @@ function PersistentThreadTerminalDrawer({
       />
     </div>
   );
-}
+});
 
 export default function ChatView(props: ChatViewProps) {
   const { environmentId, threadId, routeKind } = props;
@@ -867,6 +867,14 @@ export default function ChatView(props: ChatViewProps) {
     [draftThreadsByThreadKey],
   );
   const [mountedTerminalThreadKeys, setMountedTerminalThreadKeys] = useState<string[]>([]);
+  const mountedTerminalThreadRefs = useMemo(
+    () =>
+      mountedTerminalThreadKeys.flatMap((mountedThreadKey) => {
+        const mountedThreadRef = parseScopedThreadKey(mountedThreadKey);
+        return mountedThreadRef ? [{ key: mountedThreadKey, threadRef: mountedThreadRef }] : [];
+      }),
+    [mountedTerminalThreadKeys],
+  );
 
   const setPrompt = useCallback(
     (nextPrompt: string) => {
@@ -4850,28 +4858,22 @@ export default function ChatView(props: ChatViewProps) {
       </div>
       {/* end horizontal flex container */}
 
-      {mountedTerminalThreadKeys.flatMap((mountedThreadKey) => {
-        const mountedThreadRef = parseScopedThreadKey(mountedThreadKey);
-        if (!mountedThreadRef) {
-          return [];
-        }
-        return [
-          <PersistentThreadTerminalDrawer
-            key={mountedThreadKey}
-            threadRef={mountedThreadRef}
-            threadId={mountedThreadRef.threadId}
-            visible={mountedThreadKey === activeThreadKey && terminalState.terminalOpen}
-            launchContext={
-              mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
-            }
-            focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />,
-        ];
-      })}
+      {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
+        <PersistentThreadTerminalDrawer
+          key={mountedThreadKey}
+          threadRef={mountedThreadRef}
+          threadId={mountedThreadRef.threadId}
+          visible={mountedThreadKey === activeThreadKey && terminalState.terminalOpen}
+          launchContext={
+            mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
+          }
+          focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
+          splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+          newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+          closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+          onAddTerminalContext={addTerminalContextToDraft}
+        />
+      ))}
 
       {expandedImage && expandedImageItem && (
         <div

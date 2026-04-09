@@ -72,6 +72,10 @@ export default defineConfig({
     ...(devProxyTarget
       ? {
           proxy: {
+            "/.well-known": {
+              target: devProxyTarget,
+              changeOrigin: true,
+            },
             "/api": {
               target: devProxyTarget,
               changeOrigin: true,

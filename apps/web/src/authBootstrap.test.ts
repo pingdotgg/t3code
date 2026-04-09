@@ -175,6 +175,47 @@ describe("resolveInitialServerAuthGateState", () => {
     });
   });
 
+  it("uses the vite proxy for desktop-managed loopback auth requests during local dev", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      sessionResponse({
+        authenticated: false,
+        auth: {
+          policy: "desktop-managed-local",
+          bootstrapMethods: ["desktop-bootstrap"],
+          sessionMethods: ["browser-session-cookie"],
+          sessionCookieName: "t3_session",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://127.0.0.1:5733");
+
+    const testWindow = installTestBrowser("http://127.0.0.1:5733/");
+    testWindow.desktopBridge = {
+      getLocalEnvironmentBootstrap: () => ({
+        label: "Local environment",
+        httpBaseUrl: "http://127.0.0.1:3773",
+        wsBaseUrl: "ws://127.0.0.1:3773",
+      }),
+    } as DesktopBridge;
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: {
+        policy: "desktop-managed-local",
+        bootstrapMethods: ["desktop-bootstrap"],
+        sessionMethods: ["browser-session-cookie"],
+        sessionCookieName: "t3_session",
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:5733/api/auth/session", {
+      credentials: "include",
+    });
+  });
+
   it("returns a requires-auth state instead of throwing when no bootstrap credential exists", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
       sessionResponse({

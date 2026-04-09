@@ -196,6 +196,17 @@ function reconcileSnapshotDerivedState() {
   useTerminalStateStore.getState().removeOrphanedTerminalStates(activeThreadKeys);
 }
 
+export function shouldApplyTerminalEvent(input: {
+  serverThreadArchivedAt: string | null | undefined;
+  hasDraftThread: boolean;
+}): boolean {
+  if (input.serverThreadArchivedAt !== undefined) {
+    return input.serverThreadArchivedAt === null;
+  }
+
+  return input.hasDraftThread;
+}
+
 function applyRecoveredEventBatch(
   events: ReadonlyArray<OrchestrationEvent>,
   environmentId: EnvironmentId,
@@ -266,8 +277,15 @@ function createEnvironmentConnectionHandlers() {
     },
     applyTerminalEvent: (event: TerminalEvent, environmentId: EnvironmentId) => {
       const threadRef = scopeThreadRef(environmentId, ThreadId.makeUnsafe(event.threadId));
-      const thread = selectThreadByRef(useStore.getState(), threadRef);
-      if (!thread || thread.archivedAt !== null) {
+      const serverThread = selectThreadByRef(useStore.getState(), threadRef);
+      const hasDraftThread =
+        useComposerDraftStore.getState().getDraftThreadByRef(threadRef) !== null;
+      if (
+        !shouldApplyTerminalEvent({
+          serverThreadArchivedAt: serverThread?.archivedAt,
+          hasDraftThread,
+        })
+      ) {
         return;
       }
       useTerminalStateStore.getState().applyTerminalEvent(threadRef, event);
