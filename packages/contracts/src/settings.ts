@@ -15,6 +15,42 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+export const FontFamilySetting = Schema.Literals(["default", "system"]);
+export type FontFamilySetting = typeof FontFamilySetting.Type;
+export const DEFAULT_FONT_FAMILY_SETTING: FontFamilySetting = "default";
+
+export const UserMessageFontSetting = Schema.Literals(["monospace", "sans"]);
+export type UserMessageFontSetting = typeof UserMessageFontSetting.Type;
+export const DEFAULT_USER_MESSAGE_FONT_SETTING: UserMessageFontSetting = "monospace";
+
+export const ChatTypographyFontSize = Schema.Literals([
+  "13px",
+  "14px",
+  "15px",
+  "16px",
+  "17px",
+  "18px",
+]);
+export type ChatTypographyFontSize = typeof ChatTypographyFontSize.Type;
+export const DEFAULT_CHAT_FONT_SIZE: ChatTypographyFontSize = "14px";
+
+export const CodeTypographyFontSize = Schema.Literals([
+  "12px",
+  "13px",
+  "14px",
+  "15px",
+  "16px",
+  "17px",
+  "18px",
+]);
+export type CodeTypographyFontSize = typeof CodeTypographyFontSize.Type;
+export const DEFAULT_CODE_FONT_SIZE: CodeTypographyFontSize = "14px";
+
+export const TypographyLineHeight = Schema.Literals(["1.4", "1.5", "1.625", "1.75", "1.875"]);
+export type TypographyLineHeight = typeof TypographyLineHeight.Type;
+export const DEFAULT_CHAT_LINE_HEIGHT: TypographyLineHeight = "1.625";
+export const DEFAULT_CODE_LINE_HEIGHT: TypographyLineHeight = "1.5";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -27,6 +63,22 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  fontFamily: FontFamilySetting.pipe(Schema.withDecodingDefault(() => DEFAULT_FONT_FAMILY_SETTING)),
+  userMessageFont: UserMessageFontSetting.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_USER_MESSAGE_FONT_SETTING),
+  ),
+  chatFontSize: ChatTypographyFontSize.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_CHAT_FONT_SIZE),
+  ),
+  chatLineHeight: TypographyLineHeight.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_CHAT_LINE_HEIGHT),
+  ),
+  codeFontSize: CodeTypographyFontSize.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_CODE_FONT_SIZE),
+  ),
+  codeLineHeight: TypographyLineHeight.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_CODE_LINE_HEIGHT),
+  ),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER),
   ),

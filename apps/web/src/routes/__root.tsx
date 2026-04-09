@@ -42,6 +42,7 @@ import { selectProjects, selectThreadById, selectThreads, useStore } from "../st
 import { useUiStateStore } from "../uiStateStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { migrateLocalSettingsToServer } from "../hooks/useSettings";
+import { useAppliedTypographySettings } from "../hooks/useAppliedTypographySettings";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
@@ -61,6 +62,8 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
+  useAppliedTypographySettings();
+
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">

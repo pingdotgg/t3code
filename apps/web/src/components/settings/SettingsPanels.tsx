@@ -18,7 +18,7 @@ import {
   type ServerProviderModel,
   ThreadId,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
@@ -48,6 +48,18 @@ import {
 import { ensureNativeApi, readNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
+import {
+  CHAT_TYPOGRAPHY_FONT_SIZE_OPTIONS,
+  CODE_TYPOGRAPHY_FONT_SIZE_OPTIONS,
+  FONT_FAMILY_OPTIONS,
+  TYPOGRAPHY_LINE_HEIGHT_OPTIONS,
+  isChatTypographyFontSize,
+  isCodeTypographyFontSize,
+  isFontFamilySetting,
+  isTypographyLineHeight,
+  isUserMessageFontSetting,
+  USER_MESSAGE_FONT_OPTIONS,
+} from "../../typography";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
@@ -315,6 +327,57 @@ function SettingsPageContainer({ children }: { children: ReactNode }) {
   );
 }
 
+function TypographySettingSelect(props: {
+  ariaLabel: string;
+  label: string;
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  onValueChange: (value: string | null) => void;
+}) {
+  return (
+    <div className="min-w-0 flex-1 space-y-1">
+      <div className="text-[10px] font-medium text-muted-foreground">{props.label}</div>
+      <Select value={props.value} onValueChange={props.onValueChange}>
+        <SelectTrigger className="w-full min-w-0" aria-label={props.ariaLabel}>
+          <SelectValue>
+            {props.options.find((option) => option.value === props.value)?.label ?? props.value}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectPopup align="end" alignItemWithTrigger={false}>
+          {props.options.map((option) => (
+            <SelectItem hideIndicator key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+    </div>
+  );
+}
+
+function getTypographyDirtyState(
+  settings: Pick<
+    UnifiedSettings,
+    | "fontFamily"
+    | "userMessageFont"
+    | "chatFontSize"
+    | "chatLineHeight"
+    | "codeFontSize"
+    | "codeLineHeight"
+  >,
+) {
+  return {
+    isFontFamilyDirty: settings.fontFamily !== DEFAULT_UNIFIED_SETTINGS.fontFamily,
+    isUserMessageFontDirty: settings.userMessageFont !== DEFAULT_UNIFIED_SETTINGS.userMessageFont,
+    isChatTypographyDirty:
+      settings.chatFontSize !== DEFAULT_UNIFIED_SETTINGS.chatFontSize ||
+      settings.chatLineHeight !== DEFAULT_UNIFIED_SETTINGS.chatLineHeight,
+    isCodeTypographyDirty:
+      settings.codeFontSize !== DEFAULT_UNIFIED_SETTINGS.codeFontSize ||
+      settings.codeLineHeight !== DEFAULT_UNIFIED_SETTINGS.codeLineHeight,
+  } as const;
+}
+
 function AboutVersionTitle() {
   return (
     <span className="inline-flex items-center gap-2">
@@ -446,6 +509,12 @@ export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { resetSettings } = useUpdateSettings();
+  const {
+    isFontFamilyDirty,
+    isUserMessageFontDirty,
+    isChatTypographyDirty,
+    isCodeTypographyDirty,
+  } = getTypographyDirtyState(settings);
 
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -460,6 +529,10 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(isFontFamilyDirty ? ["Font family"] : []),
+      ...(isUserMessageFontDirty ? ["User messages"] : []),
+      ...(isChatTypographyDirty ? ["Chat text"] : []),
+      ...(isCodeTypographyDirty ? ["Code text"] : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -483,7 +556,11 @@ export function useSettingsRestore(onRestored?: () => void) {
     ],
     [
       areProviderSettingsDirty,
+      isChatTypographyDirty,
+      isCodeTypographyDirty,
+      isFontFamilyDirty,
       isGitWritingModelDirty,
+      isUserMessageFontDirty,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.defaultThreadEnvMode,
@@ -597,6 +674,12 @@ export function GeneralSettingsPanel() {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
+  const {
+    isFontFamilyDirty,
+    isUserMessageFontDirty,
+    isChatTypographyDirty,
+    isCodeTypographyDirty,
+  } = getTypographyDirtyState(settings);
 
   const openInPreferredEditor = useCallback(
     (target: "keybindings" | "logsDirectory", path: string | null, failureMessage: string) => {
@@ -809,6 +892,177 @@ export function GeneralSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Font family"
+          description="Sets the main UI and chat font family. Code blocks stay monospace."
+          resetAction={
+            isFontFamilyDirty ? (
+              <SettingResetButton
+                label="font family"
+                onClick={() =>
+                  updateSettings({
+                    fontFamily: DEFAULT_UNIFIED_SETTINGS.fontFamily,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.fontFamily}
+              onValueChange={(value) => {
+                if (value && isFontFamilySetting(value)) {
+                  updateSettings({ fontFamily: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Font family preference">
+                <SelectValue>
+                  {FONT_FAMILY_OPTIONS.find((option) => option.value === settings.fontFamily)
+                    ?.label ?? "DM Sans"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_FAMILY_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="User messages"
+          description="Choose whether your sent messages render in monospace or sans."
+          resetAction={
+            isUserMessageFontDirty ? (
+              <SettingResetButton
+                label="user messages"
+                onClick={() =>
+                  updateSettings({
+                    userMessageFont: DEFAULT_UNIFIED_SETTINGS.userMessageFont,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.userMessageFont}
+              onValueChange={(value) => {
+                if (value && isUserMessageFontSetting(value)) {
+                  updateSettings({ userMessageFont: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="User message font">
+                <SelectValue>
+                  {USER_MESSAGE_FONT_OPTIONS.find(
+                    (option) => option.value === settings.userMessageFont,
+                  )?.label ?? "Monospace"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {USER_MESSAGE_FONT_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Chat text"
+          description="Controls the composer and assistant prose."
+          resetAction={
+            isChatTypographyDirty ? (
+              <SettingResetButton
+                label="chat text"
+                onClick={() =>
+                  updateSettings({
+                    chatFontSize: DEFAULT_UNIFIED_SETTINGS.chatFontSize,
+                    chatLineHeight: DEFAULT_UNIFIED_SETTINGS.chatLineHeight,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="grid w-full grid-cols-2 gap-2 sm:w-[18rem]">
+              <TypographySettingSelect
+                ariaLabel="Chat font size"
+                label="Size"
+                value={settings.chatFontSize}
+                options={CHAT_TYPOGRAPHY_FONT_SIZE_OPTIONS}
+                onValueChange={(value) => {
+                  if (value && isChatTypographyFontSize(value)) {
+                    updateSettings({ chatFontSize: value });
+                  }
+                }}
+              />
+              <TypographySettingSelect
+                ariaLabel="Chat line height"
+                label="Line Height"
+                value={settings.chatLineHeight}
+                options={TYPOGRAPHY_LINE_HEIGHT_OPTIONS}
+                onValueChange={(value) => {
+                  if (value && isTypographyLineHeight(value)) {
+                    updateSettings({ chatLineHeight: value });
+                  }
+                }}
+              />
+            </div>
+          }
+        />
+
+        <SettingsRow
+          title="Code text"
+          description="Controls inline code and fenced code blocks in assistant responses."
+          resetAction={
+            isCodeTypographyDirty ? (
+              <SettingResetButton
+                label="code text"
+                onClick={() =>
+                  updateSettings({
+                    codeFontSize: DEFAULT_UNIFIED_SETTINGS.codeFontSize,
+                    codeLineHeight: DEFAULT_UNIFIED_SETTINGS.codeLineHeight,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="grid w-full grid-cols-2 gap-2 sm:w-[18rem]">
+              <TypographySettingSelect
+                ariaLabel="Code font size"
+                label="Size"
+                value={settings.codeFontSize}
+                options={CODE_TYPOGRAPHY_FONT_SIZE_OPTIONS}
+                onValueChange={(value) => {
+                  if (value && isCodeTypographyFontSize(value)) {
+                    updateSettings({ codeFontSize: value });
+                  }
+                }}
+              />
+              <TypographySettingSelect
+                ariaLabel="Code line height"
+                label="Line Height"
+                value={settings.codeLineHeight}
+                options={TYPOGRAPHY_LINE_HEIGHT_OPTIONS}
+                onValueChange={(value) => {
+                  if (value && isTypographyLineHeight(value)) {
+                    updateSettings({ codeLineHeight: value });
+                  }
+                }}
+              />
+            </div>
           }
         />
 

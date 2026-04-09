@@ -64,6 +64,19 @@
 :root {
   color-scheme: light;
   --radius: 0.625rem;
+  --app-font-family-default:
+    "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --app-code-font-family:
+    "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --app-ui-font-family: var(--app-font-family-default);
+  --app-chat-font-family: var(--app-font-family-default);
+  --app-user-message-font-family: var(--app-code-font-family);
+  --app-user-message-font-size: 14px;
+  --app-user-message-line-height: 1.5;
+  --app-chat-font-size: 14px;
+  --app-chat-line-height: 1.625;
+  --app-code-font-size: 14px;
+  --app-code-line-height: 1.5;
   --background: var(--color-white);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
@@ -121,13 +134,7 @@
 }
 
 body {
-  font-family:
-    "DM Sans",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    system-ui,
-    sans-serif;
+  font-family: var(--app-ui-font-family);
   margin: 0;
   padding: 0;
   min-height: 100vh;
@@ -157,10 +164,20 @@ body::after {
 }
 
 pre,
-code,
-textarea,
-input {
-  font-family: "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+code {
+  font-family: var(--app-code-font-family);
+}
+
+.app-chat-typography {
+  font-family: var(--app-chat-font-family);
+  font-size: var(--app-chat-font-size);
+  line-height: var(--app-chat-line-height);
+}
+
+.app-user-message-typography {
+  font-family: var(--app-user-message-font-family);
+  font-size: var(--app-user-message-font-size);
+  line-height: var(--app-user-message-line-height);
 }
 
 /* Window drag region (frameless titlebar) */
@@ -315,7 +332,9 @@ label:has(> select#reasoning-effort) select {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--foreground);
-  font-size: 0.75rem;
+  font-family: var(--app-code-font-family);
+  font-size: var(--app-code-font-size);
+  line-height: var(--app-code-line-height);
 }
 
 .chat-markdown pre {
@@ -325,14 +344,18 @@ label:has(> select#reasoning-effort) select {
   border-radius: 0.75rem;
   background: var(--muted);
   padding: 0.8rem 0.9rem;
+  font-family: var(--app-code-font-family);
+  font-size: var(--app-code-font-size);
+  line-height: var(--app-code-line-height);
 }
 
 .chat-markdown pre code {
   border: none;
   background: transparent;
   padding: 0;
-  line-height: 1.5;
-  font-size: 0.875rem;
+  font-family: var(--app-code-font-family);
+  font-size: var(--app-code-font-size);
+  line-height: var(--app-code-line-height);
 }
 
 .chat-markdown .chat-markdown-codeblock {
@@ -379,6 +402,9 @@ label:has(> select#reasoning-effort) select {
 
 .chat-markdown .chat-markdown-shiki .shiki {
   background: color-mix(in srgb, var(--muted) 78%, var(--background)) !important;
+  font-family: var(--app-code-font-family) !important;
+  font-size: var(--app-code-font-size) !important;
+  line-height: var(--app-code-line-height) !important;
 }
 
 .chat-markdown table {

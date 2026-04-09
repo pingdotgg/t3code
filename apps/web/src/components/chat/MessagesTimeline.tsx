@@ -56,6 +56,7 @@ import {
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
+import { useTypographySettings } from "../../hooks/useTypographySettings";
 import {
   buildInlineTerminalContextText,
   formatInlineTerminalContextLabel,
@@ -123,6 +124,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   workspaceRoot,
   onVirtualizerSnapshot,
 }: MessagesTimelineProps) {
+  const typography = useTypographySettings();
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
 
@@ -223,6 +225,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         expandedWorkGroups,
         timelineWidthPx,
         turnDiffSummaryByAssistantMessageId,
+        typography,
       });
     },
     measureElement: measureVirtualElement,
@@ -232,7 +235,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   useEffect(() => {
     if (timelineWidthPx === null) return;
     rowVirtualizer.measure();
-  }, [rowVirtualizer, timelineWidthPx]);
+  }, [rowVirtualizer, timelineWidthPx, typography]);
   useEffect(() => {
     rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
       const viewportHeight = instance.scrollRect?.height ?? 0;
@@ -700,7 +703,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         }
 
         return (
-          <div className="wrap-break-word whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground">
+          <div className="app-user-message-typography wrap-break-word whitespace-pre-wrap text-foreground">
             {inlineNodes}
           </div>
         );
@@ -728,7 +731,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     }
 
     return (
-      <div className="wrap-break-word whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground">
+      <div className="app-user-message-typography wrap-break-word whitespace-pre-wrap text-foreground">
         {inlineNodes}
       </div>
     );
@@ -739,9 +742,9 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   }
 
   return (
-    <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+    <div className="app-user-message-typography whitespace-pre-wrap wrap-break-word text-foreground">
       {props.text}
-    </pre>
+    </div>
   );
 });
 

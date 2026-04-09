@@ -1,10 +1,18 @@
 import { deriveDisplayedUserMessageState } from "../lib/terminalContext";
+import {
+  DEFAULT_TYPOGRAPHY_SETTINGS,
+  resolveChatAverageCharacterWidthPx,
+  resolveTypographyFontSizePx,
+  resolveTypographyLineHeightValue,
+  resolveUserMessageAverageCharacterWidthPx,
+  resolveUserMessageFontSizePx,
+  resolveUserMessageLineHeightValue,
+  type TypographySettings,
+} from "../typography";
 import { buildInlineTerminalContextText } from "./chat/userMessageTerminalContexts";
 
 const ASSISTANT_CHARS_PER_LINE_FALLBACK = 72;
-const USER_CHARS_PER_LINE_FALLBACK = 56;
-const USER_LINE_HEIGHT_PX = 22;
-const ASSISTANT_LINE_HEIGHT_PX = 22.75;
+const USER_CHARS_PER_LINE_FALLBACK = 64;
 // Assistant rows render as markdown content plus a compact timestamp meta line.
 // The DOM baseline is much smaller than the user bubble chrome, so model it
 // separately instead of reusing the old shared constant.
@@ -17,8 +25,6 @@ const USER_ATTACHMENT_ROW_HEIGHT_PX = 116;
 const USER_BUBBLE_WIDTH_RATIO = 0.8;
 const USER_BUBBLE_HORIZONTAL_PADDING_PX = 32;
 const ASSISTANT_MESSAGE_HORIZONTAL_PADDING_PX = 8;
-const USER_MONO_AVG_CHAR_WIDTH_PX = 8.4;
-const ASSISTANT_AVG_CHAR_WIDTH_PX = 7.2;
 const MIN_USER_CHARS_PER_LINE = 4;
 const MIN_ASSISTANT_CHARS_PER_LINE = 20;
 
@@ -30,6 +36,7 @@ interface TimelineMessageHeightInput {
 
 interface TimelineHeightEstimateLayout {
   timelineWidthPx: number | null;
+  typography?: TypographySettings | undefined;
 }
 
 function estimateWrappedLineCount(text: string, charsPerLine: number): number {
@@ -55,34 +62,52 @@ function isFinitePositiveNumber(value: number | null | undefined): value is numb
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-function estimateCharsPerLineForUser(timelineWidthPx: number | null): number {
+function estimateCharsPerLineForUser(
+  timelineWidthPx: number | null,
+  averageCharWidthPx: number,
+): number {
   if (!isFinitePositiveNumber(timelineWidthPx)) return USER_CHARS_PER_LINE_FALLBACK;
   const bubbleWidthPx = timelineWidthPx * USER_BUBBLE_WIDTH_RATIO;
   const textWidthPx = Math.max(bubbleWidthPx - USER_BUBBLE_HORIZONTAL_PADDING_PX, 0);
-  return Math.max(MIN_USER_CHARS_PER_LINE, Math.floor(textWidthPx / USER_MONO_AVG_CHAR_WIDTH_PX));
+  return Math.max(MIN_USER_CHARS_PER_LINE, Math.floor(textWidthPx / averageCharWidthPx));
 }
 
-function estimateCharsPerLineForAssistant(timelineWidthPx: number | null): number {
+function estimateCharsPerLineForAssistant(
+  timelineWidthPx: number | null,
+  averageCharWidthPx: number,
+): number {
   if (!isFinitePositiveNumber(timelineWidthPx)) return ASSISTANT_CHARS_PER_LINE_FALLBACK;
   const textWidthPx = Math.max(timelineWidthPx - ASSISTANT_MESSAGE_HORIZONTAL_PADDING_PX, 0);
-  return Math.max(
-    MIN_ASSISTANT_CHARS_PER_LINE,
-    Math.floor(textWidthPx / ASSISTANT_AVG_CHAR_WIDTH_PX),
-  );
+  return Math.max(MIN_ASSISTANT_CHARS_PER_LINE, Math.floor(textWidthPx / averageCharWidthPx));
 }
 
 export function estimateTimelineMessageHeight(
   message: TimelineMessageHeightInput,
   layout: TimelineHeightEstimateLayout = { timelineWidthPx: null },
 ): number {
+  const typography = layout.typography ?? DEFAULT_TYPOGRAPHY_SETTINGS;
+  const assistantLineHeightPx =
+    resolveTypographyFontSizePx(typography.chatFontSize) *
+    resolveTypographyLineHeightValue(typography.chatLineHeight);
+  const userLineHeightPx =
+    resolveUserMessageFontSizePx(typography) * resolveUserMessageLineHeightValue(typography);
+  const averageCharWidthPx = resolveChatAverageCharacterWidthPx(typography);
+
   if (message.role === "assistant") {
-    const charsPerLine = estimateCharsPerLineForAssistant(layout.timelineWidthPx);
+    const charsPerLine = estimateCharsPerLineForAssistant(
+      layout.timelineWidthPx,
+      averageCharWidthPx,
+    );
     const estimatedLines = estimateWrappedLineCount(message.text, charsPerLine);
-    return ASSISTANT_BASE_HEIGHT_PX + estimatedLines * ASSISTANT_LINE_HEIGHT_PX;
+    return ASSISTANT_BASE_HEIGHT_PX + estimatedLines * assistantLineHeightPx;
   }
 
   if (message.role === "user") {
-    const charsPerLine = estimateCharsPerLineForUser(layout.timelineWidthPx);
+    const userAverageCharWidthPx = resolveUserMessageAverageCharacterWidthPx(typography);
+    const charsPerLine = estimateCharsPerLineForUser(
+      layout.timelineWidthPx,
+      userAverageCharWidthPx,
+    );
     const displayedUserMessage = deriveDisplayedUserMessageState(message.text);
     const renderedText =
       displayedUserMessage.contexts.length > 0
@@ -97,12 +122,12 @@ export function estimateTimelineMessageHeight(
     const attachmentCount = message.attachments?.length ?? 0;
     const attachmentRows = Math.ceil(attachmentCount / ATTACHMENTS_PER_ROW);
     const attachmentHeight = attachmentRows * USER_ATTACHMENT_ROW_HEIGHT_PX;
-    return USER_BASE_HEIGHT_PX + estimatedLines * USER_LINE_HEIGHT_PX + attachmentHeight;
+    return USER_BASE_HEIGHT_PX + estimatedLines * userLineHeightPx + attachmentHeight;
   }
 
   // `system` messages are not rendered in the chat timeline, but keep a stable
   // explicit branch in case they are present in timeline data.
-  const charsPerLine = estimateCharsPerLineForAssistant(layout.timelineWidthPx);
+  const charsPerLine = estimateCharsPerLineForAssistant(layout.timelineWidthPx, averageCharWidthPx);
   const estimatedLines = estimateWrappedLineCount(message.text, charsPerLine);
-  return ASSISTANT_BASE_HEIGHT_PX + estimatedLines * ASSISTANT_LINE_HEIGHT_PX;
+  return ASSISTANT_BASE_HEIGHT_PX + estimatedLines * assistantLineHeightPx;
 }
