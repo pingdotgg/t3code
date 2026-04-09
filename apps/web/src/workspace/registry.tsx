@@ -30,14 +30,17 @@ function RegisteredDiffSurface(props: {
   const { updateSurface } = useWorkspaceActions();
   const diffMode: DiffPanelMode = props.renderMode === "sheet" ? "sheet" : "sidebar";
   const onFocusChange = useCallback(
-    (focus: Extract<SecondarySurface, { id: "diff" }>["input"]["focus"]) => {
+    (
+      focus: Extract<SecondarySurface, { id: "diff" }>["input"]["focus"],
+      options?: { replace?: boolean },
+    ) => {
       updateSurface(
         "secondary",
         {
           threadRef: props.surface.input.threadRef,
           focus,
         },
-        { replace: false },
+        { replace: options?.replace ?? false },
       );
     },
     [props.surface.input.threadRef, updateSurface],

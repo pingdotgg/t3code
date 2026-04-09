@@ -31,7 +31,8 @@ import { useStore } from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
-import { type DiffSurfaceFocus } from "../workspace/types";
+import { normalizeDiffSurfaceFocus } from "./DiffPanel.logic";
+import { sameDiffSurfaceFocus, type DiffSurfaceFocus } from "../workspace/types";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
@@ -161,7 +162,7 @@ interface DiffPanelProps {
   threadRef: ScopedThreadRef;
   focus: DiffSurfaceFocus;
   mode?: DiffPanelMode;
-  onFocusChange?: (focus: DiffSurfaceFocus) => void;
+  onFocusChange?: (focus: DiffSurfaceFocus, options?: { replace?: boolean }) => void;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
@@ -219,14 +220,22 @@ export default function DiffPanel({
       }),
     [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
   );
+  const normalizedFocus = useMemo(
+    () =>
+      normalizeDiffSurfaceFocus(
+        focus,
+        orderedTurnDiffSummaries.map((summary) => summary.turnId),
+      ),
+    [focus, orderedTurnDiffSummaries],
+  );
 
-  const selectedTurnId = focus.scope === "turn" ? focus.turnId : null;
-  const selectedFilePath = focus.scope === "turn" ? (focus.filePath ?? null) : null;
+  const selectedTurnId = normalizedFocus.scope === "turn" ? normalizedFocus.turnId : null;
+  const selectedFilePath =
+    normalizedFocus.scope === "turn" ? (normalizedFocus.filePath ?? null) : null;
   const selectedTurn =
     selectedTurnId === null
       ? undefined
-      : (orderedTurnDiffSummaries.find((summary) => summary.turnId === selectedTurnId) ??
-        orderedTurnDiffSummaries[0]);
+      : orderedTurnDiffSummaries.find((summary) => summary.turnId === selectedTurnId);
   const selectedCheckpointTurnCount =
     selectedTurn &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
@@ -314,6 +323,14 @@ export default function DiffPanel({
       }),
     );
   }, [renderablePatch]);
+
+  useEffect(() => {
+    if (sameDiffSurfaceFocus(focus, normalizedFocus)) {
+      return;
+    }
+
+    onFocusChange?.(normalizedFocus, { replace: true });
+  }, [focus, normalizedFocus, onFocusChange]);
 
   useEffect(() => {
     if (!selectedFilePath || !patchViewportRef.current) {

@@ -78,21 +78,7 @@ export function createWorkspaceStore(
     syncRouteState: (routeState) =>
       set((current) => {
         if (sameWorkspaceState(current.routeState, routeState)) {
-          if (
-            current.optimisticTransition === null ||
-            sameWorkspaceState(routeState, current.optimisticTransition.baseState)
-          ) {
-            return current;
-          }
-        }
-
-        if (
-          current.optimisticTransition &&
-          sameWorkspaceState(routeState, current.optimisticTransition.baseState)
-        ) {
-          return {
-            routeState,
-          };
+          return current;
         }
 
         return {
