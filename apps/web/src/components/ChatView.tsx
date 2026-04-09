@@ -115,10 +115,13 @@ import {
   ListTodoIcon,
   LockIcon,
   LockOpenIcon,
+  type LucideIcon,
+  PenLineIcon,
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { cn, randomUUID } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
@@ -409,6 +412,29 @@ interface TerminalLaunchContext {
   cwd: string;
   worktreePath: string | null;
 }
+
+const runtimeModeConfig: Record<
+  RuntimeMode,
+  { label: string; description: string; icon: LucideIcon }
+> = {
+  "approval-required": {
+    label: "Supervised",
+    description: "Ask before commands and file changes.",
+    icon: LockIcon,
+  },
+  "auto-accept-edits": {
+    label: "Auto-accept edits",
+    description: "Auto-approve edits, ask before other actions.",
+    icon: PenLineIcon,
+  },
+  "full-access": {
+    label: "Full access",
+    description: "Allow commands and edits without prompts.",
+    icon: LockOpenIcon,
+  },
+};
+
+const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 
 type PersistentTerminalLaunchContext = Pick<TerminalLaunchContext, "cwd" | "worktreePath">;
 
@@ -960,6 +986,8 @@ export default function ChatView(props: ChatViewProps) {
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const runtimeModeOption = runtimeModeConfig[runtimeMode];
+  const RuntimeModeIcon = runtimeModeOption.icon;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
@@ -2350,11 +2378,6 @@ export default function ChatView(props: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
-  const toggleRuntimeMode = useCallback(() => {
-    void handleRuntimeModeChange(
-      runtimeMode === "full-access" ? "approval-required" : "full-access",
-    );
-  }, [handleRuntimeModeChange, runtimeMode]);
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
@@ -4651,7 +4674,7 @@ export default function ChatView(props: ChatViewProps) {
                             traitsMenuContent={providerTraitsMenuContent}
                             onToggleInteractionMode={toggleInteractionMode}
                             onTogglePlanSidebar={togglePlanSidebar}
-                            onToggleRuntimeMode={toggleRuntimeMode}
+                            onRuntimeModeChange={handleRuntimeModeChange}
                           />
                         ) : (
                           <>
@@ -4693,29 +4716,39 @@ export default function ChatView(props: ChatViewProps) {
                               className="mx-0.5 hidden h-4 sm:block"
                             />
 
-                            <Button
-                              variant="ghost"
-                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                              size="sm"
-                              type="button"
-                              onClick={() =>
-                                void handleRuntimeModeChange(
-                                  runtimeMode === "full-access"
-                                    ? "approval-required"
-                                    : "full-access",
-                                )
-                              }
-                              title={
-                                runtimeMode === "full-access"
-                                  ? "Full access — click to require approvals"
-                                  : "Approval required — click for full access"
-                              }
+                            <Select
+                              value={runtimeMode}
+                              onValueChange={(value) => handleRuntimeModeChange(value!)}
                             >
-                              {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
-                              <span className="sr-only sm:not-sr-only">
-                                {runtimeMode === "full-access" ? "Full access" : "Supervised"}
-                              </span>
-                            </Button>
+                              <SelectTrigger
+                                variant="ghost"
+                                size="sm"
+                                aria-label="Runtime mode"
+                                title={runtimeModeOption.description}
+                              >
+                                <RuntimeModeIcon className="size-4" />
+                                <SelectValue>{runtimeModeOption.label}</SelectValue>
+                              </SelectTrigger>
+                              <SelectPopup alignItemWithTrigger={false}>
+                                {runtimeModeOptions.map((mode) => {
+                                  const option = runtimeModeConfig[mode];
+                                  const OptionIcon = option.icon;
+                                  return (
+                                    <SelectItem key={mode} value={mode} className="min-w-64 py-2">
+                                      <div className="grid min-w-0 gap-0.5">
+                                        <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                                          <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                                          {option.label}
+                                        </span>
+                                        <span className="text-muted-foreground text-xs leading-4">
+                                          {option.description}
+                                        </span>
+                                      </div>
+                                    </SelectItem>
+                                  );
+                                })}
+                              </SelectPopup>
+                            </Select>
 
                             {activePlan || sidebarProposedPlan || planSidebarOpen ? (
                               <>

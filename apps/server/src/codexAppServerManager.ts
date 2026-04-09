@@ -290,20 +290,26 @@ In Default mode, strongly prefer making reasonable assumptions and executing the
 </collaboration_mode>`;
 
 function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
-  readonly approvalPolicy: "on-request" | "never";
-  readonly sandbox: "workspace-write" | "danger-full-access";
+  readonly approvalPolicy: "untrusted" | "on-request" | "never";
+  readonly sandbox: "read-only" | "workspace-write" | "danger-full-access";
 } {
-  if (runtimeMode === "approval-required") {
-    return {
-      approvalPolicy: "on-request",
-      sandbox: "workspace-write",
-    };
+  switch (runtimeMode) {
+    case "approval-required":
+      return {
+        approvalPolicy: "untrusted",
+        sandbox: "read-only",
+      };
+    case "auto-accept-edits":
+      return {
+        approvalPolicy: "on-request",
+        sandbox: "workspace-write",
+      };
+    case "full-access":
+      return {
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+      };
   }
-
-  return {
-    approvalPolicy: "never",
-    sandbox: "danger-full-access",
-  };
 }
 
 /**
