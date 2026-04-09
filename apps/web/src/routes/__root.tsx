@@ -48,6 +48,13 @@ import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
 import { deriveReplayRetryDecision } from "../orchestrationRecovery";
+import {
+  extractTurnCompletions,
+  resetRunningThreadTracker,
+  seedRunningThreads,
+  showTurnCompletionNotification,
+} from "../turnCompletionNotifier";
+import { useSettings } from "../hooks/useSettings";
 import { getWsRpcClient } from "~/wsRpcClient";
 
 export const Route = createRootRouteWithContext<{
@@ -229,6 +236,11 @@ function EventRouter() {
   const bootstrapFromSnapshotRef = useRef<() => Promise<void>>(async () => undefined);
   const serverConfig = useServerConfig();
 
+  // Turn-completion OS notifications
+  const { enableTurnCompletionNotifications } = useSettings();
+  const notificationsEnabledRef = useRef(enableTurnCompletionNotifications);
+  notificationsEnabledRef.current = enableTurnCompletionNotifications;
+
   const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload | null) => {
     if (!payload) return;
 
@@ -339,6 +351,10 @@ function EventRouter() {
         })),
       );
       clearPromotedDraftThreads(threads.map((thread) => thread.id));
+      // Seed the turn-completion tracker so we detect transitions that
+      // started before our event subscription (e.g. a running turn
+      // present in the snapshot after a page refresh).
+      seedRunningThreads(threads);
       const draftThreadIds = Object.keys(
         useComposerDraftStore.getState().draftThreadsByThreadId,
       ) as ThreadId[];
@@ -376,6 +392,17 @@ function EventRouter() {
       if (nextEvents.length === 0) {
         return;
       }
+
+      // Extract turn-completion transitions *before* the store update so
+      // the running-thread tracker sees the pre-update session state. Thread
+      // and project titles are read from the current store for display.
+      const turnCompletions = notificationsEnabledRef.current
+        ? extractTurnCompletions(
+            nextEvents,
+            (id) => useStore.getState().threads.find((t) => t.id === id),
+            (id) => useStore.getState().projects.find((p) => p.id === id),
+          )
+        : [];
 
       const batchEffects = deriveOrchestrationBatchEffects(nextEvents);
       const uiEvents = coalesceOrchestrationUiEvents(nextEvents);
@@ -418,6 +445,22 @@ function EventRouter() {
       }
       for (const threadId of batchEffects.removeTerminalStateThreadIds) {
         removeTerminalState(threadId);
+      }
+
+      // Fire OS notifications for completed turns (deferred to end so store
+      // updates are already applied if the user clicks through).  Falls
+      // back to an in-app toast when the tab is focused or when the
+      // browser blocked the OS notification.
+      for (const completion of turnCompletions) {
+        const { title, body, osNotificationSent } = showTurnCompletionNotification(completion);
+        if (!osNotificationSent) {
+          toastManager.add({
+            type: completion.status === "error" ? "error" : "success",
+            title,
+            description: body,
+            data: { threadId: completion.threadId, dismissAfterVisibleMs: 5_000 },
+          });
+        }
       }
     };
     const flushPendingDomainEvents = () => {
@@ -569,6 +612,7 @@ function EventRouter() {
       flushPendingDomainEventsScheduled = false;
       pendingDomainEvents.length = 0;
       queryInvalidationThrottler.cancel();
+      resetRunningThreadTracker();
       unsubDomainEvent();
       unsubTerminalEvent();
     };

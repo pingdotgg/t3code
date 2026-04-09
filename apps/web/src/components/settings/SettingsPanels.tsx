@@ -46,6 +46,7 @@ import {
   resolveAppModelSelectionState,
 } from "../../modelSelection";
 import { ensureNativeApi, readNativeApi } from "../../nativeApi";
+import { requestNotificationPermission } from "../../turnCompletionNotifier";
 import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
@@ -469,6 +470,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
+      ...(settings.enableTurnCompletionNotifications !==
+      DEFAULT_UNIFIED_SETTINGS.enableTurnCompletionNotifications
+        ? ["Turn completion notifications"]
+        : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
@@ -489,6 +494,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.enableTurnCompletionNotifications,
       settings.timestampFormat,
       theme,
     ],
@@ -901,6 +907,38 @@ export function GeneralSettingsPanel() {
                 updateSettings({ enableAssistantStreaming: Boolean(checked) })
               }
               aria-label="Stream assistant messages"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Turn completion notifications"
+          description="Show an OS notification when a turn finishes while the tab is in the background."
+          resetAction={
+            settings.enableTurnCompletionNotifications !==
+            DEFAULT_UNIFIED_SETTINGS.enableTurnCompletionNotifications ? (
+              <SettingResetButton
+                label="turn completion notifications"
+                onClick={() =>
+                  updateSettings({
+                    enableTurnCompletionNotifications:
+                      DEFAULT_UNIFIED_SETTINGS.enableTurnCompletionNotifications,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.enableTurnCompletionNotifications}
+              onCheckedChange={(checked) => {
+                const enabled = Boolean(checked);
+                if (enabled) {
+                  void requestNotificationPermission();
+                }
+                updateSettings({ enableTurnCompletionNotifications: enabled });
+              }}
+              aria-label="Enable turn completion notifications"
             />
           }
         />
