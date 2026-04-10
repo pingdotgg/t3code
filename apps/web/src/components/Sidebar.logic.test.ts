@@ -477,6 +477,36 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
+  it("exposes the codex provider when a codex thread is running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            provider: "codex",
+            status: "running",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", workingProvider: "codex", pulse: true });
+  });
+
+  it("exposes the claude provider when a claude thread is running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            provider: "claudeAgent",
+            status: "running",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", workingProvider: "claudeAgent", pulse: true });
+  });
+
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({
@@ -526,6 +556,25 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
+  });
+
+  it("exposes the provider when a completed thread has an unseen completion", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          latestTurn: makeLatestTurn(),
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          session: {
+            ...baseThread.session,
+            provider: "claudeAgent",
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Completed", workingProvider: "claudeAgent", pulse: false });
   });
 });
 

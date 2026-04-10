@@ -12,6 +12,8 @@ import { type AppState, selectProjectByRef, useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
+import { ClaudeAI, OpenAI } from "./Icons";
+import { CLAUDE_PROVIDER_ICON_CLASS_NAME } from "./providerBrandClassNames";
 import type { SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
@@ -84,6 +86,18 @@ export function terminalStatusFromRunningIds(
   };
 }
 
+function providerStatusIconClassName(provider: ThreadStatusPill["workingProvider"]): string {
+  if (provider === "claudeAgent") {
+    return CLAUDE_PROVIDER_ICON_CLASS_NAME;
+  }
+
+  if (provider === "codex") {
+    return "text-foreground";
+  }
+
+  return "";
+}
+
 export function ThreadStatusLabel({
   status,
   compact = false,
@@ -91,17 +105,36 @@ export function ThreadStatusLabel({
   status: ThreadStatusPill;
   compact?: boolean;
 }) {
+  const statusIcon =
+    status.workingProvider === "claudeAgent" ? (
+      <ClaudeAI
+        className={`size-3 ${providerStatusIconClassName(status.workingProvider)} ${
+          status.pulse ? "animate-pulse" : ""
+        }`}
+      />
+    ) : status.workingProvider === "codex" ? (
+      <OpenAI
+        className={`size-3 ${providerStatusIconClassName(status.workingProvider)} ${
+          status.pulse ? "animate-pulse" : ""
+        }`}
+      />
+    ) : null;
+
   if (compact) {
     return (
       <span
         title={status.label}
         className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
       >
-        <span
-          className={`size-[9px] rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-pulse" : ""
-          }`}
-        />
+        {statusIcon ? (
+          statusIcon
+        ) : (
+          <span
+            className={`size-[9px] rounded-full ${status.dotClass} ${
+              status.pulse ? "animate-pulse" : ""
+            }`}
+          />
+        )}
         <span className="sr-only">{status.label}</span>
       </span>
     );
@@ -112,11 +145,15 @@ export function ThreadStatusLabel({
       title={status.label}
       className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
     >
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-          status.pulse ? "animate-pulse" : ""
-        }`}
-      />
+      {statusIcon ? (
+        statusIcon
+      ) : (
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
+            status.pulse ? "animate-pulse" : ""
+          }`}
+        />
+      )}
       <span className="hidden md:inline">{status.label}</span>
     </span>
   );
