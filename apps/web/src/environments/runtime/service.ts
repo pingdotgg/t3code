@@ -23,6 +23,7 @@ import {
   markPromotedDraftThreadsByRef,
   useComposerDraftStore,
 } from "~/composerDraftStore";
+import { ensureLocalApi } from "~/localApi";
 import { collectActiveTerminalThreadIds } from "~/lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
 import { projectQueryKeys } from "~/lib/projectReactQuery";
@@ -39,10 +40,14 @@ import {
   getSavedEnvironmentRecord,
   hasSavedEnvironmentRegistryHydrated,
   listSavedEnvironmentRecords,
+  persistSavedEnvironmentRecord,
+  readSavedEnvironmentBearerToken,
+  removeSavedEnvironmentBearerToken,
   type SavedEnvironmentRecord,
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
   waitForSavedEnvironmentRegistryHydration,
+  writeSavedEnvironmentBearerToken,
 } from "./catalog";
 import { createEnvironmentConnection, type EnvironmentConnection } from "./connection";
 import {
@@ -306,7 +311,10 @@ function createPrimaryEnvironmentClient(
   return createWsRpcClient(new WsTransport(wsBaseUrl));
 }
 
-function createSavedEnvironmentClient(record: SavedEnvironmentRecord): WsRpcClient {
+function createSavedEnvironmentClient(
+  record: SavedEnvironmentRecord,
+  bearerToken: string,
+): WsRpcClient {
   useSavedEnvironmentRuntimeStore.getState().ensure(record.environmentId);
 
   return createWsRpcClient(
@@ -315,7 +323,7 @@ function createSavedEnvironmentClient(record: SavedEnvironmentRecord): WsRpcClie
         resolveRemoteWebSocketConnectionUrl({
           wsBaseUrl: record.wsBaseUrl,
           httpBaseUrl: record.httpBaseUrl,
-          bearerToken: record.bearerToken,
+          bearerToken,
         }),
       {
         onAttempt: () => {
@@ -341,6 +349,7 @@ function createSavedEnvironmentClient(record: SavedEnvironmentRecord): WsRpcClie
 
 async function refreshSavedEnvironmentMetadata(
   record: SavedEnvironmentRecord,
+  bearerToken: string,
   client: WsRpcClient,
   roleHint?: AuthSessionRole | null,
   configHint?: ServerConfig | null,
@@ -349,7 +358,7 @@ async function refreshSavedEnvironmentMetadata(
     configHint ? Promise.resolve(configHint) : client.server.getConfig(),
     fetchRemoteSessionState({
       httpBaseUrl: record.httpBaseUrl,
-      bearerToken: record.bearerToken,
+      bearerToken,
     }),
   ]);
 
@@ -408,6 +417,7 @@ async function ensureSavedEnvironmentConnection(
   record: SavedEnvironmentRecord,
   options?: {
     readonly client?: WsRpcClient;
+    readonly bearerToken?: string;
     readonly role?: AuthSessionRole | null;
     readonly serverConfig?: ServerConfig | null;
   },
@@ -417,7 +427,20 @@ async function ensureSavedEnvironmentConnection(
     return existing;
   }
 
-  const client = options?.client ?? createSavedEnvironmentClient(record);
+  const bearerToken =
+    options?.bearerToken ?? (await readSavedEnvironmentBearerToken(record.environmentId));
+  if (!bearerToken) {
+    useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
+      authState: "requires-auth",
+      role: null,
+      connectionState: "disconnected",
+      lastError: "Saved environment is missing its saved credential. Pair it again.",
+      lastErrorAt: isoNow(),
+    });
+    throw new Error("Saved environment is missing its saved credential.");
+  }
+
+  const client = options?.client ?? createSavedEnvironmentClient(record, bearerToken);
   const knownEnvironment = createKnownEnvironment({
     id: record.environmentId,
     label: record.label,
@@ -435,7 +458,7 @@ async function ensureSavedEnvironmentConnection(
     },
     client,
     refreshMetadata: async () => {
-      await refreshSavedEnvironmentMetadata(record, client);
+      await refreshSavedEnvironmentMetadata(record, bearerToken, client);
     },
     onConfigSnapshot: (config) => {
       useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
@@ -456,6 +479,7 @@ async function ensureSavedEnvironmentConnection(
   try {
     await refreshSavedEnvironmentMetadata(
       record,
+      bearerToken,
       client,
       options?.role ?? null,
       options?.serverConfig ?? null,
@@ -552,6 +576,7 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
 
 export async function removeSavedEnvironment(environmentId: EnvironmentId): Promise<void> {
   useSavedEnvironmentRegistryStore.getState().remove(environmentId);
+  await removeSavedEnvironmentBearerToken(environmentId);
   await disconnectSavedEnvironment(environmentId);
 }
 
@@ -585,12 +610,30 @@ export async function addSavedEnvironment(input: {
     label: input.label.trim() || descriptor.label,
     wsBaseUrl: resolvedTarget.wsBaseUrl,
     httpBaseUrl: resolvedTarget.httpBaseUrl,
-    bearerToken: bearerSession.sessionToken,
     createdAt: isoNow(),
     lastConnectedAt: isoNow(),
   };
 
+  await persistSavedEnvironmentRecord(record);
+  const didPersistBearerToken = await writeSavedEnvironmentBearerToken(
+    environmentId,
+    bearerSession.sessionToken,
+  );
+  if (!didPersistBearerToken) {
+    await ensureLocalApi().persistence.setSavedEnvironmentRegistry(
+      listSavedEnvironmentRecords().map((entry) => ({
+        environmentId: entry.environmentId,
+        label: entry.label,
+        httpBaseUrl: entry.httpBaseUrl,
+        wsBaseUrl: entry.wsBaseUrl,
+        createdAt: entry.createdAt,
+        lastConnectedAt: entry.lastConnectedAt,
+      })),
+    );
+    throw new Error("Unable to persist saved environment credentials.");
+  }
   await ensureSavedEnvironmentConnection(record, {
+    bearerToken: bearerSession.sessionToken,
     role: bearerSession.role,
   });
   useSavedEnvironmentRegistryStore.getState().upsert(record);

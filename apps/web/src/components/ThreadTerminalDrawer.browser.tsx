@@ -113,6 +113,9 @@ vi.mock("~/environmentApi", () => ({
 }));
 
 vi.mock("~/localApi", () => ({
+  ensureLocalApi: vi.fn(() => {
+    throw new Error("ensureLocalApi not implemented in browser test");
+  }),
   readLocalApi: readLocalApiMock,
 }));
 

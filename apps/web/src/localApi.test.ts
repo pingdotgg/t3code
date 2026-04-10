@@ -137,9 +137,36 @@ function getWindowForTest(): Window & typeof globalThis & { desktopBridge?: unkn
   return testGlobal.window;
 }
 
+function createLocalStorageStub(): Storage {
+  const store = new Map<string, string>();
+  return {
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => {
+      store.set(key, value);
+    },
+    removeItem: (key) => {
+      store.delete(key);
+    },
+    clear: () => {
+      store.clear();
+    },
+    key: (index) => [...store.keys()][index] ?? null,
+    get length() {
+      return store.size;
+    },
+  };
+}
+
 function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
   return {
     getLocalEnvironmentBootstrap: () => null,
+    getClientSettings: async () => null,
+    setClientSettings: async () => undefined,
+    getSavedEnvironmentRegistry: async () => [],
+    setSavedEnvironmentRegistry: async () => undefined,
+    getSavedEnvironmentSecret: async () => null,
+    setSavedEnvironmentSecret: async () => true,
+    removeSavedEnvironmentSecret: async () => undefined,
     getServerExposureState: async () => ({
       mode: "local-only",
       endpointUrl: null,
@@ -242,7 +269,12 @@ beforeEach(() => {
   terminalEventListeners.clear();
   orchestrationEventListeners.clear();
   gitStatusListeners.clear();
-  Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
+  const testWindow = getWindowForTest();
+  Reflect.deleteProperty(testWindow, "desktopBridge");
+  Object.defineProperty(testWindow, "localStorage", {
+    configurable: true,
+    value: createLocalStorageStub(),
+  });
 });
 
 afterEach(() => {
@@ -462,5 +494,127 @@ describe("wsApi", () => {
 
     await expect(api.contextMenu.show(items, { x: 4, y: 5 })).resolves.toBe("rename");
     expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 });
+  });
+
+  it("reads and writes persistence through the desktop bridge when available", async () => {
+    const getClientSettings = vi.fn().mockResolvedValue({
+      confirmThreadArchive: true,
+      confirmThreadDelete: false,
+      diffWordWrap: true,
+      sidebarProjectSortOrder: "manual",
+      sidebarThreadSortOrder: "created_at",
+      timestampFormat: "24-hour",
+    });
+    const setClientSettings = vi.fn().mockResolvedValue(undefined);
+    const getSavedEnvironmentRegistry = vi.fn().mockResolvedValue([]);
+    const setSavedEnvironmentRegistry = vi.fn().mockResolvedValue(undefined);
+    const getSavedEnvironmentSecret = vi.fn().mockResolvedValue("bearer-token");
+    const setSavedEnvironmentSecret = vi.fn().mockResolvedValue(true);
+    const removeSavedEnvironmentSecret = vi.fn().mockResolvedValue(undefined);
+    getWindowForTest().desktopBridge = makeDesktopBridge({
+      getClientSettings,
+      setClientSettings,
+      getSavedEnvironmentRegistry,
+      setSavedEnvironmentRegistry,
+      getSavedEnvironmentSecret,
+      setSavedEnvironmentSecret,
+      removeSavedEnvironmentSecret,
+    });
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+
+    await api.persistence.getClientSettings();
+    await api.persistence.setClientSettings({
+      confirmThreadArchive: true,
+      confirmThreadDelete: false,
+      diffWordWrap: true,
+      sidebarProjectSortOrder: "manual",
+      sidebarThreadSortOrder: "created_at",
+      timestampFormat: "24-hour",
+    });
+    await api.persistence.getSavedEnvironmentRegistry();
+    await api.persistence.setSavedEnvironmentRegistry([]);
+    await api.persistence.getSavedEnvironmentSecret(EnvironmentId.makeUnsafe("environment-local"));
+    await api.persistence.setSavedEnvironmentSecret(
+      EnvironmentId.makeUnsafe("environment-local"),
+      "bearer-token",
+    );
+    await api.persistence.removeSavedEnvironmentSecret(
+      EnvironmentId.makeUnsafe("environment-local"),
+    );
+
+    expect(getClientSettings).toHaveBeenCalledWith();
+    expect(setClientSettings).toHaveBeenCalledWith({
+      confirmThreadArchive: true,
+      confirmThreadDelete: false,
+      diffWordWrap: true,
+      sidebarProjectSortOrder: "manual",
+      sidebarThreadSortOrder: "created_at",
+      timestampFormat: "24-hour",
+    });
+    expect(getSavedEnvironmentRegistry).toHaveBeenCalledWith();
+    expect(setSavedEnvironmentRegistry).toHaveBeenCalledWith([]);
+    expect(getSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
+    expect(setSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local", "bearer-token");
+    expect(removeSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
+  });
+
+  it("falls back to browser storage for persistence when the desktop bridge is missing", async () => {
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+
+    await api.persistence.setClientSettings({
+      confirmThreadArchive: true,
+      confirmThreadDelete: false,
+      diffWordWrap: true,
+      sidebarProjectSortOrder: "manual",
+      sidebarThreadSortOrder: "created_at",
+      timestampFormat: "24-hour",
+    });
+    await api.persistence.setSavedEnvironmentRegistry([
+      {
+        environmentId: EnvironmentId.makeUnsafe("environment-local"),
+        label: "Primary",
+        httpBaseUrl: "http://localhost:3000",
+        wsBaseUrl: "ws://localhost:3000",
+        createdAt: "2026-04-09T00:00:00.000Z",
+        lastConnectedAt: null,
+      },
+    ]);
+    await api.persistence.setSavedEnvironmentSecret(
+      EnvironmentId.makeUnsafe("environment-local"),
+      "bearer-token",
+    );
+
+    await expect(api.persistence.getClientSettings()).resolves.toEqual({
+      confirmThreadArchive: true,
+      confirmThreadDelete: false,
+      diffWordWrap: true,
+      sidebarProjectSortOrder: "manual",
+      sidebarThreadSortOrder: "created_at",
+      timestampFormat: "24-hour",
+    });
+    await expect(api.persistence.getSavedEnvironmentRegistry()).resolves.toEqual([
+      {
+        environmentId: EnvironmentId.makeUnsafe("environment-local"),
+        label: "Primary",
+        httpBaseUrl: "http://localhost:3000",
+        wsBaseUrl: "ws://localhost:3000",
+        createdAt: "2026-04-09T00:00:00.000Z",
+        lastConnectedAt: null,
+      },
+    ]);
+    await expect(
+      api.persistence.getSavedEnvironmentSecret(EnvironmentId.makeUnsafe("environment-local")),
+    ).resolves.toBe("bearer-token");
+
+    await api.persistence.removeSavedEnvironmentSecret(
+      EnvironmentId.makeUnsafe("environment-local"),
+    );
+
+    await expect(
+      api.persistence.getSavedEnvironmentSecret(EnvironmentId.makeUnsafe("environment-local")),
+    ).resolves.toBeNull();
   });
 });

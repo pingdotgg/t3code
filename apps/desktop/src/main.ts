@@ -14,14 +14,17 @@ import {
   nativeImage,
   nativeTheme,
   protocol,
+  safeStorage,
   shell,
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type {
+  ClientSettings,
   DesktopTheme,
   DesktopServerExposureMode,
   DesktopServerExposureState,
+  PersistedSavedEnvironmentRecord,
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
   DesktopUpdateState,
@@ -38,6 +41,15 @@ import {
   setDesktopServerExposurePreference,
   writeDesktopSettings,
 } from "./desktopSettings";
+import {
+  readClientSettings,
+  readSavedEnvironmentRegistry,
+  readSavedEnvironmentSecret,
+  removeSavedEnvironmentSecret,
+  writeClientSettings,
+  writeSavedEnvironmentRegistry,
+  writeSavedEnvironmentSecret,
+} from "./clientPersistence";
 import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { resolveDesktopServerExposure } from "./serverExposure";
@@ -71,11 +83,20 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL = "desktop:get-local-environment-bootstrap";
+const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
+const SET_CLIENT_SETTINGS_CHANNEL = "desktop:set-client-settings";
+const GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL = "desktop:get-saved-environment-registry";
+const SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL = "desktop:set-saved-environment-registry";
+const GET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:get-saved-environment-secret";
+const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secret";
+const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
+const CLIENT_SETTINGS_PATH = Path.join(STATE_DIR, "client-settings.json");
+const SAVED_ENVIRONMENT_REGISTRY_PATH = Path.join(STATE_DIR, "saved-environments.json");
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -202,6 +223,14 @@ function getDesktopServerExposureState(): DesktopServerExposureState {
     endpointUrl: backendEndpointUrl,
     advertisedHost: backendAdvertisedHost,
   };
+}
+
+function getDesktopSecretStorage() {
+  return {
+    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+    encryptString: (value: string) => safeStorage.encryptString(value),
+    decryptString: (value: Buffer) => safeStorage.decryptString(value),
+  } as const;
 }
 
 function resolveAdvertisedHostOverride(): string | undefined {
@@ -1348,6 +1377,86 @@ function registerIpcHandlers(): void {
       bootstrapToken: backendBootstrapToken || undefined,
     } as const;
   });
+
+  ipcMain.removeHandler(GET_CLIENT_SETTINGS_CHANNEL);
+  ipcMain.handle(GET_CLIENT_SETTINGS_CHANNEL, async () => readClientSettings(CLIENT_SETTINGS_PATH));
+
+  ipcMain.removeHandler(SET_CLIENT_SETTINGS_CHANNEL);
+  ipcMain.handle(SET_CLIENT_SETTINGS_CHANNEL, async (_event, rawSettings: unknown) => {
+    if (typeof rawSettings !== "object" || rawSettings === null) {
+      throw new Error("Invalid client settings payload.");
+    }
+
+    writeClientSettings(CLIENT_SETTINGS_PATH, rawSettings as ClientSettings);
+  });
+
+  ipcMain.removeHandler(GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL);
+  ipcMain.handle(GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL, async () =>
+    readSavedEnvironmentRegistry(SAVED_ENVIRONMENT_REGISTRY_PATH),
+  );
+
+  ipcMain.removeHandler(SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL);
+  ipcMain.handle(SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL, async (_event, rawRecords: unknown) => {
+    if (!Array.isArray(rawRecords)) {
+      throw new Error("Invalid saved environment registry payload.");
+    }
+
+    writeSavedEnvironmentRegistry(
+      SAVED_ENVIRONMENT_REGISTRY_PATH,
+      rawRecords as readonly PersistedSavedEnvironmentRecord[],
+    );
+  });
+
+  ipcMain.removeHandler(GET_SAVED_ENVIRONMENT_SECRET_CHANNEL);
+  ipcMain.handle(
+    GET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
+    async (_event, rawEnvironmentId: unknown) => {
+      if (typeof rawEnvironmentId !== "string" || rawEnvironmentId.trim().length === 0) {
+        return null;
+      }
+
+      return readSavedEnvironmentSecret({
+        registryPath: SAVED_ENVIRONMENT_REGISTRY_PATH,
+        environmentId: rawEnvironmentId,
+        secretStorage: getDesktopSecretStorage(),
+      });
+    },
+  );
+
+  ipcMain.removeHandler(SET_SAVED_ENVIRONMENT_SECRET_CHANNEL);
+  ipcMain.handle(
+    SET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
+    async (_event, rawEnvironmentId: unknown, rawSecret: unknown) => {
+      if (typeof rawEnvironmentId !== "string" || rawEnvironmentId.trim().length === 0) {
+        throw new Error("Invalid saved environment id.");
+      }
+      if (typeof rawSecret !== "string" || rawSecret.trim().length === 0) {
+        throw new Error("Invalid saved environment secret.");
+      }
+
+      return writeSavedEnvironmentSecret({
+        registryPath: SAVED_ENVIRONMENT_REGISTRY_PATH,
+        environmentId: rawEnvironmentId,
+        secret: rawSecret,
+        secretStorage: getDesktopSecretStorage(),
+      });
+    },
+  );
+
+  ipcMain.removeHandler(REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL);
+  ipcMain.handle(
+    REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL,
+    async (_event, rawEnvironmentId: unknown) => {
+      if (typeof rawEnvironmentId !== "string" || rawEnvironmentId.trim().length === 0) {
+        return;
+      }
+
+      removeSavedEnvironmentSecret({
+        registryPath: SAVED_ENVIRONMENT_REGISTRY_PATH,
+        environmentId: rawEnvironmentId,
+      });
+    },
+  );
 
   ipcMain.removeHandler(GET_SERVER_EXPOSURE_STATE_CHANNEL);
   ipcMain.handle(GET_SERVER_EXPOSURE_STATE_CHANNEL, async () => getDesktopServerExposureState());

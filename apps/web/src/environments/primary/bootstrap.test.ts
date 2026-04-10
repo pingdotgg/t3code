@@ -110,6 +110,32 @@ describe("environmentBootstrap", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://remote.example.com/.well-known/t3/environment");
   });
 
+  it("derives the websocket url when only VITE_HTTP_URL is configured", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(BASE_ENVIRONMENT));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("VITE_HTTP_URL", "https://remote.example.com");
+
+    await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
+    expect(fetchMock).toHaveBeenCalledWith("https://remote.example.com/.well-known/t3/environment");
+    expect(getPrimaryKnownEnvironment()?.target).toEqual({
+      httpBaseUrl: "https://remote.example.com/",
+      wsBaseUrl: "wss://remote.example.com/",
+    });
+  });
+
+  it("derives the http url when only VITE_WS_URL is configured", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(BASE_ENVIRONMENT));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("VITE_WS_URL", "wss://remote.example.com");
+
+    await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
+    expect(fetchMock).toHaveBeenCalledWith("https://remote.example.com/.well-known/t3/environment");
+    expect(getPrimaryKnownEnvironment()?.target).toEqual({
+      httpBaseUrl: "https://remote.example.com/",
+      wsBaseUrl: "wss://remote.example.com/",
+    });
+  });
+
   it("uses the current origin as the descriptor base for local dev environments", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(BASE_ENVIRONMENT));
     vi.stubGlobal("fetch", fetchMock);

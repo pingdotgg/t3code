@@ -282,6 +282,13 @@ const createDesktopBridgeStub = (overrides?: {
       wsBaseUrl: "ws://127.0.0.1:3773",
       bootstrapToken: "desktop-bootstrap-token",
     }),
+    getClientSettings: vi.fn().mockResolvedValue(null),
+    setClientSettings: vi.fn().mockResolvedValue(undefined),
+    getSavedEnvironmentRegistry: vi.fn().mockResolvedValue([]),
+    setSavedEnvironmentRegistry: vi.fn().mockResolvedValue(undefined),
+    getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
+    setSavedEnvironmentSecret: vi.fn().mockResolvedValue(true),
+    removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),
     getServerExposureState: vi.fn().mockResolvedValue(
       overrides?.serverExposureState ?? {
         mode: "local-only",

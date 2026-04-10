@@ -126,6 +126,9 @@ vi.mock("~/lib/gitStatusState", () => ({
 }));
 
 vi.mock("~/localApi", () => ({
+  ensureLocalApi: vi.fn(() => {
+    throw new Error("ensureLocalApi not implemented in browser test");
+  }),
   readLocalApi: vi.fn(() => null),
 }));
 

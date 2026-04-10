@@ -16,6 +16,15 @@ function normalizeBaseUrl(rawValue: string): string {
   return new URL(rawValue, window.location.origin).toString();
 }
 
+function swapBaseUrlProtocol(
+  rawValue: string,
+  nextProtocol: "http:" | "https:" | "ws:" | "wss:",
+): string {
+  const url = new URL(normalizeBaseUrl(rawValue));
+  url.protocol = nextProtocol;
+  return url.toString();
+}
+
 function normalizeHostname(hostname: string): string {
   return hostname
     .trim()
@@ -54,22 +63,29 @@ function resolveHttpRequestBaseUrl(httpBaseUrl: string): string {
 }
 
 function resolveConfiguredPrimaryTarget(): PrimaryEnvironmentTarget | null {
-  const configuredHttpBaseUrl = import.meta.env.VITE_HTTP_URL?.trim();
-  const configuredWsBaseUrl = import.meta.env.VITE_WS_URL?.trim();
+  const configuredHttpBaseUrl = import.meta.env.VITE_HTTP_URL?.trim() || undefined;
+  const configuredWsBaseUrl = import.meta.env.VITE_WS_URL?.trim() || undefined;
 
   if (!configuredHttpBaseUrl && !configuredWsBaseUrl) {
     return null;
   }
 
-  if (!configuredHttpBaseUrl || !configuredWsBaseUrl) {
-    throw new Error("Configured primary environments require both VITE_HTTP_URL and VITE_WS_URL.");
-  }
+  const resolvedHttpBaseUrl =
+    configuredHttpBaseUrl ??
+    (configuredWsBaseUrl?.startsWith("wss:")
+      ? swapBaseUrlProtocol(configuredWsBaseUrl, "https:")
+      : swapBaseUrlProtocol(configuredWsBaseUrl!, "http:"));
+  const resolvedWsBaseUrl =
+    configuredWsBaseUrl ??
+    (configuredHttpBaseUrl?.startsWith("https:")
+      ? swapBaseUrlProtocol(configuredHttpBaseUrl, "wss:")
+      : swapBaseUrlProtocol(configuredHttpBaseUrl!, "ws:"));
 
   return {
     source: "configured",
     target: {
-      httpBaseUrl: normalizeBaseUrl(configuredHttpBaseUrl),
-      wsBaseUrl: normalizeBaseUrl(configuredWsBaseUrl),
+      httpBaseUrl: normalizeBaseUrl(resolvedHttpBaseUrl),
+      wsBaseUrl: normalizeBaseUrl(resolvedWsBaseUrl),
     },
   };
 }
