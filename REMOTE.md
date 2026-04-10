@@ -35,6 +35,11 @@ From there, connect from another device in either of these ways:
 
 Use `t3 serve --help` for the full flag reference. It supports the same general startup options as the normal server command, including an optional `cwd` argument.
 
+> Note
+> The GUIs do not currently support adding projects on remote environments.
+> For now, use `t3 project ...` on the server machine instead.
+> Full GUI support for remote project management is coming soon.
+
 ## How Pairing Works
 
 The remote device does not need a long-lived secret up front.
