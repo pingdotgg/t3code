@@ -52,10 +52,10 @@ async function fetchPrimaryEnvironmentDescriptor(): Promise<ExecutionEnvironment
       resolvePrimaryEnvironmentHttpUrl(SERVER_ENVIRONMENT_DESCRIPTOR_PATH),
     );
     if (!response.ok) {
-      throw new BootstrapHttpError(
-        `Failed to load server environment descriptor (${response.status}).`,
-        response.status,
-      );
+      throw new BootstrapHttpError({
+        message: `Failed to load server environment descriptor (${response.status}).`,
+        status: response.status,
+      });
     }
 
     const descriptor = (await response.json()) as ExecutionEnvironmentDescriptor;

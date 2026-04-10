@@ -1,4 +1,4 @@
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Schema, SchemaIssue } from "effect";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
 
 import { runProcess } from "../../processRunner";
@@ -154,7 +154,7 @@ function decodeGitHubJson<S extends Schema.Top>(
       (error) =>
         new GitHubCliError({
           operation,
-          detail: error instanceof Error ? `${invalidDetail}: ${error.message}` : invalidDetail,
+          detail: `${invalidDetail}: ${SchemaIssue.makeFormatterDefault()(error.issue)}`,
           cause: error,
         }),
     ),

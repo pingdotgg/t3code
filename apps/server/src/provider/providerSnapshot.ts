@@ -32,8 +32,7 @@ export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function isCommandMissingCause(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
+export function isCommandMissingCause(error: Error): boolean {
   const lower = error.message.toLowerCase();
   return lower.includes("enoent") || lower.includes("notfound");
 }

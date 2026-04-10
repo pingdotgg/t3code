@@ -62,7 +62,13 @@
     "vitest": "catalog:"
   },
   "overrides": {
+    "@effect/atom-react": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",
+    "@effect/sql-sqlite-bun": "catalog:",
+    "@effect/vitest": "catalog:",
+    "effect": "catalog:",
     "vite": "^8.0.0"
   },
   "engines": {

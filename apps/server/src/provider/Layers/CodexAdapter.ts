@@ -51,18 +51,11 @@ export interface CodexAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
-function toMessage(cause: unknown, fallback: string): string {
-  if (cause instanceof Error && cause.message.length > 0) {
-    return cause.message;
-  }
-  return fallback;
-}
-
 function toSessionError(
   threadId: ThreadId,
   cause: unknown,
 ): ProviderAdapterSessionNotFoundError | ProviderAdapterSessionClosedError | undefined {
-  const normalized = toMessage(cause, "").toLowerCase();
+  const normalized = cause instanceof Error ? cause.message.toLowerCase() : "";
   if (normalized.includes("unknown session") || normalized.includes("unknown provider session")) {
     return new ProviderAdapterSessionNotFoundError({
       provider: PROVIDER,
@@ -88,7 +81,7 @@ function toRequestError(threadId: ThreadId, method: string, cause: unknown): Pro
   return new ProviderAdapterRequestError({
     provider: PROVIDER,
     method,
-    detail: toMessage(cause, `${method} failed`),
+    detail: cause instanceof Error ? `${method} failed: ${cause.message}` : `${method} failed`,
     cause,
   });
 }
@@ -1427,7 +1420,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           new ProviderAdapterProcessError({
             provider: PROVIDER,
             threadId: input.threadId,
-            detail: toMessage(cause, "Failed to start Codex adapter session."),
+            detail: `Failed to start Codex adapter session: ${cause instanceof Error ? cause.message : String(cause)}.`,
             cause,
           }),
       });
@@ -1455,7 +1448,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "turn/start",
-            detail: toMessage(cause, "Failed to read attachment file."),
+            detail: `Failed to read attachment file: ${cause.message}.`,
             cause,
           }),
       ),

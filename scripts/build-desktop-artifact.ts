@@ -427,9 +427,9 @@ function validateBundledClientAssets(clientDir: string) {
 }
 
 function resolveDesktopRuntimeDependencies(
-  dependencies: Record<string, unknown> | undefined,
-  catalog: Record<string, unknown>,
-): Record<string, unknown> {
+  dependencies: Record<string, string> | undefined,
+  catalog: Record<string, string>,
+): Record<string, string> {
   if (!dependencies || Object.keys(dependencies).length === 0) {
     return {};
   }

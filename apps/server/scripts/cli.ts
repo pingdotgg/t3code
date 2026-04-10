@@ -14,6 +14,22 @@ import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import serverPackageJson from "../package.json" with { type: "json" };
 
+interface PackageJson {
+  name: string;
+  repository: {
+    type: string;
+    url: string;
+    directory: string;
+  };
+  bin: Record<string, string>;
+  type: string;
+  version: string;
+  engines: Record<string, string>;
+  files: string[];
+  dependencies: Record<string, string>;
+  overrides: Record<string, string>;
+}
+
 class CliError extends Data.TaggedError("CliError")<{
   readonly message: string;
   readonly cause?: unknown;
@@ -192,7 +208,7 @@ const publishCmd = Command.make(
           // Resolve catalog dependencies before any file mutations. If this throws,
           // acquire fails and no release hook runs, so filesystem must still be untouched.
           const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
-          const pkg = {
+          const pkg: PackageJson = {
             name: serverPackageJson.name,
             repository: serverPackageJson.repository,
             bin: serverPackageJson.bin,
@@ -200,13 +216,19 @@ const publishCmd = Command.make(
             version,
             engines: serverPackageJson.engines,
             files: serverPackageJson.files,
-            dependencies: serverPackageJson.dependencies as Record<string, unknown>,
+            dependencies: serverPackageJson.dependencies,
+            overrides: rootPackageJson.overrides,
           };
 
           pkg.dependencies = resolveCatalogDependencies(
             pkg.dependencies,
             rootPackageJson.workspaces.catalog,
             "apps/server dependencies",
+          );
+          pkg.overrides = resolveCatalogDependencies(
+            pkg.overrides,
+            rootPackageJson.workspaces.catalog,
+            "root overrides",
           );
 
           const original = yield* fs.readFileString(packageJsonPath);
