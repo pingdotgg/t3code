@@ -101,6 +101,7 @@ import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
+import { searchProviderSkills } from "../../providerSkillSearch";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -757,30 +758,20 @@ export const ChatComposer = memo(
         );
       }
       if (composerTrigger.kind === "skill") {
-        const query = composerTrigger.query.trim().toLowerCase();
-        return (selectedProviderStatus?.skills ?? [])
-          .filter((skill) => skill.enabled)
-          .filter((skill) => {
-            if (!query) return true;
-            return (
-              skill.name.toLowerCase().includes(query) ||
-              skill.displayName?.toLowerCase().includes(query) ||
-              skill.shortDescription?.toLowerCase().includes(query) ||
-              skill.description?.toLowerCase().includes(query) ||
-              skill.scope?.toLowerCase().includes(query)
-            );
-          })
-          .map((skill) => ({
-            id: `skill:${selectedProvider}:${skill.name}`,
-            type: "skill" as const,
-            provider: selectedProvider,
-            skill,
-            label: formatProviderSkillDisplayName(skill),
-            description:
-              skill.shortDescription ??
-              skill.description ??
-              (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-          }));
+        return searchProviderSkills(
+          selectedProviderStatus?.skills ?? [],
+          composerTrigger.query,
+        ).map((skill) => ({
+          id: `skill:${selectedProvider}:${skill.name}`,
+          type: "skill" as const,
+          provider: selectedProvider,
+          skill,
+          label: formatProviderSkillDisplayName(skill),
+          description:
+            skill.shortDescription ??
+            skill.description ??
+            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+        }));
       }
       return searchableModelOptions
         .filter(({ searchSlug, searchName, searchProvider }) => {
