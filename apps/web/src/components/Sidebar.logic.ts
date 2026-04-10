@@ -241,6 +241,26 @@ export function getVisibleSidebarThreadIds<TThreadId>(
   );
 }
 
+export function getSidebarThreadsByIds<
+  TThreadId extends PropertyKey,
+  TThread extends { archivedAt: string | null },
+>(input: {
+  threadIds: readonly TThreadId[];
+  threadsById: Partial<Record<TThreadId, TThread | undefined>>;
+  includeArchived?: boolean;
+}): TThread[] {
+  const threads = input.threadIds.flatMap((threadId) => {
+    const thread = input.threadsById[threadId];
+    return thread === undefined ? [] : [thread];
+  });
+
+  if (input.includeArchived) {
+    return threads;
+  }
+
+  return threads.filter((thread) => thread.archivedAt === null);
+}
+
 export function resolveAdjacentThreadId<T>(input: {
   threadIds: readonly T[];
   currentThreadId: T | null;

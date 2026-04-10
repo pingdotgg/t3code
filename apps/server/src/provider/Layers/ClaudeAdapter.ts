@@ -909,6 +909,38 @@ function sdkNativeItemId(message: SDKMessage): string | undefined {
   return undefined;
 }
 
+type ClaudeToolStartBlock = {
+  readonly type: "tool_use" | "server_tool_use" | "mcp_tool_use";
+  readonly id: string;
+  readonly name: string;
+  readonly input?: unknown;
+};
+
+function getClaudeToolStartBlock(block: unknown): ClaudeToolStartBlock | undefined {
+  if (typeof block !== "object" || block === null) {
+    return undefined;
+  }
+
+  const candidate = block as Record<string, unknown>;
+  if (
+    candidate.type !== "tool_use" &&
+    candidate.type !== "server_tool_use" &&
+    candidate.type !== "mcp_tool_use"
+  ) {
+    return undefined;
+  }
+  if (typeof candidate.id !== "string" || typeof candidate.name !== "string") {
+    return undefined;
+  }
+
+  return {
+    type: candidate.type,
+    id: candidate.id,
+    name: candidate.name,
+    ...(Object.hasOwn(candidate, "input") ? { input: candidate.input } : {}),
+  };
+}
+
 const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   options?: ClaudeAdapterLiveOptions,
 ) {
@@ -1629,21 +1661,18 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       }
-      if (
-        block.type !== "tool_use" &&
-        block.type !== "server_tool_use" &&
-        block.type !== "mcp_tool_use"
-      ) {
+      const toolBlock = getClaudeToolStartBlock(block);
+      if (!toolBlock) {
         return;
       }
 
-      const toolName = block.name;
+      const toolName = toolBlock.name;
       const itemType = classifyToolItemType(toolName);
       const toolInput =
-        typeof block.input === "object" && block.input !== null
-          ? (block.input as Record<string, unknown>)
+        typeof toolBlock.input === "object" && toolBlock.input !== null
+          ? (toolBlock.input as Record<string, unknown>)
           : {};
-      const itemId = block.id;
+      const itemId = toolBlock.id;
       const detail = summarizeToolRequest(toolName, toolInput);
       const inputFingerprint =
         Object.keys(toolInput).length > 0 ? toolInputFingerprint(toolInput) : undefined;

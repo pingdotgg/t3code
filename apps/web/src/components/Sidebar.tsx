@@ -110,6 +110,7 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  getSidebarThreadsByIds,
   getVisibleSidebarThreadIds,
   getVisibleThreadsForProject,
   resolveAdjacentThreadId,
@@ -850,10 +851,10 @@ export default function Sidebar() {
   const focusMostRecentThreadForProject = useCallback(
     (projectId: ProjectId) => {
       const latestThread = sortThreadsForSidebar(
-        (threadIdsByProjectId[projectId] ?? [])
-          .map((threadId) => sidebarThreadsById[threadId])
-          .filter((thread): thread is NonNullable<typeof thread> => thread !== undefined)
-          .filter((thread) => thread.archivedAt === null),
+        getSidebarThreadsByIds({
+          threadIds: threadIdsByProjectId[projectId] ?? [],
+          threadsById: sidebarThreadsById,
+        }),
         appSettings.sidebarThreadSortOrder,
       )[0];
       if (!latestThread) return;
@@ -1252,8 +1253,11 @@ export default function Sidebar() {
       }
       if (clicked !== "delete") return;
 
-      const projectThreadIds = threadIdsByProjectId[projectId] ?? [];
-      if (projectThreadIds.length > 0) {
+      const visibleProjectThreads = getSidebarThreadsByIds({
+        threadIds: threadIdsByProjectId[projectId] ?? [],
+        threadsById: sidebarThreadsById,
+      });
+      if (visibleProjectThreads.length > 0) {
         toastManager.add({
           type: "warning",
           title: "Project is not empty",
@@ -1292,6 +1296,7 @@ export default function Sidebar() {
       copyPathToClipboard,
       getDraftThreadByProjectId,
       projects,
+      sidebarThreadsById,
       threadIdsByProjectId,
     ],
   );
@@ -1400,10 +1405,10 @@ export default function Sidebar() {
             },
           });
         const projectThreads = sortThreadsForSidebar(
-          (threadIdsByProjectId[project.id] ?? [])
-            .map((threadId) => sidebarThreadsById[threadId])
-            .filter((thread): thread is NonNullable<typeof thread> => thread !== undefined)
-            .filter((thread) => thread.archivedAt === null),
+          getSidebarThreadsByIds({
+            threadIds: threadIdsByProjectId[project.id] ?? [],
+            threadsById: sidebarThreadsById,
+          }),
           appSettings.sidebarThreadSortOrder,
         );
         const projectStatus = resolveProjectStatusIndicator(
