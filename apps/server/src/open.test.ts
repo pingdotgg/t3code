@@ -5,10 +5,12 @@ import { FileSystem, Path, Effect } from "effect";
 
 import {
   isCommandAvailable,
+  isAppInstalled,
   launchDetached,
   resolveAvailableEditors,
   resolveEditorLaunch,
 } from "./open";
+import {EDITORS} from "@t3tools/contracts";
 
 it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
   it.effect("returns commands for command-based editors", () =>
@@ -82,7 +84,8 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const ideaLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "idea" },
-        "darwin",
+        "linux",
+        { PATH: "" },
       );
       assert.deepEqual(ideaLaunch, {
         command: "idea",
@@ -172,7 +175,8 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const ideaLineOnly = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/AGENTS.md:48", editor: "idea" },
-        "darwin",
+        "linux",
+        { PATH: "" },
       );
       assert.deepEqual(ideaLineOnly, {
         command: "idea",
@@ -181,7 +185,8 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const ideaLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "idea" },
-        "darwin",
+        "linux",
+        { PATH: "" },
       );
       assert.deepEqual(ideaLineAndColumn, {
         command: "idea",
@@ -217,6 +222,25 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       assert.deepEqual(result, {
         command: "zed",
         args: ["/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("falls back to open -a on macOS when CLI is missing but .app is installed", () =>
+    Effect.gen(function* () {
+      const idea = EDITORS.find((e) => e.id === "idea");
+      assert.isDefined(idea);
+
+      if (!isAppInstalled(idea, "darwin")) return;
+
+      const launch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "idea" },
+        "darwin",
+        { PATH: "" },
+      );
+      assert.deepEqual(launch, {
+        command: "open",
+        args: ["-a", "IntelliJ IDEA", "--args", "/tmp/workspace"],
       });
     }),
   );
@@ -382,6 +406,16 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
       assert.deepEqual(editors, ["zed", "file-manager"]);
     }),
   );
+
+  it("includes editors detected via macOS .app bundle", () => {
+    const idea = EDITORS.find((e) => e.id === "idea");
+    assert.isDefined(idea);
+
+    if (!isAppInstalled(idea, "darwin")) return;
+
+    const editors = resolveAvailableEditors("darwin", { PATH: "" });
+    assert.isTrue(editors.includes("idea"));
+  });
 
   it("omits file-manager when the platform opener is unavailable", () => {
     const editors = resolveAvailableEditors("linux", {

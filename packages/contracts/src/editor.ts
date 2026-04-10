@@ -4,11 +4,12 @@ import { TrimmedNonEmptyString } from "./baseSchemas";
 export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
 
-type EditorDefinition = {
+export type EditorDefinition = {
   readonly id: string;
   readonly label: string;
   readonly commands: readonly [string, ...string[]] | null;
   readonly launchStyle: EditorLaunchStyle;
+  readonly appName?: string;
 };
 
 export const EDITORS = [
@@ -24,7 +25,13 @@ export const EDITORS = [
   { id: "vscodium", label: "VSCodium", commands: ["codium"], launchStyle: "goto" },
   { id: "zed", label: "Zed", commands: ["zed", "zeditor"], launchStyle: "direct-path" },
   { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
-  { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
+  {
+    id: "idea",
+    label: "IntelliJ IDEA",
+    commands: ["idea"],
+    launchStyle: "line-column",
+    appName: "IntelliJ IDEA",
+  },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
