@@ -361,8 +361,8 @@ describe("GeneralSettingsPanel observability", () => {
             browser: "Chrome",
             ipAddress: "127.0.0.1",
           },
-          issuedAt: "2026-04-07T00:00:00.000Z",
-          expiresAt: "2026-05-07T00:00:00.000Z",
+          issuedAt: "2036-04-07T00:00:00.000Z",
+          expiresAt: "2036-05-07T00:00:00.000Z",
           connected: true,
           current: true,
         }),
@@ -377,7 +377,7 @@ describe("GeneralSettingsPanel observability", () => {
             auth: createBaseServerConfig().auth,
             role: "owner",
             sessionMethod: "browser-session-cookie",
-            expiresAt: "2026-05-07T00:00:00.000Z",
+            expiresAt: "2036-05-07T00:00:00.000Z",
           }),
           {
             status: 200,
@@ -458,8 +458,8 @@ describe("GeneralSettingsPanel observability", () => {
           browser: "Electron",
           ipAddress: "127.0.0.1",
         },
-        issuedAt: "2026-04-07T00:00:00.000Z",
-        expiresAt: "2026-05-07T00:00:00.000Z",
+        issuedAt: "2036-04-07T00:00:00.000Z",
+        expiresAt: "2036-05-07T00:00:00.000Z",
         connected: true,
         current: true,
       }),
@@ -481,8 +481,8 @@ describe("GeneralSettingsPanel observability", () => {
               role: "client",
               subject: "one-time-token",
               label: "Julius iPhone",
-              createdAt: "2026-04-07T00:00:00.000Z",
-              expiresAt: "2026-04-10T00:05:00.000Z",
+              createdAt: "2036-04-07T00:00:00.000Z",
+              expiresAt: "2036-04-10T00:05:00.000Z",
             }),
           ];
           clientSessions = [
@@ -499,8 +499,8 @@ describe("GeneralSettingsPanel observability", () => {
                 browser: "Safari",
                 ipAddress: "192.168.1.88",
               },
-              issuedAt: "2026-04-07T00:01:00.000Z",
-              expiresAt: "2026-05-07T00:01:00.000Z",
+              issuedAt: "2036-04-07T00:01:00.000Z",
+              expiresAt: "2036-05-07T00:01:00.000Z",
               connected: false,
               current: false,
             }),
@@ -514,7 +514,7 @@ describe("GeneralSettingsPanel observability", () => {
               id: "pairing-link-1",
               credential: "pairing-token",
               label: "Julius iPhone",
-              expiresAt: "2026-04-10T00:05:00.000Z",
+              expiresAt: "2036-04-10T00:05:00.000Z",
             }),
             {
               status: 200,
@@ -547,7 +547,7 @@ describe("GeneralSettingsPanel observability", () => {
       .element(page.getByText("Client · Mobile · iOS · Safari · 192.168.1.88"))
       .toBeInTheDocument();
     await expect
-      .element(page.getByRole("button", { name: "Copy", exact: true }))
+      .element(page.getByRole("button", { name: /^(Copy|Show link)$/ }))
       .toBeInTheDocument();
     await expect.element(page.getByText("Revoke others")).toBeInTheDocument();
   });
@@ -572,8 +572,8 @@ describe("GeneralSettingsPanel observability", () => {
           os: "macOS",
           browser: "Electron",
         },
-        issuedAt: "2026-04-05T00:00:00.000Z",
-        expiresAt: "2026-05-05T00:00:00.000Z",
+        issuedAt: "2036-04-05T00:00:00.000Z",
+        expiresAt: "2036-05-05T00:00:00.000Z",
         connected: true,
         current: true,
       }),
@@ -589,8 +589,8 @@ describe("GeneralSettingsPanel observability", () => {
           browser: "Safari",
           ipAddress: "192.168.1.88",
         },
-        issuedAt: "2026-04-05T00:01:00.000Z",
-        expiresAt: "2026-05-05T00:01:00.000Z",
+        issuedAt: "2036-04-05T00:01:00.000Z",
+        expiresAt: "2036-05-05T00:01:00.000Z",
         connected: false,
         current: false,
       }),
