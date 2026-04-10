@@ -392,7 +392,7 @@ const probeClaudeCapabilities = (binaryPath: string) => {
         pathToClaudeCodeExecutable: binaryPath,
         abortController: abort,
         maxTurns: 0,
-        settingSources: [],
+        settingSources: ["user", "project", "local"],
         allowedTools: [],
         stderr: () => {},
       },
