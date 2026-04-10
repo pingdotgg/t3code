@@ -222,13 +222,28 @@ function portPairForOffset(offset: number): {
   };
 }
 
+export function checkPortAvailabilityOnHosts<R>(
+  port: number,
+  hosts: ReadonlyArray<string>,
+  canListenOnHost: (port: number, host: string) => Effect.Effect<boolean, never, R>,
+): Effect.Effect<boolean, never, R> {
+  return Effect.gen(function* () {
+    for (const host of hosts) {
+      if (!(yield* canListenOnHost(port, host))) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
 const defaultCheckPortAvailability: PortAvailabilityCheck<NetService> = (port) =>
   Effect.gen(function* () {
     const net = yield* NetService;
-    const availability = yield* Effect.all(
-      DEV_PORT_PROBE_HOSTS.map((host) => net.canListenOnHost(port, host)),
+    return yield* checkPortAvailabilityOnHosts(port, DEV_PORT_PROBE_HOSTS, (candidatePort, host) =>
+      net.canListenOnHost(candidatePort, host),
     );
-    return availability.every(Boolean);
   });
 
 interface FindFirstAvailableOffsetInput<R = NetService> {

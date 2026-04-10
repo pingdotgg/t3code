@@ -34,6 +34,20 @@ const normalizeHosts = (
     ),
   );
 
+async function canListenOnAllHosts(
+  port: number,
+  hosts: ReadonlyArray<string>,
+  canListenOnHost: (port: number, host: string) => Promise<boolean>,
+): Promise<boolean> {
+  for (const candidateHost of hosts) {
+    if (!(await canListenOnHost(port, candidateHost))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export async function resolveDesktopBackendPort({
   host,
   startPort = DEFAULT_DESKTOP_BACKEND_PORT,
@@ -58,15 +72,12 @@ export async function resolveDesktopBackendPort({
   // Keep desktop startup predictable across app restarts by probing upward from
   // the same preferred port instead of picking a fresh ephemeral port.
   for (let port = startPort; port <= maxPort; port += 1) {
-    const availability = await Promise.all(
-      hostsToCheck.map((candidateHost) => canListenOnHost(port, candidateHost)),
-    );
-    if (availability.every(Boolean)) {
+    if (await canListenOnAllHosts(port, hostsToCheck, canListenOnHost)) {
       return port;
     }
   }
 
   throw new Error(
-    `No desktop backend port is available on ${host} between ${startPort} and ${maxPort}`,
+    `No desktop backend port is available on hosts ${hostsToCheck.join(", ")} between ${startPort} and ${maxPort}`,
   );
 }

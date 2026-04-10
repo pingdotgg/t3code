@@ -5,6 +5,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
 import {
+  checkPortAvailabilityOnHosts,
   createDevRunnerEnv,
   findFirstAvailableOffset,
   resolveModePortOffsets,
@@ -243,16 +244,46 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
-    it.effect("allows offsets where only non-required ports exceed max", () =>
+    it.effect("allows offsets where the non-required server port exceeds max", () =>
       Effect.gen(function* () {
         const offset = yield* findFirstAvailableOffset({
-          startOffset: 51_762,
-          requireServerPort: true,
-          requireWebPort: false,
+          startOffset: 59_802,
+          requireServerPort: false,
+          requireWebPort: true,
           checkPortAvailability: () => Effect.succeed(true),
         });
 
-        assert.equal(offset, 51_762);
+        assert.equal(offset, 59_802);
+      }),
+    );
+  });
+
+  describe("checkPortAvailabilityOnHosts", () => {
+    it.effect("checks overlapping hosts sequentially to avoid self-interference", () =>
+      Effect.gen(function* () {
+        let inFlightCount = 0;
+        const calls: Array<[number, string]> = [];
+
+        const available = yield* checkPortAvailabilityOnHosts(
+          13_773,
+          ["127.0.0.1", "0.0.0.0", "::"],
+          (port, host) =>
+            Effect.promise(async () => {
+              calls.push([port, host]);
+              inFlightCount += 1;
+              const overlapped = inFlightCount > 1;
+              await Promise.resolve();
+              inFlightCount -= 1;
+              return !overlapped;
+            }),
+        );
+
+        assert.equal(available, true);
+        assert.deepStrictEqual(calls, [
+          [13_773, "127.0.0.1"],
+          [13_773, "0.0.0.0"],
+          [13_773, "::"],
+        ]);
       }),
     );
   });
