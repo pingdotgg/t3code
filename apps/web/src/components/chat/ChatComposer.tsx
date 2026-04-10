@@ -55,8 +55,6 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import {
-  resolveComposerFooterContentWidth,
-  shouldForceCompactComposerFooterForFit,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
@@ -646,9 +644,6 @@ export const ChatComposer = memo(
     const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
     const composerFormRef = useRef<HTMLFormElement>(null);
     const composerFormHeightRef = useRef(0);
-    const composerFooterRef = useRef<HTMLDivElement>(null);
-    const composerFooterLeadingRef = useRef<HTMLDivElement>(null);
-    const composerFooterActionsRef = useRef<HTMLDivElement>(null);
     const composerSelectLockRef = useRef(false);
     const composerMenuOpenRef = useRef(false);
     const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
@@ -1017,31 +1012,17 @@ export const ChatComposer = memo(
       const measureComposerFormWidth = () => composerForm.clientWidth;
       const measureFooterCompactness = () => {
         const composerFormWidth = measureComposerFormWidth();
-        const heuristicFooterCompact = shouldUseCompactComposerFooter(composerFormWidth, {
+        const footerCompact = shouldUseCompactComposerFooter(composerFormWidth, {
           hasWideActions: composerFooterHasWideActions,
         });
-        const footer = composerFooterRef.current;
-        const footerStyle = footer ? window.getComputedStyle(footer) : null;
-        const footerContentWidth = resolveComposerFooterContentWidth({
-          footerWidth: footer?.clientWidth ?? null,
-          paddingLeft: footerStyle ? Number.parseFloat(footerStyle.paddingLeft) : null,
-          paddingRight: footerStyle ? Number.parseFloat(footerStyle.paddingRight) : null,
-        });
-        const fitInput = {
-          footerContentWidth,
-          leadingContentWidth: composerFooterLeadingRef.current?.scrollWidth ?? null,
-          actionsWidth: composerFooterActionsRef.current?.scrollWidth ?? null,
-        };
-        const nextFooterCompact =
-          heuristicFooterCompact || shouldForceCompactComposerFooterForFit(fitInput);
-        const nextPrimaryActionsCompact =
-          nextFooterCompact &&
+        const primaryActionsCompact =
+          footerCompact &&
           shouldUseCompactComposerPrimaryActions(composerFormWidth, {
             hasWideActions: composerFooterHasWideActions,
           });
         return {
-          primaryActionsCompact: nextPrimaryActionsCompact,
-          footerCompact: nextFooterCompact,
+          primaryActionsCompact,
+          footerCompact,
         };
       };
 
@@ -1795,7 +1776,6 @@ export const ChatComposer = memo(
               </div>
             ) : (
               <div
-                ref={composerFooterRef}
                 data-chat-composer-footer="true"
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                 className={cn(
@@ -1803,15 +1783,7 @@ export const ChatComposer = memo(
                   isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                 )}
               >
-                <div
-                  ref={composerFooterLeadingRef}
-                  className={cn(
-                    "flex min-w-0 flex-1 items-center",
-                    isComposerFooterCompact
-                      ? "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                      : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible",
-                  )}
-                >
+                <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <ProviderModelPicker
                     compact={isComposerFooterCompact}
                     provider={selectedProvider}
@@ -1865,7 +1837,6 @@ export const ChatComposer = memo(
 
                 {/* Right side: send / stop button */}
                 <div
-                  ref={composerFooterActionsRef}
                   data-chat-composer-actions="right"
                   data-chat-composer-primary-actions-compact={
                     isComposerPrimaryActionsCompact ? "true" : "false"
