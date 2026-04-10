@@ -205,12 +205,7 @@ export async function probeCodexDiscovery(input: {
 
       if (response.id === 2) {
         const errorMessage = readErrorMessage(response);
-        if (errorMessage) {
-          fail(new Error(`skills/list failed: ${errorMessage}`));
-          return;
-        }
-
-        skills = parseCodexSkillsResult(response.result, input.cwd);
+        skills = errorMessage ? [] : parseCodexSkillsResult(response.result, input.cwd);
         maybeResolve();
         return;
       }
