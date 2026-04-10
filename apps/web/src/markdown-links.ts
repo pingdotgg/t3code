@@ -38,23 +38,34 @@ function stripSearchAndHash(value: string): { path: string; hash: string } {
   return { path, hash: rawHash };
 }
 
-function parseFileUrlHref(href: string): { path: string; hash: string } | null {
+function parseFileUrlHref(
+  href: string,
+  options?: { readonly decodePath?: boolean },
+): { path: string; hash: string } | null {
   try {
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") return null;
 
-    const decodedPath = safeDecode(parsed.pathname);
-    if (decodedPath.length === 0) return null;
+    const rawPath = parsed.pathname;
+    if (rawPath.length === 0) return null;
 
     // Browser URL parser encodes "C:/foo" as "/C:/foo" for file URLs.
-    const normalizedPath = /^\/[A-Za-z]:[\\/]/.test(decodedPath)
-      ? decodedPath.slice(1)
-      : decodedPath;
+    const normalizedPath = /^\/[A-Za-z]:[\\/]/.test(rawPath) ? rawPath.slice(1) : rawPath;
 
-    return { path: normalizedPath, hash: parsed.hash };
+    return {
+      path: options?.decodePath === false ? normalizedPath : safeDecode(normalizedPath),
+      hash: parsed.hash,
+    };
   } catch {
     return null;
   }
+}
+
+export function rewriteMarkdownFileUriHref(href: string | undefined): string | null {
+  if (!href) return null;
+  const target = parseFileUrlHref(href.trim(), { decodePath: false });
+  if (!target) return null;
+  return `${target.path}${target.hash}`;
 }
 
 function looksLikePosixFilesystemPath(path: string): boolean {
