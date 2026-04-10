@@ -219,7 +219,10 @@ it.layer(TestLayer)("git integration", (it) => {
 
         const seenChunks: string[][] = [];
         const core = yield* makeIsolatedGitCore((input) => {
-          if (input.args.join(" ") !== "check-ignore --no-index -z --stdin") {
+          if (
+            input.args.join(" ") !==
+            "-c core.fsmonitor=false -c core.untrackedCache=false check-ignore --no-index -z --stdin"
+          ) {
             return Effect.fail(
               new GitCommandError({
                 operation: input.operation,
@@ -250,6 +253,35 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(seenChunks.length).toBeGreaterThan(1);
         expect(seenChunks.flat()).toEqual(relativePaths);
         expect(result).toEqual(expectedPaths);
+      }),
+    );
+
+    it.effect("listWorkspaceFiles disables fsmonitor and untracked cache helpers", () =>
+      Effect.gen(function* () {
+        const core = yield* makeIsolatedGitCore((input) => {
+          expect(input.args).toEqual([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+          ]);
+          return Effect.succeed({
+            code: 0,
+            stdout: "src/index.ts\0README.md\0",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          });
+        });
+
+        const result = yield* core.listWorkspaceFiles("/virtual/repo");
+        expect(result.paths).toEqual(["src/index.ts", "README.md"]);
+        expect(result.truncated).toBe(false);
       }),
     );
   });
