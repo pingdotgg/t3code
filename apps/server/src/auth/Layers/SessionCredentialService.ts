@@ -46,6 +46,9 @@ const WebSocketClaims = Schema.Struct({
 });
 type WebSocketClaims = typeof WebSocketClaims.Type;
 
+const decodeSessionClaims = Schema.decodeUnknownEffect(Schema.fromJsonString(SessionClaims));
+const decodeWebSocketClaims = Schema.decodeUnknownEffect(Schema.fromJsonString(WebSocketClaims));
+
 function createDefaultClientMetadata(): AuthClientMetadata {
   return {
     deviceType: "unknown",
@@ -259,15 +262,15 @@ export const makeSessionCredentialService = Effect.gen(function* () {
         });
       }
 
-      const claims = yield* Effect.try({
-        try: () =>
-          Schema.decodeUnknownSync(SessionClaims)(JSON.parse(base64UrlDecodeUtf8(encodedPayload))),
-        catch: (cause) =>
-          new SessionCredentialError({
-            message: "Invalid session token payload.",
-            cause,
-          }),
-      });
+      const claims = yield* decodeSessionClaims(base64UrlDecodeUtf8(encodedPayload)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new SessionCredentialError({
+              message: "Invalid session token payload.",
+              cause,
+            }),
+        ),
+      );
 
       const now = yield* Clock.currentTimeMillis;
       if (claims.exp <= now) {
@@ -348,17 +351,15 @@ export const makeSessionCredentialService = Effect.gen(function* () {
         });
       }
 
-      const claims = yield* Effect.try({
-        try: () =>
-          Schema.decodeUnknownSync(WebSocketClaims)(
-            JSON.parse(base64UrlDecodeUtf8(encodedPayload)),
-          ),
-        catch: (cause) =>
-          new SessionCredentialError({
-            message: "Invalid websocket token payload.",
-            cause,
-          }),
-      });
+      const claims = yield* decodeWebSocketClaims(base64UrlDecodeUtf8(encodedPayload)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new SessionCredentialError({
+              message: "Invalid websocket token payload.",
+              cause,
+            }),
+        ),
+      );
 
       const now = yield* Clock.currentTimeMillis;
       if (claims.exp <= now) {

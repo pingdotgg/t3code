@@ -83,6 +83,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         staticDir: undefined,
         devUrl: new URL("http://127.0.0.1:5173"),
         noBrowser: true,
+        startupPresentation: "browser",
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: true,
@@ -144,6 +145,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         staticDir: undefined,
         devUrl: new URL("http://127.0.0.1:4173"),
         noBrowser: true,
+        startupPresentation: "browser",
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
@@ -212,6 +214,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         staticDir: undefined,
         devUrl: new URL("http://127.0.0.1:5173"),
         noBrowser: true,
+        startupPresentation: "browser",
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: true,
@@ -329,6 +332,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         staticDir: undefined,
         devUrl: new URL("http://127.0.0.1:4173"),
         noBrowser: true,
+        startupPresentation: "browser",
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
@@ -392,6 +396,66 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         staticDir: resolved.staticDir,
         devUrl: undefined,
         noBrowser: true,
+        startupPresentation: "browser",
+        desktopBootstrapToken: undefined,
+        autoBootstrapProjectFromCwd: false,
+        logWebSocketEvents: false,
+      });
+    }),
+  );
+
+  it.effect("forces noBrowser and disables auto-bootstrap for headless startup presentation", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(os.tmpdir(), "t3-cli-config-headless-base");
+      const derivedPaths = yield* deriveServerPaths(baseDir, undefined);
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+        },
+        Option.none(),
+        {
+          startupPresentation: "headless",
+        },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  T3CODE_NO_BROWSER: "false",
+                  T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved).toEqual({
+        logLevel: "Info",
+        ...defaultObservabilityConfig,
+        mode: "web",
+        port: 3773,
+        cwd: process.cwd(),
+        baseDir,
+        ...derivedPaths,
+        host: undefined,
+        staticDir: resolved.staticDir,
+        devUrl: undefined,
+        noBrowser: true,
+        startupPresentation: "headless",
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,

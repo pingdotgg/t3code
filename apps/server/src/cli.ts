@@ -1,12 +1,20 @@
 import { NetService } from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
-import { AuthSessionId } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  CommandId,
+  OrchestrationReadModel,
+  ProjectId,
+  type ClientOrchestrationCommand,
+} from "@t3tools/contracts";
 import {
   Config,
   Console,
   Duration,
   Effect,
+  Exit,
   FileSystem,
+  Layer,
   LogLevel,
   Option,
   Path,
@@ -16,6 +24,12 @@ import {
   SchemaTransformation,
 } from "effect";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 
 import {
   DEFAULT_PORT,
@@ -25,6 +39,7 @@ import {
   ServerConfig,
   RuntimeMode,
   type ServerConfigShape,
+  type StartupPresentation,
 } from "./config";
 import { readBootstrapEnvelope } from "./bootstrap";
 import { expandHomePath, resolveBaseDir } from "./os-jank";
@@ -37,6 +52,18 @@ import {
   formatSessionList,
 } from "./cliAuthFormat";
 import { AuthControlPlane, AuthControlPlaneShape } from "./auth/Services/AuthControlPlane.ts";
+import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationLayerLive } from "./orchestration/runtimeLayer";
+import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
+import { getAutoBootstrapDefaultModelSelection } from "./serverRuntimeStartup";
+import {
+  clearPersistedServerRuntimeState,
+  readPersistedServerRuntimeState,
+} from "./serverRuntimeState";
+import { WorkspacePaths } from "./workspace/Services/WorkspacePaths";
+import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
 
 const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
 
@@ -163,7 +190,7 @@ interface CliServerFlags {
 
 interface CliAuthLocationFlags {
   readonly baseDir: Option.Option<string>;
-  readonly devUrl: Option.Option<URL>;
+  readonly devUrl?: Option.Option<URL>;
 }
 
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
@@ -187,13 +214,29 @@ const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: st
 export const resolveServerConfig = (
   flags: CliServerFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
+  options?: {
+    readonly startupPresentation?: StartupPresentation;
+    readonly forceAutoBootstrapProjectFromCwd?: boolean;
+  },
 ) =>
   Effect.gen(function* () {
     const { findAvailablePort } = yield* NetService;
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const env = yield* EnvServerConfig;
-    const bootstrapFd = Option.getOrUndefined(flags.bootstrapFd) ?? env.bootstrapFd;
+    const normalizedFlags = {
+      mode: flags.mode ?? Option.none(),
+      port: flags.port ?? Option.none(),
+      host: flags.host ?? Option.none(),
+      baseDir: flags.baseDir ?? Option.none(),
+      cwd: flags.cwd ?? Option.none(),
+      devUrl: flags.devUrl ?? Option.none(),
+      noBrowser: flags.noBrowser ?? Option.none(),
+      bootstrapFd: flags.bootstrapFd ?? Option.none(),
+      autoBootstrapProjectFromCwd: flags.autoBootstrapProjectFromCwd ?? Option.none(),
+      logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
+    } satisfies CliServerFlags;
+    const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
       bootstrapFd !== undefined
         ? yield* readBootstrapEnvelope(BootstrapEnvelopeSchema, bootstrapFd)
@@ -201,7 +244,7 @@ export const resolveServerConfig = (
 
     const mode: RuntimeMode = Option.getOrElse(
       resolveOptionPrecedence(
-        flags.mode,
+        normalizedFlags.mode,
         Option.fromUndefinedOr(env.mode),
         Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.mode)),
       ),
@@ -210,7 +253,7 @@ export const resolveServerConfig = (
 
     const port = yield* Option.match(
       resolveOptionPrecedence(
-        flags.port,
+        normalizedFlags.port,
         Option.fromUndefinedOr(env.port),
         Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.port)),
       ),
@@ -226,7 +269,7 @@ export const resolveServerConfig = (
     );
     const devUrl = Option.getOrElse(
       resolveOptionPrecedence(
-        flags.devUrl,
+        normalizedFlags.devUrl,
         Option.fromUndefinedOr(env.devUrl),
         Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.devUrl)),
       ),
@@ -235,7 +278,7 @@ export const resolveServerConfig = (
     const baseDir = yield* resolveBaseDir(
       Option.getOrUndefined(
         resolveOptionPrecedence(
-          flags.baseDir,
+          normalizedFlags.baseDir,
           Option.fromUndefinedOr(env.t3Home),
           Option.flatMap(bootstrapEnvelope, (bootstrap) =>
             Option.fromUndefinedOr(bootstrap.t3Home),
@@ -243,7 +286,7 @@ export const resolveServerConfig = (
         ),
       ),
     );
-    const rawCwd = Option.getOrElse(flags.cwd, () => process.cwd());
+    const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
     const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
@@ -253,37 +296,45 @@ export const resolveServerConfig = (
     );
     const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
     yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
-    const noBrowser = resolveBooleanFlag(
-      flags.noBrowser,
-      Option.getOrElse(
-        resolveOptionPrecedence(
-          Option.fromUndefinedOr(env.noBrowser),
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.fromUndefinedOr(bootstrap.noBrowser),
-          ),
-        ),
-        () => mode === "desktop",
-      ),
-    );
+    const startupPresentation = options?.startupPresentation ?? "browser";
+    const noBrowser =
+      startupPresentation === "headless"
+        ? true
+        : resolveBooleanFlag(
+            normalizedFlags.noBrowser,
+            Option.getOrElse(
+              resolveOptionPrecedence(
+                Option.fromUndefinedOr(env.noBrowser),
+                Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+                  Option.fromUndefinedOr(bootstrap.noBrowser),
+                ),
+              ),
+              () => mode === "desktop",
+            ),
+          );
     const desktopBootstrapToken = Option.getOrUndefined(
       Option.flatMap(bootstrapEnvelope, (bootstrap) =>
         Option.fromUndefinedOr(bootstrap.desktopBootstrapToken),
       ),
     );
-    const autoBootstrapProjectFromCwd = resolveBooleanFlag(
-      flags.autoBootstrapProjectFromCwd,
-      Option.getOrElse(
-        resolveOptionPrecedence(
-          Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.fromUndefinedOr(bootstrap.autoBootstrapProjectFromCwd),
-          ),
-        ),
-        () => mode === "web",
-      ),
-    );
+    const autoBootstrapProjectFromCwd =
+      options?.forceAutoBootstrapProjectFromCwd ??
+      (startupPresentation === "headless"
+        ? false
+        : resolveBooleanFlag(
+            normalizedFlags.autoBootstrapProjectFromCwd,
+            Option.getOrElse(
+              resolveOptionPrecedence(
+                Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
+                Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+                  Option.fromUndefinedOr(bootstrap.autoBootstrapProjectFromCwd),
+                ),
+              ),
+              () => mode === "web",
+            ),
+          ));
     const logWebSocketEvents = resolveBooleanFlag(
-      flags.logWebSocketEvents,
+      normalizedFlags.logWebSocketEvents,
       Option.getOrElse(
         resolveOptionPrecedence(
           Option.fromUndefinedOr(env.logWebSocketEvents),
@@ -297,7 +348,7 @@ export const resolveServerConfig = (
     const staticDir = devUrl ? undefined : yield* resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
-        flags.host,
+        normalizedFlags.host,
         Option.fromUndefinedOr(env.host),
         Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.host)),
       ),
@@ -340,6 +391,7 @@ export const resolveServerConfig = (
       staticDir,
       devUrl,
       noBrowser,
+      startupPresentation,
       desktopBootstrapToken,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
@@ -359,7 +411,7 @@ const resolveCliAuthConfig = (
       host: Option.none(),
       baseDir: flags.baseDir,
       cwd: Option.none(),
-      devUrl: flags.devUrl,
+      devUrl: flags.devUrl ?? Option.none(),
       noBrowser: Option.none(),
       bootstrapFd: Option.none(),
       autoBootstrapProjectFromCwd: Option.none(),
@@ -446,13 +498,289 @@ const runWithAuthControlPlane = <A, E>(
       const authControlPlane = yield* AuthControlPlane;
       return yield* run(authControlPlane);
     }).pipe(
-      Effect.provide(AuthControlPlaneRuntimeLive),
-      Effect.provideService(ServerConfig, config),
-      Effect.provideService(References.MinimumLogLevel, minimumLogLevel),
+      Effect.provide(
+        Layer.mergeAll(AuthControlPlaneRuntimeLive).pipe(
+          Layer.provide(Layer.succeed(ServerConfig, config)),
+          Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+        ),
+      ),
     );
   });
 
-const commandFlags = {
+type ProjectMutationTarget = {
+  readonly id: ProjectId;
+  readonly title: string;
+  readonly workspaceRoot: string;
+};
+
+type ProjectCommandExecutionMode = "live" | "offline";
+type ProjectCliDispatchCommand = Extract<
+  ClientOrchestrationCommand,
+  { type: "project.create" | "project.meta.update" | "project.delete" }
+>;
+
+const ProjectCliRuntimeLive = Layer.mergeAll(
+  WorkspacePathsLive,
+  OrchestrationLayerLive.pipe(
+    Layer.provideMerge(RepositoryIdentityResolverLive),
+    Layer.provideMerge(SqlitePersistenceLayerLive),
+  ),
+);
+
+const PROJECT_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
+const OrchestrationHttpErrorResponse = Schema.Struct({
+  error: Schema.String,
+});
+
+const withProjectCliSessionToken = <A, E, R>(
+  authControlPlane: AuthControlPlaneShape,
+  run: (token: string) => Effect.Effect<A, E, R>,
+) =>
+  Effect.acquireUseRelease(
+    authControlPlane.issueSession({
+      role: "owner",
+      label: "t3 project cli",
+    }),
+    (issued) => run(issued.token),
+    (issued) => authControlPlane.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
+  );
+
+const withProjectCliLiveServerTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(Effect.timeout(PROJECT_CLI_LIVE_SERVER_TIMEOUT));
+
+const runLiveServerRequest = <A, E extends Error, R>(
+  request: HttpClientRequest.HttpClientRequest,
+  handle: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
+    const response = yield* httpClient.execute(request);
+    return yield* handle(response);
+  }).pipe(withProjectCliLiveServerTimeout);
+
+const decodeOrchestrationReadModelResponse = (response: HttpClientResponse.HttpClientResponse) =>
+  HttpClientResponse.schemaBodyJson(OrchestrationReadModel)(response);
+
+const readErrorMessageFromResponse = (response: HttpClientResponse.HttpClientResponse) =>
+  HttpClientResponse.schemaBodyJson(OrchestrationHttpErrorResponse)(response).pipe(
+    Effect.map((body) => body.error),
+    Effect.catch(() => Effect.succeed(null)),
+    Effect.map((body) => {
+      if (typeof body === "string" && body.trim().length > 0) {
+        return body;
+      }
+      return `Server request failed with status ${response.status}.`;
+    }),
+  );
+
+const normalizeWorkspaceRootForProjectCommand = Effect.fn(
+  "normalizeWorkspaceRootForProjectCommand",
+)(function* (workspaceRoot: string) {
+  const workspacePaths = yield* WorkspacePaths;
+  return yield* workspacePaths.normalizeWorkspaceRoot(workspaceRoot);
+});
+
+const resolveProjectTitle = Effect.fn("resolveProjectTitle")(function* (
+  workspaceRoot: string,
+  explicitTitle?: string,
+) {
+  if (explicitTitle !== undefined) {
+    const trimmed = explicitTitle.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+    return yield* Effect.fail(new Error("Project title cannot be empty."));
+  }
+
+  const path = yield* Path.Path;
+  const basename = path.basename(workspaceRoot).trim();
+  return basename.length > 0 ? basename : "project";
+});
+
+const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (input: {
+  readonly snapshot: OrchestrationReadModel;
+  readonly identifier: string;
+}) {
+  const trimmedIdentifier = input.identifier.trim();
+  if (trimmedIdentifier.length === 0) {
+    return yield* Effect.fail(new Error("Project identifier cannot be empty."));
+  }
+
+  const activeProjects = input.snapshot.projects.filter((project) => project.deletedAt === null);
+  const exactIdMatch = activeProjects.find((project) => project.id === trimmedIdentifier);
+  if (exactIdMatch) {
+    return {
+      id: exactIdMatch.id,
+      title: exactIdMatch.title,
+      workspaceRoot: exactIdMatch.workspaceRoot,
+    } satisfies ProjectMutationTarget;
+  }
+
+  const normalizedWorkspaceRootResult = yield* Effect.exit(
+    normalizeWorkspaceRootForProjectCommand(trimmedIdentifier),
+  );
+  const normalizedWorkspaceRoot = Exit.isSuccess(normalizedWorkspaceRootResult)
+    ? normalizedWorkspaceRootResult.value
+    : null;
+
+  const exactWorkspaceMatch =
+    normalizedWorkspaceRoot === null
+      ? undefined
+      : activeProjects.find((project) => project.workspaceRoot === normalizedWorkspaceRoot);
+
+  const resolved = exactWorkspaceMatch;
+  if (!resolved) {
+    return yield* Effect.fail(new Error(`No active project found for '${trimmedIdentifier}'.`));
+  }
+
+  return {
+    id: resolved.id,
+    title: resolved.title,
+    workspaceRoot: resolved.workspaceRoot,
+  } satisfies ProjectMutationTarget;
+});
+
+const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
+  runLiveServerRequest(
+    HttpClientRequest.get(`${origin}/api/orchestration/snapshot`).pipe(
+      HttpClientRequest.acceptJson,
+      HttpClientRequest.bearerToken(bearerToken),
+    ),
+    HttpClientResponse.matchStatus({
+      "2xx": decodeOrchestrationReadModelResponse,
+      orElse: (response) =>
+        readErrorMessageFromResponse(response).pipe(
+          Effect.flatMap((message) => Effect.fail(new Error(message))),
+        ),
+    }),
+  );
+
+const dispatchLiveOrchestrationCommand = (
+  origin: string,
+  bearerToken: string,
+  command: ProjectCliDispatchCommand,
+) =>
+  HttpClientRequest.post(`${origin}/api/orchestration/dispatch`).pipe(
+    HttpClientRequest.acceptJson,
+    HttpClientRequest.bearerToken(bearerToken),
+    HttpClientRequest.bodyJson(command),
+    Effect.flatMap((request) =>
+      runLiveServerRequest(
+        request,
+        HttpClientResponse.matchStatus({
+          "2xx": () => Effect.void,
+          orElse: (response) =>
+            readErrorMessageFromResponse(response).pipe(
+              Effect.flatMap((message) => Effect.fail(new Error(message))),
+            ),
+        }),
+      ),
+    ),
+  );
+
+const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  return yield* projectionSnapshotQuery.getSnapshot();
+});
+
+const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(
+  function* (authControlPlane: AuthControlPlaneShape, config: ServerConfigShape) {
+    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    if (Option.isNone(runtimeState)) {
+      return Option.none<{ readonly origin: string }>();
+    }
+
+    const attempt = withProjectCliSessionToken(authControlPlane, (token) =>
+      fetchLiveOrchestrationSnapshot(runtimeState.value.origin, token).pipe(
+        Effect.as({
+          origin: runtimeState.value.origin,
+        }),
+      ),
+    );
+
+    const attempted = yield* Effect.exit(attempt);
+    if (Exit.isSuccess(attempted)) {
+      return Option.some(attempted.value);
+    }
+
+    yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    return Option.none<{ readonly origin: string }>();
+  },
+);
+
+const runProjectMutation = Effect.fn("runProjectMutation")(function* (
+  flags: CliAuthLocationFlags,
+  run: (input: {
+    readonly snapshot: OrchestrationReadModel;
+    readonly dispatch: (
+      command: ProjectCliDispatchCommand,
+    ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
+    readonly mode: ProjectCommandExecutionMode;
+  }) => Effect.Effect<
+    string,
+    Error,
+    FileSystem.FileSystem | HttpClient.HttpClient | Path.Path | WorkspacePaths
+  >,
+) {
+  const logLevel = yield* GlobalFlag.LogLevel;
+  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const minimumLogLevel = config.logLevel;
+
+  return yield* Effect.gen(function* () {
+    const authControlPlane = yield* AuthControlPlane;
+    const liveMode = yield* tryResolveLiveProjectExecutionMode(authControlPlane, config);
+
+    if (Option.isSome(liveMode)) {
+      return yield* withProjectCliSessionToken(authControlPlane, (token) =>
+        Effect.gen(function* () {
+          const snapshot = yield* fetchLiveOrchestrationSnapshot(liveMode.value.origin, token);
+          const output = yield* run({
+            snapshot,
+            dispatch: (command) =>
+              dispatchLiveOrchestrationCommand(liveMode.value.origin, token, command),
+            mode: "live",
+          });
+          yield* Console.log(output);
+        }),
+      );
+    }
+
+    const offlineRuntimeLayer = ProjectCliRuntimeLive.pipe(
+      Layer.provide(Layer.succeed(ServerConfig, config)),
+      Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+    );
+
+    return yield* Effect.gen(function* () {
+      const snapshot = yield* getOfflineSnapshot();
+      const orchestrationEngine = yield* OrchestrationEngineService;
+      const output = yield* run({
+        snapshot,
+        dispatch: (command) => orchestrationEngine.dispatch(command),
+        mode: "offline",
+      });
+      yield* Console.log(output);
+    }).pipe(Effect.provide(offlineRuntimeLayer));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(AuthControlPlaneRuntimeLive, WorkspacePathsLive).pipe(
+        Layer.provideMerge(FetchHttpClient.layer),
+        Layer.provide(Layer.succeed(ServerConfig, config)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+      ),
+    ),
+  );
+});
+
+const sharedServerLocationFlags = {
+  baseDir: baseDirFlag,
+  devUrl: devUrlFlag,
+} as const;
+
+const projectLocationFlags = {
+  baseDir: baseDirFlag,
+} as const;
+
+const sharedServerCommandFlags = {
   mode: modeFlag,
   port: portFlag,
   host: hostFlag,
@@ -470,10 +798,7 @@ const commandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
 } as const;
 
-const authLocationFlags = {
-  baseDir: baseDirFlag,
-  devUrl: devUrlFlag,
-} as const;
+const authLocationFlags = sharedServerLocationFlags;
 
 const ttlFlag = Flag.string("ttl").pipe(
   Flag.withSchema(DurationFromString),
@@ -674,25 +999,165 @@ const authCommand = Command.make("auth").pipe(
   Command.withSubcommands([pairingCommand, sessionCommand]),
 );
 
-const startCommand = Command.make("start", commandFlags).pipe(
-  Command.withDescription("Run the T3 Code server."),
+const projectAddCommand = Command.make("add", {
+  ...projectLocationFlags,
+  workspaceRoot: Argument.string("path").pipe(
+    Argument.withDescription("Workspace root to add as a project."),
+  ),
+  title: Flag.string("title").pipe(Flag.withDescription("Optional project title."), Flag.optional),
+}).pipe(
+  Command.withDescription("Add a project."),
   Command.withHandler((flags) =>
-    Effect.gen(function* () {
-      const logLevel = yield* GlobalFlag.LogLevel;
-      const config = yield* resolveServerConfig(flags, logLevel);
-      return yield* runServer.pipe(Effect.provideService(ServerConfig, config));
+    runProjectMutation(
+      flags,
+      Effect.fn("projectAddMutation")(function* ({
+        snapshot,
+        dispatch,
+      }: {
+        readonly snapshot: OrchestrationReadModel;
+        readonly dispatch: (
+          command: ProjectCliDispatchCommand,
+        ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
+      }) {
+        const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
+        const existingProject = snapshot.projects.find(
+          (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
+        );
+        if (existingProject) {
+          return yield* Effect.fail(
+            new Error(`An active project already exists for '${workspaceRoot}'.`),
+          );
+        }
+
+        const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
+        const projectId = ProjectId.makeUnsafe(crypto.randomUUID());
+        yield* dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          projectId,
+          title,
+          workspaceRoot,
+          defaultModelSelection: getAutoBootstrapDefaultModelSelection(),
+          createdAt: new Date().toISOString(),
+        });
+        return `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
+      }),
+    ),
+  ),
+);
+
+const projectRemoveCommand = Command.make("remove", {
+  ...projectLocationFlags,
+  project: Argument.string("project").pipe(
+    Argument.withDescription("Project id or workspace root to remove."),
+  ),
+}).pipe(
+  Command.withDescription("Remove a project."),
+  Command.withHandler((flags) =>
+    runProjectMutation(
+      flags,
+      Effect.fn("projectRemoveMutation")(function* ({
+        snapshot,
+        dispatch,
+      }: {
+        readonly snapshot: OrchestrationReadModel;
+        readonly dispatch: (
+          command: ProjectCliDispatchCommand,
+        ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
+      }) {
+        const project = yield* findActiveProjectTarget({
+          snapshot,
+          identifier: flags.project,
+        });
+        yield* dispatch({
+          type: "project.delete",
+          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          projectId: project.id,
+        });
+        return `Removed project ${project.id} (${project.title}).`;
+      }),
+    ),
+  ),
+);
+
+const projectRenameCommand = Command.make("rename", {
+  ...projectLocationFlags,
+  project: Argument.string("project").pipe(
+    Argument.withDescription("Project id or workspace root to rename."),
+  ),
+  title: Argument.string("title").pipe(Argument.withDescription("New project title.")),
+}).pipe(
+  Command.withDescription("Rename a project."),
+  Command.withHandler((flags) =>
+    runProjectMutation(
+      flags,
+      Effect.fn("projectRenameMutation")(function* ({
+        snapshot,
+        dispatch,
+      }: {
+        readonly snapshot: OrchestrationReadModel;
+        readonly dispatch: (
+          command: ProjectCliDispatchCommand,
+        ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
+      }) {
+        const project = yield* findActiveProjectTarget({
+          snapshot,
+          identifier: flags.project,
+        });
+        const nextTitle = yield* resolveProjectTitle(project.workspaceRoot, flags.title);
+        if (nextTitle === project.title) {
+          return `Project ${project.id} is already named ${nextTitle}.`;
+        }
+
+        yield* dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          projectId: project.id,
+          title: nextTitle,
+        });
+        return `Renamed project ${project.id} to ${nextTitle}.`;
+      }),
+    ),
+  ),
+);
+
+const projectCommand = Command.make("project").pipe(
+  Command.withDescription("Manage projects."),
+  Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
+);
+
+const runServerCommand = (
+  flags: CliServerFlags,
+  options?: {
+    readonly startupPresentation?: StartupPresentation;
+    readonly forceAutoBootstrapProjectFromCwd?: boolean;
+  },
+) =>
+  Effect.gen(function* () {
+    const logLevel = yield* GlobalFlag.LogLevel;
+    const config = yield* resolveServerConfig(flags, logLevel, options);
+    return yield* runServer.pipe(Effect.provideService(ServerConfig, config));
+  });
+
+const startCommand = Command.make("start", { ...sharedServerCommandFlags }).pipe(
+  Command.withDescription("Run the T3 Code server."),
+  Command.withHandler((flags) => runServerCommand(flags)),
+);
+
+const serveCommand = Command.make("serve", { ...sharedServerCommandFlags }).pipe(
+  Command.withDescription(
+    "Run the T3 Code server without opening a browser and print headless pairing details.",
+  ),
+  Command.withHandler((flags) =>
+    runServerCommand(flags, {
+      startupPresentation: "headless",
+      forceAutoBootstrapProjectFromCwd: false,
     }),
   ),
 );
 
-export const cli = Command.make("t3", commandFlags).pipe(
+export const cli = Command.make("t3", { ...sharedServerCommandFlags }).pipe(
   Command.withDescription("Run the T3 Code server."),
-  Command.withHandler((flags) =>
-    Effect.gen(function* () {
-      const logLevel = yield* GlobalFlag.LogLevel;
-      const config = yield* resolveServerConfig(flags, logLevel);
-      return yield* runServer.pipe(Effect.provideService(ServerConfig, config));
-    }),
-  ),
-  Command.withSubcommands([startCommand, authCommand]),
+  Command.withHandler((flags) => runServerCommand(flags)),
+  Command.withSubcommands([startCommand, serveCommand, authCommand, projectCommand]),
 );

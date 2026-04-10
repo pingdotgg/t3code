@@ -23,12 +23,7 @@ import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
-import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine";
-import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
-import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
-import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery";
-import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { GitCoreLive } from "./git/Layers/GitCore";
 import { GitHubCliLive } from "./git/Layers/GitHubCli";
@@ -67,6 +62,16 @@ import {
 } from "./auth/http";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth";
+import { OrchestrationLayerLive } from "./orchestration/runtimeLayer";
+import {
+  clearPersistedServerRuntimeState,
+  makePersistedServerRuntimeState,
+  persistServerRuntimeState,
+} from "./serverRuntimeState";
+import {
+  orchestrationDispatchRouteLayer,
+  orchestrationSnapshotRouteLayer,
+} from "./orchestration/http";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -122,26 +127,6 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
-);
-
-const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
-  OrchestrationEventStoreLive,
-  OrchestrationCommandReceiptRepositoryLive,
-);
-
-const OrchestrationProjectionPipelineLayerLive = OrchestrationProjectionPipelineLive.pipe(
-  Layer.provide(OrchestrationEventStoreLive),
-);
-
-const OrchestrationInfrastructureLayerLive = Layer.mergeAll(
-  OrchestrationProjectionSnapshotQueryLive,
-  OrchestrationEventInfrastructureLayerLive,
-  OrchestrationProjectionPipelineLayerLive,
-);
-
-const OrchestrationLayerLive = Layer.mergeAll(
-  OrchestrationInfrastructureLayerLive,
-  OrchestrationEngineLive.pipe(Layer.provide(OrchestrationInfrastructureLayerLive)),
 );
 
 const CheckpointingLayerLive = Layer.empty.pipe(
@@ -248,6 +233,8 @@ export const makeRoutesLayer = Layer.mergeAll(
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
   attachmentsRouteLayer,
+  orchestrationDispatchRouteLayer,
+  orchestrationSnapshotRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,
@@ -268,12 +255,34 @@ export const makeServerLayer = Layer.unwrap(
         yield* startup.markHttpListening;
       }),
     );
+    const runtimeStateLayer = Layer.effectDiscard(
+      Effect.acquireRelease(
+        Effect.gen(function* () {
+          const server = yield* HttpServer.HttpServer;
+          const address = server.address;
+          if (typeof address === "string" || !("port" in address)) {
+            return;
+          }
+
+          const state = makePersistedServerRuntimeState({
+            config,
+            port: address.port,
+          });
+          yield* persistServerRuntimeState({
+            path: config.serverRuntimeStatePath,
+            state,
+          });
+        }),
+        () => clearPersistedServerRuntimeState(config.serverRuntimeStatePath),
+      ),
+    );
 
     const serverApplicationLayer = Layer.mergeAll(
       HttpRouter.serve(makeRoutesLayer, {
         disableLogger: !config.logWebSocketEvents,
       }),
       httpListeningLayer,
+      runtimeStateLayer,
     );
 
     return serverApplicationLayer.pipe(

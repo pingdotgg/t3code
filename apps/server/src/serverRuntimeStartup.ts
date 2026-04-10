@@ -18,6 +18,7 @@ import {
   Ref,
   Scope,
   ServiceMap,
+  Console,
 } from "effect";
 
 import { ServerConfig } from "./config";
@@ -31,12 +32,12 @@ import { ServerSettingsService } from "./serverSettings";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { ServerAuth } from "./auth/Services/ServerAuth";
-
-const isWildcardHost = (host: string | undefined): boolean =>
-  host === "0.0.0.0" || host === "::" || host === "[::]";
-
-const formatHostForUrl = (host: string): string =>
-  host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+import {
+  formatHeadlessServeOutput,
+  formatHostForUrl,
+  isWildcardHost,
+  issueHeadlessServeAccessInfo,
+} from "./startupAccess";
 
 export class ServerRuntimeStartupError extends Data.TaggedError("ServerRuntimeStartupError")<{
   readonly message: string;
@@ -383,14 +384,23 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
 
       yield* Effect.logDebug("startup phase: recording startup heartbeat");
       yield* launchStartupHeartbeat;
-      yield* Effect.logDebug("startup phase: browser open check");
-      const startupBrowserTarget = yield* resolveStartupBrowserTarget;
-      if (serverConfig.mode !== "desktop") {
-        yield* Effect.logInfo("Authentication required. Open T3 Code using the pairing URL.").pipe(
-          Effect.annotateLogs({ pairingUrl: startupBrowserTarget }),
+      if (serverConfig.startupPresentation === "headless") {
+        yield* Effect.logDebug("startup phase: headless access info");
+        const accessInfo = yield* issueHeadlessServeAccessInfo();
+        yield* runStartupPhase(
+          "headless.output",
+          Console.log(formatHeadlessServeOutput(accessInfo)),
         );
+      } else {
+        yield* Effect.logDebug("startup phase: browser open check");
+        const startupBrowserTarget = yield* resolveStartupBrowserTarget;
+        if (serverConfig.mode !== "desktop") {
+          yield* Effect.logInfo(
+            "Authentication required. Open T3 Code using the pairing URL.",
+          ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
+        }
+        yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
       }
-      yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
       yield* Effect.logDebug("startup phase: complete");
     }),
   );
