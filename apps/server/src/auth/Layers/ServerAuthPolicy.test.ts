@@ -33,10 +33,12 @@ it.layer(NodeServices.layer)("ServerAuthPolicyLive", (it) => {
 
       expect(descriptor.policy).toBe("desktop-managed-local");
       expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap"]);
+      expect(descriptor.sessionCookieName).toBe("t3_session_3773");
     }).pipe(
       Effect.provide(
         makeServerAuthPolicyLayer({
           mode: "desktop",
+          port: 3773,
         }),
       ),
     ),
@@ -66,6 +68,7 @@ it.layer(NodeServices.layer)("ServerAuthPolicyLive", (it) => {
 
       expect(descriptor.policy).toBe("loopback-browser");
       expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
+      expect(descriptor.sessionCookieName).toBe("t3_session");
     }).pipe(
       Effect.provide(
         makeServerAuthPolicyLayer({

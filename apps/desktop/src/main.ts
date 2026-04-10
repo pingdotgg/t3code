@@ -117,6 +117,7 @@ const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
+const DESKTOP_REQUIRED_PORT_PROBE_HOSTS = ["0.0.0.0", "::"] as const;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
@@ -1781,6 +1782,7 @@ async function bootstrap(): Promise<void> {
     (await resolveDesktopBackendPort({
       host: DESKTOP_LOOPBACK_HOST,
       startPort: DEFAULT_DESKTOP_BACKEND_PORT,
+      requiredHosts: DESKTOP_REQUIRED_PORT_PROBE_HOSTS,
     }));
   writeDesktopLogHeader(
     configuredBackendPort === undefined
