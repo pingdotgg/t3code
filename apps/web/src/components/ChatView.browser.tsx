@@ -1327,6 +1327,7 @@ async function mountChatView(options: {
   snapshot: OrchestrationReadModel;
   configureFixture?: (fixture: TestFixture) => void;
   resolveRpc?: (body: NormalizedWsRpcRequestBody) => unknown | undefined;
+  initialPath?: string;
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
   options.configureFixture?.(fixture);
@@ -1346,7 +1347,7 @@ async function mountChatView(options: {
 
   const router = getRouter(
     createMemoryHistory({
-      initialEntries: [`/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}`],
+      initialEntries: [options.initialPath ?? `/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}`],
     }),
   );
 
@@ -2504,6 +2505,119 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         async () => {
           expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses the active draft route session when changing the base branch", async () => {
+    const staleDraftId = draftIdFromPath("/draft/draft-stale-branch-session");
+    const activeDraftId = draftIdFromPath("/draft/draft-active-branch-session");
+
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [staleDraftId]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: `${PROJECT_DRAFT_KEY}:stale`,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+        [activeDraftId]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [`${PROJECT_DRAFT_KEY}:stale`]: staleDraftId,
+        [PROJECT_DRAFT_KEY]: activeDraftId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialPath: `/draft/${activeDraftId}`,
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitListBranches) {
+          return {
+            isRepo: true,
+            hasOriginRemote: true,
+            nextCursor: null,
+            totalCount: 2,
+            branches: [
+              {
+                name: "main",
+                current: true,
+                isDefault: true,
+                worktreePath: null,
+              },
+              {
+                name: "release/next",
+                current: false,
+                isDefault: false,
+                worktreePath: null,
+              },
+            ],
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const branchButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "From main",
+          ) as HTMLButtonElement | null,
+        'Unable to find branch selector button with "From main".',
+      );
+      branchButton.click();
+
+      const branchOption = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("span")).find(
+            (element) => element.textContent?.trim() === "release/next",
+          ) as HTMLSpanElement | null,
+        'Unable to find the "release/next" branch option.',
+      );
+      branchOption.click();
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().getDraftSession(activeDraftId)?.branch).toBe(
+            "release/next",
+          );
+          expect(useComposerDraftStore.getState().getDraftSession(staleDraftId)?.branch).toBe(
+            "main",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await vi.waitFor(
+        () => {
+          const updatedButton = Array.from(document.querySelectorAll("button")).find((button) =>
+            button.textContent?.trim().includes("From release/next"),
+          );
+          expect(updatedButton).toBeTruthy();
         },
         { timeout: 8_000, interval: 16 },
       );
