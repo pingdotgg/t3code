@@ -101,7 +101,7 @@ function createMessage(input: {
   attachments?: ChatMessage["attachments"];
 }): ChatMessage {
   return {
-    id: MessageId.makeUnsafe(input.id),
+    id: MessageId.make(input.id),
     role: input.role,
     text: input.text,
     ...(input.attachments ? { attachments: input.attachments } : {}),

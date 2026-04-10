@@ -6,7 +6,7 @@
  *
  * @module PtyAdapter
  */
-import { Effect, Schema, ServiceMap } from "effect";
+import { Effect, Schema, Context } from "effect";
 
 /**
  * PtyError - Error type for PTY adapter operations.
@@ -53,6 +53,6 @@ export interface PtyAdapterShape {
 /**
  * PtyAdapter - Service tag for PTY process integration.
  */
-export class PtyAdapter extends ServiceMap.Service<PtyAdapter, PtyAdapterShape>()(
+export class PtyAdapter extends Context.Service<PtyAdapter, PtyAdapterShape>()(
   "t3/terminal/Services/PTY/PtyAdapter",
 ) {}

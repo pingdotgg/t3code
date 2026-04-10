@@ -15,7 +15,7 @@ import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import * as ServiceMap from "effect/ServiceMap";
+import * as Context from "effect/Context";
 import * as Stream from "effect/Stream";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as Client from "effect/unstable/sql/SqlClient";
@@ -32,7 +32,7 @@ export type TypeId = "~local/sqlite-node/SqliteClient";
 /**
  * SqliteClient - Effect service tag for the sqlite SQL client.
  */
-export const SqliteClient = ServiceMap.Service<Client.SqlClient>("t3/persistence/NodeSqliteClient");
+export const SqliteClient = Context.Service<Client.SqlClient>("t3/persistence/NodeSqliteClient");
 
 export interface SqliteClientConfig {
   readonly filename: string;
@@ -120,7 +120,7 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
 
     const runStatement = (statement: StatementSync, params: ReadonlyArray<unknown>, raw: boolean) =>
       Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
-        statement.setReadBigInts(Boolean(ServiceMap.get(fiber.services, Client.SafeIntegers)));
+        statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
         try {
           if (hasRows(statement)) {
             return Effect.succeed(statement.all(...(params as any)));
@@ -200,7 +200,7 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
   const acquirer = semaphore.withPermits(1)(Effect.succeed(connection));
   const transactionAcquirer = Effect.uninterruptibleMask((restore) => {
     const fiber = Fiber.getCurrent()!;
-    const scope = ServiceMap.getUnsafe(fiber.services, Scope.Scope);
+    const scope = Context.getUnsafe(fiber.context, Scope.Scope);
     return Effect.as(
       Effect.tap(restore(semaphore.take(1)), () => Scope.addFinalizer(scope, semaphore.release(1))),
       connection,
@@ -251,27 +251,27 @@ const makeMemory = (
 export const layerConfig = (
   config: Config.Wrap<SqliteClientConfig>,
 ): Layer.Layer<Client.SqlClient, Config.ConfigError> =>
-  Layer.effectServices(
+  Layer.effectContext(
     Config.unwrap(config)
       .asEffect()
       .pipe(
         Effect.flatMap(make),
         Effect.map((client) =>
-          ServiceMap.make(SqliteClient, client).pipe(ServiceMap.add(Client.SqlClient, client)),
+          Context.make(SqliteClient, client).pipe(Context.add(Client.SqlClient, client)),
         ),
       ),
   ).pipe(Layer.provide(Reactivity.layer));
 
 export const layer = (config: SqliteClientConfig): Layer.Layer<Client.SqlClient> =>
-  Layer.effectServices(
+  Layer.effectContext(
     Effect.map(make(config), (client) =>
-      ServiceMap.make(SqliteClient, client).pipe(ServiceMap.add(Client.SqlClient, client)),
+      Context.make(SqliteClient, client).pipe(Context.add(Client.SqlClient, client)),
     ),
   ).pipe(Layer.provide(Reactivity.layer));
 
 export const layerMemory = (config: SqliteMemoryClientConfig = {}): Layer.Layer<Client.SqlClient> =>
-  Layer.effectServices(
+  Layer.effectContext(
     Effect.map(makeMemory(config), (client) =>
-      ServiceMap.make(SqliteClient, client).pipe(ServiceMap.add(Client.SqlClient, client)),
+      Context.make(SqliteClient, client).pipe(Context.add(Client.SqlClient, client)),
     ),
   ).pipe(Layer.provide(Reactivity.layer));

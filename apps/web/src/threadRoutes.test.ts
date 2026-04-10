@@ -12,7 +12,7 @@ import {
 
 describe("threadRoutes", () => {
   it("builds canonical thread route params from a scoped ref", () => {
-    const ref = scopeThreadRef("env-1" as never, ThreadId.makeUnsafe("thread-1"));
+    const ref = scopeThreadRef("env-1" as never, ThreadId.make("thread-1"));
 
     expect(buildThreadRouteParams(ref)).toEqual({
       environmentId: "env-1",
@@ -36,7 +36,7 @@ describe("threadRoutes", () => {
   });
 
   it("builds canonical draft route params from a draft id", () => {
-    expect(buildDraftThreadRouteParams(DraftId.makeUnsafe("draft-1"))).toEqual({
+    expect(buildDraftThreadRouteParams(DraftId.make("draft-1"))).toEqual({
       draftId: "draft-1",
     });
   });

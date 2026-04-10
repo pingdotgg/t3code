@@ -34,8 +34,8 @@ function registerListener<T>(listeners: Set<(event: T) => void>, listener: (even
 }
 
 const gitStatusListeners = new Set<(event: GitStatusResult) => void>();
-const ENVIRONMENT_ID = EnvironmentId.makeUnsafe("environment-local");
-const OTHER_ENVIRONMENT_ID = EnvironmentId.makeUnsafe("environment-remote");
+const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
+const OTHER_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
 const TARGET = { environmentId: ENVIRONMENT_ID, cwd: "/repo" } as const;
 const FRESH_TARGET = { environmentId: ENVIRONMENT_ID, cwd: "/fresh" } as const;
 

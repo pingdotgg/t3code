@@ -152,6 +152,10 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
     runCliWithRuntime(["--log-level", "debug", "--version"]),
   );
 
+  it.effect("accepts canonical --no-<flag> boolean negation", () =>
+    runCliWithRuntime(["--no-log-websocket-events", "--version"]),
+  );
+
   it.effect("rejects invalid log-level casing before launching the server", () =>
     Effect.gen(function* () {
       const error = yield* runCliWithRuntime(["--log-level", "Debug"]).pipe(Effect.flip);

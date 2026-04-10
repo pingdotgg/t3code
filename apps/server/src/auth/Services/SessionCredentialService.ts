@@ -4,7 +4,7 @@ import type {
   AuthSessionId,
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
-import { Data, DateTime, Duration, ServiceMap } from "effect";
+import { Data, DateTime, Duration, Context } from "effect";
 import type { Effect, Stream } from "effect";
 
 export type SessionRole = "owner" | "client";
@@ -81,7 +81,7 @@ export interface SessionCredentialServiceShape {
   readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
 }
 
-export class SessionCredentialService extends ServiceMap.Service<
+export class SessionCredentialService extends Context.Service<
   SessionCredentialService,
   SessionCredentialServiceShape
 >()("t3/auth/Services/SessionCredentialService") {}

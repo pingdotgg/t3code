@@ -19,7 +19,7 @@ import {
   GitStatusInput,
   GitStatusResult,
 } from "@t3tools/contracts";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { Effect } from "effect";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 
@@ -99,6 +99,6 @@ export interface GitManagerShape {
 /**
  * GitManager - Service tag for stacked Git workflow orchestration.
  */
-export class GitManager extends ServiceMap.Service<GitManager, GitManagerShape>()(
+export class GitManager extends Context.Service<GitManager, GitManagerShape>()(
   "t3/git/Services/GitManager",
 ) {}

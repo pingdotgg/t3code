@@ -68,7 +68,7 @@ describe("addSavedEnvironment", () => {
       credential: "pairing-code",
     });
     mockFetchRemoteEnvironmentDescriptor.mockResolvedValue({
-      environmentId: EnvironmentId.makeUnsafe("environment-1"),
+      environmentId: EnvironmentId.make("environment-1"),
       label: "Remote environment",
     });
     mockBootstrapRemoteBearerSession.mockResolvedValue({
@@ -94,7 +94,7 @@ describe("addSavedEnvironment", () => {
 
     expect(mockPersistSavedEnvironmentRecord).toHaveBeenCalledTimes(1);
     expect(mockWriteSavedEnvironmentBearerToken).toHaveBeenCalledWith(
-      EnvironmentId.makeUnsafe("environment-1"),
+      EnvironmentId.make("environment-1"),
       "bearer-token",
     );
     expect(mockSetSavedEnvironmentRegistry).toHaveBeenCalledWith([]);

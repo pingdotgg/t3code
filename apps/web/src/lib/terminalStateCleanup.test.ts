@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { collectActiveTerminalThreadIds } from "./terminalStateCleanup";
 
-const threadId = (id: string): ThreadId => ThreadId.makeUnsafe(id);
+const threadId = (id: string): ThreadId => ThreadId.make(id);
 const threadKey = (environmentId: string, id: string): string =>
   scopedThreadKey(scopeThreadRef(environmentId as never, threadId(id)));
 

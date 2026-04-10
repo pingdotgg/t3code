@@ -34,8 +34,8 @@ const BRANCH_SEARCH_RESULT: InfiniteData<GitListBranchesResult, number> = {
   pages: [BRANCH_QUERY_RESULT],
   pageParams: [0],
 };
-const ENVIRONMENT_A = EnvironmentId.makeUnsafe("environment-a");
-const ENVIRONMENT_B = EnvironmentId.makeUnsafe("environment-b");
+const ENVIRONMENT_A = EnvironmentId.make("environment-a");
+const ENVIRONMENT_B = EnvironmentId.make("environment-b");
 
 describe("gitMutationKeys", () => {
   it("scopes stacked action keys by cwd", () => {

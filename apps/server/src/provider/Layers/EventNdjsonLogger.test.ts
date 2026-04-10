@@ -42,11 +42,11 @@ describe("EventNdjsonLogger", () => {
 
         yield* logger.write(
           { threadId: "provider-thread-1", id: "evt-1" },
-          ThreadId.makeUnsafe("thread-1"),
+          ThreadId.make("thread-1"),
         );
         yield* logger.write(
           { type: "turn.completed", threadId: "provider-thread-2", id: "evt-2" },
-          ThreadId.makeUnsafe("thread-2"),
+          ThreadId.make("thread-2"),
         );
         yield* logger.close();
 
@@ -178,7 +178,7 @@ describe("EventNdjsonLogger", () => {
               id: `evt-${index}`,
               payload: "x".repeat(40),
             },
-            ThreadId.makeUnsafe("thread-rotate"),
+            ThreadId.make("thread-rotate"),
           );
         }
         yield* logger.close();

@@ -64,7 +64,7 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
     return generated;
   });
 
-  const environmentId = EnvironmentId.makeUnsafe(environmentIdRaw);
+  const environmentId = EnvironmentId.make(environmentIdRaw);
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
   const label = yield* resolveServerEnvironmentLabel({
     cwdBaseName,

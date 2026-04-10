@@ -58,7 +58,7 @@ const clientSettings: ClientSettings = {
 };
 
 const savedRegistryRecord: PersistedSavedEnvironmentRecord = {
-  environmentId: EnvironmentId.makeUnsafe("environment-1"),
+  environmentId: EnvironmentId.make("environment-1"),
   label: "Remote environment",
   httpBaseUrl: "https://remote.example.com/",
   wsBaseUrl: "wss://remote.example.com/",

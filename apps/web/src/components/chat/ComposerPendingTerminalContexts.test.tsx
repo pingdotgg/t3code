@@ -10,7 +10,7 @@ describe("ComposerPendingTerminalContextChip", () => {
       <ComposerPendingTerminalContextChip
         context={{
           id: "ctx-expired",
-          threadId: ThreadId.makeUnsafe("thread-1"),
+          threadId: ThreadId.make("thread-1"),
           terminalId: "default",
           terminalLabel: "Terminal 1",
           lineStart: 2,

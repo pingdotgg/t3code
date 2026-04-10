@@ -11,7 +11,7 @@ import { buildThreadRouteParams } from "../threadRoutes";
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();
   const { draftId: rawDraftId } = Route.useParams();
-  const draftId = DraftId.makeUnsafe(rawDraftId);
+  const draftId = DraftId.make(rawDraftId);
   const draftSession = useComposerDraftStore((store) => store.getDraftSession(draftId));
   const serverThread = useStore(
     useMemo(

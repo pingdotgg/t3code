@@ -122,15 +122,12 @@ it.live("replays typed runtime fixture events", () =>
 
     yield* Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession(
-        ThreadId.makeUnsafe("thread-integration-typed"),
-        {
-          threadId: ThreadId.makeUnsafe("thread-integration-typed"),
-          provider: "codex",
-          cwd: fixture.cwd,
-          runtimeMode: "full-access",
-        },
-      );
+      const session = yield* provider.startSession(ThreadId.make("thread-integration-typed"), {
+        threadId: ThreadId.make("thread-integration-typed"),
+        provider: "codex",
+        cwd: fixture.cwd,
+        runtimeMode: "full-access",
+      });
       assert.equal((session.threadId ?? "").length > 0, true);
 
       const observedEvents = yield* runTurn({
@@ -157,15 +154,12 @@ it.live("replays file-changing fixture turn events", () =>
 
     yield* Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession(
-        ThreadId.makeUnsafe("thread-integration-tools"),
-        {
-          threadId: ThreadId.makeUnsafe("thread-integration-tools"),
-          provider: "codex",
-          cwd: fixture.cwd,
-          runtimeMode: "full-access",
-        },
-      );
+      const session = yield* provider.startSession(ThreadId.make("thread-integration-tools"), {
+        threadId: ThreadId.make("thread-integration-tools"),
+        provider: "codex",
+        cwd: fixture.cwd,
+        runtimeMode: "full-access",
+      });
       assert.equal((session.threadId ?? "").length > 0, true);
 
       const observedEvents = yield* runTurn({
@@ -196,15 +190,12 @@ it.live("runs multi-turn tool/approval flow", () =>
 
     yield* Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession(
-        ThreadId.makeUnsafe("thread-integration-multi"),
-        {
-          threadId: ThreadId.makeUnsafe("thread-integration-multi"),
-          provider: "codex",
-          cwd: fixture.cwd,
-          runtimeMode: "full-access",
-        },
-      );
+      const session = yield* provider.startSession(ThreadId.make("thread-integration-multi"), {
+        threadId: ThreadId.make("thread-integration-multi"),
+        provider: "codex",
+        cwd: fixture.cwd,
+        runtimeMode: "full-access",
+      });
       assert.equal((session.threadId ?? "").length > 0, true);
 
       const firstTurnEvents = yield* runTurn({
@@ -250,15 +241,12 @@ it.live("rolls back provider conversation state only", () =>
 
     yield* Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession(
-        ThreadId.makeUnsafe("thread-integration-rollback"),
-        {
-          threadId: ThreadId.makeUnsafe("thread-integration-rollback"),
-          provider: "codex",
-          cwd: fixture.cwd,
-          runtimeMode: "full-access",
-        },
-      );
+      const session = yield* provider.startSession(ThreadId.make("thread-integration-rollback"), {
+        threadId: ThreadId.make("thread-integration-rollback"),
+        provider: "codex",
+        cwd: fixture.cwd,
+        runtimeMode: "full-access",
+      });
       assert.equal((session.threadId ?? "").length > 0, true);
 
       yield* runTurn({

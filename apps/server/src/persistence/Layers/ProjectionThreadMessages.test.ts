@@ -14,8 +14,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
   it.effect("preserves existing attachments when upsert omits attachments", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;
-      const threadId = ThreadId.makeUnsafe("thread-preserve-attachments");
-      const messageId = MessageId.makeUnsafe("message-preserve-attachments");
+      const threadId = ThreadId.make("thread-preserve-attachments");
+      const messageId = MessageId.make("message-preserve-attachments");
       const createdAt = "2026-02-28T19:00:00.000Z";
       const updatedAt = "2026-02-28T19:00:01.000Z";
       const persistedAttachments = [
@@ -68,8 +68,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
   it.effect("allows explicit attachment clearing with an empty array", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;
-      const threadId = ThreadId.makeUnsafe("thread-clear-attachments");
-      const messageId = MessageId.makeUnsafe("message-clear-attachments");
+      const threadId = ThreadId.make("thread-clear-attachments");
+      const messageId = MessageId.make("message-clear-attachments");
       const createdAt = "2026-02-28T19:10:00.000Z";
 
       yield* repository.upsert({

@@ -1,5 +1,5 @@
 import { AuthClientMetadataDeviceType, AuthSessionId } from "@t3tools/contracts";
-import { Option, Schema, ServiceMap } from "effect";
+import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
 import type { AuthSessionRepositoryError } from "../Errors.ts";
@@ -87,7 +87,7 @@ export interface AuthSessionRepositoryShape {
   ) => Effect.Effect<void, AuthSessionRepositoryError>;
 }
 
-export class AuthSessionRepository extends ServiceMap.Service<
+export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   AuthSessionRepositoryShape
 >()("t3/persistence/Services/AuthSessions/AuthSessionRepository") {}

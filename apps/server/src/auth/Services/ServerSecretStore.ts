@@ -1,4 +1,4 @@
-import { Data, ServiceMap } from "effect";
+import { Data, Context } from "effect";
 import type { Effect } from "effect";
 
 export class SecretStoreError extends Data.TaggedError("SecretStoreError")<{
@@ -16,7 +16,6 @@ export interface ServerSecretStoreShape {
   readonly remove: (name: string) => Effect.Effect<void, SecretStoreError>;
 }
 
-export class ServerSecretStore extends ServiceMap.Service<
-  ServerSecretStore,
-  ServerSecretStoreShape
->()("t3/auth/Services/ServerSecretStore") {}
+export class ServerSecretStore extends Context.Service<ServerSecretStore, ServerSecretStoreShape>()(
+  "t3/auth/Services/ServerSecretStore",
+) {}

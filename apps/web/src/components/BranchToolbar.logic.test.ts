@@ -13,8 +13,8 @@ import {
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 
-const localEnvironmentId = EnvironmentId.makeUnsafe("environment-local");
-const remoteEnvironmentId = EnvironmentId.makeUnsafe("environment-remote");
+const localEnvironmentId = EnvironmentId.make("environment-local");
+const remoteEnvironmentId = EnvironmentId.make("environment-remote");
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {

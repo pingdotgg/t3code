@@ -22,7 +22,7 @@ function normalizeScriptId(value: string): string {
 }
 
 export const commandForProjectScript = (scriptId: string): KeybindingCommand =>
-  SCRIPT_RUN_COMMAND_PATTERN.makeUnsafe(`script.${scriptId}.run`);
+  SCRIPT_RUN_COMMAND_PATTERN.make(`script.${scriptId}.run`);
 
 export function projectScriptIdFromCommand(command: string): string | null {
   const trimmed = command.trim();

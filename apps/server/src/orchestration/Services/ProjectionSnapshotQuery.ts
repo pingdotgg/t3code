@@ -13,7 +13,7 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { Option } from "effect";
 import type { Effect } from "effect";
 
@@ -74,7 +74,7 @@ export interface ProjectionSnapshotQueryShape {
 /**
  * ProjectionSnapshotQuery - Service tag for projection snapshot queries.
  */
-export class ProjectionSnapshotQuery extends ServiceMap.Service<
+export class ProjectionSnapshotQuery extends Context.Service<
   ProjectionSnapshotQuery,
   ProjectionSnapshotQueryShape
 >()("t3/orchestration/Services/ProjectionSnapshotQuery") {}

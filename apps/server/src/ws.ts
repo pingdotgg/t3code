@@ -128,7 +128,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const sessions = yield* SessionCredentialService;
       const serverCommandId = (tag: string) =>
-        CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
+        CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
       const loadAuthAccessSnapshot = () =>
         Effect.all({
@@ -149,7 +149,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           commandId: serverCommandId("setup-script-activity"),
           threadId: input.threadId,
           activity: {
-            id: EventId.makeUnsafe(crypto.randomUUID()),
+            id: EventId.make(crypto.randomUUID()),
             tone: input.tone,
             kind: input.kind,
             summary: input.summary,

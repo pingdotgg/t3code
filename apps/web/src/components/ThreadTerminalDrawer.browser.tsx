@@ -121,7 +121,7 @@ vi.mock("~/localApi", () => ({
 
 import { TerminalViewport } from "./ThreadTerminalDrawer";
 
-const THREAD_ID = ThreadId.makeUnsafe("thread-terminal-browser");
+const THREAD_ID = ThreadId.make("thread-terminal-browser");
 
 function createEnvironmentApi() {
   return {

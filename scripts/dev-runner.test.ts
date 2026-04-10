@@ -121,7 +121,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
-          baseEnv: {},
+          baseEnv: {
+            T3CODE_LOG_WS_EVENTS: "1",
+          },
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,

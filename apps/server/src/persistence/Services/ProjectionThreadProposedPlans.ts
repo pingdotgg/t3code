@@ -5,7 +5,7 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "@t3tools/contracts";
-import { Schema, ServiceMap } from "effect";
+import { Schema, Context } from "effect";
 import type { Effect } from "effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
@@ -46,7 +46,7 @@ export interface ProjectionThreadProposedPlanRepositoryShape {
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
-export class ProjectionThreadProposedPlanRepository extends ServiceMap.Service<
+export class ProjectionThreadProposedPlanRepository extends Context.Service<
   ProjectionThreadProposedPlanRepository,
   ProjectionThreadProposedPlanRepositoryShape
 >()(

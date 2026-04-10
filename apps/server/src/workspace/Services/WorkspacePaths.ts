@@ -6,7 +6,7 @@
  *
  * @module WorkspacePaths
  */
-import { Schema, ServiceMap } from "effect";
+import { Schema, Context } from "effect";
 import type { Effect } from "effect";
 
 export class WorkspaceRootNotExistsError extends Schema.TaggedErrorClass<WorkspaceRootNotExistsError>()(
@@ -80,6 +80,6 @@ export interface WorkspacePathsShape {
 /**
  * WorkspacePaths - Service tag for workspace path normalization and resolution.
  */
-export class WorkspacePaths extends ServiceMap.Service<WorkspacePaths, WorkspacePathsShape>()(
+export class WorkspacePaths extends Context.Service<WorkspacePaths, WorkspacePathsShape>()(
   "t3/workspace/Services/WorkspacePaths",
 ) {}

@@ -6,7 +6,7 @@
  *
  * @module WorkspaceEntries
  */
-import { Schema, ServiceMap } from "effect";
+import { Schema, Context } from "effect";
 import type { Effect } from "effect";
 
 import type { ProjectSearchEntriesInput, ProjectSearchEntriesResult } from "@t3tools/contracts";
@@ -43,6 +43,6 @@ export interface WorkspaceEntriesShape {
 /**
  * WorkspaceEntries - Service tag for cached workspace entry search.
  */
-export class WorkspaceEntries extends ServiceMap.Service<WorkspaceEntries, WorkspaceEntriesShape>()(
+export class WorkspaceEntries extends Context.Service<WorkspaceEntries, WorkspaceEntriesShape>()(
   "t3/workspace/Services/WorkspaceEntries",
 ) {}

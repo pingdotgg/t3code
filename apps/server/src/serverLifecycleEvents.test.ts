@@ -11,7 +11,7 @@ it.effect(
     Effect.gen(function* () {
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const environment = {
-        environmentId: EnvironmentId.makeUnsafe("environment-test"),
+        environmentId: EnvironmentId.make("environment-test"),
         label: "Test environment",
         platform: { os: "darwin" as const, arch: "arm64" as const },
         serverVersion: "0.0.0-test",

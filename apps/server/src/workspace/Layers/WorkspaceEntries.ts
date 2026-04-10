@@ -430,12 +430,14 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     return yield* buildWorkspaceIndexFromFilesystem(cwd);
   });
 
-  const workspaceIndexCache = yield* Cache.makeWith<string, WorkspaceIndex, WorkspaceEntriesError>({
-    capacity: WORKSPACE_CACHE_MAX_KEYS,
-    lookup: buildWorkspaceIndex,
-    timeToLive: (exit) =>
-      Exit.isSuccess(exit) ? Duration.millis(WORKSPACE_CACHE_TTL_MS) : Duration.zero,
-  });
+  const workspaceIndexCache = yield* Cache.makeWith<string, WorkspaceIndex, WorkspaceEntriesError>(
+    buildWorkspaceIndex,
+    {
+      capacity: WORKSPACE_CACHE_MAX_KEYS,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) ? Duration.millis(WORKSPACE_CACHE_TTL_MS) : Duration.zero,
+    },
+  );
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,

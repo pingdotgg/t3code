@@ -731,9 +731,8 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       workingTree: details.workingTree,
     } satisfies GitStatusLocalResult;
   });
-  const localStatusResultCache = yield* Cache.makeWith({
+  const localStatusResultCache = yield* Cache.makeWith(readLocalStatus, {
     capacity: STATUS_RESULT_CACHE_CAPACITY,
-    lookup: readLocalStatus,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
   });
   const invalidateLocalStatusResultCache = (cwd: string) =>
@@ -764,9 +763,8 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       pr,
     } satisfies GitStatusRemoteResult;
   });
-  const remoteStatusResultCache = yield* Cache.makeWith({
+  const remoteStatusResultCache = yield* Cache.makeWith(readRemoteStatus, {
     capacity: STATUS_RESULT_CACHE_CAPACITY,
-    lookup: readRemoteStatus,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
   });
   const invalidateRemoteStatusResultCache = (cwd: string) =>

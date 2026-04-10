@@ -41,7 +41,7 @@ describe("environment runtime catalog stores", () => {
   });
 
   it("resets the saved environment registry store state", () => {
-    const environmentId = EnvironmentId.makeUnsafe("environment-1");
+    const environmentId = EnvironmentId.make("environment-1");
 
     useSavedEnvironmentRegistryStore.getState().upsert({
       environmentId,
@@ -60,7 +60,7 @@ describe("environment runtime catalog stores", () => {
   });
 
   it("resets the saved environment runtime store state", () => {
-    const environmentId = EnvironmentId.makeUnsafe("environment-1");
+    const environmentId = EnvironmentId.make("environment-1");
 
     useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
       connectionState: "connected",
@@ -82,7 +82,7 @@ describe("environment runtime catalog stores", () => {
 
     expect(() =>
       useSavedEnvironmentRegistryStore.getState().upsert({
-        environmentId: EnvironmentId.makeUnsafe("environment-1"),
+        environmentId: EnvironmentId.make("environment-1"),
         label: "Remote environment",
         httpBaseUrl: "https://remote.example.com/",
         wsBaseUrl: "wss://remote.example.com/",
@@ -121,7 +121,7 @@ describe("environment runtime catalog stores", () => {
 
     const hydrationPromise = waitForSavedEnvironmentRegistryHydration();
 
-    const environmentId = EnvironmentId.makeUnsafe("environment-1");
+    const environmentId = EnvironmentId.make("environment-1");
     const record = {
       environmentId,
       label: "Remote environment",

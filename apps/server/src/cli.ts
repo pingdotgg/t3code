@@ -193,9 +193,6 @@ interface CliAuthLocationFlags {
   readonly devUrl?: Option.Option<URL>;
 }
 
-const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
-  Option.getOrElse(Option.filter(flag, Boolean), () => envValue);
-
 const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
 ): Option.Option<Value> => Option.firstSomeOf(values);
@@ -241,12 +238,13 @@ export const resolveServerConfig = (
       bootstrapFd !== undefined
         ? yield* readBootstrapEnvelope(BootstrapEnvelopeSchema, bootstrapFd)
         : Option.none();
+    const bootstrap = Option.getOrUndefined(bootstrapEnvelope);
 
     const mode: RuntimeMode = Option.getOrElse(
       resolveOptionPrecedence(
         normalizedFlags.mode,
         Option.fromUndefinedOr(env.mode),
-        Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.mode)),
+        Option.fromUndefinedOr(bootstrap?.mode),
       ),
       () => "web",
     );
@@ -255,7 +253,7 @@ export const resolveServerConfig = (
       resolveOptionPrecedence(
         normalizedFlags.port,
         Option.fromUndefinedOr(env.port),
-        Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.port)),
+        Option.fromUndefinedOr(bootstrap?.port),
       ),
       {
         onSome: (value) => Effect.succeed(value),
@@ -271,7 +269,7 @@ export const resolveServerConfig = (
       resolveOptionPrecedence(
         normalizedFlags.devUrl,
         Option.fromUndefinedOr(env.devUrl),
-        Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.devUrl)),
+        Option.fromUndefinedOr(bootstrap?.devUrl),
       ),
       () => undefined,
     );
@@ -280,9 +278,7 @@ export const resolveServerConfig = (
         resolveOptionPrecedence(
           normalizedFlags.baseDir,
           Option.fromUndefinedOr(env.t3Home),
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.fromUndefinedOr(bootstrap.t3Home),
-          ),
+          Option.fromUndefinedOr(bootstrap?.t3Home),
         ),
       ),
     );
@@ -297,60 +293,41 @@ export const resolveServerConfig = (
     const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
     yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
     const startupPresentation = options?.startupPresentation ?? "browser";
-    const noBrowser =
-      startupPresentation === "headless"
-        ? true
-        : resolveBooleanFlag(
-            normalizedFlags.noBrowser,
-            Option.getOrElse(
-              resolveOptionPrecedence(
-                Option.fromUndefinedOr(env.noBrowser),
-                Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-                  Option.fromUndefinedOr(bootstrap.noBrowser),
-                ),
-              ),
-              () => mode === "desktop",
-            ),
-          );
-    const desktopBootstrapToken = Option.getOrUndefined(
-      Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-        Option.fromUndefinedOr(bootstrap.desktopBootstrapToken),
+    const isHeadlessStartup = startupPresentation === "headless";
+    const noBrowser = Option.getOrElse(
+      resolveOptionPrecedence(
+        isHeadlessStartup ? Option.some(true) : Option.none(),
+        normalizedFlags.noBrowser,
+        Option.fromUndefinedOr(env.noBrowser),
+        Option.fromUndefinedOr(bootstrap?.noBrowser),
       ),
+      () => mode === "desktop",
     );
-    const autoBootstrapProjectFromCwd =
-      options?.forceAutoBootstrapProjectFromCwd ??
-      (startupPresentation === "headless"
-        ? false
-        : resolveBooleanFlag(
-            normalizedFlags.autoBootstrapProjectFromCwd,
-            Option.getOrElse(
-              resolveOptionPrecedence(
-                Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
-                Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-                  Option.fromUndefinedOr(bootstrap.autoBootstrapProjectFromCwd),
-                ),
-              ),
-              () => mode === "web",
-            ),
-          ));
-    const logWebSocketEvents = resolveBooleanFlag(
-      normalizedFlags.logWebSocketEvents,
-      Option.getOrElse(
-        resolveOptionPrecedence(
-          Option.fromUndefinedOr(env.logWebSocketEvents),
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.fromUndefinedOr(bootstrap.logWebSocketEvents),
-          ),
-        ),
-        () => Boolean(devUrl),
+    const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
+    const autoBootstrapProjectFromCwd = Option.getOrElse(
+      resolveOptionPrecedence(
+        Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
+        isHeadlessStartup ? Option.some(false) : Option.none(),
+        normalizedFlags.autoBootstrapProjectFromCwd,
+        Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
+        Option.fromUndefinedOr(bootstrap?.autoBootstrapProjectFromCwd),
       ),
+      () => mode === "web",
+    );
+    const logWebSocketEvents = Option.getOrElse(
+      resolveOptionPrecedence(
+        normalizedFlags.logWebSocketEvents,
+        Option.fromUndefinedOr(env.logWebSocketEvents),
+        Option.fromUndefinedOr(bootstrap?.logWebSocketEvents),
+      ),
+      () => Boolean(devUrl),
     );
     const staticDir = devUrl ? undefined : yield* resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
         normalizedFlags.host,
         Option.fromUndefinedOr(env.host),
-        Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.host)),
+        Option.fromUndefinedOr(bootstrap?.host),
       ),
       () => (mode === "desktop" ? "127.0.0.1" : undefined),
     );
@@ -365,19 +342,11 @@ export const resolveServerConfig = (
       traceMaxFiles: env.traceMaxFiles,
       otlpTracesUrl:
         env.otlpTracesUrl ??
-        Option.getOrUndefined(
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.fromUndefinedOr(bootstrap.otlpTracesUrl),
-          ),
-        ) ??
+        bootstrap?.otlpTracesUrl ??
         persistedObservabilitySettings.otlpTracesUrl,
       otlpMetricsUrl:
         env.otlpMetricsUrl ??
-        Option.getOrUndefined(
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.fromUndefinedOr(bootstrap.otlpMetricsUrl),
-          ),
-        ) ??
+        bootstrap?.otlpMetricsUrl ??
         persistedObservabilitySettings.otlpMetricsUrl,
       otlpExportIntervalMs: env.otlpExportIntervalMs,
       otlpServiceName: env.otlpServiceName,
@@ -1030,10 +999,10 @@ const projectAddCommand = Command.make("add", {
         }
 
         const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
-        const projectId = ProjectId.makeUnsafe(crypto.randomUUID());
+        const projectId = ProjectId.make(crypto.randomUUID());
         yield* dispatch({
           type: "project.create",
-          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          commandId: CommandId.make(crypto.randomUUID()),
           projectId,
           title,
           workspaceRoot,
@@ -1071,7 +1040,7 @@ const projectRemoveCommand = Command.make("remove", {
         });
         yield* dispatch({
           type: "project.delete",
-          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          commandId: CommandId.make(crypto.randomUUID()),
           projectId: project.id,
         });
         return `Removed project ${project.id} (${project.title}).`;
@@ -1111,7 +1080,7 @@ const projectRenameCommand = Command.make("rename", {
 
         yield* dispatch({
           type: "project.meta.update",
-          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          commandId: CommandId.make(crypto.randomUUID()),
           projectId: project.id,
           title: nextTitle,
         });

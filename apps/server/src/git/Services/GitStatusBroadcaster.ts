@@ -1,4 +1,4 @@
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { Effect, Stream } from "effect";
 import type {
   GitManagerServiceError,
@@ -21,7 +21,7 @@ export interface GitStatusBroadcasterShape {
   ) => Stream.Stream<GitStatusStreamEvent, GitManagerServiceError>;
 }
 
-export class GitStatusBroadcaster extends ServiceMap.Service<
+export class GitStatusBroadcaster extends Context.Service<
   GitStatusBroadcaster,
   GitStatusBroadcasterShape
 >()("t3/git/Services/GitStatusBroadcaster") {}

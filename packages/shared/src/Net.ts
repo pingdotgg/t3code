@@ -1,6 +1,6 @@
 import * as Net from "node:net";
 
-import { Data, Effect, Layer, ServiceMap } from "effect";
+import { Data, Effect, Layer, Context } from "effect";
 
 export class NetError extends Data.TaggedError("NetError")<{
   readonly message: string;
@@ -85,7 +85,7 @@ export interface NetServiceShape {
 /**
  * NetService - Service tag for startup networking helpers.
  */
-export class NetService extends ServiceMap.Service<NetService, NetServiceShape>()(
+export class NetService extends Context.Service<NetService, NetServiceShape>()(
   "@t3tools/shared/Net/NetService",
 ) {
   static readonly layer = Layer.sync(NetService, () => {

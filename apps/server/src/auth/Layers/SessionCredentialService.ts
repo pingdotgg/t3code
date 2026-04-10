@@ -188,7 +188,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
 
   const issue: SessionCredentialServiceShape["issue"] = (input) =>
     Effect.gen(function* () {
-      const sessionId = AuthSessionId.makeUnsafe(crypto.randomUUID());
+      const sessionId = AuthSessionId.make(crypto.randomUUID());
       const issuedAt = yield* DateTime.now;
       const expiresAt = DateTime.add(issuedAt, {
         milliseconds: Duration.toMillis(input?.ttl ?? DEFAULT_SESSION_TTL),

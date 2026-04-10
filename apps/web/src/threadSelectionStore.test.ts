@@ -3,11 +3,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { useThreadSelectionStore } from "./threadSelectionStore";
 
-const THREAD_A = ThreadId.makeUnsafe("thread-a");
-const THREAD_B = ThreadId.makeUnsafe("thread-b");
-const THREAD_C = ThreadId.makeUnsafe("thread-c");
-const THREAD_D = ThreadId.makeUnsafe("thread-d");
-const THREAD_E = ThreadId.makeUnsafe("thread-e");
+const THREAD_A = ThreadId.make("thread-a");
+const THREAD_B = ThreadId.make("thread-b");
+const THREAD_C = ThreadId.make("thread-c");
+const THREAD_D = ThreadId.make("thread-d");
+const THREAD_E = ThreadId.make("thread-e");
 
 const ORDERED = [THREAD_A, THREAD_B, THREAD_C, THREAD_D, THREAD_E] as const;
 
@@ -173,7 +173,7 @@ describe("threadSelectionStore", () => {
     it("falls back to toggle when target is not in the ordered list", () => {
       const store = useThreadSelectionStore.getState();
       store.toggleThread(THREAD_B); // anchor = B
-      const unknownThread = ThreadId.makeUnsafe("thread-unknown");
+      const unknownThread = ThreadId.make("thread-unknown");
       store.rangeSelectTo(unknownThread, ORDERED);
 
       const state = useThreadSelectionStore.getState();

@@ -281,7 +281,7 @@ function createEnvironmentConnectionHandlers() {
       reconcileSnapshotDerivedState();
     },
     applyTerminalEvent: (event: TerminalEvent, environmentId: EnvironmentId) => {
-      const threadRef = scopeThreadRef(environmentId, ThreadId.makeUnsafe(event.threadId));
+      const threadRef = scopeThreadRef(environmentId, ThreadId.make(event.threadId));
       const serverThread = selectThreadByRef(useStore.getState(), threadRef);
       const hasDraftThread =
         useComposerDraftStore.getState().getDraftThreadByRef(threadRef) !== null;

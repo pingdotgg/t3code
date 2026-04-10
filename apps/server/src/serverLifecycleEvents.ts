@@ -1,5 +1,5 @@
 import type { ServerLifecycleStreamEvent } from "@t3tools/contracts";
-import { Effect, Layer, PubSub, Ref, ServiceMap, Stream } from "effect";
+import { Effect, Layer, PubSub, Ref, Context, Stream } from "effect";
 
 type LifecycleEventInput =
   | Omit<Extract<ServerLifecycleStreamEvent, { type: "welcome" }>, "sequence">
@@ -16,7 +16,7 @@ export interface ServerLifecycleEventsShape {
   readonly stream: Stream.Stream<ServerLifecycleStreamEvent>;
 }
 
-export class ServerLifecycleEvents extends ServiceMap.Service<
+export class ServerLifecycleEvents extends Context.Service<
   ServerLifecycleEvents,
   ServerLifecycleEventsShape
 >()("t3/serverLifecycleEvents") {}

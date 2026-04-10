@@ -63,7 +63,7 @@ describe("environmentBootstrap", () => {
       desktopBridge: undefined,
     });
     writePrimaryEnvironmentDescriptor({
-      environmentId: EnvironmentId.makeUnsafe("environment-local"),
+      environmentId: EnvironmentId.make("environment-local"),
       label: "Bootstrapped environment",
       platform: {
         os: "darwin",

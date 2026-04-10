@@ -93,7 +93,7 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
         const checkpointStore = yield* CheckpointStore;
-        const threadId = ThreadId.makeUnsafe("thread-checkpoint-store");
+        const threadId = ThreadId.make("thread-checkpoint-store");
         const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
         const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
 

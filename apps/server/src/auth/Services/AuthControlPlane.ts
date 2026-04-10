@@ -4,7 +4,7 @@ import type {
   AuthPairingLink,
   AuthSessionId,
 } from "@t3tools/contracts";
-import { Data, DateTime, Duration, Effect, ServiceMap } from "effect";
+import { Data, DateTime, Duration, Effect, Context } from "effect";
 import { SessionRole } from "./SessionCredentialService";
 
 export const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
@@ -64,6 +64,6 @@ export interface AuthControlPlaneShape {
   ) => Effect.Effect<number, AuthControlPlaneError>;
 }
 
-export class AuthControlPlane extends ServiceMap.Service<AuthControlPlane, AuthControlPlaneShape>()(
+export class AuthControlPlane extends Context.Service<AuthControlPlane, AuthControlPlaneShape>()(
   "t3/AuthControlPlane",
 ) {}

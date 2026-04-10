@@ -7,7 +7,7 @@ import { HttpResponse, http } from "msw";
 
 const TEST_SESSION_EXPIRES_AT = "2026-05-01T12:00:00.000Z";
 const TEST_ENVIRONMENT_DESCRIPTOR: ExecutionEnvironmentDescriptor = {
-  environmentId: EnvironmentId.makeUnsafe("environment-local"),
+  environmentId: EnvironmentId.make("environment-local"),
   label: "Local environment",
   platform: {
     os: "darwin",

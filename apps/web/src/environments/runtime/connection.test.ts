@@ -30,7 +30,7 @@ function createTestClient(options?: {
     server: {
       getConfig: vi.fn(async () => ({
         environment: {
-          environmentId: EnvironmentId.makeUnsafe("env-1"),
+          environmentId: EnvironmentId.make("env-1"),
         },
       })),
       subscribeConfig: (listener: (event: any) => void) => {
@@ -133,7 +133,7 @@ function createTestClient(options?: {
 
 describe("createEnvironmentConnection", () => {
   it("bootstraps a snapshot immediately for a new connection", async () => {
-    const environmentId = EnvironmentId.makeUnsafe("env-1");
+    const environmentId = EnvironmentId.make("env-1");
     const { client, getSnapshot } = createTestClient();
     const syncSnapshot = vi.fn();
 
@@ -168,7 +168,7 @@ describe("createEnvironmentConnection", () => {
   });
 
   it("rejects welcome/config identity drift", async () => {
-    const environmentId = EnvironmentId.makeUnsafe("env-1");
+    const environmentId = EnvironmentId.make("env-1");
     const { client, emitWelcome } = createTestClient();
 
     const connection = createEnvironmentConnection({
@@ -189,7 +189,7 @@ describe("createEnvironmentConnection", () => {
       applyTerminalEvent: vi.fn(),
     });
 
-    expect(() => emitWelcome(EnvironmentId.makeUnsafe("env-2"))).toThrow(
+    expect(() => emitWelcome(EnvironmentId.make("env-2"))).toThrow(
       "Environment connection env-1 changed identity to env-2 via server lifecycle welcome.",
     );
 
@@ -197,7 +197,7 @@ describe("createEnvironmentConnection", () => {
   });
 
   it("rejects ensureBootstrapped when snapshot recovery fails", async () => {
-    const environmentId = EnvironmentId.makeUnsafe("env-1");
+    const environmentId = EnvironmentId.make("env-1");
     const snapshotError = new Error("snapshot failed");
     const { client } = createTestClient({
       getSnapshot: async () => {
@@ -229,7 +229,7 @@ describe("createEnvironmentConnection", () => {
   });
 
   it("retries replay recovery after transport disconnects during resubscribe", async () => {
-    const environmentId = EnvironmentId.makeUnsafe("env-1");
+    const environmentId = EnvironmentId.make("env-1");
     let replayAttempts = 0;
     const applyEventBatch = vi.fn();
     const { client, replayEvents, triggerDomainResubscribe } = createTestClient({
@@ -287,7 +287,7 @@ describe("createEnvironmentConnection", () => {
     await connection.dispose();
   });
   it("swallows replay recovery failures triggered by resubscribe", async () => {
-    const environmentId = EnvironmentId.makeUnsafe("env-1");
+    const environmentId = EnvironmentId.make("env-1");
     const snapshotError = new Error("snapshot failed");
     let snapshotCalls = 0;
     const { client, triggerDomainResubscribe } = createTestClient({

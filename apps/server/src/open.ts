@@ -11,7 +11,7 @@ import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
 import { EDITORS, OpenError, type EditorId } from "@t3tools/contracts";
-import { ServiceMap, Effect, Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 
 // ==============================
 // Definitions
@@ -247,7 +247,7 @@ export interface OpenShape {
 /**
  * Open - Service tag for browser/editor launch operations.
  */
-export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
+export class Open extends Context.Service<Open, OpenShape>()("t3/open") {}
 
 // ==============================
 // Implementations

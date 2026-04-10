@@ -16,19 +16,19 @@ import { DEFAULT_INTERACTION_MODE } from "./types";
 
 // ── Fixture Identifiers ──────────────────────────────────────────────
 
-const primaryEnvId = EnvironmentId.makeUnsafe("env-primary");
-const remoteEnvId = EnvironmentId.makeUnsafe("env-remote");
+const primaryEnvId = EnvironmentId.make("env-primary");
+const remoteEnvId = EnvironmentId.make("env-remote");
 
-const sharedProjectPrimaryId = ProjectId.makeUnsafe("shared-proj-primary");
-const sharedProjectRemoteId = ProjectId.makeUnsafe("shared-proj-remote");
-const localOnlyProjectId = ProjectId.makeUnsafe("local-only-proj");
-const remoteOnlyProjectId = ProjectId.makeUnsafe("remote-only-proj");
+const sharedProjectPrimaryId = ProjectId.make("shared-proj-primary");
+const sharedProjectRemoteId = ProjectId.make("shared-proj-remote");
+const localOnlyProjectId = ProjectId.make("local-only-proj");
+const remoteOnlyProjectId = ProjectId.make("remote-only-proj");
 
-const threadP1 = ThreadId.makeUnsafe("thread-shared-primary-1");
-const threadP2 = ThreadId.makeUnsafe("thread-shared-primary-2");
-const threadR1 = ThreadId.makeUnsafe("thread-shared-remote-1");
-const threadL1 = ThreadId.makeUnsafe("thread-local-only-1");
-const threadRO1 = ThreadId.makeUnsafe("thread-remote-only-1");
+const threadP1 = ThreadId.make("thread-shared-primary-1");
+const threadP2 = ThreadId.make("thread-shared-primary-2");
+const threadR1 = ThreadId.make("thread-shared-remote-1");
+const threadL1 = ThreadId.make("thread-local-only-1");
+const threadRO1 = ThreadId.make("thread-remote-only-1");
 
 const SHARED_REPO_CANONICAL_KEY = "github.com/example/shared-repo";
 
@@ -328,7 +328,7 @@ describe("environment grouping", () => {
 
     it("returns empty array for nonexistent environment", () => {
       const state = makeFixtureState();
-      const ref = scopeProjectRef(EnvironmentId.makeUnsafe("nonexistent"), sharedProjectPrimaryId);
+      const ref = scopeProjectRef(EnvironmentId.make("nonexistent"), sharedProjectPrimaryId);
       expect(selectSidebarThreadsForProjectRef(state, ref)).toEqual([]);
     });
   });
@@ -381,7 +381,7 @@ describe("environment grouping", () => {
       const state = makeFixtureState();
       const refs = [
         scopeProjectRef(primaryEnvId, sharedProjectPrimaryId),
-        scopeProjectRef(EnvironmentId.makeUnsafe("nonexistent"), ProjectId.makeUnsafe("nope")),
+        scopeProjectRef(EnvironmentId.make("nonexistent"), ProjectId.make("nope")),
       ];
       const threads = selectSidebarThreadsForProjectRefs(state, refs);
       // Only returns threads from the valid ref

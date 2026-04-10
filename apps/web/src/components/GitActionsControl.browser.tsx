@@ -4,7 +4,7 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-const SHARED_THREAD_ID = ThreadId.makeUnsafe("thread-shared");
+const SHARED_THREAD_ID = ThreadId.make("thread-shared");
 const ENVIRONMENT_A = "environment-local" as never;
 const ENVIRONMENT_B = "environment-remote" as never;
 const GIT_CWD = "/repo/project";

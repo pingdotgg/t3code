@@ -34,7 +34,7 @@ import {
   Schema,
   SchemaIssue,
   Scope,
-  ServiceMap,
+  Context,
   Stream,
   Cause,
 } from "effect";
@@ -62,7 +62,7 @@ export interface ServerSettingsShape {
   readonly streamChanges: Stream.Stream<ServerSettings>;
 }
 
-export class ServerSettingsService extends ServiceMap.Service<
+export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   ServerSettingsShape
 >()("t3/serverSettings/ServerSettingsService") {

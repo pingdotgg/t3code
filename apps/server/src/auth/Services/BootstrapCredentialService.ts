@@ -1,5 +1,5 @@
 import type { AuthPairingLink, ServerAuthBootstrapMethod } from "@t3tools/contracts";
-import { Data, DateTime, Duration, ServiceMap } from "effect";
+import { Data, DateTime, Duration, Context } from "effect";
 import type { Effect, Stream } from "effect";
 
 export type BootstrapCredentialRole = "owner" | "client";
@@ -51,7 +51,7 @@ export interface BootstrapCredentialServiceShape {
   readonly consume: (credential: string) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
 }
 
-export class BootstrapCredentialService extends ServiceMap.Service<
+export class BootstrapCredentialService extends Context.Service<
   BootstrapCredentialService,
   BootstrapCredentialServiceShape
 >()("t3/auth/Services/BootstrapCredentialService") {}
