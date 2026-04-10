@@ -18,7 +18,6 @@ import {
   shell,
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
-import * as Effect from "effect/Effect";
 import type {
   ClientSettings,
   DesktopTheme,
@@ -32,9 +31,9 @@ import type {
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
-import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
+import { DEFAULT_DESKTOP_BACKEND_PORT, resolveDesktopBackendPort } from "./backendPort";
 import {
   DEFAULT_DESKTOP_SETTINGS,
   readDesktopSettings,
@@ -1771,14 +1770,13 @@ async function bootstrap(): Promise<void> {
 
   backendPort =
     configuredBackendPort ??
-    (await Effect.service(NetService).pipe(
-      Effect.flatMap((net) => net.reserveLoopbackPort(DESKTOP_LOOPBACK_HOST)),
-      Effect.provide(NetService.layer),
-      Effect.runPromise,
-    ));
+    (await resolveDesktopBackendPort({
+      host: DESKTOP_LOOPBACK_HOST,
+      startPort: DEFAULT_DESKTOP_BACKEND_PORT,
+    }));
   writeDesktopLogHeader(
     configuredBackendPort === undefined
-      ? `reserved backend port via NetService port=${backendPort}`
+      ? `selected backend port via sequential scan startPort=${DEFAULT_DESKTOP_BACKEND_PORT} port=${backendPort}`
       : `using configured backend port port=${backendPort}`,
   );
   backendBootstrapToken = Crypto.randomBytes(24).toString("hex");
