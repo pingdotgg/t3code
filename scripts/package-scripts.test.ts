@@ -16,9 +16,9 @@ describe("package scripts", () => {
     const scripts = readPackageScripts("apps/server/package.json");
 
     assert.equal(
-      /^bun\s+run\s+src\/bin\.ts\b/.test(scripts.dev ?? ""),
-      false,
-      `apps/server dev script should not run under Bun on Windows because PTY support is unavailable: ${scripts.dev}`,
+      scripts.dev,
+      "tsx src/bin.ts",
+      `apps/server dev script should use the exact Windows-safe runtime entrypoint: ${scripts.dev}`,
     );
   });
 });
