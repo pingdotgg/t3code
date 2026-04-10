@@ -117,6 +117,35 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
   });
 
+  it("reorderProjectGroup places group after target when dragged from before a non-last target", () => {
+    const keyALocal = "env-local:proj-a";
+    const keyARemote = "env-remote:proj-a";
+    const keyB = "env-local:proj-b";
+    const keyC = "env-local:proj-c";
+    const keyD = "env-local:proj-d";
+    const initialState = makeUiState({
+      projectOrder: [keyALocal, keyARemote, keyB, keyC, keyD],
+    });
+
+    const next = reorderProjectGroup(initialState, [keyALocal, keyARemote], [keyC]);
+
+    expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote, keyD]);
+  });
+
+  it("reorderProjectGroup places group before target when dragged from after", () => {
+    const keyB = "env-local:proj-b";
+    const keyC = "env-local:proj-c";
+    const keyALocal = "env-local:proj-a";
+    const keyARemote = "env-remote:proj-a";
+    const initialState = makeUiState({
+      projectOrder: [keyB, keyC, keyALocal, keyARemote],
+    });
+
+    const next = reorderProjectGroup(initialState, [keyALocal, keyARemote], [keyB]);
+
+    expect(next.projectOrder).toEqual([keyALocal, keyARemote, keyB, keyC]);
+  });
+
   it("reorderProjectGroup is a no-op when dragged group equals target group", () => {
     const key1 = "env-local:proj-a";
     const key2 = "env-remote:proj-a";

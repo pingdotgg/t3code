@@ -527,16 +527,21 @@ export function reorderProjectGroup(
   const projectOrder = [...state.projectOrder];
 
   const removed: string[] = [];
+  let draggedBeforeTarget = 0;
   for (let i = projectOrder.length - 1; i >= 0; i--) {
     if (draggedSet.has(projectOrder[i]!)) {
       removed.unshift(projectOrder.splice(i, 1)[0]!);
+      if (i < originalTargetIndex) {
+        draggedBeforeTarget++;
+      }
     }
   }
   if (removed.length === 0) {
     return state;
   }
 
-  projectOrder.splice(originalTargetIndex, 0, ...removed);
+  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
+  projectOrder.splice(insertIndex, 0, ...removed);
   return {
     ...state,
     projectOrder,
