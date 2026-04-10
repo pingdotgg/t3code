@@ -2,7 +2,6 @@ import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "rea
 
 import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import {
-  exhaustWsReconnectIfStillWaiting,
   getWsConnectionStatus,
   getWsConnectionUiState,
   setBrowserOnlineStatus,
@@ -102,6 +101,18 @@ export function shouldAutoReconnect(
     status.online &&
     status.hasConnected &&
     (uiState === "reconnecting" || status.reconnectPhase === "exhausted")
+  );
+}
+
+export function shouldRestartStalledReconnect(
+  status: WsConnectionStatus,
+  expectedNextRetryAt: string,
+): boolean {
+  return (
+    status.reconnectPhase === "waiting" &&
+    status.nextRetryAt === expectedNextRetryAt &&
+    status.online &&
+    status.hasConnected
   );
 }
 
@@ -205,7 +216,12 @@ export function WebSocketConnectionCoordinator() {
     const nextRetryAt = status.nextRetryAt;
     const timeoutMs = Math.max(0, new Date(nextRetryAt).getTime() - Date.now()) + 1_500;
     const timeoutId = window.setTimeout(() => {
-      exhaustWsReconnectIfStillWaiting(nextRetryAt);
+      const currentStatus = getWsConnectionStatus();
+      if (!shouldRestartStalledReconnect(currentStatus, nextRetryAt)) {
+        return;
+      }
+
+      runReconnect(false);
     }, timeoutMs);
 
     return () => {

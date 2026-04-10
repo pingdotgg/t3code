@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  exhaustWsReconnectIfStillWaiting,
   getWsConnectionStatus,
   getWsReconnectDelayMsForRetry,
   getWsConnectionUiState,
@@ -66,42 +65,6 @@ describe("wsConnectionState", () => {
       recordWsConnectionAttempt("ws://localhost:3020/ws");
       recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
     }
-
-    expect(getWsConnectionStatus()).toMatchObject({
-      nextRetryAt: null,
-      reconnectAttemptCount: WS_RECONNECT_MAX_ATTEMPTS,
-      reconnectPhase: "exhausted",
-    });
-  });
-
-  it("can exhaust a stalled final retry window when no new attempt starts", () => {
-    recordWsConnectionAttempt("ws://localhost:3020/ws");
-    recordWsConnectionOpened();
-
-    for (let attempt = 0; attempt < WS_RECONNECT_MAX_ATTEMPTS - 1; attempt += 1) {
-      recordWsConnectionAttempt("ws://localhost:3020/ws");
-      recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
-    }
-
-    const finalRetryDelayMs = getWsReconnectDelayMsForRetry(WS_RECONNECT_MAX_ATTEMPTS - 2);
-    if (finalRetryDelayMs === null) {
-      throw new Error("Expected a final retry delay.");
-    }
-
-    const statusBeforeExhaust = getWsConnectionStatus();
-    expect(statusBeforeExhaust).toMatchObject({
-      nextRetryAt: new Date(Date.now() + finalRetryDelayMs).toISOString(),
-      reconnectAttemptCount: 7,
-      reconnectPhase: "waiting",
-    });
-
-    const nextRetryAt = statusBeforeExhaust.nextRetryAt;
-    if (!nextRetryAt) {
-      throw new Error("Expected a scheduled retry.");
-    }
-
-    vi.setSystemTime(new Date(Date.now() + finalRetryDelayMs + 1_000));
-    exhaustWsReconnectIfStillWaiting(nextRetryAt);
 
     expect(getWsConnectionStatus()).toMatchObject({
       nextRetryAt: null,

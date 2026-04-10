@@ -62,14 +62,36 @@ function defaultLifecycleHandlers(): Required<WsProtocolLifecycleHandlers> {
   };
 }
 
+function composeLifecycleHandlers(
+  handlers?: WsProtocolLifecycleHandlers,
+): Required<WsProtocolLifecycleHandlers> {
+  const defaults = defaultLifecycleHandlers();
+
+  return {
+    onAttempt: (socketUrl) => {
+      defaults.onAttempt(socketUrl);
+      handlers?.onAttempt?.(socketUrl);
+    },
+    onOpen: () => {
+      defaults.onOpen();
+      handlers?.onOpen?.();
+    },
+    onError: (message) => {
+      defaults.onError(message);
+      handlers?.onError?.(message);
+    },
+    onClose: (details) => {
+      defaults.onClose(details);
+      handlers?.onClose?.(details);
+    },
+  };
+}
+
 export function createWsRpcProtocolLayer(
   url: WsRpcProtocolSocketUrlProvider,
   handlers?: WsProtocolLifecycleHandlers,
 ) {
-  const lifecycle = {
-    ...defaultLifecycleHandlers(),
-    ...handlers,
-  };
+  const lifecycle = composeLifecycleHandlers(handlers);
   const resolvedUrl =
     typeof url === "function"
       ? Effect.promise(() => url()).pipe(

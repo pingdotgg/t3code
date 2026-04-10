@@ -100,6 +100,7 @@ function createTestClient(options?: {
   return {
     client,
     getSnapshot,
+    replayEvents,
     emitWelcome: (environmentId: EnvironmentId) => {
       for (const listener of lifecycleListeners) {
         listener({
@@ -227,6 +228,64 @@ describe("createEnvironmentConnection", () => {
     await connection.dispose();
   });
 
+  it("retries replay recovery after transport disconnects during resubscribe", async () => {
+    const environmentId = EnvironmentId.makeUnsafe("env-1");
+    let replayAttempts = 0;
+    const applyEventBatch = vi.fn();
+    const { client, replayEvents, triggerDomainResubscribe } = createTestClient({
+      replayEvents: async () => {
+        replayAttempts += 1;
+        if (replayAttempts === 1) {
+          throw new Error("SocketCloseError: 1006");
+        }
+
+        return [
+          {
+            sequence: 2,
+            type: "thread.created",
+            payload: {},
+          },
+        ];
+      },
+    });
+
+    const connection = createEnvironmentConnection({
+      kind: "saved",
+      knownEnvironment: {
+        id: "env-1",
+        label: "Remote env",
+        source: "manual",
+        target: {
+          httpBaseUrl: "http://example.test",
+          wsBaseUrl: "ws://example.test",
+        },
+        environmentId,
+      },
+      client,
+      applyEventBatch,
+      syncSnapshot: vi.fn(),
+      applyTerminalEvent: vi.fn(),
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    triggerDomainResubscribe();
+
+    await vi.waitFor(() => {
+      expect(replayEvents).toHaveBeenCalledTimes(2);
+      expect(applyEventBatch).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            sequence: 2,
+          }),
+        ],
+        environmentId,
+      );
+    });
+
+    await connection.dispose();
+  });
   it("swallows replay recovery failures triggered by resubscribe", async () => {
     const environmentId = EnvironmentId.makeUnsafe("env-1");
     const snapshotError = new Error("snapshot failed");

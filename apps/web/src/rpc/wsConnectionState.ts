@@ -149,26 +149,6 @@ export function resetWsReconnectBackoff(): WsConnectionStatus {
   }));
 }
 
-export function exhaustWsReconnectIfStillWaiting(expectedNextRetryAt: string): WsConnectionStatus {
-  return updateWsConnectionStatus((current) => {
-    if (
-      current.reconnectPhase !== "waiting" ||
-      current.nextRetryAt !== expectedNextRetryAt ||
-      !current.online ||
-      !current.hasConnected
-    ) {
-      return current;
-    }
-
-    return {
-      ...current,
-      nextRetryAt: null,
-      reconnectAttemptCount: current.reconnectMaxAttempts,
-      reconnectPhase: "exhausted",
-    };
-  });
-}
-
 export function resetWsConnectionStateForTests(): void {
   appAtomRegistry.set(wsConnectionStatusAtom, INITIAL_WS_CONNECTION_STATUS);
 }
