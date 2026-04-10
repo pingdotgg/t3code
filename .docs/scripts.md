@@ -10,10 +10,14 @@
 - `bun run build` — Builds contracts, web app, and server through Turbo.
 - `bun run typecheck` — Strict TypeScript checks for all packages.
 - `bun run test` — Runs workspace tests.
-- `bun run dist:desktop:artifact -- --platform <mac|linux|win> --target <target> --arch <arch>` — Builds a desktop artifact for a specific platform/target/arch.
+- `bun run dist:desktop:artifact -- --platform <mac|linux|win> --target <target[,target2]> --arch <arch>` — Builds a desktop artifact for a specific platform/target/arch.
 - `bun run dist:desktop:dmg` — Builds a shareable macOS `.dmg` into `./release`.
 - `bun run dist:desktop:dmg:x64` — Builds an Intel macOS `.dmg`.
-- `bun run dist:desktop:linux` — Builds a Linux AppImage into `./release`.
+- `bun run dist:desktop:linux` — Builds Linux `AppImage`, `.deb`, and `.rpm` artifacts into `./release`.
+- `bun run dist:desktop:linux:appimage` — Builds only the Linux AppImage.
+- `bun run dist:desktop:linux:deb` — Builds only the Linux `.deb`.
+- `bun run dist:desktop:linux:rpm` — Builds only the Linux `.rpm`.
+- `bun run dist:desktop:linux:rpm:podman` — Builds the Linux `.rpm` inside a Podman container, useful on Ubuntu hosts that do not have `rpmbuild` installed.
 - `bun run dist:desktop:win` — Builds a Windows NSIS installer into `./release`.
 
 ## Desktop `.dmg` packaging notes

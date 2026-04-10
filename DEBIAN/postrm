@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# Delete the link to the binary
+if type update-alternatives >/dev/null 2>&1; then
+    update-alternatives --remove 't3code' '/opt/t3code/t3code'
+else
+    rm -f '/usr/bin/t3code'
+fi
+
+APPARMOR_PROFILE_DEST='/etc/apparmor.d/t3code'
+
+# Remove apparmor profile.
+if [ -f "$APPARMOR_PROFILE_DEST" ]; then
+  rm -f "$APPARMOR_PROFILE_DEST"
+fi

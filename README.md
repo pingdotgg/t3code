@@ -39,6 +39,22 @@ brew install --cask t3-code
 yay -S t3code-bin
 ```
 
+#### Ubuntu / Debian
+
+Download the latest `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases) and install it with:
+
+```bash
+sudo apt install ./T3-Code-*.deb
+```
+
+#### Fedora / RHEL
+
+Download the latest `.rpm` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases) and install it with:
+
+```bash
+sudo dnf install ./T3-Code-*.rpm
+```
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.

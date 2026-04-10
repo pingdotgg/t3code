@@ -18,11 +18,11 @@ import { RELEASES_URL } from "../lib/releases";
         <h2 class="platform-name">macOS</h2>
       </div>
       <div class="download-cards">
-        <a class="download-card" data-asset="arm64.dmg" href={RELEASES_URL}>
+        <a class="download-card" data-asset-pattern="-arm64\\.dmg$" href={RELEASES_URL}>
           <span class="card-arch">Apple Silicon (arm64)</span>
           <span class="card-format">.dmg</span>
         </a>
-        <a class="download-card" data-asset="x64.dmg" href={RELEASES_URL}>
+        <a class="download-card" data-asset-pattern="-x64\\.dmg$" href={RELEASES_URL}>
           <span class="card-arch">Intel (x64)</span>
           <span class="card-format">.dmg</span>
         </a>
@@ -36,7 +36,7 @@ import { RELEASES_URL } from "../lib/releases";
         <h2 class="platform-name">Windows</h2>
       </div>
       <div class="download-cards">
-        <a class="download-card" data-asset="x64.exe" href={RELEASES_URL}>
+        <a class="download-card" data-asset-pattern="-x64\\.exe$" href={RELEASES_URL}>
           <span class="card-arch">Windows 10, 11</span>
           <span class="card-format">.exe</span>
         </a>
@@ -50,9 +50,17 @@ import { RELEASES_URL } from "../lib/releases";
         <h2 class="platform-name">Linux</h2>
       </div>
       <div class="download-cards">
-        <a class="download-card" data-asset="x86_64.AppImage" href={RELEASES_URL}>
-          <span class="card-arch">x86_64</span>
+        <a class="download-card" data-asset-pattern="-(x64|x86_64)\\.AppImage$" href={RELEASES_URL}>
+          <span class="card-arch">Portable Linux</span>
           <span class="card-format">AppImage</span>
+        </a>
+        <a class="download-card" data-asset-pattern="-(x64|amd64)\\.deb$" href={RELEASES_URL}>
+          <span class="card-arch">Ubuntu / Debian</span>
+          <span class="card-format">.deb</span>
+        </a>
+        <a class="download-card" data-asset-pattern="-(x64|x86_64)\\.rpm$" href={RELEASES_URL}>
+          <span class="card-arch">Fedora / RHEL</span>
+          <span class="card-format">.rpm</span>
         </a>
       </div>
     </section>
@@ -87,10 +95,12 @@ import { RELEASES_URL } from "../lib/releases";
       }
 
       cards.forEach((card) => {
-        const suffix = card.dataset.asset;
-        if (!suffix) return;
+        const pattern = card.dataset.assetPattern;
+        if (!pattern) return;
 
-        const match = (release.assets ?? []).find((a) => a.name.endsWith(`-${suffix}`));
+        const matcher = new RegExp(pattern);
+
+        const match = (release.assets ?? []).find((a) => matcher.test(a.name));
         if (match) {
           card.href = match.browser_download_url;
         } else {

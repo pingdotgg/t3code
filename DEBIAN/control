@@ -1,0 +1,14 @@
+Package: t3code
+Version: 0.0.15
+License: unknown
+Vendor: T3 Tools <opensource@t3.tools>
+Architecture: amd64
+Maintainer: T3 Tools <opensource@t3.tools>
+Installed-Size: 492821
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0
+Recommends: libappindicator3-1
+Section: default
+Priority: optional
+Homepage: https://github.com/pingdotgg/t3code
+Description: T3 Code
+  T3 Code

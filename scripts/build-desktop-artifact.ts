@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
@@ -42,24 +42,28 @@ const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 
 interface PlatformConfig {
   readonly cliFlag: "--mac" | "--linux" | "--win";
-  readonly defaultTarget: string;
+  readonly defaultTargets: ReadonlyArray<string>;
+  readonly allowedTargets: ReadonlyArray<string>;
   readonly archChoices: ReadonlyArray<typeof BuildArch.Type>;
 }
 
 const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
   mac: {
     cliFlag: "--mac",
-    defaultTarget: "dmg",
+    defaultTargets: ["dmg"],
+    allowedTargets: ["dmg", "zip"],
     archChoices: ["arm64", "x64", "universal"],
   },
   linux: {
     cliFlag: "--linux",
-    defaultTarget: "AppImage",
+    defaultTargets: ["AppImage", "deb", "rpm"],
+    allowedTargets: ["AppImage", "deb", "rpm"],
     archChoices: ["x64", "arm64"],
   },
   win: {
     cliFlag: "--win",
-    defaultTarget: "nsis",
+    defaultTargets: ["nsis"],
+    allowedTargets: ["nsis"],
     archChoices: ["x64", "arm64"],
   },
 };
@@ -154,9 +158,40 @@ function resolvePythonForNodeGyp(): string | undefined {
   return executable;
 }
 
+function resolveNodeGypExecutable(repoRoot: string): string | undefined {
+  const executableName = process.platform === "win32" ? "node-gyp.cmd" : "node-gyp";
+  const candidate = join(repoRoot, "node_modules", ".bin", executableName);
+  if (existsSync(candidate)) {
+    return candidate;
+  }
+  return undefined;
+}
+
+function createChildEnv(extraPathEntries: ReadonlyArray<string> = []): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+  };
+  for (const [key, value] of Object.entries(env)) {
+    if (value === "") {
+      delete env[key];
+    }
+  }
+
+  if (extraPathEntries.length > 0) {
+    const currentPath = env.PATH ?? "";
+    const pathEntries = extraPathEntries.filter((entry) => entry.length > 0);
+    if (currentPath.length > 0) {
+      pathEntries.push(currentPath);
+    }
+    env.PATH = pathEntries.join(delimiter);
+  }
+
+  return env;
+}
+
 interface ResolvedBuildOptions {
   readonly platform: typeof BuildPlatform.Type;
-  readonly target: string;
+  readonly targets: ReadonlyArray<string>;
   readonly arch: typeof BuildArch.Type;
   readonly version: string | undefined;
   readonly outputDir: string;
@@ -168,6 +203,14 @@ interface ResolvedBuildOptions {
   readonly mockUpdateServerPort: string | undefined;
 }
 
+const PACKAGE_HOMEPAGE = "https://github.com/pingdotgg/t3code";
+const PACKAGE_DESCRIPTION = "T3 Code";
+const LINUX_INSTALL_PRODUCT_NAME = "t3code";
+const PACKAGE_AUTHOR = {
+  name: "T3 Tools",
+  email: "opensource@t3.tools",
+} as const;
+
 interface StagePackageJson {
   readonly name: string;
   readonly version: string;
@@ -175,7 +218,11 @@ interface StagePackageJson {
   readonly t3codeCommitHash: string;
   readonly private: true;
   readonly description: string;
-  readonly author: string;
+  readonly author: {
+    readonly name: string;
+    readonly email: string;
+  };
+  readonly homepage: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
@@ -218,6 +265,30 @@ const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
 const mergeOptions = <A>(a: Option.Option<A>, b: Option.Option<A>, defaultValue: A) =>
   Option.getOrElse(a, () => Option.getOrElse(b, () => defaultValue));
 
+function parseBuildTargets(
+  platform: typeof BuildPlatform.Type,
+  raw: string,
+): ReadonlyArray<string> | BuildScriptError {
+  const config = PLATFORM_CONFIG[platform];
+  const targets = Array.from(
+    new Set(
+      raw
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  );
+
+  const invalidTargets = targets.filter((target) => !config.allowedTargets.includes(target));
+  if (invalidTargets.length > 0) {
+    return new BuildScriptError({
+      message: `Unsupported target(s) for platform '${platform}': ${invalidTargets.join(", ")}. Allowed targets: ${config.allowedTargets.join(", ")}.`,
+    });
+  }
+
+  return targets;
+}
+
 const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (input: BuildCliInput) {
   const path = yield* Path.Path;
   const repoRoot = yield* RepoRoot;
@@ -235,7 +306,16 @@ const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (input: B
     });
   }
 
-  const target = mergeOptions(input.target, env.target, PLATFORM_CONFIG[platform].defaultTarget);
+  const rawTargets = mergeOptions(
+    input.target,
+    env.target,
+    PLATFORM_CONFIG[platform].defaultTargets.join(","),
+  );
+  const parsedTargets = parseBuildTargets(platform, rawTargets);
+  if (parsedTargets instanceof BuildScriptError) {
+    return yield* parsedTargets;
+  }
+  const targets = parsedTargets;
   const arch = mergeOptions(input.arch, env.arch, getDefaultArch(platform));
   const version = mergeOptions(input.buildVersion, env.version, undefined);
   const releaseDir = resolveBooleanFlag(input.mockUpdates, env.mockUpdates)
@@ -258,9 +338,15 @@ const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (input: B
     undefined,
   );
 
+  if (targets.length === 0) {
+    return yield* new BuildScriptError({
+      message: `No build targets were provided for platform '${platform}'.`,
+    });
+  }
+
   return {
     platform,
-    target,
+    targets,
     arch,
     version,
     outputDir,
@@ -466,15 +552,16 @@ function resolveGitHubPublishConfig():
 
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
-  target: string,
+  targets: ReadonlyArray<string>,
   productName: string,
   signed: boolean,
   mockUpdates: boolean,
   mockUpdateServerPort: string | undefined,
 ) {
+  const packageProductName = platform === "linux" ? LINUX_INSTALL_PRODUCT_NAME : productName;
   const buildConfig: Record<string, unknown> = {
     appId: "com.t3tools.t3code",
-    productName,
+    productName: packageProductName,
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     directories: {
       buildResources: "apps/desktop/resources",
@@ -494,7 +581,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   if (platform === "mac") {
     buildConfig.mac = {
-      target: target === "dmg" ? [target, "zip"] : [target],
+      target: targets.includes("dmg") ? Array.from(new Set([...targets, "zip"])) : targets,
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
     };
@@ -502,12 +589,17 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   if (platform === "linux") {
     buildConfig.linux = {
-      target: [target],
+      target: targets,
       executableName: "t3code",
       icon: "icon.png",
       category: "Development",
+      description: PACKAGE_DESCRIPTION,
+      synopsis: "T3 Code",
       desktop: {
         entry: {
+          Name: productName,
+          Comment: PACKAGE_DESCRIPTION,
+          Icon: "t3code",
           StartupWMClass: "t3code",
         },
       },
@@ -516,7 +608,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   if (platform === "win") {
     const winConfig: Record<string, unknown> = {
-      target: [target],
+      target: targets,
       icon: "icon.ico",
     };
     if (signed) {
@@ -674,12 +766,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
-    description: "T3 Code desktop build",
-    author: "T3 Tools",
+    description: PACKAGE_DESCRIPTION,
+    author: PACKAGE_AUTHOR,
+    homepage: PACKAGE_HOMEPAGE,
     main: "apps/desktop/dist-electron/main.js",
     build: yield* createBuildConfig(
       options.platform,
-      options.target,
+      options.targets,
       desktopPackageJson.productName ?? "T3 Code",
       options.signed,
       options.mockUpdates,
@@ -698,24 +791,25 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
+  const nodeModulesBinDir = join(repoRoot, "node_modules", ".bin");
+  const installEnv = createChildEnv([nodeModulesBinDir]);
+  const nodeGypExecutable = resolveNodeGypExecutable(repoRoot);
+  if (nodeGypExecutable) {
+    installEnv.npm_config_node_gyp = nodeGypExecutable;
+  }
+
   yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
+      env: installEnv,
       ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
       shell: process.platform === "win32",
     })`bun install --production`,
   );
 
-  const buildEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-  };
-  for (const [key, value] of Object.entries(buildEnv)) {
-    if (value === "") {
-      delete buildEnv[key];
-    }
-  }
+  const buildEnv = createChildEnv([nodeModulesBinDir]);
   if (!options.signed) {
     buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
     delete buildEnv.CSC_LINK;
@@ -736,7 +830,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   yield* Effect.log(
-    `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
+    `[desktop-artifact] Building ${options.platform}/${options.targets.join(",")} (arch=${options.arch}, version=${appVersion})...`,
   );
   yield* runCommand(
     ChildProcess.make({
@@ -745,7 +839,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims.
       shell: process.platform === "win32",
-    })`bunx electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");
@@ -775,6 +869,31 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     });
   }
 
+  const expectedArtifactPatterns = options.targets.flatMap((target) => {
+    if (options.platform === "mac") {
+      if (target === "dmg") return [/\.dmg$/i, /\.zip$/i];
+      if (target === "zip") return [/\.zip$/i];
+    }
+    if (options.platform === "linux") {
+      if (target === "AppImage") return [/\.AppImage$/i];
+      if (target === "deb") return [/\.deb$/i];
+      if (target === "rpm") return [/\.rpm$/i];
+    }
+    if (options.platform === "win") {
+      if (target === "nsis") return [/\.exe$/i];
+    }
+    return [];
+  });
+  const copiedArtifactNames = copiedArtifacts.map((artifact) => path.basename(artifact));
+  const missingArtifacts = expectedArtifactPatterns.filter(
+    (pattern) => !copiedArtifactNames.some((artifactName) => pattern.test(artifactName)),
+  );
+  if (missingArtifacts.length > 0) {
+    return yield* new BuildScriptError({
+      message: `Build completed without expected target artifacts for ${options.platform}/${options.targets.join(",")}. Produced files: ${copiedArtifactNames.join(", ")}`,
+    });
+  }
+
   yield* Effect.log("[desktop-artifact] Done. Artifacts:").pipe(
     Effect.annotateLogs({ artifacts: copiedArtifacts }),
   );
@@ -787,7 +906,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   target: Flag.string("target").pipe(
     Flag.withDescription(
-      "Artifact target, for example dmg/AppImage/nsis (env: T3CODE_DESKTOP_TARGET).",
+      "Artifact target(s), comma-separated, for example dmg or AppImage,deb,rpm (env: T3CODE_DESKTOP_TARGET).",
     ),
     Flag.optional,
   ),

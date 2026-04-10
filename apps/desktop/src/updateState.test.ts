@@ -69,7 +69,6 @@ describe("getAutoUpdateDisabledReason", () => {
         isDevelopment: true,
         isPackaged: false,
         platform: "darwin",
-        appImage: undefined,
         disabledByEnv: false,
         hasUpdateFeedConfig: true,
       }),
@@ -108,24 +107,22 @@ describe("getAutoUpdateDisabledReason", () => {
         isDevelopment: false,
         isPackaged: true,
         platform: "darwin",
-        appImage: undefined,
         disabledByEnv: true,
         hasUpdateFeedConfig: true,
       }),
     ).toContain("T3CODE_DISABLE_AUTO_UPDATE");
   });
 
-  it("reports linux non-AppImage builds as disabled", () => {
+  it("allows packaged Linux builds when not otherwise disabled", () => {
     expect(
       getAutoUpdateDisabledReason({
         isDevelopment: false,
         isPackaged: true,
         platform: "linux",
-        appImage: undefined,
         disabledByEnv: false,
         hasUpdateFeedConfig: true,
       }),
-    ).toContain("AppImage");
+    ).toBeNull();
   });
 });
 

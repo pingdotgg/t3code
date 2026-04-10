@@ -69,6 +69,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install Linux packaging tools
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
       - name: Lint
         run: bun run lint
 
@@ -97,10 +101,10 @@ jobs:
             platform: mac
             target: dmg
             arch: x64
-          - label: Linux x64
+          - label: Linux x64 packages
             runner: ubuntu-24.04
             platform: linux
-            target: AppImage
+            target: AppImage,deb,rpm
             arch: x64
           - label: Windows x64
             runner: windows-2022
@@ -204,6 +208,8 @@ jobs:
             "release/*.dmg" \
             "release/*.zip" \
             "release/*.AppImage" \
+            "release/*.deb" \
+            "release/*.rpm" \
             "release/*.exe" \
             "release/*.blockmap" \
             "release/latest*.yml"; do
@@ -302,6 +308,8 @@ jobs:
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
+            release-assets/*.deb
+            release-assets/*.rpm
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/latest*.yml
