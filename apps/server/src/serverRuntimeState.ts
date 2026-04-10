@@ -69,10 +69,9 @@ export const readPersistedServerRuntimeState = (path: string) =>
       return Option.none<PersistedServerRuntimeState>();
     }
 
-    const decoded = yield* Effect.try({
-      try: () => Schema.decodeUnknownSync(PersistedServerRuntimeState)(JSON.parse(trimmed)),
-      catch: () => null,
-    });
+    const decoded = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(PersistedServerRuntimeState),
+    )(trimmed);
 
     return decoded === null ? Option.none<PersistedServerRuntimeState>() : Option.some(decoded);
   });
