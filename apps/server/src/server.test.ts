@@ -789,7 +789,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "browser-session-cookie",
         "bearer-session-token",
       ]);
-      assert.equal(body.auth.sessionCookieName, "t3_session");
+      assert.isTrue(body.auth.sessionCookieName.startsWith("t3_session_"));
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
