@@ -165,7 +165,7 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
   );
 
   return (
-    <div className="chat-markdown-codeblock">
+    <div className="chat-markdown-codeblock leading-snug">
       <button
         type="button"
         className="chat-markdown-copy-button"
