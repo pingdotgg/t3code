@@ -717,17 +717,30 @@ function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
   };
 }
 
-function createSnapshotWithPlanFollowUpPrompt(): OrchestrationReadModel {
+function createSnapshotWithPlanFollowUpPrompt(options?: {
+  modelSelection?: { provider: "codex"; model: string };
+  planMarkdown?: string;
+}): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-plan-follow-up-target" as MessageId,
     targetText: "plan follow-up thread",
   });
+  const modelSelection = options?.modelSelection ?? {
+    provider: "codex" as const,
+    model: "gpt-5",
+  };
+  const planMarkdown =
+    options?.planMarkdown ?? "# Follow-up plan\n\n- Keep the composer footer stable on resize.";
 
   return {
     ...snapshot,
+    projects: snapshot.projects.map((project) =>
+      project.id === PROJECT_ID ? { ...project, defaultModelSelection: modelSelection } : project,
+    ),
     threads: snapshot.threads.map((thread) =>
       thread.id === THREAD_ID
         ? Object.assign({}, thread, {
+            modelSelection,
             interactionMode: "plan",
             latestTurn: {
               turnId: "turn-plan-follow-up" as TurnId,
@@ -741,7 +754,7 @@ function createSnapshotWithPlanFollowUpPrompt(): OrchestrationReadModel {
               {
                 id: "plan-follow-up-browser-test",
                 turnId: "turn-plan-follow-up" as TurnId,
-                planMarkdown: "# Follow-up plan\n\n- Keep the composer footer stable on resize.",
+                planMarkdown,
                 implementedAt: null,
                 implementationThreadId: null,
                 createdAt: isoAt(1_002),
@@ -3720,8 +3733,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const initialModelPickerOffset =
         initialModelPicker.getBoundingClientRect().left - footer.getBoundingClientRect().left;
+      const initialImplementButton = await waitForButtonByText("Implement");
+      const initialImplementWidth = initialImplementButton.getBoundingClientRect().width;
 
-      await waitForButtonByText("Implement");
       await waitForElement(
         () =>
           document.querySelector<HTMLButtonElement>('button[aria-label="Implementation actions"]'),
@@ -3753,9 +3767,77 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
           expect(Math.abs(implementRect.right - implementActionsRect.left)).toBeLessThanOrEqual(1);
           expect(Math.abs(implementRect.top - implementActionsRect.top)).toBeLessThanOrEqual(1);
+          expect(Math.abs(implementRect.width - initialImplementWidth)).toBeLessThanOrEqual(1);
           expect(Math.abs(compactModelPickerOffset - initialModelPickerOffset)).toBeLessThanOrEqual(
             1,
           );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the wide desktop follow-up layout expanded when the footer still fits", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPlanFollowUpPrompt({
+        modelSelection: { provider: "codex", model: "gpt-5.3-codex-spark" },
+        planMarkdown:
+          "# Imaginary Long-Range Plan: T3 Code Adaptive Orchestration and Safe-Delay Execution Initiative",
+      }),
+    });
+
+    try {
+      await waitForButtonByText("Implement");
+
+      await vi.waitFor(
+        () => {
+          const footer = document.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
+          const actions = document.querySelector<HTMLElement>(
+            '[data-chat-composer-actions="right"]',
+          );
+
+          expect(footer?.dataset.chatComposerFooterCompact).toBe("false");
+          expect(actions?.dataset.chatComposerPrimaryActionsCompact).toBe("false");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("compacts the footer when a wide desktop follow-up layout starts overflowing", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPlanFollowUpPrompt({
+        modelSelection: { provider: "codex", model: "gpt-5.3-codex-spark" },
+        planMarkdown:
+          "# Imaginary Long-Range Plan: T3 Code Adaptive Orchestration and Safe-Delay Execution Initiative",
+      }),
+    });
+
+    try {
+      await waitForButtonByText("Implement");
+
+      await mounted.setContainerSize({
+        width: 804,
+        height: WIDE_FOOTER_VIEWPORT.height,
+      });
+
+      await expectComposerActionsContained();
+
+      await vi.waitFor(
+        () => {
+          const footer = document.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
+          const actions = document.querySelector<HTMLElement>(
+            '[data-chat-composer-actions="right"]',
+          );
+
+          expect(footer?.dataset.chatComposerFooterCompact).toBe("true");
+          expect(actions?.dataset.chatComposerPrimaryActionsCompact).toBe("true");
         },
         { timeout: 8_000, interval: 16 },
       );
