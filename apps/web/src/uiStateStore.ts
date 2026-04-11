@@ -482,23 +482,41 @@ export function setProjectExpanded(state: UiState, projectId: string, expanded: 
 
 export function reorderProjects(
   state: UiState,
-  draggedProjectId: string,
-  targetProjectId: string,
+  draggedProjectIds: readonly string[],
+  targetProjectIds: readonly string[],
 ): UiState {
-  if (draggedProjectId === targetProjectId) {
+  if (draggedProjectIds.length === 0) {
     return state;
   }
-  const draggedIndex = state.projectOrder.findIndex((projectId) => projectId === draggedProjectId);
-  const targetIndex = state.projectOrder.findIndex((projectId) => projectId === targetProjectId);
-  if (draggedIndex < 0 || targetIndex < 0) {
+  const draggedSet = new Set(draggedProjectIds);
+  const targetSet = new Set(targetProjectIds);
+  if (draggedProjectIds.every((id) => targetSet.has(id))) {
     return state;
   }
+
+  const originalTargetIndex = state.projectOrder.findIndex((id) => targetSet.has(id));
+  if (originalTargetIndex < 0) {
+    return state;
+  }
+
   const projectOrder = [...state.projectOrder];
-  const [draggedProject] = projectOrder.splice(draggedIndex, 1);
-  if (!draggedProject) {
+
+  const removed: string[] = [];
+  let draggedBeforeTarget = 0;
+  for (let i = projectOrder.length - 1; i >= 0; i--) {
+    if (draggedSet.has(projectOrder[i]!)) {
+      removed.unshift(projectOrder.splice(i, 1)[0]!);
+      if (i < originalTargetIndex) {
+        draggedBeforeTarget++;
+      }
+    }
+  }
+  if (removed.length === 0) {
     return state;
   }
-  projectOrder.splice(targetIndex, 0, draggedProject);
+
+  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
+  projectOrder.splice(insertIndex, 0, ...removed);
   return {
     ...state,
     projectOrder,
@@ -514,7 +532,10 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
-  reorderProjects: (draggedProjectId: string, targetProjectId: string) => void;
+  reorderProjects: (
+    draggedProjectIds: readonly string[],
+    targetProjectIds: readonly string[],
+  ) => void;
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
@@ -531,8 +552,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
-  reorderProjects: (draggedProjectId, targetProjectId) =>
-    set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
+  reorderProjects: (draggedProjectIds, targetProjectIds) =>
+    set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds)),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

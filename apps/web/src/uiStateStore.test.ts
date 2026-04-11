@@ -58,9 +58,116 @@ describe("uiStateStore pure functions", () => {
       projectOrder: [project1, project2, project3],
     });
 
-    const next = reorderProjects(initialState, project1, project3);
+    const next = reorderProjects(initialState, [project1], [project3]);
 
     expect(next.projectOrder).toEqual([project2, project3, project1]);
+  });
+
+  it("reorderProjects is a no-op when dragged key is not in projectOrder", () => {
+    const project1 = ProjectId.make("project-1");
+    const project2 = ProjectId.make("project-2");
+    const initialState = makeUiState({
+      projectOrder: [project1, project2],
+    });
+
+    const next = reorderProjects(initialState, [ProjectId.make("missing")], [project2]);
+
+    expect(next).toBe(initialState);
+  });
+
+  it("reorderProjects moves all member keys of a multi-member group together", () => {
+    const keyALocal = "env-local:proj-a";
+    const keyARemote = "env-remote:proj-a";
+    const keyB = "env-local:proj-b";
+    const keyC = "env-local:proj-c";
+    const initialState = makeUiState({
+      projectOrder: [keyALocal, keyARemote, keyB, keyC],
+    });
+
+    const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyC]);
+
+    expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
+  });
+
+  it("reorderProjects handles member keys scattered across projectOrder", () => {
+    const keyALocal = "env-local:proj-a";
+    const keyB = "env-local:proj-b";
+    const keyARemote = "env-remote:proj-a";
+    const keyC = "env-local:proj-c";
+    const initialState = makeUiState({
+      projectOrder: [keyALocal, keyB, keyARemote, keyC],
+    });
+
+    const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyC]);
+
+    expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
+  });
+
+  it("reorderProjects places group after target when dragged from before a non-last target", () => {
+    const keyALocal = "env-local:proj-a";
+    const keyARemote = "env-remote:proj-a";
+    const keyB = "env-local:proj-b";
+    const keyC = "env-local:proj-c";
+    const keyD = "env-local:proj-d";
+    const initialState = makeUiState({
+      projectOrder: [keyALocal, keyARemote, keyB, keyC, keyD],
+    });
+
+    const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyC]);
+
+    expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote, keyD]);
+  });
+
+  it("reorderProjects places group before target when dragged from after", () => {
+    const keyB = "env-local:proj-b";
+    const keyC = "env-local:proj-c";
+    const keyALocal = "env-local:proj-a";
+    const keyARemote = "env-remote:proj-a";
+    const initialState = makeUiState({
+      projectOrder: [keyB, keyC, keyALocal, keyARemote],
+    });
+
+    const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyB]);
+
+    expect(next.projectOrder).toEqual([keyALocal, keyARemote, keyB, keyC]);
+  });
+
+  it("reorderProjects with multi-member target inserts after first target occurrence", () => {
+    const keyALocal = "env-local:proj-a";
+    const keyARemote = "env-remote:proj-a";
+    const keyBLocal = "env-local:proj-b";
+    const keyBRemote = "env-remote:proj-b";
+    const initialState = makeUiState({
+      projectOrder: [keyALocal, keyARemote, keyBLocal, keyBRemote],
+    });
+
+    const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyBLocal, keyBRemote]);
+
+    // Target members may become non-contiguous; this is fine because the
+    // sidebar groups by logical key using first-occurrence positioning.
+    expect(next.projectOrder).toEqual([keyBLocal, keyALocal, keyARemote, keyBRemote]);
+  });
+
+  it("reorderProjects is a no-op when dragged group equals target group", () => {
+    const key1 = "env-local:proj-a";
+    const key2 = "env-remote:proj-a";
+    const initialState = makeUiState({
+      projectOrder: [key1, key2, "env-local:proj-b"],
+    });
+
+    const next = reorderProjects(initialState, [key1, key2], [key1, key2]);
+
+    expect(next).toBe(initialState);
+  });
+
+  it("reorderProjects is a no-op when dragged keys are not in projectOrder", () => {
+    const initialState = makeUiState({
+      projectOrder: ["env-local:proj-a", "env-local:proj-b"],
+    });
+
+    const next = reorderProjects(initialState, ["env-local:missing"], ["env-local:proj-b"]);
+
+    expect(next).toBe(initialState);
   });
 
   it("syncProjects preserves current project order during snapshot recovery", () => {

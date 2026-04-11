@@ -2696,7 +2696,9 @@ export default function Sidebar() {
       const activeProject = sidebarProjects.find((project) => project.projectKey === active.id);
       const overProject = sidebarProjects.find((project) => project.projectKey === over.id);
       if (!activeProject || !overProject) return;
-      reorderProjects(activeProject.projectKey, overProject.projectKey);
+      const activeMemberKeys = activeProject.memberProjectRefs.map(scopedProjectKey);
+      const overMemberKeys = overProject.memberProjectRefs.map(scopedProjectKey);
+      reorderProjects(activeMemberKeys, overMemberKeys);
     },
     [sidebarProjectSortOrder, reorderProjects, sidebarProjects],
   );
