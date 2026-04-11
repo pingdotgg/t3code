@@ -40,6 +40,24 @@ function writeTextFile(
   });
 }
 
+function removePath(
+  targetPath: string,
+): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.remove(targetPath, { recursive: true, force: true });
+  });
+}
+
+function makeDirectory(
+  dirPath: string,
+): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.makeDirectory(dirPath, { recursive: true });
+  });
+}
+
 /** Run a raw git command for test setup (not under test). */
 function git(
   cwd: string,
@@ -293,6 +311,21 @@ it.layer(TestLayer)("git integration", (it) => {
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const result = yield* (yield* GitCore).listBranches({ cwd: tmp });
+        expect(result.isRepo).toBe(false);
+        expect(result.hasOriginRemote).toBe(false);
+        expect(result.branches).toEqual([]);
+      }),
+    );
+
+    it.effect("returns isRepo: false for deleted directories", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const deletedDir = path.join(tmp, "deleted-repo");
+        yield* makeDirectory(deletedDir);
+        yield* removePath(deletedDir);
+
+        const result = yield* (yield* GitCore).listBranches({ cwd: deletedDir });
+
         expect(result.isRepo).toBe(false);
         expect(result.hasOriginRemote).toBe(false);
         expect(result.branches).toEqual([]);
@@ -1623,6 +1656,37 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* writeTextFile(path.join(tmp, "README.md"), "updated\n");
         const dirty = yield* core.statusDetails(tmp);
         expect(dirty.hasWorkingTreeChanges).toBe(true);
+      }),
+    );
+
+    it.effect("returns a non-repo status for deleted directories", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const deletedDir = path.join(tmp, "deleted-repo");
+        yield* makeDirectory(deletedDir);
+        yield* removePath(deletedDir);
+        const core = yield* GitCore;
+
+        const status = yield* core.statusDetails(deletedDir);
+        const localStatus = yield* core.statusDetailsLocal(deletedDir);
+
+        expect(status).toEqual({
+          isRepo: false,
+          hasOriginRemote: false,
+          isDefaultBranch: false,
+          branch: null,
+          upstreamRef: null,
+          hasWorkingTreeChanges: false,
+          workingTree: {
+            files: [],
+            insertions: 0,
+            deletions: 0,
+          },
+          hasUpstream: false,
+          aheadCount: 0,
+          behindCount: 0,
+        });
+        expect(localStatus).toEqual(status);
       }),
     );
 

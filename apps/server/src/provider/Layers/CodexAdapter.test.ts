@@ -238,14 +238,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         .pipe(Effect.result);
 
       assert.equal(result._tag, "Failure");
-      if (result._tag !== "Failure") {
-        return;
-      }
-
       assert.equal(result.failure._tag, "ProviderAdapterSessionNotFoundError");
-      if (result.failure._tag !== "ProviderAdapterSessionNotFoundError") {
-        return;
-      }
       assert.equal(result.failure.provider, "codex");
       assert.equal(result.failure.threadId, "sess-missing");
       assert.equal(result.failure.cause instanceof Error, true);

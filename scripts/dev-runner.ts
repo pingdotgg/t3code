@@ -9,11 +9,12 @@ import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from 
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
 
-const BASE_SERVER_PORT = 3773;
+const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
 const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
+const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::1", "::"] as const;
 
 export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(homedir(), ".t3"),
@@ -221,10 +222,28 @@ function portPairForOffset(offset: number): {
   };
 }
 
+export function checkPortAvailabilityOnHosts<R>(
+  port: number,
+  hosts: ReadonlyArray<string>,
+  canListenOnHost: (port: number, host: string) => Effect.Effect<boolean, never, R>,
+): Effect.Effect<boolean, never, R> {
+  return Effect.gen(function* () {
+    for (const host of hosts) {
+      if (!(yield* canListenOnHost(port, host))) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
 const defaultCheckPortAvailability: PortAvailabilityCheck<NetService> = (port) =>
   Effect.gen(function* () {
     const net = yield* NetService;
-    return yield* net.isPortAvailableOnLoopback(port);
+    return yield* checkPortAvailabilityOnHosts(port, DEV_PORT_PROBE_HOSTS, (candidatePort, host) =>
+      net.canListenOnHost(candidatePort, host),
+    );
   });
 
 interface FindFirstAvailableOffsetInput<R = NetService> {

@@ -313,10 +313,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                     worktreePath: input.worktreePath,
                     scriptId: input.scriptId,
                     terminalId: input.terminalId,
-                    detail:
-                      error instanceof Error
-                        ? error.message
-                        : "Unknown setup activity dispatch failure.",
+                    detail: error.message,
                   },
                 ),
               ),

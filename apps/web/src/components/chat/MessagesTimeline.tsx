@@ -45,6 +45,7 @@ import {
   deriveMessagesTimelineRows,
   estimateMessagesTimelineRowHeight,
   normalizeCompactToolLabel,
+  resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
@@ -56,6 +57,7 @@ import {
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
+
 import {
   buildInlineTerminalContextText,
   formatInlineTerminalContextLabel,
@@ -68,6 +70,7 @@ interface MessagesTimelineProps {
   hasMessages: boolean;
   isWorking: boolean;
   activeTurnInProgress: boolean;
+  activeTurnId?: TurnId | null;
   activeTurnStartedAt: string | null;
   scrollContainer: HTMLDivElement | null;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
@@ -77,6 +80,8 @@ interface MessagesTimelineProps {
   nowIso: string;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
+  changedFilesExpandedByTurnId: Record<string, boolean>;
+  onSetChangedFilesExpanded: (turnId: TurnId, expanded: boolean) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
@@ -104,6 +109,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hasMessages,
   isWorking,
   activeTurnInProgress,
+  activeTurnId,
   activeTurnStartedAt,
   scrollContainer,
   timelineEntries,
@@ -113,6 +119,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   nowIso,
   expandedWorkGroups,
   onToggleWorkGroup,
+  changedFilesExpandedByTurnId,
+  onSetChangedFilesExpanded,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
@@ -296,19 +304,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const nonVirtualizedRows = rows.slice(virtualizedRowCount);
-  const [allDirectoriesExpandedByTurnId, setAllDirectoriesExpandedByTurnId] = useState<
-    Record<string, boolean>
-  >({});
-  const onToggleAllDirectories = useCallback((turnId: TurnId) => {
-    setAllDirectoriesExpandedByTurnId((current) => ({
-      ...current,
-      [turnId]: !(current[turnId] ?? true),
-    }));
-  }, []);
 
   const renderRowContent = (row: TimelineRow) => (
     <div
-      className="pb-4"
+      className={cn(
+        "pb-4",
+        row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
+      )}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
       data-message-id={row.kind === "message" ? row.message.id : undefined}
@@ -441,6 +443,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "assistant" &&
         (() => {
           const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+          const assistantTurnStillInProgress =
+            activeTurnInProgress &&
+            activeTurnId !== null &&
+            activeTurnId !== undefined &&
+            row.message.turnId === activeTurnId;
+          const assistantCopyState = resolveAssistantMessageCopyState({
+            text: row.message.text ?? null,
+            showCopyButton: row.showAssistantCopyButton,
+            streaming: row.message.streaming || assistantTurnStillInProgress,
+          });
           return (
             <>
               {row.showCompletionDivider && (
@@ -466,7 +478,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   const summaryStat = summarizeTurnDiffStats(checkpointFiles);
                   const changedFileCountLabel = String(checkpointFiles.length);
                   const allDirectoriesExpanded =
-                    allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true;
+                    changedFilesExpandedByTurnId[turnSummary.turnId] ?? true;
                   return (
                     <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
                       <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -488,7 +500,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                             size="xs"
                             variant="outline"
                             data-scroll-anchor-ignore
-                            onClick={() => onToggleAllDirectories(turnSummary.turnId)}
+                            onClick={() =>
+                              onSetChangedFilesExpanded(turnSummary.turnId, !allDirectoriesExpanded)
+                            }
                           >
                             {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
                           </Button>
@@ -515,15 +529,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     </div>
                   );
                 })()}
-                <p className="mt-1.5 text-xs text-muted-foreground/50">
-                  {formatMessageMeta(
-                    row.message.createdAt,
-                    row.message.streaming
-                      ? formatElapsed(row.durationStart, nowIso)
-                      : formatElapsed(row.durationStart, row.message.completedAt),
-                    timestampFormat,
-                  )}
-                </p>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <p className="text-[10px] text-muted-foreground/30">
+                    {formatMessageMeta(
+                      row.message.createdAt,
+                      row.message.streaming
+                        ? formatElapsed(row.durationStart, nowIso)
+                        : formatElapsed(row.durationStart, row.message.completedAt),
+                      timestampFormat,
+                    )}
+                  </p>
+                  {assistantCopyState.visible ? (
+                    <div className="flex items-center opacity-0 transition-opacity duration-200  group-hover/assistant:opacity-100">
+                      <MessageCopyButton
+                        text={assistantCopyState.text ?? ""}
+                        size="icon-xs"
+                        variant="outline"
+                        className="border-border/50 bg-background/35 text-muted-foreground/45 shadow-none hover:border-border/70 hover:bg-background/55 hover:text-muted-foreground/70"
+                      />
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </>
           );

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import {
+  computeMessageDurationStart,
+  deriveMessagesTimelineRows,
+  normalizeCompactToolLabel,
+  resolveAssistantMessageCopyState,
+} from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -141,5 +146,122 @@ describe("normalizeCompactToolLabel", () => {
 
   it("removes trailing completion wording from other labels", () => {
     expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
+  });
+});
+
+describe("resolveAssistantMessageCopyState", () => {
+  it("returns enabled copy state for completed assistant messages", () => {
+    expect(
+      resolveAssistantMessageCopyState({
+        showCopyButton: true,
+        text: "Ship it",
+        streaming: false,
+      }),
+    ).toEqual({
+      text: "Ship it",
+      visible: true,
+    });
+  });
+
+  it("hides copy while an assistant message is still streaming", () => {
+    expect(
+      resolveAssistantMessageCopyState({
+        showCopyButton: true,
+        text: "Still streaming",
+        streaming: true,
+      }),
+    ).toEqual({
+      text: "Still streaming",
+      visible: false,
+    });
+  });
+
+  it("hides copy for empty completed assistant messages", () => {
+    expect(
+      resolveAssistantMessageCopyState({
+        showCopyButton: true,
+        text: "   ",
+        streaming: false,
+      }),
+    ).toEqual({
+      text: null,
+      visible: false,
+    });
+  });
+
+  it("hides copy for non-terminal assistant messages", () => {
+    expect(
+      resolveAssistantMessageCopyState({
+        showCopyButton: false,
+        text: "Interim thought",
+        streaming: false,
+      }),
+    ).toEqual({
+      text: "Interim thought",
+      visible: false,
+    });
+  });
+});
+
+describe("deriveMessagesTimelineRows", () => {
+  it("only enables assistant copy for the terminal assistant message in a turn", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-1-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "Write a poem",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-thought-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant-thought" as never,
+            role: "assistant",
+            text: "I should ground this first.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            completedAt: "2026-01-01T00:00:11Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-final-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:20Z",
+          message: {
+            id: "assistant-final" as never,
+            role: "assistant",
+            text: "Here is the poem.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:20Z",
+            completedAt: "2026-01-01T00:00:30Z",
+            streaming: false,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: "assistant-final-entry",
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const assistantRows = rows.filter(
+      (row): row is Extract<(typeof rows)[number], { kind: "message" }> =>
+        row.kind === "message" && row.message.role === "assistant",
+    );
+
+    expect(assistantRows).toHaveLength(2);
+    expect(assistantRows[0]?.showAssistantCopyButton).toBe(false);
+    expect(assistantRows[1]?.showAssistantCopyButton).toBe(true);
+    expect(assistantRows[1]?.showCompletionDivider).toBe(true);
   });
 });
