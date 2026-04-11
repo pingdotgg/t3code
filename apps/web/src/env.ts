@@ -16,8 +16,6 @@ export const usesCustomLinuxWindowControls =
   desktopPlatform === "linux" &&
   runningLinuxTitleBarMode === "custom" &&
   windowControlsLayout !== null;
-export const usesNativeLinuxTitleBar =
-  desktopPlatform === "linux" && runningLinuxTitleBarMode === "native";
 export const usesWCO =
   desktopPlatform === "windows" ||
   (desktopPlatform === "linux" && runningLinuxTitleBarMode === "overlay");
