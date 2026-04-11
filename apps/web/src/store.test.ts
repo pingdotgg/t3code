@@ -18,6 +18,8 @@ import {
   applyOrchestrationEvents,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
+  selectThreadByRef,
+  selectThreadExistsByRef,
   setThreadBranch,
   selectThreadsAcrossEnvironments,
   syncServerReadModel,
@@ -244,6 +246,128 @@ function makeEvent<T extends OrchestrationEvent["type"]>(
     ...overrides,
   } as Extract<OrchestrationEvent, { type: T }>;
 }
+
+describe("thread selection memoization", () => {
+  it("returns stable thread references for repeated reads of the same state", () => {
+    const thread = makeThread({
+      messages: [
+        {
+          id: MessageId.make("message-1"),
+          role: "user",
+          text: "hello",
+          createdAt: "2026-02-13T00:01:00.000Z",
+          streaming: false,
+        },
+      ],
+      activities: [
+        {
+          id: EventId.make("activity-1"),
+          tone: "info",
+          kind: "step",
+          summary: "working",
+          payload: {},
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-02-13T00:01:30.000Z",
+        },
+      ],
+      proposedPlans: [
+        {
+          id: "plan-1",
+          turnId: null,
+          planMarkdown: "plan",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: "2026-02-13T00:02:00.000Z",
+          updatedAt: "2026-02-13T00:02:00.000Z",
+        },
+      ],
+      turnDiffSummaries: [
+        {
+          turnId: TurnId.make("turn-1"),
+          completedAt: "2026-02-13T00:03:00.000Z",
+          files: [],
+        },
+      ],
+    });
+    const state = makeState(thread);
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+
+    const first = selectThreadByRef(state, ref);
+    const second = selectThreadByRef(state, ref);
+
+    expect(first).toBeDefined();
+    expect(second).toBe(first);
+    expect(second?.messages).toBe(first?.messages);
+    expect(second?.activities).toBe(first?.activities);
+    expect(second?.proposedPlans).toBe(first?.proposedPlans);
+    expect(second?.turnDiffSummaries).toBe(first?.turnDiffSummaries);
+  });
+
+  it("reuses the derived thread when the app state wrapper changes but thread data does not", () => {
+    const thread = makeThread({
+      messages: [
+        {
+          id: MessageId.make("message-1"),
+          role: "assistant",
+          text: "done",
+          createdAt: "2026-02-13T00:01:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const state = makeState(thread);
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+    const wrappedState: AppState = {
+      ...state,
+      environmentStateById: { ...state.environmentStateById },
+    };
+
+    const first = selectThreadByRef(state, ref);
+    const second = selectThreadByRef(wrappedState, ref);
+
+    expect(second).toBe(first);
+  });
+
+  it("updates the derived thread when the underlying thread data changes", () => {
+    const thread = makeThread();
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+    const firstState = makeState(thread);
+    const secondState = makeState({
+      ...thread,
+      messages: [
+        {
+          id: MessageId.make("message-2"),
+          role: "user",
+          text: "new",
+          createdAt: "2026-02-13T00:04:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+
+    const first = selectThreadByRef(firstState, ref);
+    const second = selectThreadByRef(secondState, ref);
+
+    expect(second).not.toBe(first);
+    expect(second?.messages).toHaveLength(1);
+    expect(second?.messages[0]?.text).toBe("new");
+  });
+
+  it("checks thread existence without materializing the full thread", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+
+    expect(selectThreadExistsByRef(state, ref)).toBe(true);
+    expect(
+      selectThreadExistsByRef(
+        state,
+        scopeThreadRef(thread.environmentId, ThreadId.make("missing")),
+      ),
+    ).toBe(false);
+    expect(selectThreadExistsByRef(state, null)).toBe(false);
+  });
+});
 
 function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"][number]>) {
   return {
