@@ -41,12 +41,6 @@ const EMPTY_ACTIVITIES: Thread["activities"] = [];
 const EMPTY_PROPOSED_PLANS: ProposedPlan[] = [];
 const EMPTY_TURN_DIFF_SUMMARIES: TurnDiffSummary[] = [];
 
-export interface ThreadViewShell extends ThreadShell {
-  session: ThreadSession | null;
-  latestTurn: ThreadTurnState["latestTurn"];
-  pendingSourceProposedPlan?: ThreadTurnState["pendingSourceProposedPlan"];
-}
-
 export type ThreadStaticShellSnapshot = Pick<
   ThreadShell,
   | "id"
@@ -144,6 +138,112 @@ function shallowArrayEqual<TValue>(
   right: ReadonlyArray<TValue>,
 ): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function normalizeArrayResult<TValue>(values: TValue[], emptyValue: TValue[]): TValue[] {
+  return values.length === 0 ? emptyValue : values;
+}
+
+function latestTurnSnapshotsEqual(
+  left: ThreadConversationRuntimeSnapshot["latestTurn"],
+  right: ThreadConversationRuntimeSnapshot["latestTurn"],
+): boolean {
+  return (
+    left?.turnId === right?.turnId &&
+    left?.state === right?.state &&
+    left?.requestedAt === right?.requestedAt &&
+    left?.startedAt === right?.startedAt &&
+    left?.completedAt === right?.completedAt &&
+    left?.assistantMessageId === right?.assistantMessageId &&
+    left?.sourceProposedPlan === right?.sourceProposedPlan
+  );
+}
+
+function conversationSessionSnapshotsEqual(
+  left: ThreadConversationRuntimeSnapshot["session"],
+  right: ThreadConversationRuntimeSnapshot["session"],
+): boolean {
+  return (
+    left?.provider === right?.provider &&
+    left?.status === right?.status &&
+    left?.activeTurnId === right?.activeTurnId &&
+    left?.orchestrationStatus === right?.orchestrationStatus
+  );
+}
+
+function runtimeSessionSnapshotsEqual(
+  left: ThreadRuntimeSnapshot["session"],
+  right: ThreadRuntimeSnapshot["session"],
+): boolean {
+  return (
+    conversationSessionSnapshotsEqual(left, right) &&
+    left?.createdAt === right?.createdAt &&
+    left?.updatedAt === right?.updatedAt
+  );
+}
+
+function toLatestTurnSnapshot(
+  latestTurn: ThreadTurnState["latestTurn"],
+): ThreadConversationRuntimeSnapshot["latestTurn"] {
+  return latestTurn
+    ? {
+        turnId: latestTurn.turnId,
+        state: latestTurn.state,
+        requestedAt: latestTurn.requestedAt,
+        startedAt: latestTurn.startedAt,
+        completedAt: latestTurn.completedAt,
+        assistantMessageId: latestTurn.assistantMessageId,
+        sourceProposedPlan: latestTurn.sourceProposedPlan,
+      }
+    : null;
+}
+
+function toConversationSessionSnapshot(
+  session: ThreadSession | null,
+): ThreadConversationRuntimeSnapshot["session"] {
+  return session
+    ? {
+        provider: session.provider,
+        status: session.status,
+        activeTurnId: session.activeTurnId,
+        orchestrationStatus: session.orchestrationStatus,
+      }
+    : null;
+}
+
+function toRuntimeSessionSnapshot(session: ThreadSession | null): ThreadRuntimeSnapshot["session"] {
+  return session
+    ? {
+        provider: session.provider,
+        status: session.status,
+        activeTurnId: session.activeTurnId,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        orchestrationStatus: session.orchestrationStatus,
+      }
+    : null;
+}
+
+function resolveThreadState(
+  state: AppState,
+  ref: ScopedThreadRef | null | undefined,
+): {
+  session: ThreadSession | null;
+  turnState: ThreadTurnState | undefined;
+} | null {
+  if (!ref) {
+    return null;
+  }
+
+  const environmentState = selectEnvironmentState(state, ref.environmentId);
+  if (!environmentState.threadShellById[ref.threadId]) {
+    return null;
+  }
+
+  return {
+    session: environmentState.threadSessionById[ref.threadId] ?? null,
+    turnState: environmentState.threadTurnStateById[ref.threadId],
+  };
 }
 
 function pendingApprovalsEqual(
@@ -435,125 +535,44 @@ export function createThreadStaticShellSelectorByRef(
   };
 }
 
-export function createThreadShellSelectorByRef(
-  ref: ScopedThreadRef | null | undefined,
-): (state: AppState) => ThreadViewShell | undefined {
-  let previousShell: EnvironmentState["threadShellById"][ThreadId] | undefined;
-  let previousSession: ThreadSession | null | undefined;
-  let previousTurnState: ThreadTurnState | undefined;
-  let previousResult: ThreadViewShell | undefined;
-
-  return (state) => {
-    if (!ref) {
-      return undefined;
-    }
-
-    const environmentState = selectEnvironmentState(state, ref.environmentId);
-    const shell = environmentState.threadShellById[ref.threadId];
-    if (!shell) {
-      return undefined;
-    }
-
-    const session = environmentState.threadSessionById[ref.threadId] ?? null;
-    const turnState = environmentState.threadTurnStateById[ref.threadId];
-
-    if (
-      previousResult &&
-      previousShell === shell &&
-      previousSession === session &&
-      previousTurnState === turnState
-    ) {
-      return previousResult;
-    }
-
-    previousShell = shell;
-    previousSession = session;
-    previousTurnState = turnState;
-    previousResult = {
-      ...shell,
-      session,
-      latestTurn: turnState?.latestTurn ?? null,
-      pendingSourceProposedPlan: turnState?.pendingSourceProposedPlan,
-    };
-    return previousResult;
-  };
-}
-
 export function createThreadRuntimeSnapshotSelectorByRef(
   ref: ScopedThreadRef | null | undefined,
 ): (state: AppState) => ThreadRuntimeSnapshot | undefined {
-  let previousSession: ThreadSession | null | undefined;
-  let previousTurnState: ThreadTurnState | undefined;
   let previousResult: ThreadRuntimeSnapshot | undefined;
 
   return (state) => {
-    if (!ref) {
-      previousSession = undefined;
-      previousTurnState = undefined;
+    const resolved = resolveThreadState(state, ref);
+    if (!resolved) {
       previousResult = undefined;
       return undefined;
     }
 
-    const environmentState = selectEnvironmentState(state, ref.environmentId);
-    const shell = environmentState.threadShellById[ref.threadId];
-    if (!shell) {
-      previousSession = undefined;
-      previousTurnState = undefined;
-      previousResult = undefined;
-      return undefined;
-    }
-
-    const session = environmentState.threadSessionById[ref.threadId] ?? null;
-    const turnState = environmentState.threadTurnStateById[ref.threadId];
-    const latestTurn = turnState?.latestTurn ?? null;
+    const { session, turnState } = resolved;
+    const nextSession = toRuntimeSessionSnapshot(session);
+    const nextLatestTurn = toLatestTurnSnapshot(turnState?.latestTurn ?? null);
     const phase = derivePhase(session);
+    const pendingSourceProposedPlan = turnState?.pendingSourceProposedPlan;
 
     if (
       previousResult &&
-      previousSession?.provider === session?.provider &&
-      previousSession?.status === session?.status &&
-      previousSession?.activeTurnId === session?.activeTurnId &&
-      previousSession?.updatedAt === session?.updatedAt &&
-      previousSession?.orchestrationStatus === session?.orchestrationStatus &&
-      previousTurnState?.pendingSourceProposedPlan === turnState?.pendingSourceProposedPlan &&
-      previousTurnState?.latestTurn?.turnId === latestTurn?.turnId &&
-      previousTurnState?.latestTurn?.requestedAt === latestTurn?.requestedAt &&
-      previousTurnState?.latestTurn?.startedAt === latestTurn?.startedAt &&
-      previousTurnState?.latestTurn?.completedAt === latestTurn?.completedAt &&
-      previousTurnState?.latestTurn?.assistantMessageId === latestTurn?.assistantMessageId &&
-      previousTurnState?.latestTurn?.sourceProposedPlan === latestTurn?.sourceProposedPlan &&
+      runtimeSessionSnapshotsEqual(previousResult.session, nextSession) &&
+      latestTurnSnapshotsEqual(previousResult.latestTurn, nextLatestTurn) &&
+      previousResult.pendingSourceProposedPlan === pendingSourceProposedPlan &&
       previousResult.phase === phase
     ) {
-      previousSession = session;
-      previousTurnState = turnState;
       return previousResult;
     }
 
-    previousSession = session;
-    previousTurnState = turnState;
     previousResult = {
-      session: session
-        ? {
-            provider: session.provider,
-            status: session.status,
-            activeTurnId: session.activeTurnId,
-            createdAt: session.createdAt,
-            updatedAt: session.updatedAt,
-            orchestrationStatus: session.orchestrationStatus,
-          }
-        : null,
-      latestTurn: latestTurn
-        ? {
-            turnId: latestTurn.turnId,
-            state: latestTurn.state,
-            requestedAt: latestTurn.requestedAt,
-            startedAt: latestTurn.startedAt,
-            completedAt: latestTurn.completedAt,
-            assistantMessageId: latestTurn.assistantMessageId,
-            sourceProposedPlan: latestTurn.sourceProposedPlan,
-          }
-        : null,
-      pendingSourceProposedPlan: turnState?.pendingSourceProposedPlan,
+      session:
+        previousResult && runtimeSessionSnapshotsEqual(previousResult.session, nextSession)
+          ? previousResult.session
+          : nextSession,
+      latestTurn:
+        previousResult && latestTurnSnapshotsEqual(previousResult.latestTurn, nextLatestTurn)
+          ? previousResult.latestTurn
+          : nextLatestTurn,
+      pendingSourceProposedPlan,
       phase,
     };
     return previousResult;
@@ -563,110 +582,40 @@ export function createThreadRuntimeSnapshotSelectorByRef(
 export function createThreadConversationRuntimeSelectorByRef(
   ref: ScopedThreadRef | null | undefined,
 ): (state: AppState) => ThreadConversationRuntimeSnapshot | undefined {
-  let previousSession: ThreadSession | null | undefined;
-  let previousTurnState: ThreadTurnState | undefined;
   let previousResult: ThreadConversationRuntimeSnapshot | undefined;
 
   return (state) => {
-    if (!ref) {
-      previousSession = undefined;
-      previousTurnState = undefined;
+    const resolved = resolveThreadState(state, ref);
+    if (!resolved) {
       previousResult = undefined;
       return undefined;
     }
 
-    const environmentState = selectEnvironmentState(state, ref.environmentId);
-    const shell = environmentState.threadShellById[ref.threadId];
-    if (!shell) {
-      previousSession = undefined;
-      previousTurnState = undefined;
-      previousResult = undefined;
-      return undefined;
-    }
-
-    const session = environmentState.threadSessionById[ref.threadId] ?? null;
-    const turnState = environmentState.threadTurnStateById[ref.threadId];
-    const latestTurn = turnState?.latestTurn ?? null;
+    const { session, turnState } = resolved;
+    const nextSession = toConversationSessionSnapshot(session);
+    const nextLatestTurn = toLatestTurnSnapshot(turnState?.latestTurn ?? null);
     const phase = derivePhase(session);
 
     if (
       previousResult &&
-      previousSession?.provider === session?.provider &&
-      previousSession?.status === session?.status &&
-      previousSession?.activeTurnId === session?.activeTurnId &&
-      previousSession?.orchestrationStatus === session?.orchestrationStatus &&
-      previousTurnState?.latestTurn?.turnId === latestTurn?.turnId &&
-      previousTurnState?.latestTurn?.state === latestTurn?.state &&
-      previousTurnState?.latestTurn?.requestedAt === latestTurn?.requestedAt &&
-      previousTurnState?.latestTurn?.startedAt === latestTurn?.startedAt &&
-      previousTurnState?.latestTurn?.completedAt === latestTurn?.completedAt &&
-      previousTurnState?.latestTurn?.assistantMessageId === latestTurn?.assistantMessageId &&
-      previousTurnState?.latestTurn?.sourceProposedPlan === latestTurn?.sourceProposedPlan &&
+      conversationSessionSnapshotsEqual(previousResult.session, nextSession) &&
+      latestTurnSnapshotsEqual(previousResult.latestTurn, nextLatestTurn) &&
       previousResult.phase === phase
     ) {
-      previousSession = session;
-      previousTurnState = turnState;
       return previousResult;
     }
 
-    previousSession = session;
-    previousTurnState = turnState;
     previousResult = {
-      session: session
-        ? {
-            provider: session.provider,
-            status: session.status,
-            activeTurnId: session.activeTurnId,
-            orchestrationStatus: session.orchestrationStatus,
-          }
-        : null,
-      latestTurn: latestTurn
-        ? {
-            turnId: latestTurn.turnId,
-            state: latestTurn.state,
-            requestedAt: latestTurn.requestedAt,
-            startedAt: latestTurn.startedAt,
-            completedAt: latestTurn.completedAt,
-            assistantMessageId: latestTurn.assistantMessageId,
-            sourceProposedPlan: latestTurn.sourceProposedPlan,
-          }
-        : null,
+      session:
+        previousResult && conversationSessionSnapshotsEqual(previousResult.session, nextSession)
+          ? previousResult.session
+          : nextSession,
+      latestTurn:
+        previousResult && latestTurnSnapshotsEqual(previousResult.latestTurn, nextLatestTurn)
+          ? previousResult.latestTurn
+          : nextLatestTurn,
       phase,
     };
-    return previousResult;
-  };
-}
-
-export function createThreadMessagesSelectorByRef(
-  ref: ScopedThreadRef | null | undefined,
-): (state: AppState) => ChatMessage[] {
-  let previousIds: MessageId[] | undefined;
-  let previousMessagesById: EnvironmentState["messageByThreadId"][ThreadId] | undefined;
-  let previousResult: ChatMessage[] = EMPTY_MESSAGES;
-
-  return (state) => {
-    if (!ref) {
-      previousIds = undefined;
-      previousMessagesById = undefined;
-      previousResult = EMPTY_MESSAGES;
-      return previousResult;
-    }
-
-    const environmentState = selectEnvironmentState(state, ref.environmentId);
-    const messageIds = environmentState.messageIdsByThreadId[ref.threadId];
-    const messagesById = environmentState.messageByThreadId[ref.threadId];
-
-    if (previousIds === messageIds && previousMessagesById === messagesById) {
-      return previousResult;
-    }
-
-    previousIds = messageIds;
-    previousMessagesById = messagesById;
-    const nextMessages = collectByIds(
-      messageIds,
-      messagesById,
-    ) as Thread["messages"] extends ChatMessage[] ? ChatMessage[] : never;
-    previousResult = nextMessages.length === 0 ? EMPTY_MESSAGES : nextMessages;
     return previousResult;
   };
 }
@@ -735,7 +684,7 @@ export function createThreadActivitiesSelectorByRef(
       activityIds,
       activitiesById,
     ) as Thread["activities"] extends Array<infer _> ? Thread["activities"] : never;
-    previousResult = nextActivities.length === 0 ? EMPTY_ACTIVITIES : nextActivities;
+    previousResult = normalizeArrayResult(nextActivities, EMPTY_ACTIVITIES);
     return previousResult;
   };
 }
@@ -1103,7 +1052,7 @@ export function createThreadProposedPlansSelectorByRef(
       proposedPlanIds,
       proposedPlansById,
     ) as Thread["proposedPlans"] extends ProposedPlan[] ? ProposedPlan[] : never;
-    previousResult = nextProposedPlans.length === 0 ? EMPTY_PROPOSED_PLANS : nextProposedPlans;
+    previousResult = normalizeArrayResult(nextProposedPlans, EMPTY_PROPOSED_PLANS);
     return previousResult;
   };
 }
@@ -1139,9 +1088,7 @@ export function createThreadTurnDiffSummariesSelectorByRef(
     ) as Thread["turnDiffSummaries"] extends TurnDiffSummary[] ? TurnDiffSummary[] : never;
     previousResult = shallowArrayEqual(previousResult, nextTurnDiffSummaries)
       ? previousResult
-      : nextTurnDiffSummaries.length === 0
-        ? EMPTY_TURN_DIFF_SUMMARIES
-        : nextTurnDiffSummaries;
+      : normalizeArrayResult(nextTurnDiffSummaries, EMPTY_TURN_DIFF_SUMMARIES);
     return previousResult;
   };
 }

@@ -1635,6 +1635,14 @@ function ChatView(props: ChatViewProps) {
     () => createThreadPendingSnapshotSelectorByRef(routeKind === "server" ? routeThreadRef : null),
     [routeKind, routeThreadRef],
   );
+  const serverThreadActivitiesSelector = useMemo(
+    () => createThreadActivitiesSelectorByRef(routeKind === "server" ? routeThreadRef : null),
+    [routeKind, routeThreadRef],
+  );
+  const serverThreadProposedPlansSelector = useMemo(
+    () => createThreadProposedPlansSelectorByRef(routeKind === "server" ? routeThreadRef : null),
+    [routeKind, routeThreadRef],
+  );
   const serverThreadShell = useStore(
     useMemo(
       () => createThreadStaticShellSelectorByRef(routeKind === "server" ? routeThreadRef : null),
@@ -1822,6 +1830,14 @@ function ChatView(props: ChatViewProps) {
   const getCurrentServerPendingSnapshot = useCallback(
     () => serverThreadPendingSelector(useStore.getState()),
     [serverThreadPendingSelector],
+  );
+  const getCurrentServerActivities = useCallback(
+    () => serverThreadActivitiesSelector(useStore.getState()),
+    [serverThreadActivitiesSelector],
+  );
+  const getCurrentServerProposedPlans = useCallback(
+    () => serverThreadProposedPlansSelector(useStore.getState()),
+    [serverThreadProposedPlansSelector],
   );
   const activeMessageCount = isServerThread
     ? serverMessageIds.length
@@ -3375,10 +3391,10 @@ function ChatView(props: ChatViewProps) {
 
   const resolveCurrentConversationDispatchState = useCallback(() => {
     const threadActivities = isServerThread
-      ? createThreadActivitiesSelectorByRef(routeThreadRef)(useStore.getState())
+      ? getCurrentServerActivities()
       : (localDraftThread?.activities ?? EMPTY_ACTIVITIES);
     const threadProposedPlans = isServerThread
-      ? createThreadProposedPlansSelectorByRef(routeThreadRef)(useStore.getState())
+      ? getCurrentServerProposedPlans()
       : (localDraftThread?.proposedPlans ?? EMPTY_PROPOSED_PLANS);
     const runtimeState = getCurrentConversationRuntimeState();
     const nextLatestTurnSettled = isLatestTurnSettled(
@@ -3425,13 +3441,14 @@ function ChatView(props: ChatViewProps) {
     };
   }, [
     getCurrentConversationRuntimeState,
+    getCurrentServerActivities,
+    getCurrentServerProposedPlans,
     interactionMode,
     isServerThread,
     localDraftThread?.activities,
     localDraftThread?.proposedPlans,
     pendingUserInputAnswersByRequestId,
     pendingUserInputQuestionIndexByRequestId,
-    routeThreadRef,
   ]);
 
   const onSubmitPlanFollowUp = useCallback(

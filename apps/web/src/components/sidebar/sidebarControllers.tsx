@@ -37,6 +37,18 @@ import { THREAD_PREVIEW_LIMIT } from "./sidebarConstants";
 
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
 
+function readSidebarShortcutContext(routeThreadRef: ScopedThreadRef | null) {
+  return {
+    terminalFocus: isTerminalFocused(),
+    terminalOpen: routeThreadRef
+      ? selectThreadTerminalState(
+          useTerminalStateStore.getState().terminalStateByThreadKey,
+          routeThreadRef,
+        ).terminalOpen
+      : false,
+  };
+}
+
 function buildThreadJumpLabelMap(input: {
   keybindings: ReturnType<typeof useServerKeybindings>;
   platform: string;
@@ -153,15 +165,7 @@ function useSidebarKeyboardController(input: {
     [threadJumpCommandByKey],
   );
   const getCurrentSidebarShortcutContext = useCallback(
-    () => ({
-      terminalFocus: isTerminalFocused(),
-      terminalOpen: routeThreadRef
-        ? selectThreadTerminalState(
-            useTerminalStateStore.getState().terminalStateByThreadKey,
-            routeThreadRef,
-          ).terminalOpen
-        : false,
-    }),
+    () => readSidebarShortcutContext(routeThreadRef),
     [routeThreadRef],
   );
   const threadJumpLabelByKey = useMemo(
@@ -222,18 +226,8 @@ function useSidebarKeyboardController(input: {
       event.key !== "Shift" &&
       !showThreadJumpHintsRef.current &&
       threadJumpLabelsRef.current === EMPTY_THREAD_JUMP_LABELS;
-    const getCurrentSidebarShortcutContext = () => {
-      const { routeThreadRef } = latestKeyboardStateRef.current;
-      return {
-        terminalFocus: isTerminalFocused(),
-        terminalOpen: routeThreadRef
-          ? selectThreadTerminalState(
-              useTerminalStateStore.getState().terminalStateByThreadKey,
-              routeThreadRef,
-            ).terminalOpen
-          : false,
-      };
-    };
+    const getCurrentSidebarShortcutContext = () =>
+      readSidebarShortcutContext(latestKeyboardStateRef.current.routeThreadRef);
 
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
       if (shouldIgnoreThreadJumpHintUpdate(event)) {

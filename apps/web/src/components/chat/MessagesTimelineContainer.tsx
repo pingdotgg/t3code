@@ -36,7 +36,6 @@ import { useUiStateStore } from "../../uiStateStore";
 const EMPTY_CHANGED_FILES_EXPANDED_BY_TURN_ID: Record<string, boolean> = {};
 const EMPTY_CHAT_MESSAGES: ChatMessage[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
-const EMPTY_WORK_LOG_ENTRIES: ReturnType<typeof deriveWorkLogEntries> = [];
 const EMPTY_REVERT_TURN_COUNT_BY_USER_MESSAGE_ID = new Map<MessageId, number>();
 const NOOP_REVERT_USER_MESSAGE = (_messageId: MessageId) => {};
 
@@ -196,18 +195,14 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
     [attachmentPreviewHandoffByMessageId],
   );
   const historicalTimelineMessages = useMemo(() => {
-    const baseMessages = threadRef
-      ? (serverTimelineSlices.historicalMessages ?? EMPTY_CHAT_MESSAGES)
-      : draftMessages;
+    const baseMessages = threadRef ? serverTimelineSlices.historicalMessages : draftMessages;
     return applyPreviewHandoff(baseMessages);
   }, [applyPreviewHandoff, draftMessages, serverTimelineSlices.historicalMessages, threadRef]);
   const activeWorkEntries = threadRef
-    ? (serverTimelineSlices.activeWorkEntries ?? EMPTY_WORK_LOG_ENTRIES)
+    ? serverTimelineSlices.activeWorkEntries
     : deriveWorkLogEntries(draftActivities, activeLatestTurn?.turnId ?? undefined);
   const settledLiveMessages = useMemo(() => {
-    const baseMessages = threadRef
-      ? (serverTimelineSlices.liveMessages ?? EMPTY_CHAT_MESSAGES)
-      : EMPTY_CHAT_MESSAGES;
+    const baseMessages = threadRef ? serverTimelineSlices.liveMessages : EMPTY_CHAT_MESSAGES;
     const messagesWithPreviewHandoff = applyPreviewHandoff(baseMessages);
     const canPromoteSettledLiveMessages =
       optimisticUserMessages.length > 0 &&
@@ -223,9 +218,7 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
     threadRef,
   ]);
   const liveTimelineMessages = useMemo(() => {
-    const baseMessages = threadRef
-      ? (serverTimelineSlices.liveMessages ?? EMPTY_CHAT_MESSAGES)
-      : EMPTY_CHAT_MESSAGES;
+    const baseMessages = threadRef ? serverTimelineSlices.liveMessages : EMPTY_CHAT_MESSAGES;
     const messagesWithPreviewHandoff = applyPreviewHandoff(baseMessages);
     if (settledLiveMessages.length > 0) {
       const settledLiveMessageIds = new Set(settledLiveMessages.map((message) => message.id));
@@ -257,12 +250,12 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
   const promotedLiveProposedPlans =
     settledLiveMessages.length > 0
       ? threadRef
-        ? (serverTimelineSlices.liveProposedPlans ?? EMPTY_PROPOSED_PLANS)
+        ? serverTimelineSlices.liveProposedPlans
         : EMPTY_PROPOSED_PLANS
       : EMPTY_PROPOSED_PLANS;
   const historicalProposedPlans = useMemo(() => {
     const baseProposedPlans = threadRef
-      ? (serverTimelineSlices.historicalProposedPlans ?? EMPTY_PROPOSED_PLANS)
+      ? serverTimelineSlices.historicalProposedPlans
       : draftProposedPlans;
     return promotedLiveProposedPlans.length > 0
       ? [...baseProposedPlans, ...promotedLiveProposedPlans]
@@ -277,7 +270,7 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
     settledLiveMessages.length > 0
       ? EMPTY_PROPOSED_PLANS
       : threadRef
-        ? (serverTimelineSlices.liveProposedPlans ?? EMPTY_PROPOSED_PLANS)
+        ? serverTimelineSlices.liveProposedPlans
         : EMPTY_PROPOSED_PLANS;
   const effectiveHistoricalTimelineMessages = useMemo(
     () =>
@@ -287,7 +280,7 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
     [historicalTimelineMessages, settledLiveMessages],
   );
   const turnDiffSummaries = threadRef
-    ? (serverTimelineSlices.turnDiffSummaries ?? draftTurnDiffSummaries)
+    ? serverTimelineSlices.turnDiffSummaries
     : draftTurnDiffSummaries;
   const latestTurnHasToolActivity = threadRef
     ? serverTimelineSlices.latestTurnHasToolActivity
@@ -371,9 +364,6 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
     },
     [historicalRevertTurnCountByUserMessageId, onRevertToTurnCount],
   );
-  const onRevertLiveUserMessage = useCallback((messageId: MessageId) => {
-    NOOP_REVERT_USER_MESSAGE(messageId);
-  }, []);
   const onSetChangedFilesExpanded = useCallback(
     (turnId: TurnId, expanded: boolean) => {
       if (!threadRef) {
@@ -525,7 +515,7 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
         onSetChangedFilesExpanded={onSetChangedFilesExpanded}
         onOpenTurnDiff={onOpenTurnDiff}
         revertTurnCountByUserMessageId={EMPTY_REVERT_TURN_COUNT_BY_USER_MESSAGE_ID}
-        onRevertUserMessage={onRevertLiveUserMessage}
+        onRevertUserMessage={NOOP_REVERT_USER_MESSAGE}
         isRevertingCheckpoint={isRevertingCheckpoint}
         onImageExpand={onImageExpand}
         activeThreadEnvironmentId={activeThreadEnvironmentId}

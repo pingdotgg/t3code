@@ -88,16 +88,65 @@ const EMPTY_PROJECT_RENDER_STATE: SidebarProjectRenderStateSnapshot = {
   shouldShowThreadPanel: false,
 };
 
-function collectProjectThreadEntries(
+function resolveLogicalProjectKey(
+  summary: SidebarThreadSummary,
+  physicalToLogicalKey?: ReadonlyMap<string, LogicalProjectKey>,
+): LogicalProjectKey {
+  const physicalProjectKey = scopedProjectKey(
+    scopeProjectRef(summary.environmentId, summary.projectId),
+  );
+  return physicalToLogicalKey?.get(physicalProjectKey) ?? physicalProjectKey;
+}
+
+function buildProjectThreadRenderEntry(
+  summary: SidebarThreadSummary,
+  physicalToLogicalKey?: ReadonlyMap<string, LogicalProjectKey>,
+): ProjectThreadRenderEntry {
+  return {
+    threadKey: scopedThreadKey(scopeThreadRef(summary.environmentId, summary.id)),
+    id: summary.id,
+    environmentId: summary.environmentId,
+    projectId: resolveLogicalProjectKey(summary, physicalToLogicalKey),
+    createdAt: summary.createdAt,
+    archivedAt: summary.archivedAt,
+    updatedAt: summary.updatedAt,
+    latestUserMessageAt: summary.latestUserMessageAt,
+  };
+}
+
+function buildProjectThreadStatusInput(summary: SidebarThreadSummary): ProjectThreadStatusInput {
+  return {
+    threadKey: scopedThreadKey(scopeThreadRef(summary.environmentId, summary.id)),
+    hasActionableProposedPlan: summary.hasActionableProposedPlan,
+    hasPendingApprovals: summary.hasPendingApprovals,
+    hasPendingUserInput: summary.hasPendingUserInput,
+    interactionMode: summary.interactionMode,
+    latestTurn: summary.latestTurn
+      ? {
+          turnId: summary.latestTurn.turnId,
+          startedAt: summary.latestTurn.startedAt,
+          completedAt: summary.latestTurn.completedAt,
+        }
+      : null,
+    session: summary.session
+      ? {
+          orchestrationStatus: summary.session.orchestrationStatus,
+          activeTurnId: summary.session.activeTurnId,
+          status: summary.session.status,
+        }
+      : null,
+  };
+}
+
+function forEachProjectThreadSummary(
   state: AppState,
   memberProjectRefs: readonly ScopedProjectRef[],
-  physicalToLogicalKey?: ReadonlyMap<string, LogicalProjectKey>,
-): ProjectThreadRenderEntry[] {
+  visit: (summary: SidebarThreadSummary) => void,
+): void {
   if (memberProjectRefs.length === 0) {
-    return [];
+    return;
   }
 
-  const entries: ProjectThreadRenderEntry[] = [];
   for (const ref of memberProjectRefs) {
     const environmentState = state.environmentStateById[ref.environmentId];
     if (!environmentState) {
@@ -109,21 +158,20 @@ function collectProjectThreadEntries(
       if (!summary) {
         continue;
       }
-      entries.push({
-        threadKey: scopedThreadKey(scopeThreadRef(summary.environmentId, summary.id)),
-        id: summary.id,
-        environmentId: summary.environmentId,
-        projectId:
-          physicalToLogicalKey?.get(
-            scopedProjectKey(scopeProjectRef(summary.environmentId, summary.projectId)),
-          ) ?? scopedProjectKey(scopeProjectRef(summary.environmentId, summary.projectId)),
-        createdAt: summary.createdAt,
-        archivedAt: summary.archivedAt,
-        updatedAt: summary.updatedAt,
-        latestUserMessageAt: summary.latestUserMessageAt,
-      });
+      visit(summary);
     }
   }
+}
+
+function collectProjectThreadEntries(
+  state: AppState,
+  memberProjectRefs: readonly ScopedProjectRef[],
+  physicalToLogicalKey?: ReadonlyMap<string, LogicalProjectKey>,
+): ProjectThreadRenderEntry[] {
+  const entries: ProjectThreadRenderEntry[] = [];
+  forEachProjectThreadSummary(state, memberProjectRefs, (summary) => {
+    entries.push(buildProjectThreadRenderEntry(summary, physicalToLogicalKey));
+  });
   return entries;
 }
 
@@ -131,45 +179,10 @@ function collectProjectThreadStatusInputs(
   state: AppState,
   memberProjectRefs: readonly ScopedProjectRef[],
 ): ProjectThreadStatusInput[] {
-  if (memberProjectRefs.length === 0) {
-    return [];
-  }
-
   const inputs: ProjectThreadStatusInput[] = [];
-  for (const ref of memberProjectRefs) {
-    const environmentState = state.environmentStateById[ref.environmentId];
-    if (!environmentState) {
-      continue;
-    }
-    const threadIds = environmentState.threadIdsByProjectId[ref.projectId] ?? [];
-    for (const threadId of threadIds) {
-      const summary = environmentState.sidebarThreadSummaryById[threadId];
-      if (!summary) {
-        continue;
-      }
-      inputs.push({
-        threadKey: scopedThreadKey(scopeThreadRef(summary.environmentId, summary.id)),
-        hasActionableProposedPlan: summary.hasActionableProposedPlan,
-        hasPendingApprovals: summary.hasPendingApprovals,
-        hasPendingUserInput: summary.hasPendingUserInput,
-        interactionMode: summary.interactionMode,
-        latestTurn: summary.latestTurn
-          ? {
-              turnId: summary.latestTurn.turnId,
-              startedAt: summary.latestTurn.startedAt,
-              completedAt: summary.latestTurn.completedAt,
-            }
-          : null,
-        session: summary.session
-          ? {
-              orchestrationStatus: summary.session.orchestrationStatus,
-              activeTurnId: summary.session.activeTurnId,
-              status: summary.session.status,
-            }
-          : null,
-      });
-    }
-  }
+  forEachProjectThreadSummary(state, memberProjectRefs, (summary) => {
+    inputs.push(buildProjectThreadStatusInput(summary));
+  });
   return inputs;
 }
 
@@ -230,10 +243,7 @@ export function createSidebarProjectOrderingThreadSnapshotsSelector(input: {
           continue;
         }
 
-        const physicalKey = scopedProjectKey(
-          scopeProjectRef(summary.environmentId, summary.projectId),
-        );
-        const logicalProjectKey = input.physicalToLogicalKey.get(physicalKey) ?? physicalKey;
+        const logicalProjectKey = resolveLogicalProjectKey(summary, input.physicalToLogicalKey);
         const entryKey = `${environmentId}:${threadId}`;
         const previousEntry = previousEntries.get(entryKey);
         if (
@@ -350,21 +360,9 @@ export function createSidebarSortedThreadKeysByLogicalProjectSelector(input: {
           continue;
         }
 
-        const physicalKey = scopedProjectKey(
-          scopeProjectRef(summary.environmentId, summary.projectId),
-        );
-        const logicalProjectKey = input.physicalToLogicalKey.get(physicalKey) ?? physicalKey;
+        const logicalProjectKey = resolveLogicalProjectKey(summary, input.physicalToLogicalKey);
         const projectEntries = groupedEntries.get(logicalProjectKey);
-        const entry: ProjectThreadRenderEntry = {
-          threadKey: scopedThreadKey(scopeThreadRef(summary.environmentId, summary.id)),
-          id: summary.id,
-          environmentId: summary.environmentId,
-          projectId: logicalProjectKey,
-          createdAt: summary.createdAt,
-          archivedAt: summary.archivedAt,
-          updatedAt: summary.updatedAt,
-          latestUserMessageAt: summary.latestUserMessageAt,
-        };
+        const entry = buildProjectThreadRenderEntry(summary, input.physicalToLogicalKey);
         if (projectEntries) {
           projectEntries.push(entry);
         } else {
@@ -461,27 +459,7 @@ export function createSidebarThreadStatusInputSelectorByRef(
       return undefined;
     }
 
-    const nextResult: ProjectThreadStatusInput = {
-      threadKey: scopedThreadKey(scopeThreadRef(summary.environmentId, summary.id)),
-      hasActionableProposedPlan: summary.hasActionableProposedPlan,
-      hasPendingApprovals: summary.hasPendingApprovals,
-      hasPendingUserInput: summary.hasPendingUserInput,
-      interactionMode: summary.interactionMode,
-      latestTurn: summary.latestTurn
-        ? {
-            turnId: summary.latestTurn.turnId,
-            startedAt: summary.latestTurn.startedAt,
-            completedAt: summary.latestTurn.completedAt,
-          }
-        : null,
-      session: summary.session
-        ? {
-            orchestrationStatus: summary.session.orchestrationStatus,
-            activeTurnId: summary.session.activeTurnId,
-            status: summary.session.status,
-          }
-        : null,
-    };
+    const nextResult = buildProjectThreadStatusInput(summary);
 
     if (projectThreadStatusInputsEqual(previousResult, nextResult)) {
       return previousResult;
@@ -545,8 +523,7 @@ export function createSidebarActiveRouteProjectKeySelectorByRef(
       return null;
     }
 
-    const physicalKey = scopedProjectKey(scopeProjectRef(summary.environmentId, summary.projectId));
-    const nextResult = physicalToLogicalKey.get(physicalKey) ?? physicalKey;
+    const nextResult = resolveLogicalProjectKey(summary, physicalToLogicalKey);
     if (previousResult === nextResult) {
       return previousResult;
     }
