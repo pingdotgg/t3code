@@ -60,10 +60,7 @@ function collectByIds<TKey extends string, TValue>(
   return nextValues;
 }
 
-export function selectThreadMessages(
-  state: EnvironmentState,
-  threadId: ThreadId,
-): Thread["messages"] {
+function selectThreadMessages(state: EnvironmentState, threadId: ThreadId): Thread["messages"] {
   return collectByIds(
     state.messageIdsByThreadId[threadId],
     state.messageByThreadId[threadId] ?? EMPTY_MESSAGE_MAP,
@@ -71,10 +68,7 @@ export function selectThreadMessages(
   );
 }
 
-export function selectThreadActivities(
-  state: EnvironmentState,
-  threadId: ThreadId,
-): Thread["activities"] {
+function selectThreadActivities(state: EnvironmentState, threadId: ThreadId): Thread["activities"] {
   return collectByIds(
     state.activityIdsByThreadId[threadId],
     state.activityByThreadId[threadId] ?? EMPTY_ACTIVITY_MAP,
@@ -82,7 +76,7 @@ export function selectThreadActivities(
   );
 }
 
-export function selectThreadProposedPlans(
+function selectThreadProposedPlans(
   state: EnvironmentState,
   threadId: ThreadId,
 ): Thread["proposedPlans"] {
@@ -93,7 +87,7 @@ export function selectThreadProposedPlans(
   );
 }
 
-export function selectThreadTurnDiffSummaries(
+function selectThreadTurnDiffSummaries(
   state: EnvironmentState,
   threadId: ThreadId,
 ): Thread["turnDiffSummaries"] {
