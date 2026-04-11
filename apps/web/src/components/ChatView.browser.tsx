@@ -169,6 +169,8 @@ function createBaseServerConfig(): ServerConfig {
         auth: { status: "authenticated" },
         checkedAt: NOW_ISO,
         models: [],
+        slashCommands: [],
+        skills: [],
       },
     ],
     availableEditors: [],
@@ -717,17 +719,30 @@ function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
   };
 }
 
-function createSnapshotWithPlanFollowUpPrompt(): OrchestrationReadModel {
+function createSnapshotWithPlanFollowUpPrompt(options?: {
+  modelSelection?: { provider: "codex"; model: string };
+  planMarkdown?: string;
+}): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-plan-follow-up-target" as MessageId,
     targetText: "plan follow-up thread",
   });
+  const modelSelection = options?.modelSelection ?? {
+    provider: "codex" as const,
+    model: "gpt-5",
+  };
+  const planMarkdown =
+    options?.planMarkdown ?? "# Follow-up plan\n\n- Keep the composer footer stable on resize.";
 
   return {
     ...snapshot,
+    projects: snapshot.projects.map((project) =>
+      project.id === PROJECT_ID ? { ...project, defaultModelSelection: modelSelection } : project,
+    ),
     threads: snapshot.threads.map((thread) =>
       thread.id === THREAD_ID
         ? Object.assign({}, thread, {
+            modelSelection,
             interactionMode: "plan",
             latestTurn: {
               turnId: "turn-plan-follow-up" as TurnId,
@@ -741,7 +756,7 @@ function createSnapshotWithPlanFollowUpPrompt(): OrchestrationReadModel {
               {
                 id: "plan-follow-up-browser-test",
                 turnId: "turn-plan-follow-up" as TurnId,
-                planMarkdown: "# Follow-up plan\n\n- Keep the composer footer stable on resize.",
+                planMarkdown,
                 implementedAt: null,
                 implementationThreadId: null,
                 createdAt: isoAt(1_002),
@@ -1327,6 +1342,7 @@ async function mountChatView(options: {
   snapshot: OrchestrationReadModel;
   configureFixture?: (fixture: TestFixture) => void;
   resolveRpc?: (body: NormalizedWsRpcRequestBody) => unknown | undefined;
+  initialPath?: string;
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
   options.configureFixture?.(fixture);
@@ -1346,7 +1362,7 @@ async function mountChatView(options: {
 
   const router = getRouter(
     createMemoryHistory({
-      initialEntries: [`/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}`],
+      initialEntries: [options.initialPath ?? `/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}`],
     }),
   );
 
@@ -2512,6 +2528,119 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("uses the active draft route session when changing the base branch", async () => {
+    const staleDraftId = draftIdFromPath("/draft/draft-stale-branch-session");
+    const activeDraftId = draftIdFromPath("/draft/draft-active-branch-session");
+
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [staleDraftId]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: `${PROJECT_DRAFT_KEY}:stale`,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+        [activeDraftId]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [`${PROJECT_DRAFT_KEY}:stale`]: staleDraftId,
+        [PROJECT_DRAFT_KEY]: activeDraftId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialPath: `/draft/${activeDraftId}`,
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitListBranches) {
+          return {
+            isRepo: true,
+            hasOriginRemote: true,
+            nextCursor: null,
+            totalCount: 2,
+            branches: [
+              {
+                name: "main",
+                current: true,
+                isDefault: true,
+                worktreePath: null,
+              },
+              {
+                name: "release/next",
+                current: false,
+                isDefault: false,
+                worktreePath: null,
+              },
+            ],
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const branchButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "From main",
+          ) as HTMLButtonElement | null,
+        'Unable to find branch selector button with "From main".',
+      );
+      branchButton.click();
+
+      const branchOption = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("span")).find(
+            (element) => element.textContent?.trim() === "release/next",
+          ) as HTMLSpanElement | null,
+        'Unable to find the "release/next" branch option.',
+      );
+      branchOption.click();
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().getDraftSession(activeDraftId)?.branch).toBe(
+            "release/next",
+          );
+          expect(useComposerDraftStore.getState().getDraftSession(staleDraftId)?.branch).toBe(
+            "main",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await vi.waitFor(
+        () => {
+          const updatedButton = Array.from(document.querySelectorAll("button")).find((button) =>
+            button.textContent?.trim().includes("From release/next"),
+          );
+          expect(updatedButton).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("surrounds selected plain text and preserves the inner selection for repeated wrapping", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -3606,8 +3735,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const initialModelPickerOffset =
         initialModelPicker.getBoundingClientRect().left - footer.getBoundingClientRect().left;
+      const initialImplementButton = await waitForButtonByText("Implement");
+      const initialImplementWidth = initialImplementButton.getBoundingClientRect().width;
 
-      await waitForButtonByText("Implement");
       await waitForElement(
         () =>
           document.querySelector<HTMLButtonElement>('button[aria-label="Implementation actions"]'),
@@ -3639,9 +3769,77 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
           expect(Math.abs(implementRect.right - implementActionsRect.left)).toBeLessThanOrEqual(1);
           expect(Math.abs(implementRect.top - implementActionsRect.top)).toBeLessThanOrEqual(1);
+          expect(Math.abs(implementRect.width - initialImplementWidth)).toBeLessThanOrEqual(1);
           expect(Math.abs(compactModelPickerOffset - initialModelPickerOffset)).toBeLessThanOrEqual(
             1,
           );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the wide desktop follow-up layout expanded when the footer still fits", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPlanFollowUpPrompt({
+        modelSelection: { provider: "codex", model: "gpt-5.3-codex-spark" },
+        planMarkdown:
+          "# Imaginary Long-Range Plan: T3 Code Adaptive Orchestration and Safe-Delay Execution Initiative",
+      }),
+    });
+
+    try {
+      await waitForButtonByText("Implement");
+
+      await vi.waitFor(
+        () => {
+          const footer = document.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
+          const actions = document.querySelector<HTMLElement>(
+            '[data-chat-composer-actions="right"]',
+          );
+
+          expect(footer?.dataset.chatComposerFooterCompact).toBe("false");
+          expect(actions?.dataset.chatComposerPrimaryActionsCompact).toBe("false");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("compacts the footer when a wide desktop follow-up layout starts overflowing", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPlanFollowUpPrompt({
+        modelSelection: { provider: "codex", model: "gpt-5.3-codex-spark" },
+        planMarkdown:
+          "# Imaginary Long-Range Plan: T3 Code Adaptive Orchestration and Safe-Delay Execution Initiative",
+      }),
+    });
+
+    try {
+      await waitForButtonByText("Implement");
+
+      await mounted.setContainerSize({
+        width: 804,
+        height: WIDE_FOOTER_VIEWPORT.height,
+      });
+
+      await expectComposerActionsContained();
+
+      await vi.waitFor(
+        () => {
+          const footer = document.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
+          const actions = document.querySelector<HTMLElement>(
+            '[data-chat-composer-actions="right"]',
+          );
+
+          expect(footer?.dataset.chatComposerFooterCompact).toBe("true");
+          expect(actions?.dataset.chatComposerPrimaryActionsCompact).toBe("true");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3682,6 +3880,57 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(menuRect.height).toBeGreaterThan(0);
           expect(menuRect.bottom).toBeLessThanOrEqual(composerRect.bottom);
           expect(hitTarget instanceof Element && menuItem.contains(hitTarget)).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows a tooltip with the skill description when hovering a skill pill", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-skill-tooltip-target" as MessageId,
+        targetText: "skill tooltip thread",
+      }),
+      configureFixture: (nextFixture) => {
+        const provider = nextFixture.serverConfig.providers[0];
+        if (!provider) {
+          throw new Error("Expected default provider in test fixture.");
+        }
+        (
+          provider as {
+            skills: ServerConfig["providers"][number]["skills"];
+          }
+        ).skills = [
+          {
+            name: "agent-browser",
+            displayName: "Agent Browser",
+            description: "Open pages, click around, and inspect web apps.",
+            path: "/Users/test/.agents/skills/agent-browser/SKILL.md",
+            enabled: true,
+          },
+        ];
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "use the $agent-browser ");
+      await waitForComposerText("use the $agent-browser ");
+
+      await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-composer-skill-chip="true"]'),
+        "Unable to find rendered composer skill chip.",
+      );
+      await page.getByText("Agent Browser").hover();
+
+      await vi.waitFor(
+        () => {
+          const tooltip = document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]');
+          expect(tooltip).not.toBeNull();
+          expect(tooltip?.textContent).toContain("Open pages, click around, and inspect web apps.");
         },
         { timeout: 8_000, interval: 16 },
       );

@@ -426,4 +426,37 @@ describe("GitActionsControl thread-scoped progress toast", () => {
       host.remove();
     }
   });
+
+  it("does not overwrite a selected base branch while a new worktree draft is being configured", async () => {
+    hasServerThreadRef.current = false;
+    activeDraftThreadRef.current = {
+      threadId: SHARED_THREAD_ID,
+      environmentId: ENVIRONMENT_A,
+      branch: "feature/base-branch",
+      worktreePath: null,
+      envMode: "worktree",
+    };
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <GitActionsControl
+        gitCwd={GIT_CWD}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
+      />,
+      {
+        container: host,
+      },
+    );
+
+    try {
+      await Promise.resolve();
+
+      expect(setDraftThreadContextSpy).not.toHaveBeenCalled();
+      expect(setThreadBranchSpy).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
 });

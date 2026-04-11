@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerAuthPolicy, type ServerAuthPolicyShape } from "../Services/ServerAuthPolicy.ts";
-import { SESSION_COOKIE_NAME } from "../utils.ts";
+import { resolveSessionCookieName } from "../utils.ts";
 import { isLoopbackHost, isWildcardHost } from "../../startupAccess.ts";
 
 export const makeServerAuthPolicy = Effect.gen(function* () {
@@ -30,7 +30,10 @@ export const makeServerAuthPolicy = Effect.gen(function* () {
     policy,
     bootstrapMethods,
     sessionMethods: ["browser-session-cookie", "bearer-session-token"],
-    sessionCookieName: SESSION_COOKIE_NAME,
+    sessionCookieName: resolveSessionCookieName({
+      mode: config.mode,
+      port: config.port,
+    }),
   };
 
   return {
