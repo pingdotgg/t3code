@@ -10,6 +10,7 @@ import {
   resolveEffectiveEnvMode,
   resolveEnvModeLabel,
   resolveBranchToolbarValue,
+  resolveLockedWorkspaceLabel,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 
@@ -154,6 +155,16 @@ describe("resolveCurrentWorkspaceLabel", () => {
 
   it("describes the active checkout as a worktree when one is attached", () => {
     expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Current worktree");
+  });
+});
+
+describe("resolveLockedWorkspaceLabel", () => {
+  it("uses a shorter label for the main repo checkout", () => {
+    expect(resolveLockedWorkspaceLabel(null)).toBe("Local checkout");
+  });
+
+  it("uses a shorter label for an attached worktree", () => {
+    expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Worktree");
   });
 });
 
