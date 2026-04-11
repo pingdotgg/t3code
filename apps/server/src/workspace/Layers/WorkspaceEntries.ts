@@ -4,6 +4,12 @@ import type { Dirent } from "node:fs";
 import { Cache, Duration, Effect, Exit, Layer, Option, Path } from "effect";
 
 import { type ProjectEntry } from "@t3tools/contracts";
+import {
+  insertRankedSearchResult,
+  normalizeSearchQuery,
+  scoreQueryMatch,
+  type RankedSearchResult,
+} from "@t3tools/shared/searchRanking";
 
 import { GitCore } from "../../git/Services/GitCore.ts";
 import {
@@ -40,10 +46,7 @@ interface SearchableWorkspaceEntry extends ProjectEntry {
   normalizedName: string;
 }
 
-interface RankedWorkspaceEntry {
-  entry: SearchableWorkspaceEntry;
-  score: number;
-}
+type RankedWorkspaceEntry = RankedSearchResult<SearchableWorkspaceEntry>;
 
 function toPosixPath(input: string): string {
   return input.replaceAll("\\", "/");
@@ -74,45 +77,6 @@ function toSearchableWorkspaceEntry(entry: ProjectEntry): SearchableWorkspaceEnt
   };
 }
 
-function normalizeQuery(input: string): string {
-  return input
-    .trim()
-    .replace(/^[@./]+/, "")
-    .toLowerCase();
-}
-
-function scoreSubsequenceMatch(value: string, query: string): number | null {
-  if (!query) return 0;
-
-  let queryIndex = 0;
-  let firstMatchIndex = -1;
-  let previousMatchIndex = -1;
-  let gapPenalty = 0;
-
-  for (let valueIndex = 0; valueIndex < value.length; valueIndex += 1) {
-    if (value[valueIndex] !== query[queryIndex]) {
-      continue;
-    }
-
-    if (firstMatchIndex === -1) {
-      firstMatchIndex = valueIndex;
-    }
-    if (previousMatchIndex !== -1) {
-      gapPenalty += valueIndex - previousMatchIndex - 1;
-    }
-
-    previousMatchIndex = valueIndex;
-    queryIndex += 1;
-    if (queryIndex === query.length) {
-      const spanPenalty = valueIndex - firstMatchIndex + 1 - query.length;
-      const lengthPenalty = Math.min(64, value.length - query.length);
-      return firstMatchIndex * 2 + gapPenalty * 3 + spanPenalty + lengthPenalty;
-    }
-  }
-
-  return null;
-}
-
 function scoreEntry(entry: SearchableWorkspaceEntry, query: string): number | null {
   if (!query) {
     return entry.kind === "directory" ? 0 : 1;
@@ -120,81 +84,32 @@ function scoreEntry(entry: SearchableWorkspaceEntry, query: string): number | nu
 
   const { normalizedPath, normalizedName } = entry;
 
-  if (normalizedName === query) return 0;
-  if (normalizedPath === query) return 1;
-  if (normalizedName.startsWith(query)) return 2;
-  if (normalizedPath.startsWith(query)) return 3;
-  if (normalizedPath.includes(`/${query}`)) return 4;
-  if (normalizedName.includes(query)) return 5;
-  if (normalizedPath.includes(query)) return 6;
+  const scores = [
+    scoreQueryMatch({
+      value: normalizedName,
+      query,
+      exactBase: 0,
+      prefixBase: 2,
+      includesBase: 5,
+      fuzzyBase: 100,
+    }),
+    scoreQueryMatch({
+      value: normalizedPath,
+      query,
+      exactBase: 1,
+      prefixBase: 3,
+      boundaryBase: 4,
+      includesBase: 6,
+      fuzzyBase: 200,
+      boundaryMarkers: ["/"],
+    }),
+  ].filter((score): score is number => score !== null);
 
-  const nameFuzzyScore = scoreSubsequenceMatch(normalizedName, query);
-  if (nameFuzzyScore !== null) {
-    return 100 + nameFuzzyScore;
+  if (scores.length === 0) {
+    return null;
   }
 
-  const pathFuzzyScore = scoreSubsequenceMatch(normalizedPath, query);
-  if (pathFuzzyScore !== null) {
-    return 200 + pathFuzzyScore;
-  }
-
-  return null;
-}
-
-function compareRankedWorkspaceEntries(
-  left: RankedWorkspaceEntry,
-  right: RankedWorkspaceEntry,
-): number {
-  const scoreDelta = left.score - right.score;
-  if (scoreDelta !== 0) return scoreDelta;
-  return left.entry.path.localeCompare(right.entry.path);
-}
-
-function findInsertionIndex(
-  rankedEntries: RankedWorkspaceEntry[],
-  candidate: RankedWorkspaceEntry,
-): number {
-  let low = 0;
-  let high = rankedEntries.length;
-
-  while (low < high) {
-    const middle = low + Math.floor((high - low) / 2);
-    const current = rankedEntries[middle];
-    if (!current) {
-      break;
-    }
-
-    if (compareRankedWorkspaceEntries(candidate, current) < 0) {
-      high = middle;
-    } else {
-      low = middle + 1;
-    }
-  }
-
-  return low;
-}
-
-function insertRankedEntry(
-  rankedEntries: RankedWorkspaceEntry[],
-  candidate: RankedWorkspaceEntry,
-  limit: number,
-): void {
-  if (limit <= 0) {
-    return;
-  }
-
-  const insertionIndex = findInsertionIndex(rankedEntries, candidate);
-  if (rankedEntries.length < limit) {
-    rankedEntries.splice(insertionIndex, 0, candidate);
-    return;
-  }
-
-  if (insertionIndex >= limit) {
-    return;
-  }
-
-  rankedEntries.splice(insertionIndex, 0, candidate);
-  rankedEntries.pop();
+  return Math.min(...scores);
 }
 
 function isPathInIgnoredDirectory(relativePath: string): boolean {
@@ -469,7 +384,9 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
       return yield* Cache.get(workspaceIndexCache, normalizedCwd).pipe(
         Effect.map((index) => {
-          const normalizedQuery = normalizeQuery(input.query);
+          const normalizedQuery = normalizeSearchQuery(input.query, {
+            trimLeadingPattern: /^[@./]+/,
+          });
           const limit = Math.max(0, Math.floor(input.limit));
           const rankedEntries: RankedWorkspaceEntry[] = [];
           let matchedEntryCount = 0;
@@ -481,11 +398,15 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
             }
 
             matchedEntryCount += 1;
-            insertRankedEntry(rankedEntries, { entry, score }, limit);
+            insertRankedSearchResult(
+              rankedEntries,
+              { item: entry, score, tieBreaker: entry.path },
+              limit,
+            );
           }
 
           return {
-            entries: rankedEntries.map((candidate) => candidate.entry),
+            entries: rankedEntries.map((candidate) => candidate.item),
             truncated: index.truncated || matchedEntryCount > limit,
           };
         }),
