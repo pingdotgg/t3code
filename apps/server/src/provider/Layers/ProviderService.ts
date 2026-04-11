@@ -13,6 +13,7 @@ import {
   ModelSelection,
   NonNegativeInt,
   ThreadId,
+  ProviderKind,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
@@ -53,6 +54,13 @@ export interface ProviderServiceLiveOptions {
 const ProviderRollbackConversationInput = Schema.Struct({
   threadId: ThreadId,
   numTurns: NonNegativeInt,
+});
+const ProviderCompactThreadInput = Schema.Struct({
+  threadId: ThreadId,
+});
+const ProviderStopSessionForProviderInput = Schema.Struct({
+  threadId: ThreadId,
+  provider: ProviderKind,
 });
 
 function toValidationError(
@@ -296,6 +304,23 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const recovered = yield* recoverSessionForThread({ binding, operation: input.operation });
     return { adapter: recovered.adapter, threadId: input.threadId, isActive: true } as const;
   });
+
+  const stopSessionForProviderInternal = Effect.fn("stopSessionForProviderInternal")(
+    function* (input: { readonly threadId: ThreadId; readonly provider: ProviderKind }) {
+      const adapter = yield* registry.getByProvider(input.provider);
+      const hasSession = yield* adapter.hasSession(input.threadId);
+      if (hasSession) {
+        yield* adapter.stopSession(input.threadId);
+      }
+      const binding = Option.getOrUndefined(yield* directory.getBinding(input.threadId));
+      if (binding?.provider === input.provider) {
+        yield* directory.remove(input.threadId);
+      }
+      yield* analytics.record("provider.session.stopped", {
+        provider: input.provider,
+      });
+    },
+  );
 
   const startSession: ProviderServiceShape["startSession"] = Effect.fn("startSession")(
     function* (threadId, rawInput) {
@@ -579,11 +604,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.kind": routed.adapter.provider,
           "provider.thread_id": input.threadId,
         });
-        if (routed.isActive) {
-          yield* routed.adapter.stopSession(routed.threadId);
-        }
-        yield* directory.remove(input.threadId);
-        yield* analytics.record("provider.session.stopped", {
+        yield* stopSessionForProviderInternal({
+          threadId: routed.threadId,
           provider: routed.adapter.provider,
         });
       }).pipe(
@@ -597,6 +619,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     },
   );
+
+  const stopSessionForProvider: ProviderServiceShape["stopSessionForProvider"] = Effect.fn(
+    "stopSessionForProvider",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.stopSessionForProvider",
+      schema: ProviderStopSessionForProviderInput,
+      payload: rawInput,
+    });
+    return yield* stopSessionForProviderInternal(input);
+  });
 
   const listSessions: ProviderServiceShape["listSessions"] = Effect.fn("listSessions")(
     function* () {
@@ -648,6 +681,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const getCapabilities: ProviderServiceShape["getCapabilities"] = (provider) =>
     registry.getByProvider(provider).pipe(Effect.map((adapter) => adapter.capabilities));
+
+  const compactThread: ProviderServiceShape["compactThread"] = Effect.fn("compactThread")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.compactThread",
+        schema: ProviderCompactThreadInput,
+        payload: rawInput,
+      });
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.compactThread",
+        allowRecovery: true,
+      });
+      return yield* routed.adapter.compactThread(routed.threadId);
+    },
+  );
 
   const rollbackConversation: ProviderServiceShape["rollbackConversation"] = Effect.fn(
     "rollbackConversation",
@@ -737,8 +786,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
+    stopSessionForProvider,
     listSessions,
     getCapabilities,
+    compactThread,
     rollbackConversation,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each

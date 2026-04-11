@@ -747,9 +747,17 @@ export function deriveEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
+  const threadModelSelectionForProvider =
+    input.threadModelSelection?.provider === input.selectedProvider
+      ? input.threadModelSelection
+      : null;
+  const projectModelSelectionForProvider =
+    input.projectModelSelection?.provider === input.selectedProvider
+      ? input.projectModelSelection
+      : null;
   const baseModel =
     normalizeModelSlug(
-      input.threadModelSelection?.model ?? input.projectModelSelection?.model,
+      threadModelSelectionForProvider?.model ?? projectModelSelectionForProvider?.model,
       input.selectedProvider,
     ) ?? getDefaultServerModel(input.providers, input.selectedProvider);
   const activeSelection = input.draft?.modelSelectionByProvider?.[input.selectedProvider];
@@ -763,8 +771,8 @@ export function deriveEffectiveComposerModelState(input: {
     : baseModel;
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerModelOptionsFromSelection(input.threadModelSelection) ??
-    providerModelOptionsFromSelection(input.projectModelSelection) ??
+    providerModelOptionsFromSelection(threadModelSelectionForProvider) ??
+    providerModelOptionsFromSelection(projectModelSelectionForProvider) ??
     null;
 
   return {

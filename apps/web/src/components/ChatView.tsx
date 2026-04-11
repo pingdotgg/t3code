@@ -1024,7 +1024,6 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.modelSelection.provider ?? activeProject?.defaultModelSelection?.provider ?? null;
   const lockedProvider = deriveLockedProvider({
     thread: activeThread,
-    selectedProvider: selectedProviderByThreadId,
     threadProvider,
   });
   const primaryServerConfig = useServerConfig();

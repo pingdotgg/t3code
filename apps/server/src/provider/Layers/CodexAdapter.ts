@@ -40,6 +40,7 @@ import {
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { extractCompactionSummaryFromSnapshot } from "../handoffSummary.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "codex" as const;
@@ -1514,6 +1515,12 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })),
     );
 
+  const compactThread: CodexAdapterShape["compactThread"] = (threadId) =>
+    Effect.tryPromise({
+      try: () => manager.compactThread(threadId),
+      catch: (cause) => toRequestError(threadId, "thread/compact/start", cause),
+    }).pipe(Effect.map((snapshot) => extractCompactionSummaryFromSnapshot(snapshot)));
+
   const rollbackThread: CodexAdapterShape["rollbackThread"] = (threadId, numTurns) => {
     if (!Number.isInteger(numTurns) || numTurns < 1) {
       return Effect.fail(
@@ -1619,6 +1626,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     sendTurn,
     interruptTurn,
     readThread,
+    compactThread,
     rollbackThread,
     respondToRequest,
     respondToUserInput,

@@ -882,6 +882,7 @@ const make = Effect.fn("make")(function* () {
     const now = event.createdAt;
     const eventTurnId = toTurnId(event.turnId);
     const activeTurnId = thread.session?.activeTurnId ?? null;
+    const sessionProviderName = thread.session?.providerName ?? null;
 
     const conflictsWithActiveTurn =
       activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -890,6 +891,17 @@ const make = Effect.fn("make")(function* () {
     const shouldApplyThreadLifecycle = (() => {
       if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
         return true;
+      }
+      if (sessionProviderName !== null && sessionProviderName !== event.provider) {
+        switch (event.type) {
+          case "session.started":
+          case "session.state.changed":
+          case "session.exited":
+          case "thread.started":
+          case "turn.started":
+          case "turn.completed":
+            return false;
+        }
       }
       switch (event.type) {
         case "session.exited":
@@ -1144,7 +1156,8 @@ const make = Effect.fn("make")(function* () {
 
       const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
         ? true
-        : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
+        : (sessionProviderName === null || sessionProviderName === event.provider) &&
+          (activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId));
 
       if (shouldApplyRuntimeError) {
         yield* orchestrationEngine.dispatch({

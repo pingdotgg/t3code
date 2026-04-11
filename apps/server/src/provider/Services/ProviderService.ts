@@ -78,6 +78,14 @@ export interface ProviderServiceShape {
   ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
+   * Stop a specific provider session for a thread without routing through the active binding.
+   */
+  readonly stopSessionForProvider: (input: {
+    readonly threadId: ThreadId;
+    readonly provider: ProviderKind;
+  }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
    * List active provider sessions.
    *
    * Aggregates runtime session lists from all registered adapters.
@@ -90,6 +98,13 @@ export interface ProviderServiceShape {
   readonly getCapabilities: (
     provider: ProviderKind,
   ) => Effect.Effect<ProviderAdapterCapabilities, ProviderServiceError>;
+
+  /**
+   * Trigger native compaction for the currently bound provider thread.
+   */
+  readonly compactThread: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<string | null, ProviderServiceError>;
 
   /**
    * Roll back provider conversation state by a number of turns.

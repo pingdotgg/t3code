@@ -18,6 +18,7 @@ import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError, ProviderServiceError } from "../../provider/Errors.ts";
+import { buildProviderSwitchHandoffInput } from "../../provider/handoffSummary.ts";
 import { TextGeneration } from "../../git/Services/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -39,6 +40,12 @@ type ProviderIntentEvent = Extract<
       | "thread.session-stop-requested";
   }
 >;
+
+interface ProviderSwitchHandoff {
+  readonly sourceProvider: ProviderKind;
+  readonly targetProvider: ProviderKind;
+  readonly compactSummary: string | null;
+}
 
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
@@ -200,6 +207,34 @@ const make = Effect.gen(function* () {
       createdAt: input.createdAt,
     });
 
+  const appendProviderHandoffActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly kind: "provider.handoff.compacting" | "provider.handoff.completed";
+    readonly summary: string;
+    readonly sourceProvider: ProviderKind;
+    readonly targetProvider: ProviderKind;
+    readonly turnId: TurnId | null;
+    readonly createdAt: string;
+  }) =>
+    orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: serverCommandId("provider-handoff-activity"),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.make(crypto.randomUUID()),
+        tone: "info",
+        kind: input.kind,
+        summary: input.summary,
+        payload: {
+          sourceProvider: input.sourceProvider,
+          targetProvider: input.targetProvider,
+        },
+        turnId: input.turnId,
+        createdAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+
   const setThreadSession = (input: {
     readonly threadId: ThreadId;
     readonly session: OrchestrationSession;
@@ -223,6 +258,7 @@ const make = Effect.gen(function* () {
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
+      readonly turnId?: TurnId | null;
     },
   ) {
     const readModel = yield* orchestrationEngine.getReadModel();
@@ -238,19 +274,8 @@ const make = Effect.gen(function* () {
       ? thread.session.providerName
       : undefined;
     const requestedModelSelection = options?.modelSelection;
-    const threadProvider: ProviderKind = currentProvider ?? thread.modelSelection.provider;
-    if (
-      requestedModelSelection !== undefined &&
-      requestedModelSelection.provider !== threadProvider
-    ) {
-      return yield* new ProviderAdapterRequestError({
-        provider: threadProvider,
-        method: "thread.turn.start",
-        detail: `Thread '${threadId}' is bound to provider '${threadProvider}' and cannot switch to '${requestedModelSelection.provider}'.`,
-      });
-    }
-    const preferredProvider: ProviderKind = currentProvider ?? threadProvider;
     const desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
+    const desiredProvider: ProviderKind = desiredModelSelection.provider;
     const effectiveCwd = resolveThreadWorkspaceCwd({
       thread,
       projects: readModel.projects,
@@ -267,7 +292,7 @@ const make = Effect.gen(function* () {
     }) =>
       providerService.startSession(threadId, {
         threadId,
-        ...(preferredProvider ? { provider: preferredProvider } : {}),
+        provider: input?.provider ?? desiredProvider,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
@@ -289,6 +314,21 @@ const make = Effect.gen(function* () {
         },
         createdAt,
       });
+
+    const startAndBindProviderSession = (input?: {
+      readonly resumeCursor?: unknown;
+      readonly provider?: ProviderKind;
+    }) =>
+      startProviderSession(input).pipe(
+        Effect.tap((session) =>
+          Effect.logInfo("provider command reactor restarted provider session", {
+            threadId,
+            provider: session.provider,
+            runtimeMode: session.runtimeMode,
+          }),
+        ),
+        Effect.tap(bindSessionToThread),
+      );
 
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" ? thread.id : null;
@@ -318,7 +358,10 @@ const make = Effect.gen(function* () {
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
-        return existingSessionThreadId;
+        return {
+          threadId: existingSessionThreadId,
+          handoff: null,
+        } as const;
       }
 
       const resumeCursor =
@@ -339,23 +382,74 @@ const make = Effect.gen(function* () {
         shouldRestartForModelSelectionChange,
         hasResumeCursor: resumeCursor !== undefined,
       });
-      const restartedSession = yield* startProviderSession(
-        resumeCursor !== undefined ? { resumeCursor } : undefined,
+      if (providerChanged && currentProvider) {
+        yield* appendProviderHandoffActivity({
+          threadId,
+          kind: "provider.handoff.compacting",
+          summary: "Handing off thread",
+          sourceProvider: currentProvider,
+          targetProvider: desiredProvider,
+          turnId: options?.turnId ?? null,
+          createdAt,
+        });
+        const compactSummary = yield* providerService.compactThread({
+          threadId: existingSessionThreadId,
+        });
+        const restartedSession = yield* startAndBindProviderSession({
+          provider: desiredProvider,
+        });
+        yield* providerService
+          .stopSessionForProvider({
+            threadId: existingSessionThreadId,
+            provider: currentProvider,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "provider command reactor failed to stop replaced provider session",
+                {
+                  threadId,
+                  provider: currentProvider,
+                  cause: Cause.pretty(cause),
+                },
+              ),
+            ),
+          );
+        yield* appendProviderHandoffActivity({
+          threadId,
+          kind: "provider.handoff.completed",
+          summary: "Handed off thread",
+          sourceProvider: currentProvider,
+          targetProvider: desiredProvider,
+          turnId: options?.turnId ?? null,
+          createdAt,
+        });
+        return {
+          threadId: restartedSession.threadId,
+          handoff: {
+            sourceProvider: currentProvider,
+            targetProvider: desiredProvider,
+            compactSummary,
+          } satisfies ProviderSwitchHandoff,
+        } as const;
+      }
+
+      const restartedSession = yield* startAndBindProviderSession(
+        resumeCursor !== undefined ? { resumeCursor, provider: desiredProvider } : undefined,
       );
-      yield* Effect.logInfo("provider command reactor restarted provider session", {
-        threadId,
-        previousSessionId: existingSessionThreadId,
-        restartedSessionThreadId: restartedSession.threadId,
-        provider: restartedSession.provider,
-        runtimeMode: restartedSession.runtimeMode,
-      });
-      yield* bindSessionToThread(restartedSession);
-      return restartedSession.threadId;
+      return {
+        threadId: restartedSession.threadId,
+        handoff: null,
+      } as const;
     }
 
-    const startedSession = yield* startProviderSession(undefined);
-    yield* bindSessionToThread(startedSession);
-    return startedSession.threadId;
+    const startedSession = yield* startAndBindProviderSession({
+      provider: desiredProvider,
+    });
+    return {
+      threadId: startedSession.threadId,
+      handoff: null,
+    } as const;
   });
 
   const sendTurnForThread = Effect.fn("sendTurnForThread")(function* (input: {
@@ -370,15 +464,23 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    yield* ensureSessionForThread(
-      input.threadId,
-      input.createdAt,
-      input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {},
-    );
+    const ensuredSession = yield* ensureSessionForThread(input.threadId, input.createdAt, {
+      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+      turnId: thread.latestTurn?.turnId ?? null,
+    });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
-    const normalizedInput = toNonEmptyProviderInput(input.messageText);
+    const normalizedInput = ensuredSession.handoff
+      ? toNonEmptyProviderInput(
+          buildProviderSwitchHandoffInput({
+            sourceProvider: ensuredSession.handoff.sourceProvider,
+            targetProvider: ensuredSession.handoff.targetProvider,
+            compactSummary: ensuredSession.handoff.compactSummary,
+            userMessage: input.messageText,
+          }),
+        )
+      : toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()

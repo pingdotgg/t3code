@@ -228,13 +228,21 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
 
 export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
-  selectedProvider: ProviderKind | null;
   threadProvider: ProviderKind | null;
 }): ProviderKind | null {
   if (!threadHasStarted(input.thread)) {
     return null;
   }
-  return input.thread?.session?.provider ?? input.threadProvider ?? input.selectedProvider ?? null;
+  const session = input.thread?.session;
+  if (!session) {
+    return null;
+  }
+  if (session.status !== "running" && session.status !== "connecting") {
+    return null;
+  }
+  return input.threadProvider && input.threadProvider !== session.provider
+    ? input.threadProvider
+    : session.provider;
 }
 
 export async function waitForStartedServerThread(

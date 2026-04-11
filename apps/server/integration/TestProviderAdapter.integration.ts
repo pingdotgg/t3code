@@ -472,6 +472,15 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         sessions.clear();
       });
 
+    const compactThread: ProviderAdapterShape<ProviderAdapterError>["compactThread"] = (threadId) =>
+      readThread(threadId).pipe(
+        Effect.map((snapshot) => {
+          const latestTurn = snapshot.turns.at(-1);
+          const latestItem = latestTurn?.items.at(-1);
+          return typeof latestItem === "string" ? latestItem : null;
+        }),
+      );
+
     const adapter: ProviderAdapterShape<ProviderAdapterError> = {
       provider,
       capabilities: {
@@ -486,6 +495,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       listSessions,
       hasSession,
       readThread,
+      compactThread,
       rollbackThread,
       stopAll,
       streamEvents: Stream.fromQueue(runtimeEvents),

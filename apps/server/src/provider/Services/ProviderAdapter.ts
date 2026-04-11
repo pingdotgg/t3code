@@ -107,6 +107,11 @@ export interface ProviderAdapterShape<TError> {
   readonly readThread: (threadId: ThreadId) => Effect.Effect<ProviderThreadSnapshot, TError>;
 
   /**
+   * Trigger native thread compaction and return the provider's compacted summary when available.
+   */
+  readonly compactThread: (threadId: ThreadId) => Effect.Effect<string | null, TError>;
+
+  /**
    * Roll back a provider thread by N turns.
    */
   readonly rollbackThread: (

@@ -138,6 +138,7 @@ export interface CodexThreadSnapshot {
 }
 
 const CODEX_VERSION_CHECK_TIMEOUT_MS = 4_000;
+const CODEX_THREAD_COMPACTION_TIMEOUT_MS = 60_000;
 
 const ANSI_ESCAPE_CHAR = String.fromCharCode(27);
 const ANSI_ESCAPE_REGEX = new RegExp(`${ANSI_ESCAPE_CHAR}\\[[0-9;]*m`, "g");
@@ -793,6 +794,60 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       includeTurns: true,
     });
     return this.parseThreadSnapshot("thread/read", response);
+  }
+
+  async compactThread(threadId: ThreadId): Promise<CodexThreadSnapshot> {
+    const context = this.requireSession(threadId);
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!providerThreadId) {
+      throw new Error("Session is missing a provider resume thread id.");
+    }
+
+    const compactionWait = {
+      cleanup: () => undefined,
+    };
+    const waitForCompaction = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        compactionWait.cleanup();
+        reject(new Error("Timed out waiting for Codex thread compaction."));
+      }, CODEX_THREAD_COMPACTION_TIMEOUT_MS);
+
+      const onEvent = (event: ProviderEvent) => {
+        if (
+          event.provider !== "codex" ||
+          event.threadId !== context.session.threadId ||
+          event.kind !== "notification"
+        ) {
+          return;
+        }
+        if (event.method === "thread/compacted") {
+          compactionWait.cleanup();
+          resolve();
+        }
+      };
+
+      compactionWait.cleanup = () => {
+        clearTimeout(timeout);
+        this.off("event", onEvent);
+      };
+
+      this.on("event", onEvent);
+    });
+
+    try {
+      await this.sendRequest(context, "thread/compact/start", {
+        threadId: providerThreadId,
+      });
+      await waitForCompaction;
+    } catch (error) {
+      compactionWait.cleanup();
+      throw error;
+    }
+    return this.readThread(threadId);
   }
 
   async rollbackThread(threadId: ThreadId, numTurns: number): Promise<CodexThreadSnapshot> {

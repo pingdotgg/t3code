@@ -9,6 +9,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveLockedProvider,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -190,6 +191,68 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
         targetThreadId: threadId,
       }),
     ).toBe(false);
+  });
+});
+
+describe("deriveLockedProvider", () => {
+  it("unlocks provider selection after a started thread is idle", () => {
+    expect(
+      deriveLockedProvider({
+        thread: {
+          ...makeThread(),
+          session: {
+            provider: "codex",
+            status: "ready",
+            createdAt: "2026-03-29T00:00:00.000Z",
+            updatedAt: "2026-03-29T00:00:10.000Z",
+            orchestrationStatus: "idle",
+          },
+        },
+        threadProvider: "codex",
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps provider selection locked while the active session is running", () => {
+    expect(
+      deriveLockedProvider({
+        thread: {
+          ...makeThread(),
+          session: {
+            provider: "codex",
+            status: "running",
+            activeTurnId: TurnId.make("turn-running"),
+            createdAt: "2026-03-29T00:00:00.000Z",
+            updatedAt: "2026-03-29T00:00:10.000Z",
+            orchestrationStatus: "running",
+          },
+        },
+        threadProvider: "codex",
+      }),
+    ).toBe("codex");
+  });
+
+  it("locks to the target provider once a running handoff updates the thread selection", () => {
+    expect(
+      deriveLockedProvider({
+        thread: {
+          ...makeThread(),
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-6",
+          },
+          session: {
+            provider: "codex",
+            status: "running",
+            activeTurnId: TurnId.make("turn-running"),
+            createdAt: "2026-03-29T00:00:00.000Z",
+            updatedAt: "2026-03-29T00:00:10.000Z",
+            orchestrationStatus: "running",
+          },
+        },
+        threadProvider: "claudeAgent",
+      }),
+    ).toBe("claudeAgent");
   });
 });
 

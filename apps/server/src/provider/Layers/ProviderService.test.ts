@@ -160,6 +160,11 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
       }),
   );
 
+  const compactThread = vi.fn(
+    (threadId: ThreadId): Effect.Effect<string | null, ProviderAdapterError> =>
+      Effect.succeed(`Summary for ${String(threadId)}`),
+  );
+
   const rollbackThread = vi.fn(
     (
       threadId: ThreadId,
@@ -189,6 +194,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     listSessions,
     hasSession,
     readThread,
+    compactThread,
     rollbackThread,
     stopAll,
     get streamEvents() {
@@ -224,6 +230,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     listSessions,
     hasSession,
     readThread,
+    compactThread,
     rollbackThread,
     stopAll,
   };
@@ -691,6 +698,61 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.threadId, initial.threadId);
       }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("routes native thread compaction through the bound adapter", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const session = yield* provider.startSession(asThreadId("thread-compact"), {
+        provider: "codex",
+        threadId: asThreadId("thread-compact"),
+        cwd: "/tmp/project-compact",
+        runtimeMode: "full-access",
+      });
+
+      routing.codex.compactThread.mockClear();
+      const summary = yield* provider.compactThread({
+        threadId: session.threadId,
+      });
+
+      assert.equal(summary, `Summary for ${String(session.threadId)}`);
+      assert.deepEqual(routing.codex.compactThread.mock.calls, [[session.threadId]]);
+    }),
+  );
+
+  it.effect("stops a specific provider session without clearing a different active binding", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+
+      const claudeSession = yield* provider.startSession(asThreadId("thread-switch"), {
+        provider: "claudeAgent",
+        threadId: asThreadId("thread-switch"),
+        cwd: "/tmp/project-switch",
+        runtimeMode: "full-access",
+      });
+
+      yield* routing.codex.startSession({
+        provider: "codex",
+        threadId: claudeSession.threadId,
+        cwd: "/tmp/project-switch",
+        runtimeMode: "full-access",
+      });
+      routing.codex.stopSession.mockClear();
+
+      yield* provider.stopSessionForProvider({
+        threadId: claudeSession.threadId,
+        provider: "codex",
+      });
+
+      assert.deepEqual(routing.codex.stopSession.mock.calls, [[claudeSession.threadId]]);
+      const binding = yield* directory.getBinding(claudeSession.threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.equal(binding.value.provider, "claudeAgent");
+      }
     }),
   );
 

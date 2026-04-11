@@ -44,6 +44,11 @@ export interface WorkLogEntry {
   toolTitle?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
+  providerHandoff?: {
+    sourceProvider: ProviderKind;
+    targetProvider: ProviderKind;
+    state: "compacting" | "completed";
+  };
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -462,7 +467,9 @@ export function deriveWorkLogEntries(
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries = ordered
-    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
+    .filter((activity) =>
+      latestTurnId ? activity.turnId === latestTurnId || isProviderHandoffActivity(activity) : true,
+    )
     .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
     .filter((activity) => activity.kind !== "context-window.updated")
@@ -471,6 +478,13 @@ export function deriveWorkLogEntries(
     .map(toDerivedWorkLogEntry);
   return collapseDerivedWorkLogEntries(entries).map(
     ({ activityKind: _activityKind, collapseKey: _collapseKey, ...entry }) => entry,
+  );
+}
+
+function isProviderHandoffActivity(activity: OrchestrationThreadActivity): boolean {
+  return (
+    activity.kind === "provider.handoff.compacting" ||
+    activity.kind === "provider.handoff.completed"
   );
 }
 
@@ -501,6 +515,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     tone: activity.tone === "approval" ? "info" : activity.tone,
     activityKind: activity.kind,
   };
+  const providerHandoff = extractProviderHandoff(activity.kind, payload);
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
   if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
@@ -527,11 +542,45 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (requestKind) {
     entry.requestKind = requestKind;
   }
+  if (providerHandoff) {
+    entry.providerHandoff = providerHandoff;
+  }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
   }
   return entry;
+}
+
+function extractProviderHandoff(
+  activityKind: OrchestrationThreadActivity["kind"],
+  payload: Record<string, unknown> | null,
+): WorkLogEntry["providerHandoff"] | undefined {
+  const state =
+    activityKind === "provider.handoff.compacting"
+      ? "compacting"
+      : activityKind === "provider.handoff.completed"
+        ? "completed"
+        : null;
+  if (!state) {
+    return undefined;
+  }
+  const sourceProvider =
+    payload?.sourceProvider === "codex" || payload?.sourceProvider === "claudeAgent"
+      ? payload.sourceProvider
+      : null;
+  const targetProvider =
+    payload?.targetProvider === "codex" || payload?.targetProvider === "claudeAgent"
+      ? payload.targetProvider
+      : null;
+  if (!sourceProvider || !targetProvider) {
+    return undefined;
+  }
+  return {
+    sourceProvider,
+    targetProvider,
+    state,
+  };
 }
 
 function collapseDerivedWorkLogEntries(
@@ -540,6 +589,10 @@ function collapseDerivedWorkLogEntries(
   const collapsed: DerivedWorkLogEntry[] = [];
   for (const entry of entries) {
     const previous = collapsed.at(-1);
+    if (previous && shouldCollapseProviderHandoffEntries(previous, entry)) {
+      collapsed[collapsed.length - 1] = entry;
+      continue;
+    }
     if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
       collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
       continue;
@@ -547,6 +600,24 @@ function collapseDerivedWorkLogEntries(
     collapsed.push(entry);
   }
   return collapsed;
+}
+
+function shouldCollapseProviderHandoffEntries(
+  previous: DerivedWorkLogEntry,
+  next: DerivedWorkLogEntry,
+): boolean {
+  const previousHandoff = previous.providerHandoff;
+  const nextHandoff = next.providerHandoff;
+  if (!previousHandoff || !nextHandoff) {
+    return false;
+  }
+  if (previousHandoff.state !== "compacting") {
+    return false;
+  }
+  return (
+    previousHandoff.sourceProvider === nextHandoff.sourceProvider &&
+    previousHandoff.targetProvider === nextHandoff.targetProvider
+  );
 }
 
 function shouldCollapseToolLifecycleEntries(

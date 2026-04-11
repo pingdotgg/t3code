@@ -1136,6 +1136,75 @@ describe("deriveWorkLogEntries context window handling", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.label).toBe("Context compacted");
   });
+
+  it("preserves provider handoff metadata for dedicated UI treatment", () => {
+    const [entry] = deriveWorkLogEntries(
+      [
+        makeActivity({
+          id: "provider-handoff-1",
+          turnId: "turn-1",
+          kind: "provider.handoff.compacting",
+          summary: "Handing off thread",
+          tone: "info",
+          payload: {
+            sourceProvider: "codex",
+            targetProvider: "claudeAgent",
+          },
+        }),
+      ],
+      TurnId.make("turn-1"),
+    );
+
+    expect(entry).toMatchObject({
+      label: "Handing off thread",
+      providerHandoff: {
+        sourceProvider: "codex",
+        targetProvider: "claudeAgent",
+        state: "compacting",
+      },
+    });
+  });
+
+  it("replaces the compacting handoff entry with the completed entry", () => {
+    const entries = deriveWorkLogEntries(
+      [
+        makeActivity({
+          id: "provider-handoff-1",
+          turnId: "turn-1",
+          kind: "provider.handoff.compacting",
+          summary: "Handing off thread",
+          tone: "info",
+          payload: {
+            sourceProvider: "codex",
+            targetProvider: "claudeAgent",
+          },
+        }),
+        makeActivity({
+          id: "provider-handoff-2",
+          turnId: "turn-1",
+          kind: "provider.handoff.completed",
+          summary: "Handed off thread",
+          tone: "info",
+          payload: {
+            sourceProvider: "codex",
+            targetProvider: "claudeAgent",
+          },
+        }),
+      ],
+      TurnId.make("turn-1"),
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "provider-handoff-2",
+      label: "Handed off thread",
+      providerHandoff: {
+        sourceProvider: "codex",
+        targetProvider: "claudeAgent",
+        state: "completed",
+      },
+    });
+  });
 });
 
 describe("hasToolActivityForTurn", () => {

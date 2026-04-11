@@ -6,8 +6,10 @@ import {
 } from "@t3tools/client-runtime";
 import * as Schema from "effect/Schema";
 import {
+  DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
   ProjectId,
+  type ServerProvider,
   ThreadId,
   type ModelSelection,
   type ProviderModelOptions,
@@ -16,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
+  deriveEffectiveComposerModelState,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
@@ -109,6 +112,44 @@ function providerModelOptions(options: ProviderModelOptions): ProviderModelOptio
 const TEST_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const OTHER_TEST_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
 const LEGACY_TEST_ENVIRONMENT_ID = EnvironmentId.make("__legacy__");
+const TEST_PROVIDERS: ServerProvider[] = [
+  {
+    provider: "codex",
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-04-10T00:00:00.000Z",
+    models: [
+      { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null },
+      { slug: "gpt-5.4-mini", name: "GPT-5.4 Mini", isCustom: false, capabilities: null },
+    ],
+  },
+  {
+    provider: "claudeAgent",
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-04-10T00:00:00.000Z",
+    models: [
+      {
+        slug: "claude-opus-4-6",
+        name: "Claude Opus 4.6",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "claude-sonnet-4-6",
+        name: "Claude Sonnet 4.6",
+        isCustom: false,
+        capabilities: null,
+      },
+    ],
+  },
+];
 
 function threadKeyFor(
   threadId: ThreadId,
@@ -478,6 +519,28 @@ describe("composerDraftStore terminal contexts", () => {
     expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]).toBeUndefined();
     expect(mergedState.draftThreadsByThreadKey).toEqual({});
     expect(mergedState.logicalProjectDraftThreadKeyByLogicalProjectKey).toEqual({});
+  });
+});
+
+describe("deriveEffectiveComposerModelState", () => {
+  it("keeps the locked provider on its own model while another provider is pending", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers: TEST_PROVIDERS,
+      selectedProvider: "codex",
+      threadModelSelection: {
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+      },
+      projectModelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.4");
+    expect(state.modelOptions).toBeNull();
   });
 });
 
