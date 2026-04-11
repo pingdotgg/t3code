@@ -1,6 +1,46 @@
 import { MessageId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+function matchMedia() {
+  return {
+    matches: false,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+}
+
+beforeAll(() => {
+  const classList = {
+    add: () => {},
+    remove: () => {},
+    toggle: () => {},
+    contains: () => false,
+  };
+
+  vi.stubGlobal("localStorage", {
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {},
+    clear: () => {},
+  });
+  vi.stubGlobal("window", {
+    matchMedia,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    desktopBridge: undefined,
+  });
+  vi.stubGlobal("document", {
+    documentElement: {
+      classList,
+      offsetHeight: 0,
+    },
+  });
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callback(0);
+    return 0;
+  });
+});
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = "environment-local" as never;
 
@@ -12,7 +52,6 @@ describe("MessagesTimeline", () => {
         hasMessages
         isWorking={false}
         activeTurnInProgress={false}
-        activeTurnId={null}
         activeTurnStartedAt={null}
         scrollContainer={null}
         timelineEntries={[
@@ -70,7 +109,6 @@ describe("MessagesTimeline", () => {
         hasMessages
         isWorking={false}
         activeTurnInProgress={false}
-        activeTurnId={null}
         activeTurnStartedAt={null}
         scrollContainer={null}
         timelineEntries={[
@@ -110,170 +148,4 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Context compacted");
     expect(markup).toContain("Work log");
   });
-
-  it("does not render the assistant copy button while streaming", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        hasMessages
-        isWorking={false}
-        activeTurnInProgress
-        activeTurnId={"turn-1" as never}
-        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
-        scrollContainer={null}
-        timelineEntries={[
-          {
-            id: "assistant-entry",
-            kind: "message",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            message: {
-              id: MessageId.make("assistant-1"),
-              role: "assistant",
-              text: "",
-              turnId: "turn-1" as never,
-              createdAt: "2026-03-17T19:12:28.000Z",
-              streaming: true,
-            },
-          },
-        ]}
-        completionDividerBeforeEntryId={null}
-        completionSummary={null}
-        turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
-        expandedWorkGroups={{}}
-        onToggleWorkGroup={() => {}}
-        changedFilesExpandedByTurnId={{}}
-        onSetChangedFilesExpanded={() => {}}
-        onOpenTurnDiff={() => {}}
-        revertTurnCountByUserMessageId={new Map()}
-        onRevertUserMessage={() => {}}
-        isRevertingCheckpoint={false}
-        onImageExpand={() => {}}
-        activeThreadEnvironmentId={ACTIVE_THREAD_ENVIRONMENT_ID}
-        markdownCwd={undefined}
-        resolvedTheme="light"
-        timestampFormat="locale"
-        workspaceRoot={undefined}
-      />,
-    );
-
-    expect(markup).not.toContain('aria-label="Copy assistant response"');
-  }, 10_000);
-
-  it("does not render the assistant copy button until the active turn settles", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        hasMessages
-        isWorking={false}
-        activeTurnInProgress
-        activeTurnId={"turn-1" as never}
-        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
-        scrollContainer={null}
-        timelineEntries={[
-          {
-            id: "assistant-entry",
-            kind: "message",
-            createdAt: "2026-03-17T19:12:29.000Z",
-            message: {
-              id: MessageId.make("assistant-1"),
-              role: "assistant",
-              text: "Partial answer before tool work finishes.",
-              turnId: "turn-1" as never,
-              createdAt: "2026-03-17T19:12:29.000Z",
-              completedAt: "2026-03-17T19:12:30.000Z",
-              streaming: false,
-            },
-          },
-          {
-            id: "work-entry",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:31.000Z",
-            entry: {
-              id: "work-1",
-              createdAt: "2026-03-17T19:12:31.000Z",
-              label: "Ran command",
-              tone: "tool",
-            },
-          },
-        ]}
-        completionDividerBeforeEntryId={null}
-        completionSummary={null}
-        turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:33.000Z"
-        expandedWorkGroups={{}}
-        onToggleWorkGroup={() => {}}
-        changedFilesExpandedByTurnId={{}}
-        onSetChangedFilesExpanded={() => {}}
-        onOpenTurnDiff={() => {}}
-        revertTurnCountByUserMessageId={new Map()}
-        onRevertUserMessage={() => {}}
-        isRevertingCheckpoint={false}
-        onImageExpand={() => {}}
-        activeThreadEnvironmentId={ACTIVE_THREAD_ENVIRONMENT_ID}
-        markdownCwd={undefined}
-        resolvedTheme="light"
-        timestampFormat="locale"
-        workspaceRoot={undefined}
-      />,
-    );
-
-    expect(markup).not.toContain('aria-label="Copy assistant response"');
-  }, 10_000);
-
-  it("renders the assistant copy button next to the footer metadata with row hover visibility", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        hasMessages
-        isWorking={false}
-        activeTurnInProgress={false}
-        activeTurnId={null}
-        activeTurnStartedAt={null}
-        scrollContainer={null}
-        timelineEntries={[
-          {
-            id: "assistant-entry",
-            kind: "message",
-            createdAt: "2026-03-17T19:12:29.000Z",
-            message: {
-              id: MessageId.make("assistant-1"),
-              role: "assistant",
-              text: "Final answer.",
-              turnId: "turn-1" as never,
-              createdAt: "2026-03-17T19:12:29.000Z",
-              completedAt: "2026-03-17T19:12:30.000Z",
-              streaming: false,
-            },
-          },
-        ]}
-        completionDividerBeforeEntryId={null}
-        completionSummary={null}
-        turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:33.000Z"
-        expandedWorkGroups={{}}
-        onToggleWorkGroup={() => {}}
-        changedFilesExpandedByTurnId={{}}
-        onSetChangedFilesExpanded={() => {}}
-        onOpenTurnDiff={() => {}}
-        revertTurnCountByUserMessageId={new Map()}
-        onRevertUserMessage={() => {}}
-        isRevertingCheckpoint={false}
-        onImageExpand={() => {}}
-        activeThreadEnvironmentId={ACTIVE_THREAD_ENVIRONMENT_ID}
-        markdownCwd={undefined}
-        resolvedTheme="light"
-        timestampFormat="locale"
-        workspaceRoot={undefined}
-      />,
-    );
-
-    expect(markup).toContain('aria-label="Copy assistant response"');
-    expect(markup).toContain("group/assistant");
-    expect(markup).toContain("group-hover/assistant:opacity-100");
-    expect(markup).toContain('class="text-[10px] text-muted-foreground/30"');
-    expect(markup.indexOf('class="text-[10px] text-muted-foreground/30"')).toBeLessThan(
-      markup.indexOf('aria-label="Copy assistant response"'),
-    );
-  }, 10_000);
 });
