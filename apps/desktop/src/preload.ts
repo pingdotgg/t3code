@@ -40,12 +40,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return result as ReturnType<DesktopBridge["getLocalEnvironmentBootstrap"]>;
   },
   getPlatform: () => {
-    const result = ipcRenderer.sendSync(GET_PLATFORM_CHANNEL);
-    return result === "macos" || result === "windows" || result === "linux" ? result : null;
+    return ipcRenderer.sendSync(GET_PLATFORM_CHANNEL) as ReturnType<
+      NonNullable<DesktopBridge["getPlatform"]>
+    >;
   },
   getLinuxTitleBarMode: () => {
-    const result = ipcRenderer.sendSync(GET_LINUX_TITLE_BAR_MODE_CHANNEL);
-    return result === "native" || result === "overlay" || result === "custom" ? result : null;
+    return ipcRenderer.sendSync(GET_LINUX_TITLE_BAR_MODE_CHANNEL) as ReturnType<
+      NonNullable<DesktopBridge["getLinuxTitleBarMode"]>
+    >;
   },
   setLinuxTitleBarMode: (mode) => ipcRenderer.invoke(SET_LINUX_TITLE_BAR_MODE_CHANNEL, mode),
   getWindowControlsLayout: () => {
