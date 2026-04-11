@@ -3353,6 +3353,7 @@ export default function ChatView(props: ChatViewProps) {
                 hasMessages={timelineEntries.length > 0}
                 isWorking={isWorking}
                 activeTurnInProgress={isWorking || !latestTurnSettled}
+                activeTurnId={activeLatestTurn?.turnId ?? null}
                 activeTurnStartedAt={activeWorkStartedAt}
                 scrollContainer={messagesScrollElement}
                 timelineEntries={timelineEntries}

@@ -135,4 +135,17 @@ describe("estimateTimelineMessageHeight", () => {
     expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 320 })).toBe(154.75);
     expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 768 })).toBe(86.5);
   });
+
+  it("treats inline code as wider when estimating assistant markdown wrapping", () => {
+    const message = {
+      role: "assistant" as const,
+      text: [
+        "Typecheck found one exact-optional-property issue in the browser harness:",
+        "I was always passing `onVirtualizerSnapshot`, including `undefined`.",
+        "I'm tightening that object construction and rerunning the checks.",
+      ].join(" "),
+    };
+
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 768 })).toBe(109.25);
+  });
 });
