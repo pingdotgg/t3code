@@ -1570,4 +1570,133 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.activeTurnId).toBeNull();
   });
+
+  it("returns clear error when project workspace path does not exist", async () => {
+    const now = new Date().toISOString();
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-missing-path-"));
+    createdBaseDirs.add(baseDir);
+    const { stateDir } = deriveServerPathsSync(baseDir, undefined);
+    createdStateDirs.add(stateDir);
+    const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+    const modelSelection = {
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+    };
+
+    const startSession = vi.fn(() => Effect.die(new Error("Should not be called")));
+    const sendTurn = vi.fn(() => Effect.die(new Error("Should not be called")));
+    const interruptTurn = vi.fn(() => Effect.void);
+    const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
+    const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
+    const stopSession = vi.fn(() => Effect.void);
+    const renameBranch = vi.fn(() => Effect.succeed({ branch: "test-branch" }));
+    const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>(() =>
+      Effect.fail(new TextGenerationError({ operation: "generateBranchName", detail: "disabled" })),
+    );
+    const generateThreadTitle = vi.fn<TextGenerationShape["generateThreadTitle"]>(() =>
+      Effect.fail(new TextGenerationError({ operation: "generateThreadTitle", detail: "disabled" })),
+    );
+
+    const service: ProviderServiceShape = {
+      startSession: startSession as ProviderServiceShape["startSession"],
+      sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
+      interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
+      respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
+      respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
+      stopSession: stopSession as ProviderServiceShape["stopSession"],
+      listSessions: () => Effect.succeed([]),
+      getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+      rollbackConversation: () => Effect.die(new Error("Unsupported")) as never,
+      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+    };
+
+    const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(OrchestrationEventStoreLive),
+      Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const layer = ProviderCommandReactorLive.pipe(
+      Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
+      Layer.provideMerge(
+        Layer.mock(TextGeneration, {
+          generateBranchName,
+          generateThreadTitle,
+        }),
+      ),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    const runtime = ManagedRuntime.make(layer);
+
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
+
+    const nonExistentPath = "/tmp/this-path-definitely-does-not-exist-t3code-test-12345";
+    await Effect.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-missing"),
+        projectId: asProjectId("project-missing"),
+        title: "Missing Project",
+        workspaceRoot: nonExistentPath,
+        defaultModelSelection: modelSelection,
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-missing"),
+        threadId: ThreadId.makeUnsafe("thread-missing"),
+        projectId: asProjectId("project-missing"),
+        title: "Thread",
+        modelSelection: modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      }),
+    );
+
+    let errorOccurred = false;
+    let errorDetail: string | undefined;
+    try {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.makeUnsafe("cmd-turn-start-missing"),
+          threadId: ThreadId.makeUnsafe("thread-missing"),
+          message: {
+            messageId: asMessageId("user-message-missing"),
+            role: "user",
+            text: "hello",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+    } catch (e) {
+      errorOccurred = true;
+      if (e instanceof ProviderAdapterRequestError) {
+        errorDetail = e.detail;
+      }
+    }
+
+    expect(errorOccurred).toBe(true);
+    expect(errorDetail).toContain("no longer exists");
+    expect(errorDetail).toContain(nonExistentPath);
+    expect(startSession).not.toHaveBeenCalled();
+
+    await runtime.dispose();
+  });
 });
