@@ -1,0 +1,103 @@
+import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { ChevronRightIcon } from "lucide-react";
+import { shortcutLabelForCommand } from "../keybindings";
+import {
+  type CommandPaletteActionItem,
+  type CommandPaletteGroup,
+  type CommandPaletteSubmenuItem,
+} from "./CommandPalette.logic";
+import {
+  CommandCollection,
+  CommandGroup,
+  CommandGroupLabel,
+  CommandItem,
+  CommandList,
+  CommandShortcut,
+} from "./ui/command";
+
+interface CommandPaletteResultsProps {
+  emptyStateMessage?: string;
+  groups: ReadonlyArray<CommandPaletteGroup>;
+  isActionsOnly: boolean;
+  keybindings: ResolvedKeybindingsConfig;
+  onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
+}
+
+export function CommandPaletteResults(props: CommandPaletteResultsProps) {
+  if (props.groups.length === 0) {
+    return (
+      <div className="py-10 text-center text-sm text-muted-foreground">
+        {props.emptyStateMessage ??
+          (props.isActionsOnly
+            ? "No matching actions."
+            : "No matching commands, projects, or threads.")}
+      </div>
+    );
+  }
+
+  return (
+    <CommandList>
+      {props.groups.map((group) => (
+        <CommandGroup items={group.items} key={group.value}>
+          <CommandGroupLabel>{group.label}</CommandGroupLabel>
+          <CommandCollection>
+            {(item) => (
+              <CommandPaletteResultRow
+                item={item}
+                key={item.value}
+                keybindings={props.keybindings}
+                onExecuteItem={props.onExecuteItem}
+              />
+            )}
+          </CommandCollection>
+        </CommandGroup>
+      ))}
+    </CommandList>
+  );
+}
+
+function CommandPaletteResultRow(props: {
+  item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
+  keybindings: ResolvedKeybindingsConfig;
+  onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
+}) {
+  const shortcutLabel = props.item.shortcutCommand
+    ? shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand)
+    : null;
+
+  return (
+    <CommandItem
+      value={props.item.value}
+      className="cursor-pointer gap-2"
+      onMouseDown={(event) => {
+        event.preventDefault();
+      }}
+      onClick={() => {
+        props.onExecuteItem(props.item);
+      }}
+    >
+      {props.item.icon}
+      {props.item.description ? (
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-sm text-foreground">{props.item.title}</span>
+          <span className="truncate text-muted-foreground/70 text-xs">
+            {props.item.description}
+          </span>
+        </span>
+      ) : (
+        <span className="flex min-w-0 items-center gap-1.5 truncate text-sm text-foreground">
+          <span className="truncate">{props.item.title}</span>
+        </span>
+      )}
+      {props.item.timestamp ? (
+        <span className="min-w-12 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground/70">
+          {props.item.timestamp}
+        </span>
+      ) : null}
+      {shortcutLabel ? <CommandShortcut>{shortcutLabel}</CommandShortcut> : null}
+      {props.item.kind === "submenu" ? (
+        <ChevronRightIcon className="ml-auto size-4 shrink-0 text-muted-foreground/50" />
+      ) : null}
+    </CommandItem>
+  );
+}

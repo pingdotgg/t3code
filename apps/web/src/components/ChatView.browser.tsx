@@ -30,11 +30,12 @@ import { page } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
+import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
-  type TerminalContextDraft,
   removeInlineTerminalContextPlaceholder,
+  type TerminalContextDraft,
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { __resetLocalApiForTests } from "../localApi";
@@ -57,7 +58,9 @@ vi.mock("../lib/gitStatusState", () => ({
 }));
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
+const ARCHIVED_SECONDARY_THREAD_ID = "thread-secondary-project-archived" as ThreadId;
 const PROJECT_ID = "project-1" as ProjectId;
+const SECOND_PROJECT_ID = "project-2" as ProjectId;
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, THREAD_ID);
 const THREAD_KEY = scopedThreadKey(THREAD_REF);
@@ -563,6 +566,18 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   };
 }
 
+function createProjectlessSnapshot(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-projectless-target" as MessageId,
+    targetText: "projectless",
+  });
+  return {
+    ...snapshot,
+    projects: [],
+    threads: [],
+  };
+}
+
 function withProjectScripts(
   snapshot: OrchestrationReadModel,
   scripts: OrchestrationReadModel["projects"][number]["scripts"],
@@ -651,6 +666,100 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
           })
         : thread,
     ),
+  };
+}
+
+function createSnapshotWithSecondaryProject(options?: {
+  includeSecondaryThread?: boolean;
+  includeArchivedSecondaryThread?: boolean;
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-secondary-project-target" as MessageId,
+    targetText: "secondary project",
+  });
+  const includeSecondaryThread = options?.includeSecondaryThread ?? true;
+  const includeArchivedSecondaryThread = options?.includeArchivedSecondaryThread ?? true;
+  const secondaryThreads: OrchestrationReadModel["threads"] = includeSecondaryThread
+    ? [
+        {
+          id: "thread-secondary-project" as ThreadId,
+          projectId: SECOND_PROJECT_ID,
+          title: "Release checklist",
+          modelSelection: { provider: "codex", model: "gpt-5" },
+          interactionMode: "default",
+          runtimeMode: "full-access",
+          branch: "release/docs-portal",
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: isoAt(30),
+          updatedAt: isoAt(31),
+          deletedAt: null,
+          messages: [],
+          activities: [],
+          proposedPlans: [],
+          checkpoints: [],
+          session: {
+            threadId: "thread-secondary-project" as ThreadId,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: isoAt(31),
+          },
+          archivedAt: null,
+        },
+      ]
+    : [];
+  const archivedSecondaryThreads: OrchestrationReadModel["threads"] = includeArchivedSecondaryThread
+    ? [
+        {
+          id: ARCHIVED_SECONDARY_THREAD_ID,
+          projectId: SECOND_PROJECT_ID,
+          title: "Archived Docs Notes",
+          modelSelection: { provider: "codex", model: "gpt-5" },
+          interactionMode: "default",
+          runtimeMode: "full-access",
+          branch: "release/docs-archive",
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: isoAt(24),
+          updatedAt: isoAt(25),
+          deletedAt: null,
+          messages: [],
+          activities: [],
+          proposedPlans: [],
+          checkpoints: [],
+          session: {
+            threadId: ARCHIVED_SECONDARY_THREAD_ID,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: isoAt(25),
+          },
+          archivedAt: isoAt(26),
+        },
+      ]
+    : [];
+
+  return {
+    ...snapshot,
+    projects: [
+      ...snapshot.projects,
+      {
+        id: SECOND_PROJECT_ID,
+        title: "Docs Portal",
+        workspaceRoot: "/repo/clients/docs-portal",
+        defaultModelSelection: { provider: "codex", model: "gpt-5" },
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: [...snapshot.threads, ...secondaryThreads, ...archivedSecondaryThreads],
   };
 }
 
@@ -1242,6 +1351,16 @@ async function triggerChatNewShortcutUntilPath(
   throw new Error(`${errorMessage} Last path: ${pathname}`);
 }
 
+async function openCommandPaletteFromTrigger(): Promise<void> {
+  const trigger = page.getByTestId("command-palette-trigger");
+  await expect.element(trigger).toBeInTheDocument();
+  await trigger.click();
+  await waitForElement(
+    () => document.querySelector('[data-testid="command-palette"]'),
+    "Command palette should have opened from the sidebar trigger.",
+  );
+}
+
 async function waitForNewThreadShortcutLabel(): Promise<void> {
   const newThreadButton = page.getByTestId("new-thread-button");
   await expect.element(newThreadButton).toBeInTheDocument();
@@ -1250,6 +1369,13 @@ async function waitForNewThreadShortcutLabel(): Promise<void> {
     ? "New thread (⇧⌘O)"
     : "New thread (Ctrl+Shift+O)";
   await expect.element(page.getByText(shortcutLabel)).toBeInTheDocument();
+}
+
+async function waitForCommandPaletteShortcutLabel(): Promise<void> {
+  await waitForElement(
+    () => document.querySelector('[data-testid="command-palette-trigger"] kbd'),
+    "Command palette shortcut label did not render.",
+  );
 }
 
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
@@ -1383,6 +1509,7 @@ async function mountChatView(options: {
     customWsRpcResolver = null;
     await screen.unmount();
     host.remove();
+    await waitForLayout();
   };
 
   return {
@@ -1479,6 +1606,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
+    });
+    useCommandPaletteStore.setState({
+      open: false,
     });
     useStore.setState({
       activeEnvironmentId: null,
@@ -3489,6 +3619,359 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it("does not consume chat.new when there is no project context", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createProjectlessSnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.new",
+              shortcut: {
+                key: "o",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      dispatchChatNewShortcut();
+      await waitForLayout();
+
+      expect(mounted.router.state.location.pathname).toBe(serverThreadPath(THREAD_ID));
+      expect(Object.keys(useComposerDraftStore.getState().draftThreadsByThreadKey)).toHaveLength(0);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders the configurable shortcut and runs a command from the sidebar trigger", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-palette-shortcut-test" as MessageId,
+        targetText: "command palette shortcut test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForCommandPaletteShortcutLabel();
+      const palette = page.getByTestId("command-palette");
+      await openCommandPaletteFromTrigger();
+
+      await expect.element(palette).toBeInTheDocument();
+      await expect
+        .element(palette.getByText("New thread in Project", { exact: true }))
+        .toBeInTheDocument();
+      await palette.getByText("New thread in Project", { exact: true }).click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID from the command palette.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("filters command palette results as the user types", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-palette-search-test" as MessageId,
+        targetText: "command palette search test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForCommandPaletteShortcutLabel();
+      const palette = page.getByTestId("command-palette");
+      await openCommandPaletteFromTrigger();
+
+      await expect.element(palette).toBeInTheDocument();
+      await page.getByPlaceholder("Search commands, projects, and threads...").fill("settings");
+      await expect.element(palette.getByText("Open settings", { exact: true })).toBeInTheDocument();
+      await expect
+        .element(palette.getByText("New thread in Project", { exact: true }))
+        .not.toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps project-context thread matches available when searching by project name", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForCommandPaletteShortcutLabel();
+      const palette = page.getByTestId("command-palette");
+      await openCommandPaletteFromTrigger();
+
+      await expect.element(palette).toBeInTheDocument();
+      await page.getByPlaceholder("Search commands, projects, and threads...").fill("docs");
+      await expect.element(palette.getByText("Docs Portal", { exact: true })).toBeInTheDocument();
+      await expect
+        .element(palette.getByText("Release checklist", { exact: true }))
+        .toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("searches projects by path and opens the latest thread for that project", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          settings: {
+            ...nextFixture.serverConfig.settings,
+            defaultThreadEnvMode: "worktree",
+          },
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForCommandPaletteShortcutLabel();
+      const palette = page.getByTestId("command-palette");
+      await openCommandPaletteFromTrigger();
+
+      await expect.element(palette).toBeInTheDocument();
+      await page.getByPlaceholder("Search commands, projects, and threads...").fill("clients/docs");
+      await expect.element(palette.getByText("Docs Portal", { exact: true })).toBeInTheDocument();
+      await expect
+        .element(palette.getByText("/repo/clients/docs-portal", { exact: true }))
+        .toBeInTheDocument();
+      await palette.getByText("Docs Portal", { exact: true }).click();
+
+      const nextPath = await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath("thread-secondary-project" as ThreadId),
+        "Route should have changed to the latest thread for the selected project.",
+      );
+      expect(nextPath).toBe(serverThreadPath("thread-secondary-project" as ThreadId));
+      expect(
+        useComposerDraftStore
+          .getState()
+          .getDraftThread(threadRefFor("thread-secondary-project" as ThreadId)),
+      ).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("creates a new thread from project search when no active project thread exists", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject({ includeSecondaryThread: false }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          settings: {
+            ...nextFixture.serverConfig.settings,
+            defaultThreadEnvMode: "worktree",
+          },
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForCommandPaletteShortcutLabel();
+      const palette = page.getByTestId("command-palette");
+      await openCommandPaletteFromTrigger();
+
+      await expect.element(palette).toBeInTheDocument();
+      await page.getByPlaceholder("Search commands, projects, and threads...").fill("clients/docs");
+      await expect.element(palette.getByText("Docs Portal", { exact: true })).toBeInTheDocument();
+      await expect
+        .element(palette.getByText("/repo/clients/docs-portal", { exact: true }))
+        .toBeInTheDocument();
+      await palette.getByText("Docs Portal", { exact: true }).click();
+
+      const nextPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID from the project search result.",
+      );
+      const nextDraftId = draftIdFromPath(nextPath);
+      const draftThread = useComposerDraftStore.getState().getDraftSession(nextDraftId);
+      expect(draftThread?.projectId).toBe(SECOND_PROJECT_ID);
+      expect(draftThread?.envMode).toBe("worktree");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("filters archived threads out of command palette search results", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForCommandPaletteShortcutLabel();
+      const palette = page.getByTestId("command-palette");
+      await openCommandPaletteFromTrigger();
+
+      await expect.element(palette).toBeInTheDocument();
+      await page.getByPlaceholder("Search commands, projects, and threads...").fill("docs-archive");
+      await expect
+        .element(palette.getByText("Archived Docs Notes", { exact: true }))
+        .not.toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("creates a fresh draft after the previous draft thread is promoted", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -3523,7 +4006,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       const newThreadButton = page.getByTestId("new-thread-button");
       await expect.element(newThreadButton).toBeInTheDocument();
-      await waitForNewThreadShortcutLabel();
       await waitForServerConfigToApply();
       await newThreadButton.click();
 
@@ -3547,6 +4029,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      await waitForLayout();
 
       const freshThreadPath = await triggerChatNewShortcutUntilPath(
         mounted.router,
