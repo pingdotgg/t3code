@@ -5,6 +5,7 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
+import { type ServerProviderSkill } from "@t3tools/contracts";
 import {
   $applyNodeReplacement,
   $createRangeSelection,
@@ -73,8 +74,11 @@ import {
   COMPOSER_INLINE_CHIP_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
+  COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
 } from "./composerInlineChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
+import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
 const SURROUND_SYMBOLS: [string, string][] = [
@@ -100,6 +104,17 @@ type SerializedComposerMentionNode = Spread<
     version: 1;
   },
   SerializedTextNode
+>;
+
+type SerializedComposerSkillNode = Spread<
+  {
+    skillName: string;
+    skillLabel?: string;
+    skillDescription?: string;
+    type: "composer-skill";
+    version: 1;
+  },
+  SerializedLexicalNode
 >;
 
 type SerializedComposerTerminalContextNode = Spread<
@@ -189,6 +204,155 @@ function $createComposerMentionNode(path: string): ComposerMentionNode {
   return $applyNodeReplacement(new ComposerMentionNode(path));
 }
 
+const SKILL_CHIP_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>`;
+
+function resolveSkillDescription(
+  skill: Pick<ServerProviderSkill, "shortDescription" | "description">,
+): string | null {
+  const shortDescription = skill.shortDescription?.trim();
+  if (shortDescription) {
+    return shortDescription;
+  }
+  const description = skill.description?.trim();
+  return description || null;
+}
+
+type ComposerSkillMetadata = {
+  label: string;
+  description: string | null;
+};
+
+function skillMetadataByName(
+  skills: ReadonlyArray<ServerProviderSkill>,
+): ReadonlyMap<string, ComposerSkillMetadata> {
+  return new Map(
+    skills.map((skill) => [
+      skill.name,
+      {
+        label: formatProviderSkillDisplayName(skill),
+        description: resolveSkillDescription(skill),
+      },
+    ]),
+  );
+}
+
+function ComposerSkillDecorator(props: { skillLabel: string; skillDescription: string | null }) {
+  const chip = (
+    <span
+      className={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}
+      contentEditable={false}
+      spellCheck={false}
+      data-composer-skill-chip="true"
+    >
+      <span
+        aria-hidden="true"
+        className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+        dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
+      />
+      <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.skillLabel}</span>
+    </span>
+  );
+
+  if (!props.skillDescription) {
+    return chip;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={chip} />
+      <TooltipPopup side="top" className="max-w-[30rem] whitespace-normal leading-tight">
+        {props.skillDescription}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+class ComposerSkillNode extends DecoratorNode<ReactElement> {
+  __skillName: string;
+  __skillLabel: string;
+  __skillDescription: string | null;
+
+  static override getType(): string {
+    return "composer-skill";
+  }
+
+  static override clone(node: ComposerSkillNode): ComposerSkillNode {
+    return new ComposerSkillNode(
+      node.__skillName,
+      node.__skillLabel,
+      node.__skillDescription,
+      node.__key,
+    );
+  }
+
+  static override importJSON(serializedNode: SerializedComposerSkillNode): ComposerSkillNode {
+    return $createComposerSkillNode(
+      serializedNode.skillName,
+      serializedNode.skillLabel ?? serializedNode.skillName,
+      serializedNode.skillDescription ?? null,
+    ).updateFromJSON(serializedNode);
+  }
+
+  constructor(
+    skillName: string,
+    skillLabel: string,
+    skillDescription: string | null,
+    key?: NodeKey,
+  ) {
+    super(key);
+    const normalizedSkillName = skillName.startsWith("$") ? skillName.slice(1) : skillName;
+    this.__skillName = normalizedSkillName;
+    this.__skillLabel = skillLabel;
+    this.__skillDescription = skillDescription;
+  }
+
+  override exportJSON(): SerializedComposerSkillNode {
+    return {
+      ...super.exportJSON(),
+      skillName: this.__skillName,
+      skillLabel: this.__skillLabel,
+      ...(this.__skillDescription ? { skillDescription: this.__skillDescription } : {}),
+      type: "composer-skill",
+      version: 1,
+    };
+  }
+
+  override createDOM(): HTMLElement {
+    const dom = document.createElement("span");
+    dom.className = "inline-flex align-middle leading-none";
+    return dom;
+  }
+
+  override updateDOM(): false {
+    return false;
+  }
+
+  override getTextContent(): string {
+    return `$${this.__skillName}`;
+  }
+
+  override isInline(): true {
+    return true;
+  }
+
+  override decorate(): ReactElement {
+    return (
+      <ComposerSkillDecorator
+        skillLabel={this.__skillLabel}
+        skillDescription={this.__skillDescription}
+      />
+    );
+  }
+}
+
+function $createComposerSkillNode(
+  skillName: string,
+  skillLabel: string,
+  skillDescription: string | null,
+): ComposerSkillNode {
+  return $applyNodeReplacement(new ComposerSkillNode(skillName, skillLabel, skillDescription));
+}
+
 function ComposerTerminalContextDecorator(props: { context: TerminalContextDraft }) {
   return <ComposerPendingTerminalContextChip context={props.context} />;
 }
@@ -253,11 +417,16 @@ function $createComposerTerminalContextNode(
   return $applyNodeReplacement(new ComposerTerminalContextNode(context));
 }
 
-type ComposerInlineTokenNode = ComposerMentionNode | ComposerTerminalContextNode;
+type ComposerInlineTokenNode =
+  | ComposerMentionNode
+  | ComposerSkillNode
+  | ComposerTerminalContextNode;
 
 function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInlineTokenNode {
   return (
-    candidate instanceof ComposerMentionNode || candidate instanceof ComposerTerminalContextNode
+    candidate instanceof ComposerMentionNode ||
+    candidate instanceof ComposerSkillNode ||
+    candidate instanceof ComposerTerminalContextNode
   );
 }
 
@@ -297,6 +466,22 @@ function terminalContextSignature(contexts: ReadonlyArray<TerminalContextDraft>)
         context.lineEnd,
         context.createdAt,
         context.text,
+      ].join("\u001f"),
+    )
+    .join("\u001e");
+}
+
+function skillSignature(skills: ReadonlyArray<ServerProviderSkill>): string {
+  return skills
+    .map((skill) =>
+      [
+        skill.name,
+        skill.displayName ?? "",
+        skill.shortDescription ?? "",
+        skill.description ?? "",
+        skill.path,
+        skill.scope ?? "",
+        skill.enabled ? "1" : "0",
       ].join("\u001f"),
     )
     .join("\u001e");
@@ -415,7 +600,7 @@ function getAbsoluteOffsetForPoint(node: LexicalNode, pointOffset: number): numb
     }
     return offset + Math.min(pointOffset, node.getTextContentSize());
   }
-  if (node instanceof ComposerTerminalContextNode) {
+  if (node instanceof ComposerSkillNode || node instanceof ComposerTerminalContextNode) {
     return getAbsoluteOffsetForInlineTokenPoint(node, offset, pointOffset);
   }
 
@@ -462,7 +647,7 @@ function getExpandedAbsoluteOffsetForPoint(node: LexicalNode, pointOffset: numbe
     }
     return offset + Math.min(pointOffset, node.getTextContentSize());
   }
-  if (node instanceof ComposerTerminalContextNode) {
+  if (node instanceof ComposerSkillNode || node instanceof ComposerTerminalContextNode) {
     return getExpandedAbsoluteOffsetForInlineTokenPoint(node, offset, pointOffset);
   }
 
@@ -488,7 +673,7 @@ function findSelectionPointAtOffset(
   node: LexicalNode,
   remainingRef: { value: number },
 ): { key: string; offset: number; type: "text" | "element" } | null {
-  if (node instanceof ComposerMentionNode) {
+  if (node instanceof ComposerMentionNode || node instanceof ComposerSkillNode) {
     return findSelectionPointForInlineToken(node, remainingRef);
   }
   if (node instanceof ComposerTerminalContextNode) {
@@ -657,6 +842,7 @@ function $appendTextWithLineBreaks(parent: ElementNode, text: string): void {
 function $setComposerEditorPrompt(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft>,
+  skillMetadata: ReadonlyMap<string, ComposerSkillMetadata>,
 ): void {
   const root = $getRoot();
   root.clear();
@@ -667,6 +853,17 @@ function $setComposerEditorPrompt(
   for (const segment of segments) {
     if (segment.type === "mention") {
       paragraph.append($createComposerMentionNode(segment.path));
+      continue;
+    }
+    if (segment.type === "skill") {
+      const metadata = skillMetadata.get(segment.name);
+      paragraph.append(
+        $createComposerSkillNode(
+          segment.name,
+          metadata?.label ?? formatProviderSkillDisplayName({ name: segment.name }),
+          metadata?.description ?? null,
+        ),
+      );
       continue;
     }
     if (segment.type === "terminal-context") {
@@ -705,6 +902,7 @@ interface ComposerPromptEditorProps {
   value: string;
   cursor: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
   className?: string;
@@ -946,9 +1144,11 @@ function ComposerInlineTokenBackspacePlugin() {
 
 function ComposerSurroundSelectionPlugin(props: {
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  skills: ReadonlyArray<ServerProviderSkill>;
 }) {
   const [editor] = useLexicalComposerContext();
   const terminalContextsRef = useRef(props.terminalContexts);
+  const skillMetadataRef = useRef(skillMetadataByName(props.skills));
   const pendingSurroundSelectionRef = useRef<{
     value: string;
     expandedStart: number;
@@ -963,6 +1163,10 @@ function ComposerSurroundSelectionPlugin(props: {
   useEffect(() => {
     terminalContextsRef.current = props.terminalContexts;
   }, [props.terminalContexts]);
+
+  useEffect(() => {
+    skillMetadataRef.current = skillMetadataByName(props.skills);
+  }, [props.skills]);
 
   const applySurroundInsertion = useCallback(
     (inputData: string): boolean => {
@@ -1009,7 +1213,7 @@ function ComposerSurroundSelectionPlugin(props: {
           selectionSnapshot.expandedEnd,
         );
         const nextValue = `${selectionSnapshot.value.slice(0, selectionSnapshot.expandedStart)}${inputData}${selectedText}${surroundCloseSymbol}${selectionSnapshot.value.slice(selectionSnapshot.expandedEnd)}`;
-        $setComposerEditorPrompt(nextValue, terminalContextsRef.current);
+        $setComposerEditorPrompt(nextValue, terminalContextsRef.current, skillMetadataRef.current);
         const selectionStart = collapseExpandedComposerCursor(
           nextValue,
           selectionSnapshot.expandedStart,
@@ -1211,6 +1415,7 @@ function ComposerPromptEditorInner({
   value,
   cursor,
   terminalContexts,
+  skills,
   disabled,
   placeholder,
   className,
@@ -1225,6 +1430,9 @@ function ComposerPromptEditorInner({
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
   const terminalContextsSignature = terminalContextSignature(terminalContexts);
   const terminalContextsSignatureRef = useRef(terminalContextsSignature);
+  const skillsSignature = skillSignature(skills);
+  const skillsSignatureRef = useRef(skillsSignature);
+  const skillMetadataRef = useRef(skillMetadataByName(skills));
   const snapshotRef = useRef({
     value,
     cursor: initialCursor,
@@ -1241,6 +1449,10 @@ function ComposerPromptEditorInner({
     onChangeRef.current = onChange;
   }, [onChange]);
 
+  useLayoutEffect(() => {
+    skillMetadataRef.current = skillMetadataByName(skills);
+  }, [skills]);
+
   useEffect(() => {
     editor.setEditable(!disabled);
   }, [disabled, editor]);
@@ -1249,10 +1461,12 @@ function ComposerPromptEditorInner({
     const normalizedCursor = clampCollapsedComposerCursor(value, cursor);
     const previousSnapshot = snapshotRef.current;
     const contextsChanged = terminalContextsSignatureRef.current !== terminalContextsSignature;
+    const skillsChanged = skillsSignatureRef.current !== skillsSignature;
     if (
       previousSnapshot.value === value &&
       previousSnapshot.cursor === normalizedCursor &&
-      !contextsChanged
+      !contextsChanged &&
+      !skillsChanged
     ) {
       return;
     }
@@ -1264,18 +1478,20 @@ function ComposerPromptEditorInner({
       terminalContextIds: terminalContexts.map((context) => context.id),
     };
     terminalContextsSignatureRef.current = terminalContextsSignature;
+    skillsSignatureRef.current = skillsSignature;
 
     const rootElement = editor.getRootElement();
     const isFocused = Boolean(rootElement && document.activeElement === rootElement);
-    if (previousSnapshot.value === value && !contextsChanged && !isFocused) {
+    if (previousSnapshot.value === value && !contextsChanged && !skillsChanged && !isFocused) {
       return;
     }
 
     isApplyingControlledUpdateRef.current = true;
     editor.update(() => {
-      const shouldRewriteEditorState = previousSnapshot.value !== value || contextsChanged;
+      const shouldRewriteEditorState =
+        previousSnapshot.value !== value || contextsChanged || skillsChanged;
       if (shouldRewriteEditorState) {
-        $setComposerEditorPrompt(value, terminalContexts);
+        $setComposerEditorPrompt(value, terminalContexts, skillMetadataRef.current);
       }
       if (shouldRewriteEditorState || isFocused) {
         $setSelectionAtComposerOffset(normalizedCursor);
@@ -1284,7 +1500,7 @@ function ComposerPromptEditorInner({
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
-  }, [cursor, editor, terminalContexts, terminalContextsSignature, value]);
+  }, [cursor, editor, skillsSignature, terminalContexts, terminalContextsSignature, value]);
 
   const focusAt = useCallback(
     (nextCursor: number) => {
@@ -1442,7 +1658,7 @@ function ComposerPromptEditorInner({
         />
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
-        <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} />
+        <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
         <ComposerInlineTokenBackspacePlugin />
@@ -1460,6 +1676,7 @@ export const ComposerPromptEditor = forwardRef<
     value,
     cursor,
     terminalContexts,
+    skills,
     disabled,
     placeholder,
     className,
@@ -1472,13 +1689,18 @@ export const ComposerPromptEditor = forwardRef<
 ) {
   const initialValueRef = useRef(value);
   const initialTerminalContextsRef = useRef(terminalContexts);
+  const initialSkillMetadataRef = useRef(skillMetadataByName(skills));
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
       namespace: "t3tools-composer-editor",
       editable: true,
-      nodes: [ComposerMentionNode, ComposerTerminalContextNode],
+      nodes: [ComposerMentionNode, ComposerSkillNode, ComposerTerminalContextNode],
       editorState: () => {
-        $setComposerEditorPrompt(initialValueRef.current, initialTerminalContextsRef.current);
+        $setComposerEditorPrompt(
+          initialValueRef.current,
+          initialTerminalContextsRef.current,
+          initialSkillMetadataRef.current,
+        );
       },
       onError: (error) => {
         throw error;
@@ -1493,6 +1715,7 @@ export const ComposerPromptEditor = forwardRef<
         value={value}
         cursor={cursor}
         terminalContexts={terminalContexts}
+        skills={skills}
         disabled={disabled}
         placeholder={placeholder}
         onRemoveTerminalContext={onRemoveTerminalContext}

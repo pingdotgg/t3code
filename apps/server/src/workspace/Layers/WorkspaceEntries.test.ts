@@ -129,6 +129,18 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
       }),
     );
 
+    it.effect("prioritizes exact basename matches ahead of broader path matches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-exact-ranking-" });
+        yield* writeTextFile(cwd, "src/components/Composer.tsx");
+        yield* writeTextFile(cwd, "docs/composer.tsx-notes.md");
+
+        const result = yield* searchWorkspaceEntries({ cwd, query: "Composer.tsx", limit: 5 });
+
+        expect(result.entries[0]?.path).toBe("src/components/Composer.tsx");
+      }),
+    );
+
     it.effect("tracks truncation without sorting every fuzzy match", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-fuzzy-limit-" });

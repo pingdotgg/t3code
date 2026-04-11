@@ -169,6 +169,8 @@ function createBaseServerConfig(): ServerConfig {
         auth: { status: "authenticated" },
         checkedAt: NOW_ISO,
         models: [],
+        slashCommands: [],
+        skills: [],
       },
     ],
     availableEditors: [],
@@ -3878,6 +3880,57 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(menuRect.height).toBeGreaterThan(0);
           expect(menuRect.bottom).toBeLessThanOrEqual(composerRect.bottom);
           expect(hitTarget instanceof Element && menuItem.contains(hitTarget)).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows a tooltip with the skill description when hovering a skill pill", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-skill-tooltip-target" as MessageId,
+        targetText: "skill tooltip thread",
+      }),
+      configureFixture: (nextFixture) => {
+        const provider = nextFixture.serverConfig.providers[0];
+        if (!provider) {
+          throw new Error("Expected default provider in test fixture.");
+        }
+        (
+          provider as {
+            skills: ServerConfig["providers"][number]["skills"];
+          }
+        ).skills = [
+          {
+            name: "agent-browser",
+            displayName: "Agent Browser",
+            description: "Open pages, click around, and inspect web apps.",
+            path: "/Users/test/.agents/skills/agent-browser/SKILL.md",
+            enabled: true,
+          },
+        ];
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "use the $agent-browser ");
+      await waitForComposerText("use the $agent-browser ");
+
+      await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-composer-skill-chip="true"]'),
+        "Unable to find rendered composer skill chip.",
+      );
+      await page.getByText("Agent Browser").hover();
+
+      await vi.waitFor(
+        () => {
+          const tooltip = document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]');
+          expect(tooltip).not.toBeNull();
+          expect(tooltip?.textContent).toContain("Open pages, click around, and inspect web apps.");
         },
         { timeout: 8_000, interval: 16 },
       );

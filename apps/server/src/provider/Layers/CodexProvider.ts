@@ -5,6 +5,7 @@ import type {
   ServerProvider,
   ServerProviderModel,
   ServerProviderAuth,
+  ServerProviderSkill,
   ServerProviderState,
 } from "@t3tools/contracts";
 import {
@@ -44,7 +45,7 @@ import {
   codexAuthSubType,
   type CodexAccountSnapshot,
 } from "../codexAccount";
-import { probeCodexAccount } from "../codexAppServer";
+import { probeCodexDiscovery } from "../codexAppServer";
 import { CodexProvider } from "../Services/CodexProvider";
 import { ServerSettingsService } from "../../serverSettings";
 import { ServerSettingsError } from "@t3tools/contracts";
@@ -304,8 +305,9 @@ const CAPABILITIES_PROBE_TIMEOUT_MS = 8_000;
 const probeCodexCapabilities = (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
+  readonly cwd: string;
 }) =>
-  Effect.tryPromise((signal) => probeCodexAccount({ ...input, signal })).pipe(
+  Effect.tryPromise((signal) => probeCodexDiscovery({ ...input, signal })).pipe(
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
     Effect.result,
     Effect.map((result) => {
@@ -334,6 +336,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly binaryPath: string;
     readonly homePath?: string;
   }) => Effect.Effect<CodexAccountSnapshot | undefined>,
+  resolveSkills?: (input: {
+    readonly binaryPath: string;
+    readonly homePath?: string;
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<ServerProviderSkill> | undefined>,
 ): Effect.fn.Return<
   ServerProvider,
   ServerSettingsError,
@@ -449,12 +456,22 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
+  const skills =
+    (resolveSkills
+      ? yield* resolveSkills({
+          binaryPath: codexSettings.binaryPath,
+          homePath: codexSettings.homePath,
+          cwd: process.cwd(),
+        }).pipe(Effect.orElseSucceed(() => undefined))
+      : undefined) ?? [];
+
   if (yield* hasCustomModelProvider) {
     return buildServerProvider({
       provider: PROVIDER,
       enabled: codexSettings.enabled,
       checkedAt,
       models,
+      skills,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -484,6 +501,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: codexSettings.enabled,
       checkedAt,
       models: resolvedModels,
+      skills,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -500,6 +518,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: codexSettings.enabled,
       checkedAt,
       models: resolvedModels,
+      skills,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -518,6 +537,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     enabled: codexSettings.enabled,
     checkedAt,
     models: resolvedModels,
+    skills,
     probe: {
       installed: true,
       version: parsedVersion,
@@ -543,16 +563,29 @@ export const CodexProviderLive = Layer.effect(
       capacity: 4,
       timeToLive: Duration.minutes(5),
       lookup: (key: string) => {
-        const [binaryPath, homePath] = JSON.parse(key) as [string, string | undefined];
+        const [binaryPath, homePath, cwd] = JSON.parse(key) as [string, string | undefined, string];
         return probeCodexCapabilities({
           binaryPath,
+          cwd,
           ...(homePath ? { homePath } : {}),
         });
       },
     });
 
-    const checkProvider = checkCodexProviderStatus((input) =>
-      Cache.get(accountProbeCache, JSON.stringify([input.binaryPath, input.homePath])),
+    const getDiscovery = (input: {
+      readonly binaryPath: string;
+      readonly homePath?: string;
+      readonly cwd: string;
+    }) =>
+      Cache.get(accountProbeCache, JSON.stringify([input.binaryPath, input.homePath, input.cwd]));
+
+    const checkProvider = checkCodexProviderStatus(
+      (input) =>
+        getDiscovery({
+          ...input,
+          cwd: process.cwd(),
+        }).pipe(Effect.map((discovery) => discovery?.account)),
+      (input) => getDiscovery(input).pipe(Effect.map((discovery) => discovery?.skills)),
     ).pipe(
       Effect.provideService(ServerSettingsService, serverSettings),
       Effect.provideService(FileSystem.FileSystem, fileSystem),

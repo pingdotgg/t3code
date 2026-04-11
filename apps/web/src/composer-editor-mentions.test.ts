@@ -29,6 +29,20 @@ describe("splitPromptIntoComposerSegments", () => {
     ]);
   });
 
+  it("splits skill tokens followed by whitespace into skill segments", () => {
+    expect(splitPromptIntoComposerSegments("Use $review-follow-up please")).toEqual([
+      { type: "text", text: "Use " },
+      { type: "skill", name: "review-follow-up" },
+      { type: "text", text: " please" },
+    ]);
+  });
+
+  it("does not convert an incomplete trailing skill token", () => {
+    expect(splitPromptIntoComposerSegments("Use $review-follow-up")).toEqual([
+      { type: "text", text: "Use $review-follow-up" },
+    ]);
+  });
+
   it("keeps inline terminal context placeholders at their prompt positions", () => {
     expect(
       splitPromptIntoComposerSegments(
@@ -51,6 +65,21 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "terminal-context", context: null },
       { type: "terminal-context", context: null },
       { type: "text", text: "tail" },
+    ]);
+  });
+
+  it("keeps skill parsing alongside mentions and terminal placeholders", () => {
+    expect(
+      splitPromptIntoComposerSegments(
+        `Inspect ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}$review-follow-up after @AGENTS.md `,
+      ),
+    ).toEqual([
+      { type: "text", text: "Inspect " },
+      { type: "terminal-context", context: null },
+      { type: "skill", name: "review-follow-up" },
+      { type: "text", text: " after " },
+      { type: "mention", path: "AGENTS.md" },
+      { type: "text", text: " " },
     ]);
   });
 });

@@ -44,6 +44,8 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
+    slashCommands: [],
+    skills: [],
     models: [
       {
         slug: "gpt-5.4",
@@ -70,6 +72,8 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
+    slashCommands: [],
+    skills: [],
     models: [
       {
         slug: "claude-opus-4-6",
