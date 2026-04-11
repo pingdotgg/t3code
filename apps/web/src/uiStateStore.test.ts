@@ -141,11 +141,7 @@ describe("uiStateStore pure functions", () => {
       projectOrder: [keyALocal, keyARemote, keyBLocal, keyBRemote],
     });
 
-    const next = reorderProjects(
-      initialState,
-      [keyALocal, keyARemote],
-      [keyBLocal, keyBRemote],
-    );
+    const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyBLocal, keyBRemote]);
 
     // Target members may become non-contiguous; this is fine because the
     // sidebar groups by logical key using first-occurrence positioning.
