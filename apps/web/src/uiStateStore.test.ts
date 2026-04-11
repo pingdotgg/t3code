@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
   clearThreadUi,
   markThreadUnread,
-  reorderProjectGroup,
   reorderProjects,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
@@ -59,7 +58,7 @@ describe("uiStateStore pure functions", () => {
       projectOrder: [project1, project2, project3],
     });
 
-    const next = reorderProjects(initialState, project1, project3);
+    const next = reorderProjects(initialState, [project1], [project3]);
 
     expect(next.projectOrder).toEqual([project2, project3, project1]);
   });
@@ -71,25 +70,12 @@ describe("uiStateStore pure functions", () => {
       projectOrder: [project1, project2],
     });
 
-    const next = reorderProjects(initialState, ProjectId.make("missing"), project2);
+    const next = reorderProjects(initialState, [ProjectId.make("missing")], [project2]);
 
     expect(next).toBe(initialState);
   });
 
-  it("reorderProjectGroup moves a single-member group to a target position", () => {
-    const project1 = ProjectId.make("project-1");
-    const project2 = ProjectId.make("project-2");
-    const project3 = ProjectId.make("project-3");
-    const initialState = makeUiState({
-      projectOrder: [project1, project2, project3],
-    });
-
-    const next = reorderProjectGroup(initialState, [project1], [project3]);
-
-    expect(next.projectOrder).toEqual([project2, project3, project1]);
-  });
-
-  it("reorderProjectGroup moves all member keys of a multi-member group together", () => {
+  it("reorderProjects moves all member keys of a multi-member group together", () => {
     const keyALocal = "env-local:proj-a";
     const keyARemote = "env-remote:proj-a";
     const keyB = "env-local:proj-b";
@@ -98,12 +84,12 @@ describe("uiStateStore pure functions", () => {
       projectOrder: [keyALocal, keyARemote, keyB, keyC],
     });
 
-    const next = reorderProjectGroup(initialState, [keyALocal, keyARemote], [keyC]);
+    const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyC]);
 
     expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
   });
 
-  it("reorderProjectGroup handles member keys scattered across projectOrder", () => {
+  it("reorderProjects handles member keys scattered across projectOrder", () => {
     const keyALocal = "env-local:proj-a";
     const keyB = "env-local:proj-b";
     const keyARemote = "env-remote:proj-a";
@@ -112,12 +98,12 @@ describe("uiStateStore pure functions", () => {
       projectOrder: [keyALocal, keyB, keyARemote, keyC],
     });
 
-    const next = reorderProjectGroup(initialState, [keyALocal, keyARemote], [keyC]);
+    const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyC]);
 
     expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
   });
 
-  it("reorderProjectGroup places group after target when dragged from before a non-last target", () => {
+  it("reorderProjects places group after target when dragged from before a non-last target", () => {
     const keyALocal = "env-local:proj-a";
     const keyARemote = "env-remote:proj-a";
     const keyB = "env-local:proj-b";
@@ -127,12 +113,12 @@ describe("uiStateStore pure functions", () => {
       projectOrder: [keyALocal, keyARemote, keyB, keyC, keyD],
     });
 
-    const next = reorderProjectGroup(initialState, [keyALocal, keyARemote], [keyC]);
+    const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyC]);
 
     expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote, keyD]);
   });
 
-  it("reorderProjectGroup places group before target when dragged from after", () => {
+  it("reorderProjects places group before target when dragged from after", () => {
     const keyB = "env-local:proj-b";
     const keyC = "env-local:proj-c";
     const keyALocal = "env-local:proj-a";
@@ -141,12 +127,12 @@ describe("uiStateStore pure functions", () => {
       projectOrder: [keyB, keyC, keyALocal, keyARemote],
     });
 
-    const next = reorderProjectGroup(initialState, [keyALocal, keyARemote], [keyB]);
+    const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyB]);
 
     expect(next.projectOrder).toEqual([keyALocal, keyARemote, keyB, keyC]);
   });
 
-  it("reorderProjectGroup with multi-member target inserts after first target occurrence", () => {
+  it("reorderProjects with multi-member target inserts after first target occurrence", () => {
     const keyALocal = "env-local:proj-a";
     const keyARemote = "env-remote:proj-a";
     const keyBLocal = "env-local:proj-b";
@@ -155,7 +141,7 @@ describe("uiStateStore pure functions", () => {
       projectOrder: [keyALocal, keyARemote, keyBLocal, keyBRemote],
     });
 
-    const next = reorderProjectGroup(
+    const next = reorderProjects(
       initialState,
       [keyALocal, keyARemote],
       [keyBLocal, keyBRemote],
@@ -166,24 +152,24 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectOrder).toEqual([keyBLocal, keyALocal, keyARemote, keyBRemote]);
   });
 
-  it("reorderProjectGroup is a no-op when dragged group equals target group", () => {
+  it("reorderProjects is a no-op when dragged group equals target group", () => {
     const key1 = "env-local:proj-a";
     const key2 = "env-remote:proj-a";
     const initialState = makeUiState({
       projectOrder: [key1, key2, "env-local:proj-b"],
     });
 
-    const next = reorderProjectGroup(initialState, [key1, key2], [key1, key2]);
+    const next = reorderProjects(initialState, [key1, key2], [key1, key2]);
 
     expect(next).toBe(initialState);
   });
 
-  it("reorderProjectGroup is a no-op when dragged keys are not in projectOrder", () => {
+  it("reorderProjects is a no-op when dragged keys are not in projectOrder", () => {
     const initialState = makeUiState({
       projectOrder: ["env-local:proj-a", "env-local:proj-b"],
     });
 
-    const next = reorderProjectGroup(initialState, ["env-local:missing"], ["env-local:proj-b"]);
+    const next = reorderProjects(initialState, ["env-local:missing"], ["env-local:proj-b"]);
 
     expect(next).toBe(initialState);
   });

@@ -482,31 +482,6 @@ export function setProjectExpanded(state: UiState, projectId: string, expanded: 
 
 export function reorderProjects(
   state: UiState,
-  draggedProjectId: string,
-  targetProjectId: string,
-): UiState {
-  if (draggedProjectId === targetProjectId) {
-    return state;
-  }
-  const draggedIndex = state.projectOrder.findIndex((projectId) => projectId === draggedProjectId);
-  const targetIndex = state.projectOrder.findIndex((projectId) => projectId === targetProjectId);
-  if (draggedIndex < 0 || targetIndex < 0) {
-    return state;
-  }
-  const projectOrder = [...state.projectOrder];
-  const [draggedProject] = projectOrder.splice(draggedIndex, 1);
-  if (!draggedProject) {
-    return state;
-  }
-  projectOrder.splice(targetIndex, 0, draggedProject);
-  return {
-    ...state,
-    projectOrder,
-  };
-}
-
-export function reorderProjectGroup(
-  state: UiState,
   draggedProjectIds: readonly string[],
   targetProjectIds: readonly string[],
 ): UiState {
@@ -557,8 +532,7 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
-  reorderProjects: (draggedProjectId: string, targetProjectId: string) => void;
-  reorderProjectGroup: (
+  reorderProjects: (
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
   ) => void;
@@ -578,10 +552,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
-  reorderProjects: (draggedProjectId, targetProjectId) =>
-    set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
-  reorderProjectGroup: (draggedProjectIds, targetProjectIds) =>
-    set((state) => reorderProjectGroup(state, draggedProjectIds, targetProjectIds)),
+  reorderProjects: (draggedProjectIds, targetProjectIds) =>
+    set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds)),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

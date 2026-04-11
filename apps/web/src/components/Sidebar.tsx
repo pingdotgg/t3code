@@ -2330,7 +2330,7 @@ export default function Sidebar() {
   const activeEnvironmentId = useStore((store) => store.activeEnvironmentId);
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const reorderProjectGroup = useUiStateStore((store) => store.reorderProjectGroup);
+  const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
@@ -2698,9 +2698,9 @@ export default function Sidebar() {
       if (!activeProject || !overProject) return;
       const activeMemberKeys = activeProject.memberProjectRefs.map(scopedProjectKey);
       const overMemberKeys = overProject.memberProjectRefs.map(scopedProjectKey);
-      reorderProjectGroup(activeMemberKeys, overMemberKeys);
+      reorderProjects(activeMemberKeys, overMemberKeys);
     },
-    [sidebarProjectSortOrder, reorderProjectGroup, sidebarProjects],
+    [sidebarProjectSortOrder, reorderProjects, sidebarProjects],
   );
 
   const handleProjectDragStart = useCallback(
