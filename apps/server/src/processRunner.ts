@@ -1,4 +1,7 @@
-import { type ChildProcess as ChildProcessHandle, spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { killChildProcessTree } from "./process/killTree";
+import { appendTextChunkWithinByteLimit } from "./process/outputBuffer";
+import { isWindowsCommandNotFound } from "./process/windowsCommand";
 
 export interface ProcessRunOptions {
   cwd?: string | undefined;
@@ -35,12 +38,6 @@ function normalizeSpawnError(command: string, args: readonly string[], error: un
   }
 
   return new Error(`Failed to run ${commandLabel(command, args)}: ${error.message}`);
-}
-
-export function isWindowsCommandNotFound(code: number | null, stderr: string): boolean {
-  if (process.platform !== "win32") return false;
-  if (code === 9009) return true;
-  return /is not recognized as an internal or external command/i.test(stderr);
 }
 
 function normalizeExitError(
@@ -80,51 +77,6 @@ function normalizeBufferError(
 
 const DEFAULT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 
-/**
- * On Windows with `shell: true`, `child.kill()` only terminates the `cmd.exe`
- * wrapper, leaving the actual command running. Use `taskkill /T` to kill the
- * entire process tree instead.
- */
-function killChild(child: ChildProcessHandle, signal: NodeJS.Signals = "SIGTERM"): void {
-  if (process.platform === "win32" && child.pid !== undefined) {
-    try {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-      return;
-    } catch {
-      // fallback to direct kill
-    }
-  }
-  child.kill(signal);
-}
-
-function appendChunkWithinLimit(
-  target: string,
-  currentBytes: number,
-  chunk: Buffer,
-  maxBytes: number,
-): {
-  next: string;
-  nextBytes: number;
-  truncated: boolean;
-} {
-  const remaining = maxBytes - currentBytes;
-  if (remaining <= 0) {
-    return { next: target, nextBytes: currentBytes, truncated: true };
-  }
-  if (chunk.length <= remaining) {
-    return {
-      next: `${target}${chunk.toString()}`,
-      nextBytes: currentBytes + chunk.length,
-      truncated: false,
-    };
-  }
-  return {
-    next: `${target}${chunk.subarray(0, remaining).toString()}`,
-    nextBytes: currentBytes + remaining,
-    truncated: true,
-  };
-}
-
 export async function runProcess(
   command: string,
   args: readonly string[],
@@ -154,9 +106,9 @@ export async function runProcess(
 
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
-      killChild(child, "SIGTERM");
+      killChildProcessTree(child, "SIGTERM");
       forceKillTimer = setTimeout(() => {
-        killChild(child, "SIGKILL");
+        killChildProcessTree(child, "SIGKILL");
       }, 1_000);
     }, timeoutMs);
 
@@ -171,7 +123,7 @@ export async function runProcess(
     };
 
     const fail = (error: Error): void => {
-      killChild(child, "SIGTERM");
+      killChildProcessTree(child, "SIGTERM");
       finalize(() => {
         reject(error);
       });
@@ -183,7 +135,12 @@ export async function runProcess(
       const byteLength = chunkBuffer.length;
       if (stream === "stdout") {
         if (outputMode === "truncate") {
-          const appended = appendChunkWithinLimit(stdout, stdoutBytes, chunkBuffer, maxBufferBytes);
+          const appended = appendTextChunkWithinByteLimit(
+            stdout,
+            stdoutBytes,
+            chunkBuffer,
+            maxBufferBytes,
+          );
           stdout = appended.next;
           stdoutBytes = appended.nextBytes;
           stdoutTruncated = stdoutTruncated || appended.truncated;
@@ -196,7 +153,12 @@ export async function runProcess(
         }
       } else {
         if (outputMode === "truncate") {
-          const appended = appendChunkWithinLimit(stderr, stderrBytes, chunkBuffer, maxBufferBytes);
+          const appended = appendTextChunkWithinByteLimit(
+            stderr,
+            stderrBytes,
+            chunkBuffer,
+            maxBufferBytes,
+          );
           stderr = appended.next;
           stderrBytes = appended.nextBytes;
           stderrTruncated = stderrTruncated || appended.truncated;

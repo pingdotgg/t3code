@@ -254,6 +254,20 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       });
     }),
   );
+
+  it.effect("uses explorer with a VS Code protocol target on Windows", () =>
+    Effect.gen(function* () {
+      const launch = yield* resolveEditorLaunch(
+        { cwd: "C:\\work\\100% real\\file.ts:12:4", editor: "vscode" },
+        "win32",
+        { PATH: "" },
+      );
+      assert.deepEqual(launch, {
+        command: "explorer",
+        args: ["vscode://file/C:/work/100%25%20real/file.ts:12:4"],
+      });
+    }),
+  );
 });
 
 it.layer(NodeServices.layer)("launchDetached", (it) => {

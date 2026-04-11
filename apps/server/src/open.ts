@@ -9,6 +9,7 @@
 import { spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { EDITORS, OpenError, type EditorId } from "@t3tools/contracts";
 import { Context, Effect, Layer } from "effect";
@@ -35,6 +36,11 @@ interface CommandAvailabilityOptions {
 }
 
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+const WINDOWS_EDITOR_URI_SCHEMES: Partial<Record<EditorId, string>> = {
+  vscode: "vscode",
+  "vscode-insiders": "vscode-insiders",
+  vscodium: "vscodium",
+};
 
 function parseTargetPathAndPosition(target: string): {
   path: string;
@@ -51,6 +57,36 @@ function parseTargetPathAndPosition(target: string): {
     line: match[2],
     column: match[3],
   };
+}
+
+function splitTargetPathAndSuffix(target: string): {
+  path: string;
+  suffix: string;
+} {
+  const parsedTarget = parseTargetPathAndPosition(target);
+  if (!parsedTarget) {
+    return { path: target, suffix: "" };
+  }
+
+  return {
+    path: parsedTarget.path,
+    suffix: parsedTarget.column
+      ? `:${parsedTarget.line}:${parsedTarget.column}`
+      : `:${parsedTarget.line}`,
+  };
+}
+
+function makeWindowsEditorProtocolTarget(editor: EditorId, target: string): string | undefined {
+  const scheme = WINDOWS_EDITOR_URI_SCHEMES[editor];
+  if (!scheme) return undefined;
+
+  const { path, suffix } = splitTargetPathAndSuffix(target);
+  const fileUrl = pathToFileURL(path).href;
+  const fileTarget = fileUrl.startsWith("file:///")
+    ? fileUrl.slice("file:///".length)
+    : fileUrl.replace(/^file:\/\//, "");
+
+  return `${scheme}://file/${fileTarget}${suffix}`;
 }
 
 function resolveCommandEditorArgs(
@@ -268,6 +304,16 @@ export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });
   }
 
+  if (platform === "win32") {
+    const protocolTarget = makeWindowsEditorProtocolTarget(input.editor, input.cwd);
+    if (protocolTarget) {
+      return {
+        command: fileManagerCommandForPlatform(platform),
+        args: [protocolTarget],
+      };
+    }
+  }
+
   if (editorDef.commands) {
     const command =
       resolveAvailableCommand(editorDef.commands, { platform, env }) ?? editorDef.commands[0];
@@ -296,7 +342,12 @@ export const launchDetached = (launch: EditorLaunch) =>
         child = spawn(launch.command, [...launch.args], {
           detached: true,
           stdio: "ignore",
-          shell: process.platform === "win32",
+          shell:
+            process.platform === "win32" &&
+            launch.command.toLowerCase() !== "explorer" &&
+            !launch.command.toLowerCase().endsWith("\\explorer.exe") &&
+            !launch.command.toLowerCase().endsWith("/explorer.exe"),
+          ...(process.platform === "win32" ? { windowsHide: true } : {}),
         });
       } catch (error) {
         return resume(

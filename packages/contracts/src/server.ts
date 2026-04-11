@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Schema } from "effect";
 import { ExecutionEnvironmentDescriptor } from "./environment";
 import { ServerAuthDescriptor } from "./auth";
 import {
@@ -92,9 +92,9 @@ export const ServerProvider = Schema.Struct({
   message: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
+    Schema.withDecodingDefault(() => []),
   ),
-  skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(() => [])),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

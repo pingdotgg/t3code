@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Option, Schema } from "effect";
 import {
   EventId,
   IsoDateTime,
@@ -435,7 +435,7 @@ export const UserInputQuestion = Schema.Struct({
   question: TrimmedNonEmptyStringSchema,
   options: Schema.Array(UserInputQuestionOption),
   multiSelect: Schema.optional(Schema.Boolean).pipe(
-    Schema.withConstructorDefault(Effect.succeed(false)),
+    Schema.withConstructorDefault(() => Option.some(false)),
   ),
 });
 export type UserInputQuestion = typeof UserInputQuestion.Type;
