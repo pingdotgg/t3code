@@ -10,6 +10,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   size = "xs",
   variant = "outline",
   className,
+  disabled = false,
   onCopy,
   onError,
 }: {
@@ -18,6 +19,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   size?: "xs" | "icon-xs";
   variant?: "outline" | "ghost";
   className?: string;
+  disabled?: boolean;
   onCopy?: () => void;
   onError?: (error: Error) => void;
 }) {
@@ -33,6 +35,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
       size={size}
       variant={variant}
       className={cn(className)}
+      disabled={disabled}
       onClick={() => copyToClipboard(text, undefined)}
       title={buttonTitle}
       aria-label={buttonTitle}

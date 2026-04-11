@@ -537,6 +537,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                         size="icon-xs"
                         variant="outline"
                         className="border-border/50 bg-background/35 text-muted-foreground/45 shadow-none hover:border-border/70 hover:bg-background/55 hover:text-muted-foreground/70"
+                        disabled={assistantCopyState.disabled}
                         onCopy={() => {
                           toastManager.add({
                             type: "success",
