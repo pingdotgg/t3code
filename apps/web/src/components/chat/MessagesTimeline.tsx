@@ -191,6 +191,7 @@ export const HistoricalMessagesTimelineSection = memo(function HistoricalMessage
     [historicalTimelineEntries],
   );
   const historicalRows = useStableTimelineRows(historicalRawRows);
+  const shouldRenderHistoricalRowsWithoutVirtualizer = typeof ResizeObserver === "undefined";
 
   const virtualizedRowCount = clamp(historicalRows.length, {
     minimum: 0,
@@ -348,7 +349,12 @@ export const HistoricalMessagesTimelineSection = memo(function HistoricalMessage
 
   return (
     <div ref={timelineRootRef} data-timeline-root="true" className="w-full overflow-x-hidden">
-      {virtualizedRowCount > 0 && (
+      {shouldRenderHistoricalRowsWithoutVirtualizer ? (
+        <NonVirtualTimelineRows
+          rows={historicalRows}
+          renderRowContent={renderHistoricalRowContent}
+        />
+      ) : virtualizedRowCount > 0 ? (
         <HistoricalTimelineRows
           rows={historicalRows}
           virtualRows={virtualRows}
@@ -356,7 +362,7 @@ export const HistoricalMessagesTimelineSection = memo(function HistoricalMessage
           measureElement={rowVirtualizer.measureElement}
           renderRowContent={renderHistoricalRowContent}
         />
-      )}
+      ) : null}
     </div>
   );
 });
@@ -591,6 +597,13 @@ const HistoricalTimelineRows = memo(function HistoricalTimelineRows(props: {
 });
 
 const LiveTimelineRows = memo(function LiveTimelineRows(props: {
+  rows: ReadonlyArray<TimelineRow>;
+  renderRowContent: (row: TimelineRow) => ReactNode;
+}) {
+  return <NonVirtualTimelineRows rows={props.rows} renderRowContent={props.renderRowContent} />;
+});
+
+const NonVirtualTimelineRows = memo(function NonVirtualTimelineRows(props: {
   rows: ReadonlyArray<TimelineRow>;
   renderRowContent: (row: TimelineRow) => ReactNode;
 }) {

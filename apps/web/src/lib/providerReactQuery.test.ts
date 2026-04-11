@@ -141,6 +141,28 @@ describe("checkpointDiffQueryOptions", () => {
     expect(retry(3, new Error("Something else failed."))).toBe(false);
   });
 
+  it("retries transient checkpoint errors for full thread diffs too", () => {
+    const options = checkpointDiffQueryOptions({
+      environmentId,
+      threadId,
+      fromTurnCount: 0,
+      toTurnCount: 2,
+      cacheScope: "thread:all",
+    });
+    const retry = options.retry;
+    expect(typeof retry).toBe("function");
+    if (typeof retry !== "function") {
+      throw new Error("Expected retry to be a function.");
+    }
+
+    expect(
+      retry(1, new Error("Filesystem checkpoint is unavailable for turn 2 in thread thread-1.")),
+    ).toBe(true);
+    expect(
+      retry(12, new Error("Filesystem checkpoint is unavailable for turn 2 in thread thread-1.")),
+    ).toBe(false);
+  });
+
   it("backs off longer for checkpoint-not-ready errors", () => {
     const options = checkpointDiffQueryOptions({
       environmentId,

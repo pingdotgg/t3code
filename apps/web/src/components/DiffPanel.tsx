@@ -423,9 +423,18 @@ const DiffPanelContent = memo(function DiffPanelContent(props: {
   } = props;
   const { resolvedTheme } = useTheme();
   const patchViewportRef = useRef<HTMLDivElement>(null);
+  const activeProject = useStore((store) =>
+    workspaceSnapshot
+      ? selectProjectByRef(store, {
+          environmentId: workspaceSnapshot.environmentId,
+          projectId: workspaceSnapshot.projectId,
+        })
+      : undefined,
+  );
+  const activeCwd = workspaceSnapshot?.worktreePath ?? activeProject?.cwd ?? null;
   const isGitRepo = useGitStatusIsRepo({
     environmentId: workspaceSnapshot?.environmentId ?? null,
-    cwd: workspaceSnapshot?.worktreePath ?? null,
+    cwd: activeCwd,
   });
   const { inferredCheckpointTurnCountByTurnId } = useTurnDiffSummaries(orderedTurnDiffSummaries);
   const activeCheckpointSelection = useMemo(() => {
@@ -475,15 +484,6 @@ const DiffPanelContent = memo(function DiffPanelContent(props: {
       activeCheckpointRange: selectedTurn ? selectedCheckpointRange : conversationCheckpointRange,
     };
   }, [inferredCheckpointTurnCountByTurnId, orderedTurnDiffSummaries, selectedTurnId]);
-  const activeProject = useStore((store) =>
-    workspaceSnapshot
-      ? selectProjectByRef(store, {
-          environmentId: workspaceSnapshot.environmentId,
-          projectId: workspaceSnapshot.projectId,
-        })
-      : undefined,
-  );
-  const activeCwd = workspaceSnapshot?.worktreePath ?? activeProject?.cwd;
   const activeCheckpointDiffQuery = useQuery(
     checkpointDiffQueryOptions({
       environmentId: workspaceSnapshot?.environmentId ?? null,
