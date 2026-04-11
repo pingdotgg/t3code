@@ -1,7 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 
-import { Cache, Duration, Effect, Exit, FileSystem, Layer, Option, Path, Ref } from "effect";
+import {
+  Cache,
+  Duration,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Ref,
+  Result,
+} from "effect";
 import {
   GitActionProgressEvent,
   GitActionProgressPhase,
@@ -34,6 +45,10 @@ import { ProjectSetupScriptRunner } from "../../project/Services/ProjectSetupScr
 import { extractBranchNameFromRemoteRef } from "../remoteRefs.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
+import {
+  decodeGitHubPullRequestListJson,
+  formatGitHubJsonDecodeError,
+} from "../githubPullRequests.ts";
 
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;
@@ -238,85 +253,6 @@ function matchesBranchHeadContext(
     return false;
   }
   return true;
-}
-
-function parsePullRequestList(raw: unknown): PullRequestInfo[] {
-  if (!Array.isArray(raw)) return [];
-
-  const parsed: PullRequestInfo[] = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    const number = record.number;
-    const title = record.title;
-    const url = record.url;
-    const baseRefName = record.baseRefName;
-    const headRefName = record.headRefName;
-    const state = record.state;
-    const mergedAt = record.mergedAt;
-    const updatedAt = record.updatedAt;
-    const isCrossRepository = record.isCrossRepository;
-    const headRepositoryRecord =
-      typeof record.headRepository === "object" && record.headRepository !== null
-        ? (record.headRepository as Record<string, unknown>)
-        : null;
-    const headRepositoryOwnerRecord =
-      typeof record.headRepositoryOwner === "object" && record.headRepositoryOwner !== null
-        ? (record.headRepositoryOwner as Record<string, unknown>)
-        : null;
-    const headRepositoryNameWithOwner =
-      typeof record.headRepositoryNameWithOwner === "string"
-        ? record.headRepositoryNameWithOwner
-        : typeof headRepositoryRecord?.nameWithOwner === "string"
-          ? headRepositoryRecord.nameWithOwner
-          : null;
-    const headRepositoryOwnerLogin =
-      typeof record.headRepositoryOwnerLogin === "string"
-        ? record.headRepositoryOwnerLogin
-        : typeof headRepositoryOwnerRecord?.login === "string"
-          ? headRepositoryOwnerRecord.login
-          : null;
-    if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) {
-      continue;
-    }
-    if (
-      typeof title !== "string" ||
-      typeof url !== "string" ||
-      typeof baseRefName !== "string" ||
-      typeof headRefName !== "string"
-    ) {
-      continue;
-    }
-
-    let normalizedState: "open" | "closed" | "merged";
-    if (
-      (typeof mergedAt === "string" && mergedAt.trim().length > 0) ||
-      state === "MERGED" ||
-      state === "merged"
-    ) {
-      normalizedState = "merged";
-    } else if (state === "OPEN" || state === "open" || state === undefined || state === null) {
-      normalizedState = "open";
-    } else if (state === "CLOSED" || state === "closed") {
-      normalizedState = "closed";
-    } else {
-      continue;
-    }
-
-    parsed.push({
-      number,
-      title,
-      url,
-      baseRefName,
-      headRefName,
-      state: normalizedState,
-      updatedAt: typeof updatedAt === "string" && updatedAt.trim().length > 0 ? updatedAt : null,
-      ...(typeof isCrossRepository === "boolean" ? { isCrossRepository } : {}),
-      ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
-      ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
-    });
-  }
-  return parsed;
 }
 
 function toPullRequestInfo(summary: GitHubPullRequestSummary): PullRequestInfo {
@@ -947,13 +883,23 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         continue;
       }
 
-      const parsedJson = yield* Effect.try({
-        try: () => JSON.parse(raw) as unknown,
-        catch: (cause) =>
-          gitManagerError("findLatestPr", "GitHub CLI returned invalid PR list JSON.", cause),
-      });
+      const pullRequests = yield* Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
+        Effect.flatMap((decoded) => {
+          if (!Result.isSuccess(decoded)) {
+            return Effect.fail(
+              gitManagerError(
+                "findLatestPr",
+                `GitHub CLI returned invalid PR list JSON: ${formatGitHubJsonDecodeError(decoded.failure)}`,
+                decoded.failure,
+              ),
+            );
+          }
 
-      for (const pr of parsePullRequestList(parsedJson)) {
+          return Effect.succeed(decoded.success);
+        }),
+      );
+
+      for (const pr of pullRequests) {
         if (!matchesBranchHeadContext(pr, headContext)) {
           continue;
         }
