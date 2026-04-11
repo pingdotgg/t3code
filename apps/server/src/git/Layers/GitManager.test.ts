@@ -750,6 +750,57 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status ignores invalid gh pr list entries and keeps valid ones", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-valid-pr-entry"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-valid-pr-entry"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            JSON.stringify([
+              {
+                number: 0,
+                title: "invalid",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/0",
+                baseRefName: "main",
+                headRefName: "feature/invalid",
+              },
+              {
+                number: 15,
+                title: "  Valid PR title  ",
+                url: " https://github.com/pingdotgg/codething-mvp/pull/15 ",
+                baseRefName: " main ",
+                headRefName: "\tfeature/status-valid-pr-entry\t",
+                headRepository: {
+                  nameWithOwner: "   ",
+                },
+                headRepositoryOwner: {
+                  login: "   ",
+                },
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr).toEqual({
+        number: 15,
+        title: "Valid PR title",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/15",
+        baseBranch: "main",
+        headBranch: "feature/status-valid-pr-entry",
+        state: "open",
+      });
+    }),
+  );
+
   it.effect("status returns an explicit non-repo result for non-git directories", () =>
     Effect.gen(function* () {
       const cwd = yield* makeTempDir("t3code-git-manager-non-repo-");

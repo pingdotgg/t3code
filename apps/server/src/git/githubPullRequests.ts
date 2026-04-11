@@ -1,4 +1,4 @@
-import { Cause, Result, Schema } from "effect";
+import { Cause, Exit, Result, Schema } from "effect";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 
@@ -28,18 +28,23 @@ const GitHubPullRequestSchema = Schema.Struct({
   headRepository: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
-        nameWithOwner: TrimmedNonEmptyString,
+        nameWithOwner: Schema.String,
       }),
     ),
   ),
   headRepositoryOwner: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
-        login: TrimmedNonEmptyString,
+        login: Schema.String,
       }),
     ),
   ),
 });
+
+function trimOptionalString(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
+}
 
 function normalizeGitHubPullRequestState(input: {
   state?: string | null | undefined;
@@ -60,9 +65,9 @@ function normalizeGitHubPullRequestState(input: {
 function normalizeGitHubPullRequestRecord(
   raw: Schema.Schema.Type<typeof GitHubPullRequestSchema>,
 ): NormalizedGitHubPullRequestRecord {
-  const headRepositoryNameWithOwner = raw.headRepository?.nameWithOwner ?? null;
+  const headRepositoryNameWithOwner = trimOptionalString(raw.headRepository?.nameWithOwner);
   const headRepositoryOwnerLogin =
-    raw.headRepositoryOwner?.login ??
+    trimOptionalString(raw.headRepositoryOwner?.login) ??
     (typeof headRepositoryNameWithOwner === "string" && headRepositoryNameWithOwner.includes("/")
       ? (headRepositoryNameWithOwner.split("/")[0] ?? null)
       : null);
@@ -84,8 +89,9 @@ function normalizeGitHubPullRequestRecord(
   };
 }
 
-const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(GitHubPullRequestSchema));
+const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeGitHubPullRequest = decodeJsonResult(GitHubPullRequestSchema);
+const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
 
 export const formatGitHubJsonDecodeError = formatSchemaError;
 
@@ -97,7 +103,15 @@ export function decodeGitHubPullRequestListJson(
 > {
   const result = decodeGitHubPullRequestList(raw);
   if (Result.isSuccess(result)) {
-    return Result.succeed(result.success.map(normalizeGitHubPullRequestRecord));
+    const pullRequests: NormalizedGitHubPullRequestRecord[] = [];
+    for (const entry of result.success) {
+      const decodedEntry = decodeGitHubPullRequestEntry(entry);
+      if (Exit.isFailure(decodedEntry)) {
+        continue;
+      }
+      pullRequests.push(normalizeGitHubPullRequestRecord(decodedEntry.value));
+    }
+    return Result.succeed(pullRequests);
   }
   return Result.fail(result.failure);
 }

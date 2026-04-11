@@ -123,6 +123,58 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 
+  it.effect("skips invalid entries when parsing pr lists", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          {
+            number: 0,
+            title: "invalid",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/0",
+            baseRefName: "main",
+            headRefName: "feature/invalid",
+          },
+          {
+            number: 43,
+            title: "  Valid PR  ",
+            url: " https://github.com/pingdotgg/codething-mvp/pull/43 ",
+            baseRefName: " main ",
+            headRefName: " feature/pr-list ",
+            headRepository: {
+              nameWithOwner: "   ",
+            },
+            headRepositoryOwner: {
+              login: "   ",
+            },
+          },
+        ]),
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.listOpenPullRequests({
+          cwd: "/repo",
+          headSelector: "feature/pr-list",
+        });
+      });
+
+      assert.deepStrictEqual(result, [
+        {
+          number: 43,
+          title: "Valid PR",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/43",
+          baseRefName: "main",
+          headRefName: "feature/pr-list",
+          state: "open",
+        },
+      ]);
+    }),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockedRunProcess.mockResolvedValueOnce({
