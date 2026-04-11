@@ -977,6 +977,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const defaultThreadEnvMode = useSettings<ThreadEnvMode>(
     (settings) => settings.defaultThreadEnvMode,
   );
+  const sidebarProjectsDefaultExpanded = useSettings<boolean>(
+    (settings) => settings.sidebarProjectsDefaultExpanded,
+  );
   const router = useRouter();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const toggleProject = useUiStateStore((state) => state.toggleProject);
@@ -1102,7 +1105,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   // already fetched into allSidebarThreads, so we can use them directly.
   const projectThreads = allSidebarThreads;
   const projectExpanded = useUiStateStore(
-    (state) => state.projectExpandedById[project.projectKey] ?? true,
+    (state) => state.projectExpandedById[project.projectKey] ?? sidebarProjectsDefaultExpanded,
   );
   const threadLastVisitedAts = useUiStateStore(
     useShallow((state) =>
@@ -1251,13 +1254,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (selectedThreadCount > 0) {
         clearSelection();
       }
-      toggleProject(project.projectKey);
+      toggleProject(project.projectKey, sidebarProjectsDefaultExpanded);
     },
     [
       clearSelection,
       dragInProgressRef,
       project.projectKey,
       selectedThreadCount,
+      sidebarProjectsDefaultExpanded,
       suppressProjectClickAfterDragRef,
       suppressProjectClickForContextMenuRef,
       toggleProject,
@@ -1271,9 +1275,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (dragInProgressRef.current) {
         return;
       }
-      toggleProject(project.projectKey);
+      toggleProject(project.projectKey, sidebarProjectsDefaultExpanded);
     },
-    [dragInProgressRef, project.projectKey, toggleProject],
+    [dragInProgressRef, project.projectKey, sidebarProjectsDefaultExpanded, toggleProject],
   );
 
   const handleProjectButtonPointerDownCapture = useCallback(
@@ -2336,6 +2340,7 @@ export default function Sidebar() {
   const isOnSettings = pathname.startsWith("/settings");
   const sidebarThreadSortOrder = useSettings((s) => s.sidebarThreadSortOrder);
   const sidebarProjectSortOrder = useSettings((s) => s.sidebarProjectSortOrder);
+  const sidebarProjectsDefaultExpanded = useSettings((s) => s.sidebarProjectsDefaultExpanded);
   const defaultThreadEnvMode = useSettings((s) => s.defaultThreadEnvMode);
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useNewThreadHandler();
@@ -2777,7 +2782,7 @@ export default function Sidebar() {
           ),
           sidebarThreadSortOrder,
         );
-        const projectExpanded = projectExpandedById[project.projectKey] ?? true;
+        const projectExpanded = projectExpandedById[project.projectKey] ?? sidebarProjectsDefaultExpanded;
         const activeThreadKey = routeThreadKey ?? undefined;
         const pinnedCollapsedThread =
           !projectExpanded && activeThreadKey
@@ -2804,6 +2809,7 @@ export default function Sidebar() {
       }),
     [
       sidebarThreadSortOrder,
+      sidebarProjectsDefaultExpanded,
       expandedThreadListsByProject,
       projectExpandedById,
       routeThreadKey,

@@ -57,6 +57,7 @@ import {
   selectThreadsAcrossEnvironments,
 } from "~/store";
 import { useTerminalStateStore } from "~/terminalStateStore";
+import { getClientSettingsSnapshot } from "~/hooks/useSettings";
 import { useUiStateStore } from "~/uiStateStore";
 import { WsTransport } from "../../rpc/wsTransport";
 import { createWsRpcClient, type WsRpcClient } from "../../rpc/wsRpcClient";
@@ -179,6 +180,7 @@ function reconcileSnapshotDerivedState() {
       key: scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
       cwd: project.cwd,
     })),
+    getClientSettingsSnapshot().sidebarProjectsDefaultExpanded,
   );
   useUiStateStore.getState().syncThreads(
     threads.map((thread) => ({
@@ -242,6 +244,7 @@ function applyRecoveredEventBatch(
         key: scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
         cwd: project.cwd,
       })),
+      getClientSettingsSnapshot().sidebarProjectsDefaultExpanded,
     );
   }
 
