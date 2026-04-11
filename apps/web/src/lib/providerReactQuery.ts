@@ -94,6 +94,8 @@ function isCheckpointTemporarilyUnavailable(error: unknown): boolean {
 
 export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
   const decodedRequest = decodeCheckpointDiffRequest(input);
+  const isFullThreadDiffRequest =
+    decodedRequest._tag === "Some" && decodedRequest.value.kind === "fullThreadDiff";
 
   return queryOptions({
     queryKey: providerQueryKeys.checkpointDiff(input),
@@ -118,6 +120,9 @@ export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
       decodedRequest._tag === "Some",
     staleTime: Infinity,
     retry: (failureCount, error) => {
+      if (isFullThreadDiffRequest) {
+        return false;
+      }
       if (isCheckpointTemporarilyUnavailable(error)) {
         return failureCount < 12;
       }

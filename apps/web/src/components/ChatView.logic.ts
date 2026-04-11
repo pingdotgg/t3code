@@ -228,7 +228,10 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
 
 type ThreadStartSnapshot = {
   latestTurn: Thread["latestTurn"] | null;
-  session: Thread["session"] | null;
+  session: Pick<
+    NonNullable<Thread["session"]>,
+    "provider" | "status" | "activeTurnId" | "orchestrationStatus"
+  > | null;
   messageCount?: number;
   messages?: { length: number } | null;
 };

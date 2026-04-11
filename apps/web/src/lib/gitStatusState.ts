@@ -61,6 +61,10 @@ const gitStatusLastRefreshAtByKey = new Map<string, number>();
 
 const GIT_STATUS_REFRESH_DEBOUNCE_MS = 1_000;
 
+function selectIsRepo(state: GitStatusState): boolean {
+  return state.data?.isRepo ?? true;
+}
+
 const gitStatusStateAtom = Atom.family((key: string) => {
   knownGitStatusKeys.add(key);
   return Atom.make(INITIAL_GIT_STATUS_STATE).pipe(
@@ -173,6 +177,19 @@ export function useGitStatus(target: GitStatusTarget): GitStatusState {
     targetKey !== null ? gitStatusStateAtom(targetKey) : EMPTY_GIT_STATUS_ATOM,
   );
   return targetKey === null ? EMPTY_GIT_STATUS_STATE : state;
+}
+
+export function useGitStatusIsRepo(target: GitStatusTarget): boolean {
+  const targetKey = getGitStatusTargetKey(target);
+  useEffect(
+    () => watchGitStatus({ environmentId: target.environmentId, cwd: target.cwd }),
+    [target.environmentId, target.cwd],
+  );
+
+  return useAtomValue(
+    targetKey !== null ? gitStatusStateAtom(targetKey) : EMPTY_GIT_STATUS_ATOM,
+    selectIsRepo,
+  );
 }
 
 function unwatchGitStatus(targetKey: string): void {

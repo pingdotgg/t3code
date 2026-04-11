@@ -1058,7 +1058,7 @@ export function deriveCompletionDividerBeforeEntryId(
 }
 
 export function inferCheckpointTurnCountByTurnId(
-  summaries: TurnDiffSummary[],
+  summaries: readonly TurnDiffSummary[],
 ): Record<TurnId, number> {
   const sorted = [...summaries].toSorted((a, b) => a.completedAt.localeCompare(b.completedAt));
   const result: Record<TurnId, number> = {};

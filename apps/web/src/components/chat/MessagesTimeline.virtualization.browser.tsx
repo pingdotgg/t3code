@@ -172,11 +172,12 @@ function createBaseTimelineProps(input: {
     isWorking: false,
     activeTurnInProgress: false,
     activeTurnStartedAt: null,
-    timelineEntries: deriveTimelineEntries(
+    historicalTimelineEntries: deriveTimelineEntries(
       input.messages ?? [],
       input.proposedPlans ?? [],
       input.workEntries ?? [],
     ),
+    liveTimelineEntries: [],
     completionDividerBeforeEntryId: input.completionDividerBeforeEntryId ?? null,
     completionSummary: null,
     turnDiffSummaryByAssistantMessageId: input.turnDiffSummaryByAssistantMessageId ?? new Map(),
@@ -556,7 +557,7 @@ async function measureTimelineRow(input: {
   );
 
   const rows = deriveMessagesTimelineRows({
-    timelineEntries: input.props.timelineEntries,
+    timelineEntries: [...input.props.historicalTimelineEntries, ...input.props.liveTimelineEntries],
     completionDividerBeforeEntryId: input.props.completionDividerBeforeEntryId,
     isWorking: input.props.isWorking,
     activeTurnStartedAt: input.props.activeTurnStartedAt,

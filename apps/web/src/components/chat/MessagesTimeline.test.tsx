@@ -54,7 +54,7 @@ describe("MessagesTimeline", () => {
         activeTurnInProgress={false}
         activeTurnStartedAt={null}
         scrollContainer={null}
-        timelineEntries={[
+        historicalTimelineEntries={[
           {
             id: "entry-1",
             kind: "message",
@@ -76,6 +76,7 @@ describe("MessagesTimeline", () => {
             },
           },
         ]}
+        liveTimelineEntries={[]}
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
@@ -111,7 +112,7 @@ describe("MessagesTimeline", () => {
         activeTurnInProgress={false}
         activeTurnStartedAt={null}
         scrollContainer={null}
-        timelineEntries={[
+        historicalTimelineEntries={[
           {
             id: "entry-1",
             kind: "work",
@@ -124,6 +125,7 @@ describe("MessagesTimeline", () => {
             },
           },
         ]}
+        liveTimelineEntries={[]}
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}

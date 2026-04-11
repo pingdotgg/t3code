@@ -18,7 +18,21 @@ import {
   type ThreadTurnState,
   type TurnDiffSummary,
 } from "./types";
-import { derivePendingApprovals, derivePendingUserInputs, derivePhase } from "./session-logic";
+import {
+  type ActivePlanState,
+  type LatestProposedPlanState,
+  type PendingApproval,
+  type PendingUserInput,
+  type WorkLogEntry,
+  deriveActivePlanState,
+  derivePendingApprovals,
+  derivePendingUserInputs,
+  derivePhase,
+  deriveWorkLogEntries,
+  findLatestProposedPlan,
+  hasToolActivityForTurn,
+  isLatestTurnSettled,
+} from "./session-logic";
 import { getThreadFromEnvironmentState } from "./threadDerivation";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
@@ -67,9 +81,48 @@ export interface ThreadRuntimeSnapshot {
   phase: ReturnType<typeof derivePhase>;
 }
 
+export interface ThreadConversationRuntimeSnapshot {
+  session: Pick<
+    ThreadSession,
+    "provider" | "status" | "activeTurnId" | "orchestrationStatus"
+  > | null;
+  latestTurn: Pick<
+    NonNullable<ThreadTurnState["latestTurn"]>,
+    | "turnId"
+    | "state"
+    | "requestedAt"
+    | "startedAt"
+    | "completedAt"
+    | "assistantMessageId"
+    | "sourceProposedPlan"
+  > | null;
+  phase: ReturnType<typeof derivePhase>;
+}
+
 export interface ThreadPendingSnapshot {
   pendingApprovalRequestId: ApprovalRequestId | null;
   pendingUserInputRequestId: ApprovalRequestId | null;
+}
+
+export interface ThreadComposerSnapshot {
+  session: ThreadConversationRuntimeSnapshot["session"];
+  latestTurn: ThreadConversationRuntimeSnapshot["latestTurn"];
+  phase: ReturnType<typeof derivePhase>;
+  latestTurnSettled: boolean;
+  pendingApprovals: PendingApproval[];
+  pendingUserInputs: PendingUserInput[];
+  activeProposedPlan: LatestProposedPlanState | null;
+  activePlan: ActivePlanState | null;
+}
+
+export interface ThreadTimelineSliceSnapshot {
+  historicalMessages: ChatMessage[];
+  liveMessages: ChatMessage[];
+  historicalProposedPlans: ProposedPlan[];
+  liveProposedPlans: ProposedPlan[];
+  turnDiffSummaries: TurnDiffSummary[];
+  activeWorkEntries: WorkLogEntry[];
+  latestTurnHasToolActivity: boolean;
 }
 
 function collectByIds<TKey extends string, TValue>(
@@ -84,6 +137,119 @@ function collectByIds<TKey extends string, TValue>(
     const value = byId[id];
     return value ? [value] : [];
   });
+}
+
+function shallowArrayEqual<TValue>(
+  left: ReadonlyArray<TValue>,
+  right: ReadonlyArray<TValue>,
+): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function pendingApprovalsEqual(
+  left: ReadonlyArray<PendingApproval>,
+  right: ReadonlyArray<PendingApproval>,
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((approval, index) => {
+      const candidate = right[index];
+      return (
+        candidate !== undefined &&
+        approval.requestId === candidate.requestId &&
+        approval.requestKind === candidate.requestKind &&
+        approval.createdAt === candidate.createdAt &&
+        approval.detail === candidate.detail
+      );
+    })
+  );
+}
+
+function pendingUserInputsEqual(
+  left: ReadonlyArray<PendingUserInput>,
+  right: ReadonlyArray<PendingUserInput>,
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((userInput, index) => {
+      const candidate = right[index];
+      return (
+        candidate !== undefined &&
+        userInput.requestId === candidate.requestId &&
+        userInput.createdAt === candidate.createdAt &&
+        shallowArrayEqual(userInput.questions, candidate.questions)
+      );
+    })
+  );
+}
+
+function activePlanStatesEqual(
+  left: ActivePlanState | null,
+  right: ActivePlanState | null,
+): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return (
+    left.createdAt === right.createdAt &&
+    left.turnId === right.turnId &&
+    left.explanation === right.explanation &&
+    left.steps.length === right.steps.length &&
+    left.steps.every(
+      (step, index) =>
+        step.step === right.steps[index]?.step && step.status === right.steps[index]?.status,
+    )
+  );
+}
+
+function latestProposedPlansEqual(
+  left: LatestProposedPlanState | null,
+  right: LatestProposedPlanState | null,
+): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return (
+    left.id === right.id &&
+    left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt &&
+    left.turnId === right.turnId &&
+    left.planMarkdown === right.planMarkdown &&
+    left.implementedAt === right.implementedAt &&
+    left.implementationThreadId === right.implementationThreadId
+  );
+}
+
+function workLogEntriesEqual(
+  left: ReadonlyArray<WorkLogEntry>,
+  right: ReadonlyArray<WorkLogEntry>,
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((entry, index) => {
+      const candidate = right[index];
+      return (
+        candidate !== undefined &&
+        entry.id === candidate.id &&
+        entry.createdAt === candidate.createdAt &&
+        entry.label === candidate.label &&
+        entry.tone === candidate.tone &&
+        entry.detail === candidate.detail &&
+        entry.command === candidate.command &&
+        entry.rawCommand === candidate.rawCommand &&
+        entry.toolTitle === candidate.toolTitle &&
+        entry.itemType === candidate.itemType &&
+        entry.requestKind === candidate.requestKind &&
+        shallowArrayEqual(entry.changedFiles ?? [], candidate.changedFiles ?? [])
+      );
+    })
+  );
 }
 
 export function createProjectSelectorByRef(
@@ -107,11 +273,20 @@ export type ThreadBranchToolbarSnapshot = Pick<
   "environmentId" | "projectId" | "worktreePath"
 >;
 
+export type ThreadWorkspaceSnapshot = ThreadBranchToolbarSnapshot;
+
+export type ThreadBranchActionSnapshot = Pick<
+  ThreadShell,
+  "id" | "environmentId" | "projectId" | "branch" | "worktreePath"
+> & {
+  hasSession: boolean;
+};
+
 export function createThreadBranchToolbarSnapshotSelectorByRef(
   ref: ScopedThreadRef | null | undefined,
-): (state: AppState) => ThreadBranchToolbarSnapshot | undefined {
+): (state: AppState) => ThreadWorkspaceSnapshot | undefined {
   let previousShell: EnvironmentState["threadShellById"][ThreadId] | undefined;
-  let previousResult: ThreadBranchToolbarSnapshot | undefined;
+  let previousResult: ThreadWorkspaceSnapshot | undefined;
 
   return (state) => {
     if (!ref) {
@@ -143,6 +318,61 @@ export function createThreadBranchToolbarSnapshotSelectorByRef(
       environmentId: shell.environmentId,
       projectId: shell.projectId,
       worktreePath: shell.worktreePath,
+    };
+    return previousResult;
+  };
+}
+
+export function createThreadBranchActionSnapshotSelectorByRef(
+  ref: ScopedThreadRef | null | undefined,
+): (state: AppState) => ThreadBranchActionSnapshot | undefined {
+  let previousShell: EnvironmentState["threadShellById"][ThreadId] | undefined;
+  let previousSession: ThreadSession | null | undefined;
+  let previousResult: ThreadBranchActionSnapshot | undefined;
+
+  return (state) => {
+    if (!ref) {
+      previousShell = undefined;
+      previousSession = undefined;
+      previousResult = undefined;
+      return undefined;
+    }
+
+    const environmentState = selectEnvironmentState(state, ref.environmentId);
+    const shell = environmentState.threadShellById[ref.threadId];
+    if (!shell) {
+      previousShell = undefined;
+      previousSession = undefined;
+      previousResult = undefined;
+      return undefined;
+    }
+
+    const session = environmentState.threadSessionById[ref.threadId] ?? null;
+    const hasSession = session !== null;
+
+    if (
+      previousResult &&
+      previousShell?.id === shell.id &&
+      previousShell.environmentId === shell.environmentId &&
+      previousShell.projectId === shell.projectId &&
+      previousShell.branch === shell.branch &&
+      previousShell.worktreePath === shell.worktreePath &&
+      (previousSession !== null) === hasSession
+    ) {
+      previousShell = shell;
+      previousSession = session;
+      return previousResult;
+    }
+
+    previousShell = shell;
+    previousSession = session;
+    previousResult = {
+      id: shell.id,
+      environmentId: shell.environmentId,
+      projectId: shell.projectId,
+      branch: shell.branch,
+      worktreePath: shell.worktreePath,
+      hasSession,
     };
     return previousResult;
   };
@@ -330,6 +560,83 @@ export function createThreadRuntimeSnapshotSelectorByRef(
   };
 }
 
+export function createThreadConversationRuntimeSelectorByRef(
+  ref: ScopedThreadRef | null | undefined,
+): (state: AppState) => ThreadConversationRuntimeSnapshot | undefined {
+  let previousSession: ThreadSession | null | undefined;
+  let previousTurnState: ThreadTurnState | undefined;
+  let previousResult: ThreadConversationRuntimeSnapshot | undefined;
+
+  return (state) => {
+    if (!ref) {
+      previousSession = undefined;
+      previousTurnState = undefined;
+      previousResult = undefined;
+      return undefined;
+    }
+
+    const environmentState = selectEnvironmentState(state, ref.environmentId);
+    const shell = environmentState.threadShellById[ref.threadId];
+    if (!shell) {
+      previousSession = undefined;
+      previousTurnState = undefined;
+      previousResult = undefined;
+      return undefined;
+    }
+
+    const session = environmentState.threadSessionById[ref.threadId] ?? null;
+    const turnState = environmentState.threadTurnStateById[ref.threadId];
+    const latestTurn = turnState?.latestTurn ?? null;
+    const phase = derivePhase(session);
+
+    if (
+      previousResult &&
+      previousSession?.provider === session?.provider &&
+      previousSession?.status === session?.status &&
+      previousSession?.activeTurnId === session?.activeTurnId &&
+      previousSession?.orchestrationStatus === session?.orchestrationStatus &&
+      previousTurnState?.latestTurn?.turnId === latestTurn?.turnId &&
+      previousTurnState?.latestTurn?.state === latestTurn?.state &&
+      previousTurnState?.latestTurn?.requestedAt === latestTurn?.requestedAt &&
+      previousTurnState?.latestTurn?.startedAt === latestTurn?.startedAt &&
+      previousTurnState?.latestTurn?.completedAt === latestTurn?.completedAt &&
+      previousTurnState?.latestTurn?.assistantMessageId === latestTurn?.assistantMessageId &&
+      previousTurnState?.latestTurn?.sourceProposedPlan === latestTurn?.sourceProposedPlan &&
+      previousResult.phase === phase
+    ) {
+      previousSession = session;
+      previousTurnState = turnState;
+      return previousResult;
+    }
+
+    previousSession = session;
+    previousTurnState = turnState;
+    previousResult = {
+      session: session
+        ? {
+            provider: session.provider,
+            status: session.status,
+            activeTurnId: session.activeTurnId,
+            orchestrationStatus: session.orchestrationStatus,
+          }
+        : null,
+      latestTurn: latestTurn
+        ? {
+            turnId: latestTurn.turnId,
+            state: latestTurn.state,
+            requestedAt: latestTurn.requestedAt,
+            startedAt: latestTurn.startedAt,
+            completedAt: latestTurn.completedAt,
+            assistantMessageId: latestTurn.assistantMessageId,
+            sourceProposedPlan: latestTurn.sourceProposedPlan,
+          }
+        : null,
+      phase,
+    };
+    return previousResult;
+  };
+}
+
 export function createThreadMessagesSelectorByRef(
   ref: ScopedThreadRef | null | undefined,
 ): (state: AppState) => ChatMessage[] {
@@ -367,17 +674,34 @@ export function createThreadMessagesSelectorByRef(
 export function createThreadMessageIdsSelectorByRef(
   ref: ScopedThreadRef | null | undefined,
 ): (state: AppState) => readonly MessageId[] {
+  let previousIds: readonly MessageId[] | undefined;
   let previousResult: readonly MessageId[] = EMPTY_MESSAGE_IDS;
 
   return (state) => {
     if (!ref) {
+      previousIds = undefined;
       previousResult = EMPTY_MESSAGE_IDS;
       return previousResult;
     }
 
     const environmentState = selectEnvironmentState(state, ref.environmentId);
     const messageIds = environmentState.messageIdsByThreadId[ref.threadId];
-    previousResult = messageIds && messageIds.length > 0 ? messageIds : EMPTY_MESSAGE_IDS;
+
+    if (messageIds && messageIds.length > 0) {
+      if (
+        previousIds &&
+        previousIds.length === messageIds.length &&
+        previousIds.every((id, index) => id === messageIds[index])
+      ) {
+        return previousResult;
+      }
+      previousIds = messageIds;
+      previousResult = messageIds;
+      return previousResult;
+    }
+
+    previousIds = undefined;
+    previousResult = EMPTY_MESSAGE_IDS;
     return previousResult;
   };
 }
@@ -469,6 +793,282 @@ export function createThreadPendingSnapshotSelectorByRef(
   };
 }
 
+export function createThreadComposerSnapshotSelectorByRef(
+  ref: ScopedThreadRef | null | undefined,
+): (state: AppState) => ThreadComposerSnapshot | undefined {
+  let previousResult: ThreadComposerSnapshot | undefined;
+
+  return (state) => {
+    if (!ref) {
+      previousResult = undefined;
+      return undefined;
+    }
+
+    const environmentState = selectEnvironmentState(state, ref.environmentId);
+    const shell = environmentState.threadShellById[ref.threadId];
+    if (!shell) {
+      previousResult = undefined;
+      return undefined;
+    }
+
+    const session = environmentState.threadSessionById[ref.threadId] ?? null;
+    const latestTurn = environmentState.threadTurnStateById[ref.threadId]?.latestTurn ?? null;
+    const activities = collectByIds(
+      environmentState.activityIdsByThreadId[ref.threadId],
+      environmentState.activityByThreadId[ref.threadId],
+    ) as Thread["activities"] extends Array<infer _> ? Thread["activities"] : never;
+    const proposedPlans = collectByIds(
+      environmentState.proposedPlanIdsByThreadId[ref.threadId],
+      environmentState.proposedPlanByThreadId[ref.threadId],
+    ) as Thread["proposedPlans"] extends ProposedPlan[] ? ProposedPlan[] : never;
+
+    const phase = derivePhase(session);
+    const latestTurnSettled = isLatestTurnSettled(latestTurn, session);
+    const pendingApprovals = derivePendingApprovals(activities);
+    const pendingUserInputs = derivePendingUserInputs(activities);
+    const activeProposedPlan = latestTurnSettled
+      ? findLatestProposedPlan(proposedPlans, latestTurn?.turnId ?? null)
+      : null;
+    const activePlan = deriveActivePlanState(activities, latestTurn?.turnId ?? undefined);
+
+    const nextSession = session
+      ? {
+          provider: session.provider,
+          status: session.status,
+          activeTurnId: session.activeTurnId,
+          orchestrationStatus: session.orchestrationStatus,
+        }
+      : null;
+    const nextLatestTurn = latestTurn
+      ? {
+          turnId: latestTurn.turnId,
+          state: latestTurn.state,
+          requestedAt: latestTurn.requestedAt,
+          startedAt: latestTurn.startedAt,
+          completedAt: latestTurn.completedAt,
+          assistantMessageId: latestTurn.assistantMessageId,
+          sourceProposedPlan: latestTurn.sourceProposedPlan,
+        }
+      : null;
+
+    if (
+      previousResult &&
+      previousResult.session?.provider === nextSession?.provider &&
+      previousResult.session?.status === nextSession?.status &&
+      previousResult.session?.activeTurnId === nextSession?.activeTurnId &&
+      previousResult.session?.orchestrationStatus === nextSession?.orchestrationStatus &&
+      previousResult.latestTurn?.turnId === nextLatestTurn?.turnId &&
+      previousResult.latestTurn?.state === nextLatestTurn?.state &&
+      previousResult.latestTurn?.requestedAt === nextLatestTurn?.requestedAt &&
+      previousResult.latestTurn?.startedAt === nextLatestTurn?.startedAt &&
+      previousResult.latestTurn?.completedAt === nextLatestTurn?.completedAt &&
+      previousResult.latestTurn?.assistantMessageId === nextLatestTurn?.assistantMessageId &&
+      previousResult.latestTurn?.sourceProposedPlan === nextLatestTurn?.sourceProposedPlan &&
+      previousResult.phase === phase &&
+      previousResult.latestTurnSettled === latestTurnSettled &&
+      pendingApprovalsEqual(previousResult.pendingApprovals, pendingApprovals) &&
+      pendingUserInputsEqual(previousResult.pendingUserInputs, pendingUserInputs) &&
+      activePlanStatesEqual(previousResult.activePlan, activePlan) &&
+      latestProposedPlansEqual(previousResult.activeProposedPlan, activeProposedPlan)
+    ) {
+      return previousResult;
+    }
+
+    previousResult = {
+      session:
+        previousResult &&
+        previousResult.session?.provider === nextSession?.provider &&
+        previousResult.session?.status === nextSession?.status &&
+        previousResult.session?.activeTurnId === nextSession?.activeTurnId &&
+        previousResult.session?.orchestrationStatus === nextSession?.orchestrationStatus
+          ? previousResult.session
+          : nextSession,
+      latestTurn:
+        previousResult &&
+        previousResult.latestTurn?.turnId === nextLatestTurn?.turnId &&
+        previousResult.latestTurn?.state === nextLatestTurn?.state &&
+        previousResult.latestTurn?.requestedAt === nextLatestTurn?.requestedAt &&
+        previousResult.latestTurn?.startedAt === nextLatestTurn?.startedAt &&
+        previousResult.latestTurn?.completedAt === nextLatestTurn?.completedAt &&
+        previousResult.latestTurn?.assistantMessageId === nextLatestTurn?.assistantMessageId &&
+        previousResult.latestTurn?.sourceProposedPlan === nextLatestTurn?.sourceProposedPlan
+          ? previousResult.latestTurn
+          : nextLatestTurn,
+      phase,
+      latestTurnSettled,
+      pendingApprovals:
+        previousResult && pendingApprovalsEqual(previousResult.pendingApprovals, pendingApprovals)
+          ? previousResult.pendingApprovals
+          : pendingApprovals,
+      pendingUserInputs:
+        previousResult &&
+        pendingUserInputsEqual(previousResult.pendingUserInputs, pendingUserInputs)
+          ? previousResult.pendingUserInputs
+          : pendingUserInputs,
+      activeProposedPlan:
+        previousResult &&
+        latestProposedPlansEqual(previousResult.activeProposedPlan, activeProposedPlan)
+          ? previousResult.activeProposedPlan
+          : activeProposedPlan,
+      activePlan:
+        previousResult && activePlanStatesEqual(previousResult.activePlan, activePlan)
+          ? previousResult.activePlan
+          : activePlan,
+    };
+    return previousResult;
+  };
+}
+
+export function createThreadTimelineSliceSelectorByRef(
+  ref: ScopedThreadRef | null | undefined,
+): (state: AppState) => ThreadTimelineSliceSnapshot {
+  let previousResult: ThreadTimelineSliceSnapshot = {
+    historicalMessages: EMPTY_MESSAGES,
+    liveMessages: EMPTY_MESSAGES,
+    historicalProposedPlans: EMPTY_PROPOSED_PLANS,
+    liveProposedPlans: EMPTY_PROPOSED_PLANS,
+    turnDiffSummaries: EMPTY_TURN_DIFF_SUMMARIES,
+    activeWorkEntries: [],
+    latestTurnHasToolActivity: false,
+  };
+
+  return (state) => {
+    if (!ref) {
+      previousResult = {
+        historicalMessages: EMPTY_MESSAGES,
+        liveMessages: EMPTY_MESSAGES,
+        historicalProposedPlans: EMPTY_PROPOSED_PLANS,
+        liveProposedPlans: EMPTY_PROPOSED_PLANS,
+        turnDiffSummaries: EMPTY_TURN_DIFF_SUMMARIES,
+        activeWorkEntries: [],
+        latestTurnHasToolActivity: false,
+      };
+      return previousResult;
+    }
+
+    const environmentState = selectEnvironmentState(state, ref.environmentId);
+    const shell = environmentState.threadShellById[ref.threadId];
+    if (!shell) {
+      previousResult = {
+        historicalMessages: EMPTY_MESSAGES,
+        liveMessages: EMPTY_MESSAGES,
+        historicalProposedPlans: EMPTY_PROPOSED_PLANS,
+        liveProposedPlans: EMPTY_PROPOSED_PLANS,
+        turnDiffSummaries: EMPTY_TURN_DIFF_SUMMARIES,
+        activeWorkEntries: [],
+        latestTurnHasToolActivity: false,
+      };
+      return previousResult;
+    }
+
+    const messages = collectByIds(
+      environmentState.messageIdsByThreadId[ref.threadId],
+      environmentState.messageByThreadId[ref.threadId],
+    ) as Thread["messages"] extends ChatMessage[] ? ChatMessage[] : never;
+    const proposedPlans = collectByIds(
+      environmentState.proposedPlanIdsByThreadId[ref.threadId],
+      environmentState.proposedPlanByThreadId[ref.threadId],
+    ) as Thread["proposedPlans"] extends ProposedPlan[] ? ProposedPlan[] : never;
+    const turnDiffSummaries = collectByIds(
+      environmentState.turnDiffIdsByThreadId[ref.threadId],
+      environmentState.turnDiffSummaryByThreadId[ref.threadId],
+    ) as Thread["turnDiffSummaries"] extends TurnDiffSummary[] ? TurnDiffSummary[] : never;
+    const activities = collectByIds(
+      environmentState.activityIdsByThreadId[ref.threadId],
+      environmentState.activityByThreadId[ref.threadId],
+    ) as Thread["activities"] extends Array<infer _> ? Thread["activities"] : never;
+    const latestTurn = environmentState.threadTurnStateById[ref.threadId]?.latestTurn ?? null;
+    const activeAssistantMessageId = latestTurn?.assistantMessageId ?? null;
+    const activeTurnId = latestTurn?.turnId ?? undefined;
+
+    const historicalMessages =
+      activeAssistantMessageId === null
+        ? messages
+        : messages.filter((message) => message.id !== activeAssistantMessageId);
+    const liveMessages =
+      activeAssistantMessageId === null
+        ? EMPTY_MESSAGES
+        : messages.filter((message) => message.id === activeAssistantMessageId);
+    const historicalProposedPlans =
+      activeTurnId === undefined
+        ? proposedPlans
+        : proposedPlans.filter((plan) => plan.turnId !== activeTurnId);
+    const liveProposedPlans =
+      activeTurnId === undefined
+        ? EMPTY_PROPOSED_PLANS
+        : proposedPlans.filter((plan) => plan.turnId === activeTurnId);
+    const activeWorkEntries = deriveWorkLogEntries(activities, activeTurnId);
+    const latestTurnHasToolActivity = hasToolActivityForTurn(activities, activeTurnId);
+
+    const nextHistoricalMessages = shallowArrayEqual(
+      previousResult.historicalMessages,
+      historicalMessages,
+    )
+      ? previousResult.historicalMessages
+      : historicalMessages.length === 0
+        ? EMPTY_MESSAGES
+        : historicalMessages;
+    const nextLiveMessages = shallowArrayEqual(previousResult.liveMessages, liveMessages)
+      ? previousResult.liveMessages
+      : liveMessages.length === 0
+        ? EMPTY_MESSAGES
+        : liveMessages;
+    const nextHistoricalProposedPlans = shallowArrayEqual(
+      previousResult.historicalProposedPlans,
+      historicalProposedPlans,
+    )
+      ? previousResult.historicalProposedPlans
+      : historicalProposedPlans.length === 0
+        ? EMPTY_PROPOSED_PLANS
+        : historicalProposedPlans;
+    const nextLiveProposedPlans = shallowArrayEqual(
+      previousResult.liveProposedPlans,
+      liveProposedPlans,
+    )
+      ? previousResult.liveProposedPlans
+      : liveProposedPlans.length === 0
+        ? EMPTY_PROPOSED_PLANS
+        : liveProposedPlans;
+    const nextTurnDiffSummaries = shallowArrayEqual(
+      previousResult.turnDiffSummaries,
+      turnDiffSummaries,
+    )
+      ? previousResult.turnDiffSummaries
+      : turnDiffSummaries.length === 0
+        ? EMPTY_TURN_DIFF_SUMMARIES
+        : turnDiffSummaries;
+    const nextActiveWorkEntries = workLogEntriesEqual(
+      previousResult.activeWorkEntries,
+      activeWorkEntries,
+    )
+      ? previousResult.activeWorkEntries
+      : activeWorkEntries;
+
+    if (
+      previousResult.historicalMessages === nextHistoricalMessages &&
+      previousResult.liveMessages === nextLiveMessages &&
+      previousResult.historicalProposedPlans === nextHistoricalProposedPlans &&
+      previousResult.liveProposedPlans === nextLiveProposedPlans &&
+      previousResult.turnDiffSummaries === nextTurnDiffSummaries &&
+      previousResult.activeWorkEntries === nextActiveWorkEntries &&
+      previousResult.latestTurnHasToolActivity === latestTurnHasToolActivity
+    ) {
+      return previousResult;
+    }
+
+    previousResult = {
+      historicalMessages: nextHistoricalMessages,
+      liveMessages: nextLiveMessages,
+      historicalProposedPlans: nextHistoricalProposedPlans,
+      liveProposedPlans: nextLiveProposedPlans,
+      turnDiffSummaries: nextTurnDiffSummaries,
+      activeWorkEntries: nextActiveWorkEntries,
+      latestTurnHasToolActivity,
+    };
+    return previousResult;
+  };
+}
+
 export function createThreadProposedPlansSelectorByRef(
   ref: ScopedThreadRef | null | undefined,
 ): (state: AppState) => Thread["proposedPlans"] {
@@ -532,8 +1132,11 @@ export function createThreadTurnDiffSummariesSelectorByRef(
       turnDiffIds,
       turnDiffsById,
     ) as Thread["turnDiffSummaries"] extends TurnDiffSummary[] ? TurnDiffSummary[] : never;
-    previousResult =
-      nextTurnDiffSummaries.length === 0 ? EMPTY_TURN_DIFF_SUMMARIES : nextTurnDiffSummaries;
+    previousResult = shallowArrayEqual(previousResult, nextTurnDiffSummaries)
+      ? previousResult
+      : nextTurnDiffSummaries.length === 0
+        ? EMPTY_TURN_DIFF_SUMMARIES
+        : nextTurnDiffSummaries;
     return previousResult;
   };
 }

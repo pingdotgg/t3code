@@ -64,8 +64,6 @@ import {
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
 
-const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
-
 interface MessagesTimelineProps {
   hasMessages: boolean;
   isWorking: boolean;
@@ -73,7 +71,8 @@ interface MessagesTimelineProps {
   activeTurnId?: TurnId | null;
   activeTurnStartedAt: string | null;
   scrollContainer: HTMLDivElement | null;
-  timelineEntries: ReturnType<typeof deriveTimelineEntries>;
+  historicalTimelineEntries: ReturnType<typeof deriveTimelineEntries>;
+  liveTimelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
@@ -105,18 +104,18 @@ interface MessagesTimelineProps {
   }) => void;
 }
 
-export const MessagesTimeline = memo(function MessagesTimeline({
-  hasMessages,
-  isWorking,
-  activeTurnInProgress,
-  activeTurnId,
-  activeTurnStartedAt,
+export const TimelineEmptyState = memo(function TimelineEmptyState() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <p className="text-sm text-muted-foreground/30">Send a message to start the conversation.</p>
+    </div>
+  );
+});
+
+export const HistoricalMessagesTimelineSection = memo(function HistoricalMessagesTimelineSection({
   scrollContainer,
-  timelineEntries,
-  completionDividerBeforeEntryId,
-  completionSummary,
+  historicalTimelineEntries,
   turnDiffSummaryByAssistantMessageId,
-  nowIso,
   expandedWorkGroups,
   onToggleWorkGroup,
   changedFilesExpandedByTurnId,
@@ -132,7 +131,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   onVirtualizerSnapshot,
-}: MessagesTimelineProps) {
+}: Pick<
+  MessagesTimelineProps,
+  | "scrollContainer"
+  | "historicalTimelineEntries"
+  | "turnDiffSummaryByAssistantMessageId"
+  | "expandedWorkGroups"
+  | "onToggleWorkGroup"
+  | "changedFilesExpandedByTurnId"
+  | "onSetChangedFilesExpanded"
+  | "onOpenTurnDiff"
+  | "revertTurnCountByUserMessageId"
+  | "onRevertUserMessage"
+  | "isRevertingCheckpoint"
+  | "onImageExpand"
+  | "activeThreadEnvironmentId"
+  | "markdownCwd"
+  | "resolvedTheme"
+  | "timestampFormat"
+  | "workspaceRoot"
+  | "onVirtualizerSnapshot"
+>) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
 
@@ -159,60 +178,23 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return () => {
       observer.disconnect();
     };
-  }, [hasMessages, isWorking]);
+  }, []);
 
-  const rows = useMemo(
+  const historicalRawRows = useMemo(
     () =>
       deriveMessagesTimelineRows({
-        timelineEntries,
-        completionDividerBeforeEntryId,
-        isWorking,
-        activeTurnStartedAt,
+        timelineEntries: historicalTimelineEntries,
+        completionDividerBeforeEntryId: null,
+        isWorking: false,
+        activeTurnStartedAt: null,
       }),
-    [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt],
+    [historicalTimelineEntries],
   );
+  const historicalRows = useStableTimelineRows(historicalRawRows);
 
-  const firstUnvirtualizedRowIndex = useMemo(() => {
-    const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
-    if (!activeTurnInProgress) return firstTailRowIndex;
-
-    const turnStartedAtMs =
-      typeof activeTurnStartedAt === "string" ? Date.parse(activeTurnStartedAt) : Number.NaN;
-    let firstCurrentTurnRowIndex = -1;
-    if (!Number.isNaN(turnStartedAtMs)) {
-      firstCurrentTurnRowIndex = rows.findIndex((row) => {
-        if (row.kind === "working") return true;
-        if (!row.createdAt) return false;
-        const rowCreatedAtMs = Date.parse(row.createdAt);
-        return !Number.isNaN(rowCreatedAtMs) && rowCreatedAtMs >= turnStartedAtMs;
-      });
-    }
-
-    if (firstCurrentTurnRowIndex < 0) {
-      firstCurrentTurnRowIndex = rows.findIndex(
-        (row) => row.kind === "message" && row.message.streaming,
-      );
-    }
-
-    if (firstCurrentTurnRowIndex < 0) return firstTailRowIndex;
-
-    for (let index = firstCurrentTurnRowIndex - 1; index >= 0; index -= 1) {
-      const previousRow = rows[index];
-      if (!previousRow || previousRow.kind !== "message") continue;
-      if (previousRow.message.role === "user") {
-        return Math.min(index, firstTailRowIndex);
-      }
-      if (previousRow.message.role === "assistant" && !previousRow.message.streaming) {
-        break;
-      }
-    }
-
-    return Math.min(firstCurrentTurnRowIndex, firstTailRowIndex);
-  }, [activeTurnInProgress, activeTurnStartedAt, rows]);
-
-  const virtualizedRowCount = clamp(firstUnvirtualizedRowIndex, {
+  const virtualizedRowCount = clamp(historicalRows.length, {
     minimum: 0,
-    maximum: rows.length,
+    maximum: historicalRows.length,
   });
   const virtualMeasurementScopeKey =
     timelineWidthPx === null ? "width:unknown" : `width:${Math.round(timelineWidthPx)}`;
@@ -223,11 +205,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     // Scope cached row measurements to the current timeline width so offscreen
     // rows do not keep stale heights after wrapping changes.
     getItemKey: (index: number) => {
-      const rowId = rows[index]?.id ?? String(index);
+      const rowId = historicalRows[index]?.id ?? String(index);
       return `${virtualMeasurementScopeKey}:${rowId}`;
     },
     estimateSize: (index: number) => {
-      const row = rows[index];
+      const row = historicalRows[index];
       if (!row) return 96;
       return estimateMessagesTimelineRowHeight(row, {
         expandedWorkGroups,
@@ -284,7 +266,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       measurements: rowVirtualizer.measurementsCache
         .slice(0, virtualizedRowCount)
         .flatMap((measurement) => {
-          const row = rows[measurement.index];
+          const row = historicalRows[measurement.index];
           if (!row) {
             return [];
           }
@@ -300,95 +282,268 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           ];
         }),
     });
-  }, [onVirtualizerSnapshot, rowVirtualizer, rows, virtualizedRowCount]);
+  }, [historicalRows, onVirtualizerSnapshot, rowVirtualizer, virtualizedRowCount]);
 
-  const virtualRows = rowVirtualizer.getVirtualItems();
-  const nonVirtualizedRows = rows.slice(virtualizedRowCount);
+  const virtualRows = useStableVirtualRows(rowVirtualizer.getVirtualItems());
 
-  const renderRowContent = (row: TimelineRow) => {
-    const turnDiffSummary =
-      row.kind === "message" && row.message.role === "assistant"
-        ? (turnDiffSummaryByAssistantMessageId.get(row.message.id) ?? null)
-        : null;
+  const renderHistoricalRowContent = useCallback(
+    (row: TimelineRow) => {
+      const turnDiffSummary =
+        row.kind === "message" && row.message.role === "assistant"
+          ? (turnDiffSummaryByAssistantMessageId.get(row.message.id) ?? null)
+          : null;
 
-    return (
-      <TimelineRowItem
-        row={row}
-        completionSummary={completionSummary}
-        turnDiffSummary={turnDiffSummary}
-        isExpandedWorkGroup={row.kind === "work" ? (expandedWorkGroups[row.id] ?? false) : false}
-        changedFilesExpanded={
-          turnDiffSummary ? (changedFilesExpandedByTurnId[turnDiffSummary.turnId] ?? true) : true
-        }
-        canRevertAgentWork={
-          row.kind === "message" && row.message.role === "user"
-            ? revertTurnCountByUserMessageId.has(row.message.id)
-            : false
-        }
-        activeTurnInProgress={activeTurnInProgress}
-        activeTurnId={activeTurnId}
-        isWorking={isWorking}
-        isRevertingCheckpoint={isRevertingCheckpoint}
-        activeThreadEnvironmentId={activeThreadEnvironmentId}
-        markdownCwd={markdownCwd}
-        resolvedTheme={resolvedTheme}
-        timestampFormat={timestampFormat}
-        workspaceRoot={workspaceRoot}
-        nowIso={nowIso}
-        onToggleWorkGroup={onToggleWorkGroup}
-        onSetChangedFilesExpanded={onSetChangedFilesExpanded}
-        onOpenTurnDiff={onOpenTurnDiff}
-        onRevertUserMessage={onRevertUserMessage}
-        onImageExpand={onImageExpand}
-        onTimelineImageLoad={onTimelineImageLoad}
-      />
-    );
-  };
+      return (
+        <TimelineRowItem
+          row={row}
+          completionSummary={null}
+          turnDiffSummary={turnDiffSummary}
+          isExpandedWorkGroup={row.kind === "work" ? (expandedWorkGroups[row.id] ?? false) : false}
+          changedFilesExpanded={
+            turnDiffSummary ? (changedFilesExpandedByTurnId[turnDiffSummary.turnId] ?? true) : true
+          }
+          canRevertAgentWork={
+            row.kind === "message" && row.message.role === "user"
+              ? revertTurnCountByUserMessageId.has(row.message.id)
+              : false
+          }
+          activeTurnInProgress={false}
+          activeTurnId={null}
+          isWorking={false}
+          isRevertingCheckpoint={isRevertingCheckpoint}
+          activeThreadEnvironmentId={activeThreadEnvironmentId}
+          markdownCwd={markdownCwd}
+          resolvedTheme={resolvedTheme}
+          timestampFormat={timestampFormat}
+          workspaceRoot={workspaceRoot}
+          nowIso={undefined}
+          onToggleWorkGroup={onToggleWorkGroup}
+          onSetChangedFilesExpanded={onSetChangedFilesExpanded}
+          onOpenTurnDiff={onOpenTurnDiff}
+          onRevertUserMessage={onRevertUserMessage}
+          onImageExpand={onImageExpand}
+          onTimelineImageLoad={onTimelineImageLoad}
+        />
+      );
+    },
+    [
+      activeThreadEnvironmentId,
+      changedFilesExpandedByTurnId,
+      expandedWorkGroups,
+      isRevertingCheckpoint,
+      markdownCwd,
+      onImageExpand,
+      onOpenTurnDiff,
+      onRevertUserMessage,
+      onSetChangedFilesExpanded,
+      onTimelineImageLoad,
+      onToggleWorkGroup,
+      resolvedTheme,
+      revertTurnCountByUserMessageId,
+      timestampFormat,
+      turnDiffSummaryByAssistantMessageId,
+      workspaceRoot,
+    ],
+  );
 
-  if (!hasMessages && !isWorking) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground/30">
-          Send a message to start the conversation.
-        </p>
-      </div>
-    );
+  return (
+    <div ref={timelineRootRef} data-timeline-root="true" className="w-full overflow-x-hidden">
+      {virtualizedRowCount > 0 && (
+        <HistoricalTimelineRows
+          rows={historicalRows}
+          virtualRows={virtualRows}
+          totalSize={rowVirtualizer.getTotalSize()}
+          measureElement={rowVirtualizer.measureElement}
+          renderRowContent={renderHistoricalRowContent}
+        />
+      )}
+    </div>
+  );
+});
+
+export const LiveMessagesTimelineSection = memo(function LiveMessagesTimelineSection({
+  isWorking,
+  activeTurnInProgress,
+  activeTurnId,
+  activeTurnStartedAt,
+  liveTimelineEntries,
+  completionDividerBeforeEntryId,
+  completionSummary,
+  turnDiffSummaryByAssistantMessageId,
+  nowIso,
+  expandedWorkGroups,
+  onToggleWorkGroup,
+  changedFilesExpandedByTurnId,
+  onSetChangedFilesExpanded,
+  onOpenTurnDiff,
+  revertTurnCountByUserMessageId,
+  onRevertUserMessage,
+  isRevertingCheckpoint,
+  onImageExpand,
+  activeThreadEnvironmentId,
+  markdownCwd,
+  resolvedTheme,
+  timestampFormat,
+  workspaceRoot,
+}: Pick<
+  MessagesTimelineProps,
+  | "isWorking"
+  | "activeTurnInProgress"
+  | "activeTurnId"
+  | "activeTurnStartedAt"
+  | "liveTimelineEntries"
+  | "completionDividerBeforeEntryId"
+  | "completionSummary"
+  | "turnDiffSummaryByAssistantMessageId"
+  | "nowIso"
+  | "expandedWorkGroups"
+  | "onToggleWorkGroup"
+  | "changedFilesExpandedByTurnId"
+  | "onSetChangedFilesExpanded"
+  | "onOpenTurnDiff"
+  | "revertTurnCountByUserMessageId"
+  | "onRevertUserMessage"
+  | "isRevertingCheckpoint"
+  | "onImageExpand"
+  | "activeThreadEnvironmentId"
+  | "markdownCwd"
+  | "resolvedTheme"
+  | "timestampFormat"
+  | "workspaceRoot"
+>) {
+  const liveRawRows = useMemo(
+    () =>
+      deriveMessagesTimelineRows({
+        timelineEntries: liveTimelineEntries,
+        completionDividerBeforeEntryId,
+        isWorking,
+        activeTurnStartedAt,
+      }),
+    [activeTurnStartedAt, completionDividerBeforeEntryId, isWorking, liveTimelineEntries],
+  );
+  const liveRows = useStableTimelineRows(liveRawRows);
+
+  const renderLiveRowContent = useCallback(
+    (row: TimelineRow) => {
+      const turnDiffSummary =
+        row.kind === "message" && row.message.role === "assistant"
+          ? (turnDiffSummaryByAssistantMessageId.get(row.message.id) ?? null)
+          : null;
+
+      return (
+        <TimelineRowItem
+          row={row}
+          completionSummary={completionSummary}
+          turnDiffSummary={turnDiffSummary}
+          isExpandedWorkGroup={row.kind === "work" ? (expandedWorkGroups[row.id] ?? false) : false}
+          changedFilesExpanded={
+            turnDiffSummary ? (changedFilesExpandedByTurnId[turnDiffSummary.turnId] ?? true) : true
+          }
+          canRevertAgentWork={
+            row.kind === "message" && row.message.role === "user"
+              ? revertTurnCountByUserMessageId.has(row.message.id)
+              : false
+          }
+          activeTurnInProgress={activeTurnInProgress}
+          activeTurnId={activeTurnId}
+          isWorking={isWorking}
+          isRevertingCheckpoint={isRevertingCheckpoint}
+          activeThreadEnvironmentId={activeThreadEnvironmentId}
+          markdownCwd={markdownCwd}
+          resolvedTheme={resolvedTheme}
+          timestampFormat={timestampFormat}
+          workspaceRoot={workspaceRoot}
+          nowIso={nowIso}
+          onToggleWorkGroup={onToggleWorkGroup}
+          onSetChangedFilesExpanded={onSetChangedFilesExpanded}
+          onOpenTurnDiff={onOpenTurnDiff}
+          onRevertUserMessage={onRevertUserMessage}
+          onImageExpand={onImageExpand}
+          onTimelineImageLoad={() => {}}
+        />
+      );
+    },
+    [
+      activeThreadEnvironmentId,
+      activeTurnId,
+      activeTurnInProgress,
+      changedFilesExpandedByTurnId,
+      completionSummary,
+      expandedWorkGroups,
+      isRevertingCheckpoint,
+      isWorking,
+      markdownCwd,
+      nowIso,
+      onImageExpand,
+      onOpenTurnDiff,
+      onRevertUserMessage,
+      onSetChangedFilesExpanded,
+      onToggleWorkGroup,
+      resolvedTheme,
+      revertTurnCountByUserMessageId,
+      timestampFormat,
+      turnDiffSummaryByAssistantMessageId,
+      workspaceRoot,
+    ],
+  );
+
+  return <LiveTimelineRows rows={liveRows} renderRowContent={renderLiveRowContent} />;
+});
+
+export const MessagesTimeline = memo(function MessagesTimeline(props: MessagesTimelineProps) {
+  if (!props.hasMessages && !props.isWorking) {
+    return <TimelineEmptyState />;
   }
 
   return (
-    <div
-      ref={timelineRootRef}
-      data-timeline-root="true"
-      className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden"
-    >
-      {virtualizedRowCount > 0 && (
-        <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
-          {virtualRows.map((virtualRow: VirtualItem) => {
-            const row = rows[virtualRow.index];
-            if (!row) return null;
-
-            return (
-              <div
-                key={`virtual-row:${row.id}`}
-                data-index={virtualRow.index}
-                data-virtual-row-id={row.id}
-                data-virtual-row-kind={row.kind}
-                data-virtual-row-size={virtualRow.size}
-                data-virtual-row-start={virtualRow.start}
-                ref={rowVirtualizer.measureElement}
-                className="absolute left-0 top-0 w-full"
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
-              >
-                {renderRowContent(row)}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {nonVirtualizedRows.map((row) => (
-        <div key={`non-virtual-row:${row.id}`}>{renderRowContent(row)}</div>
-      ))}
+    <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden">
+      <HistoricalMessagesTimelineSection
+        scrollContainer={props.scrollContainer}
+        historicalTimelineEntries={props.historicalTimelineEntries}
+        turnDiffSummaryByAssistantMessageId={props.turnDiffSummaryByAssistantMessageId}
+        expandedWorkGroups={props.expandedWorkGroups}
+        onToggleWorkGroup={props.onToggleWorkGroup}
+        changedFilesExpandedByTurnId={props.changedFilesExpandedByTurnId}
+        onSetChangedFilesExpanded={props.onSetChangedFilesExpanded}
+        onOpenTurnDiff={props.onOpenTurnDiff}
+        revertTurnCountByUserMessageId={props.revertTurnCountByUserMessageId}
+        onRevertUserMessage={props.onRevertUserMessage}
+        isRevertingCheckpoint={props.isRevertingCheckpoint}
+        onImageExpand={props.onImageExpand}
+        activeThreadEnvironmentId={props.activeThreadEnvironmentId}
+        markdownCwd={props.markdownCwd}
+        resolvedTheme={props.resolvedTheme}
+        timestampFormat={props.timestampFormat}
+        workspaceRoot={props.workspaceRoot}
+        {...(props.onVirtualizerSnapshot
+          ? { onVirtualizerSnapshot: props.onVirtualizerSnapshot }
+          : {})}
+      />
+      <LiveMessagesTimelineSection
+        isWorking={props.isWorking}
+        activeTurnInProgress={props.activeTurnInProgress}
+        activeTurnStartedAt={props.activeTurnStartedAt}
+        liveTimelineEntries={props.liveTimelineEntries}
+        completionDividerBeforeEntryId={props.completionDividerBeforeEntryId}
+        completionSummary={props.completionSummary}
+        turnDiffSummaryByAssistantMessageId={props.turnDiffSummaryByAssistantMessageId}
+        expandedWorkGroups={props.expandedWorkGroups}
+        onToggleWorkGroup={props.onToggleWorkGroup}
+        changedFilesExpandedByTurnId={props.changedFilesExpandedByTurnId}
+        onSetChangedFilesExpanded={props.onSetChangedFilesExpanded}
+        onOpenTurnDiff={props.onOpenTurnDiff}
+        revertTurnCountByUserMessageId={props.revertTurnCountByUserMessageId}
+        onRevertUserMessage={props.onRevertUserMessage}
+        isRevertingCheckpoint={props.isRevertingCheckpoint}
+        onImageExpand={props.onImageExpand}
+        activeThreadEnvironmentId={props.activeThreadEnvironmentId}
+        markdownCwd={props.markdownCwd}
+        resolvedTheme={props.resolvedTheme}
+        timestampFormat={props.timestampFormat}
+        workspaceRoot={props.workspaceRoot}
+        {...(props.nowIso !== undefined ? { nowIso: props.nowIso } : {})}
+        {...(props.activeTurnId !== undefined ? { activeTurnId: props.activeTurnId } : {})}
+      />
     </div>
   );
 });
@@ -397,6 +552,125 @@ type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
+
+const HistoricalTimelineRows = memo(function HistoricalTimelineRows(props: {
+  rows: ReadonlyArray<TimelineRow>;
+  virtualRows: ReadonlyArray<VirtualItem>;
+  totalSize: number;
+  measureElement: (element: Element | null) => void;
+  renderRowContent: (row: TimelineRow) => ReactNode;
+}) {
+  if (props.rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="relative" style={{ height: `${props.totalSize}px` }}>
+      {props.virtualRows.map((virtualRow) => {
+        const row = props.rows[virtualRow.index];
+        if (!row) return null;
+
+        return (
+          <div
+            key={`virtual-row:${row.id}`}
+            data-index={virtualRow.index}
+            data-virtual-row-id={row.id}
+            data-virtual-row-kind={row.kind}
+            data-virtual-row-size={virtualRow.size}
+            data-virtual-row-start={virtualRow.start}
+            ref={props.measureElement}
+            className="absolute left-0 top-0 w-full"
+            style={{ transform: `translateY(${virtualRow.start}px)` }}
+          >
+            {props.renderRowContent(row)}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
+const LiveTimelineRows = memo(function LiveTimelineRows(props: {
+  rows: ReadonlyArray<TimelineRow>;
+  renderRowContent: (row: TimelineRow) => ReactNode;
+}) {
+  return props.rows.map((row) => (
+    <div key={`non-virtual-row:${row.id}`}>{props.renderRowContent(row)}</div>
+  ));
+});
+
+function useStableTimelineRows(rows: ReadonlyArray<TimelineRow>): ReadonlyArray<TimelineRow> {
+  const previousRowsRef = useRef<ReadonlyArray<TimelineRow>>([]);
+  const stabilizedRows = rows.map((row, index) => {
+    const previousRow = previousRowsRef.current[index];
+    return canReuseTimelineRow(previousRow, row) ? previousRow : row;
+  });
+
+  previousRowsRef.current = stabilizedRows;
+  return stabilizedRows;
+}
+
+function useStableVirtualRows(rows: ReadonlyArray<VirtualItem>): ReadonlyArray<VirtualItem> {
+  const previousRowsRef = useRef<ReadonlyArray<VirtualItem>>([]);
+  const previousRows = previousRowsRef.current;
+  const hasSameRows =
+    previousRows.length === rows.length &&
+    previousRows.every((row, index) => {
+      const candidate = rows[index];
+      return (
+        candidate !== undefined &&
+        row.index === candidate.index &&
+        row.start === candidate.start &&
+        row.end === candidate.end &&
+        row.size === candidate.size &&
+        row.key === candidate.key
+      );
+    });
+
+  if (hasSameRows) {
+    return previousRows;
+  }
+
+  previousRowsRef.current = rows;
+  return rows;
+}
+
+function canReuseTimelineRow(
+  previous: TimelineRow | undefined,
+  next: TimelineRow,
+): previous is TimelineRow {
+  if (!previous || previous.kind !== next.kind || previous.id !== next.id) {
+    return false;
+  }
+
+  switch (next.kind) {
+    case "message": {
+      const previousMessageRow = previous as Extract<TimelineRow, { kind: "message" }>;
+      const nextMessageRow = next as Extract<TimelineRow, { kind: "message" }>;
+      return (
+        previousMessageRow.message === nextMessageRow.message &&
+        previousMessageRow.durationStart === nextMessageRow.durationStart &&
+        previousMessageRow.showCompletionDivider === nextMessageRow.showCompletionDivider &&
+        previousMessageRow.showAssistantCopyButton === nextMessageRow.showAssistantCopyButton
+      );
+    }
+    case "proposed-plan": {
+      const previousProposedPlanRow = previous as Extract<TimelineRow, { kind: "proposed-plan" }>;
+      const nextProposedPlanRow = next as Extract<TimelineRow, { kind: "proposed-plan" }>;
+      return previousProposedPlanRow.proposedPlan === nextProposedPlanRow.proposedPlan;
+    }
+    case "working": {
+      const previousWorkingRow = previous as Extract<TimelineRow, { kind: "working" }>;
+      const nextWorkingRow = next as Extract<TimelineRow, { kind: "working" }>;
+      return previousWorkingRow.createdAt === nextWorkingRow.createdAt;
+    }
+    case "work": {
+      const previousWorkRow = previous as Extract<TimelineRow, { kind: "work" }>;
+      const nextWorkRow = next as Extract<TimelineRow, { kind: "work" }>;
+      return workEntriesEqual(previousWorkRow.groupedEntries, nextWorkRow.groupedEntries);
+    }
+  }
+}
 
 interface TimelineRowItemProps {
   row: TimelineRow;

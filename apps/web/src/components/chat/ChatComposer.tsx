@@ -101,7 +101,9 @@ import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
-import { type ContextWindowSnapshot } from "../../lib/contextWindow";
+import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
+import { createThreadActivitiesSelectorByRef } from "../../storeSelectors";
+import { useStore } from "../../store";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -256,7 +258,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
-  activeContextWindow: ContextWindowSnapshot | null;
+  routeKind: "server" | "draft";
+  routeThreadRef: ScopedThreadRef;
+  draftThreadActivities: Thread["activities"];
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -277,7 +281,11 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 }) {
   return (
     <>
-      {props.activeContextWindow ? <ContextWindowMeter usage={props.activeContextWindow} /> : null}
+      <ComposerContextWindowMeterContainer
+        routeKind={props.routeKind}
+        routeThreadRef={props.routeThreadRef}
+        draftThreadActivities={props.draftThreadActivities}
+      />
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
       ) : null}
@@ -298,6 +306,32 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     </>
   );
 });
+
+const ComposerContextWindowMeterContainer = memo(
+  function ComposerContextWindowMeterContainer(props: {
+    routeKind: "server" | "draft";
+    routeThreadRef: ScopedThreadRef;
+    draftThreadActivities: Thread["activities"];
+  }) {
+    const serverThreadActivities = useStore(
+      useMemo(
+        () =>
+          createThreadActivitiesSelectorByRef(
+            props.routeKind === "server" ? props.routeThreadRef : null,
+          ),
+        [props.routeKind, props.routeThreadRef],
+      ),
+    );
+    const threadActivities =
+      props.routeKind === "server" ? serverThreadActivities : props.draftThreadActivities;
+    const activeContextWindow = useMemo(
+      () => deriveLatestContextWindowSnapshot(threadActivities),
+      [threadActivities],
+    );
+
+    return activeContextWindow ? <ContextWindowMeter usage={activeContextWindow} /> : null;
+  },
+);
 
 // --------------------------------------------------------------------------
 // Handle exposed to ChatView
@@ -390,9 +424,7 @@ export interface ChatComposerProps {
   providerStatuses: ServerProvider[];
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
-
-  // Context window
-  activeContextWindow: ContextWindowSnapshot | null;
+  draftThreadActivities: Thread["activities"];
 
   // Misc
   resolvedTheme: "light" | "dark";
@@ -479,7 +511,7 @@ export const ChatComposer = memo(
       providerStatuses,
       activeProjectDefaultModelSelection,
       activeThreadModelSelection,
-      activeContextWindow,
+      draftThreadActivities,
       resolvedTheme,
       settings,
       gitCwd,
@@ -1957,7 +1989,9 @@ export const ChatComposer = memo(
                 >
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
-                    activeContextWindow={activeContextWindow}
+                    routeKind={routeKind}
+                    routeThreadRef={routeThreadRef}
+                    draftThreadActivities={draftThreadActivities}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     showPlanFollowUpPrompt={
@@ -2022,7 +2056,7 @@ function areChatComposerPropsEqual(
     previous.providerStatuses === next.providerStatuses &&
     previous.activeProjectDefaultModelSelection === next.activeProjectDefaultModelSelection &&
     previous.activeThreadModelSelection === next.activeThreadModelSelection &&
-    contextWindowSnapshotsEqual(previous.activeContextWindow, next.activeContextWindow) &&
+    previous.draftThreadActivities === next.draftThreadActivities &&
     previous.resolvedTheme === next.resolvedTheme &&
     previous.settings === next.settings &&
     previous.gitCwd === next.gitCwd &&
@@ -2109,37 +2143,4 @@ function pendingProgressEqual(
 
 function proposedPlanIdentity(plan: ChatComposerProps["activeProposedPlan"]): string | null {
   return plan ? `${plan.id}:${plan.updatedAt}:${plan.implementedAt ?? ""}` : null;
-}
-
-function contextWindowSnapshotsEqual(
-  previous: ContextWindowSnapshot | null,
-  next: ContextWindowSnapshot | null,
-): boolean {
-  if (previous === next) {
-    return true;
-  }
-  if (!previous || !next) {
-    return previous === next;
-  }
-  return (
-    previous.usedTokens === next.usedTokens &&
-    previous.totalProcessedTokens === next.totalProcessedTokens &&
-    previous.maxTokens === next.maxTokens &&
-    previous.remainingTokens === next.remainingTokens &&
-    previous.usedPercentage === next.usedPercentage &&
-    previous.remainingPercentage === next.remainingPercentage &&
-    previous.inputTokens === next.inputTokens &&
-    previous.cachedInputTokens === next.cachedInputTokens &&
-    previous.outputTokens === next.outputTokens &&
-    previous.reasoningOutputTokens === next.reasoningOutputTokens &&
-    previous.lastUsedTokens === next.lastUsedTokens &&
-    previous.lastInputTokens === next.lastInputTokens &&
-    previous.lastCachedInputTokens === next.lastCachedInputTokens &&
-    previous.lastOutputTokens === next.lastOutputTokens &&
-    previous.lastReasoningOutputTokens === next.lastReasoningOutputTokens &&
-    previous.toolUses === next.toolUses &&
-    previous.durationMs === next.durationMs &&
-    previous.compactsAutomatically === next.compactsAutomatically &&
-    previous.updatedAt === next.updatedAt
-  );
 }

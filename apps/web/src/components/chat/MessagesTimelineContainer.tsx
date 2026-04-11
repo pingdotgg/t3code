@@ -23,18 +23,22 @@ import {
   type TurnDiffSummary,
 } from "../../types";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
-import { MessagesTimeline } from "./MessagesTimeline";
-import { type ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
-  createThreadActivitiesSelectorByRef,
-  createThreadMessagesSelectorByRef,
-  createThreadProposedPlansSelectorByRef,
-  createThreadTurnDiffSummariesSelectorByRef,
-} from "../../storeSelectors";
+  HistoricalMessagesTimelineSection,
+  LiveMessagesTimelineSection,
+  TimelineEmptyState,
+} from "./MessagesTimeline";
+import { type ExpandedImagePreview } from "./ExpandedImagePreview";
+import { createThreadTimelineSliceSelectorByRef } from "../../storeSelectors";
 import { useStore } from "../../store";
 import { useUiStateStore } from "../../uiStateStore";
 
 const EMPTY_CHANGED_FILES_EXPANDED_BY_TURN_ID: Record<string, boolean> = {};
+const EMPTY_CHAT_MESSAGES: ChatMessage[] = [];
+const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
+const EMPTY_WORK_LOG_ENTRIES: ReturnType<typeof deriveWorkLogEntries> = [];
+const EMPTY_REVERT_TURN_COUNT_BY_USER_MESSAGE_ID = new Map<MessageId, number>();
+const NOOP_REVERT_USER_MESSAGE = (_messageId: MessageId) => {};
 
 interface MessagesTimelineContainerProps {
   activeLatestTurn: Thread["latestTurn"] | null;
@@ -42,7 +46,7 @@ interface MessagesTimelineContainerProps {
   activeTurnInProgress: boolean;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
-  activeThreadSession: Thread["session"] | null;
+  activeThreadSession: Parameters<typeof deriveActiveWorkStartedAt>[1];
   draftActivities: Thread["activities"];
   isRevertingCheckpoint: boolean;
   isWorking: boolean;
@@ -105,17 +109,8 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
     clearAttachmentPreviewHandoff,
     workspaceRoot,
   } = props;
-  const serverActivities = useStore(
-    useMemo(() => createThreadActivitiesSelectorByRef(threadRef), [threadRef]),
-  );
-  const serverMessages = useStore(
-    useMemo(() => createThreadMessagesSelectorByRef(threadRef), [threadRef]),
-  );
-  const serverProposedPlans = useStore(
-    useMemo(() => createThreadProposedPlansSelectorByRef(threadRef), [threadRef]),
-  );
-  const serverTurnDiffSummaries = useStore(
-    useMemo(() => createThreadTurnDiffSummariesSelectorByRef(threadRef), [threadRef]),
+  const serverTimelineSlices = useStore(
+    useMemo(() => createThreadTimelineSliceSelectorByRef(threadRef), [threadRef]),
   );
   const changedFilesExpandedByTurnId = useUiStateStore((store) =>
     threadRef
@@ -127,105 +122,148 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
     (store) => store.setThreadChangedFilesExpanded,
   );
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
-  const timelineMessages = useMemo(() => {
-    const messages = threadRef ? serverMessages : draftMessages;
-    let messagesWithPreviewHandoff = messages;
-    if (Object.keys(attachmentPreviewHandoffByMessageId).length > 0) {
-      let nextMessages: ChatMessage[] | null = null;
+  const applyPreviewHandoff = useCallback(
+    (messages: ChatMessage[]) => {
+      let messagesWithPreviewHandoff = messages;
+      if (Object.keys(attachmentPreviewHandoffByMessageId).length > 0) {
+        let nextMessages: ChatMessage[] | null = null;
 
-      for (const [messageIndex, message] of messages.entries()) {
-        if (message.role !== "user" || !message.attachments || message.attachments.length === 0) {
-          if (nextMessages) {
-            nextMessages.push(message);
-          }
-          continue;
-        }
-
-        const handoffPreviewUrls = attachmentPreviewHandoffByMessageId[message.id];
-        if (!handoffPreviewUrls || handoffPreviewUrls.length === 0) {
-          if (nextMessages) {
-            nextMessages.push(message);
-          }
-          continue;
-        }
-
-        let changed = false;
-        let imageIndex = 0;
-        const attachments = [...message.attachments];
-
-        for (let attachmentIndex = 0; attachmentIndex < attachments.length; attachmentIndex += 1) {
-          const attachment = attachments[attachmentIndex];
-          if (!attachment || attachment.type !== "image") {
+        for (const [messageIndex, message] of messages.entries()) {
+          if (message.role !== "user" || !message.attachments || message.attachments.length === 0) {
+            if (nextMessages) {
+              nextMessages.push(message);
+            }
             continue;
           }
 
-          const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
-          imageIndex += 1;
-          if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
+          const handoffPreviewUrls = attachmentPreviewHandoffByMessageId[message.id];
+          if (!handoffPreviewUrls || handoffPreviewUrls.length === 0) {
+            if (nextMessages) {
+              nextMessages.push(message);
+            }
             continue;
           }
 
-          changed = true;
-          attachments[attachmentIndex] = {
-            ...attachment,
-            previewUrl: handoffPreviewUrl,
-          };
-        }
+          let changed = false;
+          let imageIndex = 0;
+          const attachments = [...message.attachments];
 
-        if (!changed) {
-          if (nextMessages) {
-            nextMessages.push(message);
+          for (
+            let attachmentIndex = 0;
+            attachmentIndex < attachments.length;
+            attachmentIndex += 1
+          ) {
+            const attachment = attachments[attachmentIndex];
+            if (!attachment || attachment.type !== "image") {
+              continue;
+            }
+
+            const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
+            imageIndex += 1;
+            if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
+              continue;
+            }
+
+            changed = true;
+            attachments[attachmentIndex] = {
+              ...attachment,
+              previewUrl: handoffPreviewUrl,
+            };
           }
-          continue;
+
+          if (!changed) {
+            if (nextMessages) {
+              nextMessages.push(message);
+            }
+            continue;
+          }
+
+          if (!nextMessages) {
+            nextMessages = messages.slice(0, messageIndex);
+          }
+
+          nextMessages.push({
+            ...message,
+            attachments,
+          });
         }
 
-        if (!nextMessages) {
-          nextMessages = messages.slice(0, messageIndex);
-        }
-
-        nextMessages.push({
-          ...message,
-          attachments,
-        });
+        messagesWithPreviewHandoff = nextMessages ?? messages;
       }
 
-      messagesWithPreviewHandoff = nextMessages ?? messages;
-    }
-
+      return messagesWithPreviewHandoff;
+    },
+    [attachmentPreviewHandoffByMessageId],
+  );
+  const historicalTimelineMessages = useMemo(() => {
+    const baseMessages = threadRef
+      ? (serverTimelineSlices.historicalMessages ?? EMPTY_CHAT_MESSAGES)
+      : draftMessages;
+    return applyPreviewHandoff(baseMessages);
+  }, [applyPreviewHandoff, draftMessages, serverTimelineSlices.historicalMessages, threadRef]);
+  const activeWorkEntries = threadRef
+    ? (serverTimelineSlices.activeWorkEntries ?? EMPTY_WORK_LOG_ENTRIES)
+    : deriveWorkLogEntries(draftActivities, activeLatestTurn?.turnId ?? undefined);
+  const liveTimelineMessages = useMemo(() => {
+    const baseMessages = threadRef
+      ? (serverTimelineSlices.liveMessages ?? EMPTY_CHAT_MESSAGES)
+      : EMPTY_CHAT_MESSAGES;
+    const messagesWithPreviewHandoff = applyPreviewHandoff(baseMessages);
     if (optimisticUserMessages.length === 0) {
       return messagesWithPreviewHandoff;
     }
-    const serverIds = new Set(messagesWithPreviewHandoff.map((message) => message.id));
-    const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
+    const historicalServerIds = new Set(historicalTimelineMessages.map((message) => message.id));
+    const liveServerIds = new Set(messagesWithPreviewHandoff.map((message) => message.id));
+    const pendingMessages = optimisticUserMessages.filter(
+      (message) => !historicalServerIds.has(message.id) && !liveServerIds.has(message.id),
+    );
     if (pendingMessages.length === 0) {
       return messagesWithPreviewHandoff;
     }
-    return [...messagesWithPreviewHandoff, ...pendingMessages];
+    const liveSectionIsAwaitingNextTurn =
+      activeWorkEntries.length === 0 &&
+      messagesWithPreviewHandoff.length > 0 &&
+      messagesWithPreviewHandoff.every(
+        (message) => message.role === "assistant" && !message.streaming,
+      );
+    return liveSectionIsAwaitingNextTurn
+      ? [...messagesWithPreviewHandoff, ...pendingMessages]
+      : [...pendingMessages, ...messagesWithPreviewHandoff];
   }, [
-    attachmentPreviewHandoffByMessageId,
-    draftMessages,
+    activeWorkEntries,
+    applyPreviewHandoff,
+    historicalTimelineMessages,
     optimisticUserMessages,
-    serverMessages,
+    serverTimelineSlices.liveMessages,
     threadRef,
   ]);
-  const proposedPlans = threadRef ? serverProposedPlans : draftProposedPlans;
-  const turnDiffSummaries = threadRef ? serverTurnDiffSummaries : draftTurnDiffSummaries;
-  const threadActivities = threadRef ? serverActivities : draftActivities;
+  const historicalProposedPlans = threadRef
+    ? (serverTimelineSlices.historicalProposedPlans ?? EMPTY_PROPOSED_PLANS)
+    : draftProposedPlans;
+  const liveProposedPlans = threadRef
+    ? (serverTimelineSlices.liveProposedPlans ?? EMPTY_PROPOSED_PLANS)
+    : EMPTY_PROPOSED_PLANS;
+  const turnDiffSummaries = threadRef
+    ? (serverTimelineSlices.turnDiffSummaries ?? draftTurnDiffSummaries)
+    : draftTurnDiffSummaries;
+  const latestTurnHasToolActivity = threadRef
+    ? serverTimelineSlices.latestTurnHasToolActivity
+    : hasToolActivityForTurn(draftActivities, activeLatestTurn?.turnId);
+  const historicalTimelineEntries = useMemo(
+    () => deriveTimelineEntries(historicalTimelineMessages, historicalProposedPlans, []),
+    [historicalProposedPlans, historicalTimelineMessages],
+  );
+  const liveTimelineEntries = useMemo(
+    () => deriveTimelineEntries(liveTimelineMessages, liveProposedPlans, activeWorkEntries),
+    [activeWorkEntries, liveProposedPlans, liveTimelineMessages],
+  );
+  const timelineEntries = useMemo(
+    () => [...historicalTimelineEntries, ...liveTimelineEntries],
+    [historicalTimelineEntries, liveTimelineEntries],
+  );
   const activeWorkStartedAt = useMemo(
     () => deriveActiveWorkStartedAt(activeLatestTurn, activeThreadSession, localDispatchStartedAt),
     [activeLatestTurn, activeThreadSession, localDispatchStartedAt],
-  );
-  const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
-  );
-  const latestTurnHasToolActivity = useMemo(
-    () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
-    [activeLatestTurn?.turnId, threadActivities],
-  );
-  const timelineEntries = useMemo(
-    () => deriveTimelineEntries(timelineMessages, proposedPlans, workLogEntries),
-    [proposedPlans, timelineMessages, workLogEntries],
   );
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<MessageId, TurnDiffSummary>();
@@ -241,38 +279,19 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
     () => inferCheckpointTurnCountByTurnId(turnDiffSummaries),
     [turnDiffSummaries],
   );
-  const revertTurnCountByUserMessageId = useMemo(() => {
-    const byUserMessageId = new Map<MessageId, number>();
-    for (let index = 0; index < timelineEntries.length; index += 1) {
-      const entry = timelineEntries[index];
-      if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
-        continue;
-      }
-
-      for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
-        const nextEntry = timelineEntries[nextIndex];
-        if (!nextEntry || nextEntry.kind !== "message") {
-          continue;
-        }
-        if (nextEntry.message.role === "user") {
-          break;
-        }
-        const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
-        if (!summary) {
-          continue;
-        }
-        const turnCount =
-          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-        if (typeof turnCount !== "number") {
-          break;
-        }
-        byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
-        break;
-      }
-    }
-
-    return byUserMessageId;
-  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const historicalRevertTurnCountByUserMessageId = useMemo(
+    () =>
+      deriveRevertTurnCountByUserMessageId({
+        inferredCheckpointTurnCountByTurnId,
+        timelineEntries: historicalTimelineEntries,
+        turnDiffSummaryByAssistantMessageId,
+      }),
+    [
+      historicalTimelineEntries,
+      inferredCheckpointTurnCountByTurnId,
+      turnDiffSummaryByAssistantMessageId,
+    ],
+  );
   const completionSummary = useMemo(() => {
     if (!latestTurnSettled) return null;
     if (!activeLatestTurn?.startedAt) return null;
@@ -292,7 +311,7 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
     if (!completionSummary) return null;
     return deriveCompletionDividerBeforeEntryId(timelineEntries, activeLatestTurn);
   }, [activeLatestTurn, completionSummary, latestTurnSettled, timelineEntries]);
-  const messageCount = timelineMessages.length;
+  const messageCount = historicalTimelineMessages.length + liveTimelineMessages.length;
   const onToggleWorkGroup = useCallback((groupId: string) => {
     setExpandedWorkGroups((existing) => ({
       ...existing,
@@ -301,14 +320,17 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
   }, []);
   const onRevertUserMessage = useCallback(
     (messageId: MessageId) => {
-      const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
+      const targetTurnCount = historicalRevertTurnCountByUserMessageId.get(messageId);
       if (typeof targetTurnCount !== "number") {
         return;
       }
       onRevertToTurnCount(targetTurnCount);
     },
-    [onRevertToTurnCount, revertTurnCountByUserMessageId],
+    [historicalRevertTurnCountByUserMessageId, onRevertToTurnCount],
   );
+  const onRevertLiveUserMessage = useCallback((messageId: MessageId) => {
+    NOOP_REVERT_USER_MESSAGE(messageId);
+  }, []);
   const onSetChangedFilesExpanded = useCallback(
     (turnId: TurnId, expanded: boolean) => {
       if (!threadRef) {
@@ -321,6 +343,10 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
   const activeThreadIdRef = useRef(activeThreadId);
 
   useEffect(() => {
+    const serverMessages = [
+      ...serverTimelineSlices.historicalMessages,
+      ...serverTimelineSlices.liveMessages,
+    ];
     if (!threadRef || typeof Image === "undefined" || serverMessages.length === 0) {
       return;
     }
@@ -392,7 +418,8 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
   }, [
     attachmentPreviewHandoffByMessageId,
     clearAttachmentPreviewHandoff,
-    serverMessages,
+    serverTimelineSlices.historicalMessages,
+    serverTimelineSlices.liveMessages,
     threadRef,
   ]);
 
@@ -413,35 +440,102 @@ export const MessagesTimelineContainer = memo(function MessagesTimelineContainer
     if (phase !== "running") return;
     if (!shouldAutoScrollRef.current) return;
     scheduleStickToBottom();
-  }, [phase, scheduleStickToBottom, shouldAutoScrollRef, timelineEntries]);
+  }, [liveTimelineEntries, phase, scheduleStickToBottom, shouldAutoScrollRef]);
+
+  if (timelineEntries.length === 0 && !isWorking) {
+    return <TimelineEmptyState />;
+  }
 
   return (
-    <MessagesTimeline
-      key={activeThreadId}
-      hasMessages={timelineEntries.length > 0}
-      isWorking={isWorking}
-      activeTurnInProgress={activeTurnInProgress}
-      activeTurnId={activeTurnId}
-      activeTurnStartedAt={activeWorkStartedAt}
-      scrollContainer={scrollContainer}
-      timelineEntries={timelineEntries}
-      completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-      completionSummary={completionSummary}
-      turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-      activeThreadEnvironmentId={activeThreadEnvironmentId}
-      expandedWorkGroups={expandedWorkGroups}
-      onToggleWorkGroup={onToggleWorkGroup}
-      changedFilesExpandedByTurnId={changedFilesExpandedByTurnId}
-      onSetChangedFilesExpanded={onSetChangedFilesExpanded}
-      onOpenTurnDiff={onOpenTurnDiff}
-      revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-      onRevertUserMessage={onRevertUserMessage}
-      isRevertingCheckpoint={isRevertingCheckpoint}
-      onImageExpand={onImageExpand}
-      markdownCwd={markdownCwd}
-      resolvedTheme={resolvedTheme}
-      timestampFormat={timestampFormat}
-      workspaceRoot={workspaceRoot}
-    />
+    <div key={activeThreadId} className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden">
+      <HistoricalMessagesTimelineSection
+        scrollContainer={scrollContainer}
+        historicalTimelineEntries={historicalTimelineEntries}
+        turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+        expandedWorkGroups={expandedWorkGroups}
+        onToggleWorkGroup={onToggleWorkGroup}
+        changedFilesExpandedByTurnId={changedFilesExpandedByTurnId}
+        onSetChangedFilesExpanded={onSetChangedFilesExpanded}
+        onOpenTurnDiff={onOpenTurnDiff}
+        revertTurnCountByUserMessageId={historicalRevertTurnCountByUserMessageId}
+        onRevertUserMessage={onRevertUserMessage}
+        isRevertingCheckpoint={isRevertingCheckpoint}
+        onImageExpand={onImageExpand}
+        activeThreadEnvironmentId={activeThreadEnvironmentId}
+        markdownCwd={markdownCwd}
+        resolvedTheme={resolvedTheme}
+        timestampFormat={timestampFormat}
+        workspaceRoot={workspaceRoot}
+      />
+      <LiveMessagesTimelineSection
+        isWorking={isWorking}
+        activeTurnInProgress={activeTurnInProgress}
+        activeTurnId={activeTurnId}
+        activeTurnStartedAt={activeWorkStartedAt}
+        liveTimelineEntries={liveTimelineEntries}
+        completionDividerBeforeEntryId={completionDividerBeforeEntryId}
+        completionSummary={completionSummary}
+        turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+        expandedWorkGroups={expandedWorkGroups}
+        onToggleWorkGroup={onToggleWorkGroup}
+        changedFilesExpandedByTurnId={changedFilesExpandedByTurnId}
+        onSetChangedFilesExpanded={onSetChangedFilesExpanded}
+        onOpenTurnDiff={onOpenTurnDiff}
+        revertTurnCountByUserMessageId={EMPTY_REVERT_TURN_COUNT_BY_USER_MESSAGE_ID}
+        onRevertUserMessage={onRevertLiveUserMessage}
+        isRevertingCheckpoint={isRevertingCheckpoint}
+        onImageExpand={onImageExpand}
+        activeThreadEnvironmentId={activeThreadEnvironmentId}
+        markdownCwd={markdownCwd}
+        resolvedTheme={resolvedTheme}
+        timestampFormat={timestampFormat}
+        workspaceRoot={workspaceRoot}
+      />
+    </div>
   );
 });
+
+function deriveRevertTurnCountByUserMessageId({
+  inferredCheckpointTurnCountByTurnId,
+  timelineEntries,
+  turnDiffSummaryByAssistantMessageId,
+}: {
+  inferredCheckpointTurnCountByTurnId: Record<TurnId, number>;
+  timelineEntries: ReturnType<typeof deriveTimelineEntries>;
+  turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
+}): Map<MessageId, number> {
+  if (timelineEntries.length === 0) {
+    return EMPTY_REVERT_TURN_COUNT_BY_USER_MESSAGE_ID;
+  }
+
+  const byUserMessageId = new Map<MessageId, number>();
+  for (let index = 0; index < timelineEntries.length; index += 1) {
+    const entry = timelineEntries[index];
+    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+      continue;
+    }
+
+    for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
+      const nextEntry = timelineEntries[nextIndex];
+      if (!nextEntry || nextEntry.kind !== "message") {
+        continue;
+      }
+      if (nextEntry.message.role === "user") {
+        break;
+      }
+      const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
+      if (!summary) {
+        continue;
+      }
+      const turnCount =
+        summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+      if (typeof turnCount !== "number") {
+        break;
+      }
+      byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
+      break;
+    }
+  }
+
+  return byUserMessageId.size === 0 ? EMPTY_REVERT_TURN_COUNT_BY_USER_MESSAGE_ID : byUserMessageId;
+}

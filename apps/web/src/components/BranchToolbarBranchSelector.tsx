@@ -22,7 +22,10 @@ import { useGitStatus } from "../lib/gitStatusState";
 import { newCommandId } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { useStore } from "../store";
-import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
+import {
+  createProjectSelectorByRef,
+  createThreadBranchActionSnapshotSelectorByRef,
+} from "../storeSelectors";
 import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchSelectionTarget,
@@ -87,9 +90,11 @@ export function BranchToolbarBranchSelector({
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
-  const serverThreadSelector = useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]);
+  const serverThreadSelector = useMemo(
+    () => createThreadBranchActionSnapshotSelectorByRef(threadRef),
+    [threadRef],
+  );
   const serverThread = useStore(serverThreadSelector);
-  const serverSession = serverThread?.session ?? null;
   const setThreadBranchAction = useStore((store) => store.setThreadBranch);
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
@@ -126,7 +131,7 @@ export function BranchToolbarBranchSelector({
     (branch: string | null, worktreePath: string | null) => {
       if (!activeThreadId || !activeProject) return;
       const api = readEnvironmentApi(environmentId);
-      if (serverSession && worktreePath !== activeWorktreePath && api) {
+      if (serverThread?.hasSession && worktreePath !== activeWorktreePath && api) {
         void api.orchestration
           .dispatchCommand({
             type: "thread.session.stop",
@@ -164,7 +169,7 @@ export function BranchToolbarBranchSelector({
     [
       activeThreadId,
       activeProject,
-      serverSession,
+      serverThread?.hasSession,
       activeWorktreePath,
       hasServerThread,
       setThreadBranchAction,

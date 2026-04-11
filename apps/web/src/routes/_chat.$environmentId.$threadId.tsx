@@ -2,7 +2,7 @@ import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/reac
 import { Suspense, lazy, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import ChatView from "../components/ChatView";
-import { threadHasStarted } from "../components/ChatView.logic";
+import { threadSnapshotHasStarted } from "../components/ChatView.logic";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import {
   DiffPanelHeaderSkeleton,
@@ -18,7 +18,10 @@ import {
 } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../store";
-import { createThreadSelectorByRef } from "../storeSelectors";
+import {
+  createThreadConversationRuntimeSelectorByRef,
+  createThreadMessageIdsSelectorByRef,
+} from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
@@ -171,7 +174,12 @@ function ChatThreadRouteView() {
   const bootstrapComplete = useStore(
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).bootstrapComplete,
   );
-  const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
+  const serverThreadRuntime = useStore(
+    useMemo(() => createThreadConversationRuntimeSelectorByRef(threadRef), [threadRef]),
+  );
+  const serverMessageIds = useStore(
+    useMemo(() => createThreadMessageIdsSelectorByRef(threadRef), [threadRef]),
+  );
   const threadExists = useStore((store) => selectThreadExistsByRef(store, threadRef));
   const environmentHasServerThreads = useStore(
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).threadIds.length > 0,
@@ -189,7 +197,11 @@ function ChatThreadRouteView() {
     return store.hasDraftThreadsInEnvironment(threadRef.environmentId);
   });
   const routeThreadExists = threadExists || draftThreadExists;
-  const serverThreadStarted = threadHasStarted(serverThread);
+  const serverThreadStarted = threadSnapshotHasStarted({
+    latestTurn: serverThreadRuntime?.latestTurn ?? null,
+    session: serverThreadRuntime?.session ?? null,
+    messageCount: serverMessageIds.length,
+  });
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
   const diffOpen = search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
