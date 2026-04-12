@@ -1321,7 +1321,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         }
         if (clicked !== "delete") return;
 
-        if (projectThreads.length > 0) {
+        if (visibleProjectThreads.length > 0) {
           toastManager.add({
             type: "warning",
             title: "Project is not empty",
@@ -1371,7 +1371,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       project.environmentId,
       project.id,
       project.name,
-      projectThreads.length,
+      visibleProjectThreads.length,
       suppressProjectClickForContextMenuRef,
     ],
   );
