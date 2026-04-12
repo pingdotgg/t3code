@@ -12,6 +12,7 @@ function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
   return cn(
     "flex items-center justify-between gap-2",
     usesWCO ? "titlebar-overlay-safe titlebar-overlay-safe-md" : "px-4",
+    "pr-[var(--desktop-chrome-safe-inline-end,0px)]",
     shouldUseDragRegion ? "drag-region h-[52px] border-b border-border" : "h-12",
   );
 }

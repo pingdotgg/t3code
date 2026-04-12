@@ -16,6 +16,19 @@ export const usesWCO =
   desktopPlatform === "windows" ||
   (desktopPlatform === "linux" && runningLinuxTitleBarMode === "overlay");
 
+export function shouldUseCustomWindowControls(options?: {
+  platform?: Platform;
+  linuxTitleBarMode?: LinuxTitleBarMode;
+}): boolean {
+  const resolvedPlatform = options?.platform ?? desktopPlatform;
+  if (resolvedPlatform !== "linux") {
+    return false;
+  }
+
+  const resolvedLinuxTitleBarMode = options?.linuxTitleBarMode ?? runningLinuxTitleBarMode;
+  return resolvedLinuxTitleBarMode === "custom";
+}
+
 export function shouldRenderDesktopChromeHeader(options?: {
   platform?: Platform;
   linuxTitleBarMode?: LinuxTitleBarMode;
@@ -34,3 +47,4 @@ export function shouldRenderDesktopChromeHeader(options?: {
 }
 
 export const usesDesktopChromeHeader = shouldRenderDesktopChromeHeader();
+export const usesCustomWindowControls = shouldUseCustomWindowControls();

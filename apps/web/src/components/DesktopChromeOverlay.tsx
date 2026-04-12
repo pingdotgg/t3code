@@ -1,11 +1,7 @@
 import type { DesktopWindowControl, DesktopWindowControlsLayout } from "@t3tools/contracts";
 import { LinuxWindowControls } from "./LinuxWindowControls";
 
-export function DesktopChromeOverlay(props: { layout: DesktopWindowControlsLayout | null }) {
-  if (!props.layout) {
-    return null;
-  }
-
+export function DesktopChromeOverlay(props: { layout: DesktopWindowControlsLayout }) {
   return (
     <>
       <DesktopChromeOverlayBank actions={props.layout.left} side="left" />

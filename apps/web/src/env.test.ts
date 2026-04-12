@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldRenderDesktopChromeHeader } from "./env";
+import { shouldRenderDesktopChromeHeader, shouldUseCustomWindowControls } from "./env";
 
 describe("shouldRenderDesktopChromeHeader", () => {
   it("returns false on web", () => {
@@ -31,5 +31,37 @@ describe("shouldRenderDesktopChromeHeader", () => {
         linuxTitleBarMode: "native",
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldUseCustomWindowControls", () => {
+  it("returns false on web", () => {
+    expect(shouldUseCustomWindowControls({ platform: "web" })).toBe(false);
+  });
+
+  it("returns false on macos", () => {
+    expect(shouldUseCustomWindowControls({ platform: "macos" })).toBe(false);
+  });
+
+  it("returns false on windows", () => {
+    expect(shouldUseCustomWindowControls({ platform: "windows" })).toBe(false);
+  });
+
+  it("returns false on linux overlay mode", () => {
+    expect(
+      shouldUseCustomWindowControls({
+        platform: "linux",
+        linuxTitleBarMode: "overlay",
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true on linux custom mode", () => {
+    expect(
+      shouldUseCustomWindowControls({
+        platform: "linux",
+        linuxTitleBarMode: "custom",
+      }),
+    ).toBe(true);
   });
 });

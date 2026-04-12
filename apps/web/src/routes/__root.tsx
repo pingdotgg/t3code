@@ -27,7 +27,7 @@ import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { readLocalApi } from "../localApi";
-import { windowControlsLayout } from "../env";
+import { usesCustomWindowControls, windowControlsLayout } from "../env";
 import {
   getServerConfigUpdatedNotification,
   ServerConfigUpdatedNotification,
@@ -77,7 +77,7 @@ function RootRouteView() {
     ? {
         ...resolveDesktopChromeSafeAreaStyle({
           leftControlCount: windowControlsLayout.left.length,
-          rightControlCount: windowControlsLayout.right.length,
+          rightControlCount: usesCustomWindowControls ? windowControlsLayout.right.length : 0,
         }),
         "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
       }
@@ -114,7 +114,9 @@ function RootRouteView() {
               <Outlet />
             </AppSidebarLayout>
           </WebSocketConnectionSurface>
-          <DesktopChromeOverlay layout={windowControlsLayout} />
+          {usesCustomWindowControls && windowControlsLayout ? (
+            <DesktopChromeOverlay layout={windowControlsLayout} />
+          ) : null}
         </div>
       </AnchoredToastProvider>
     </ToastProvider>
