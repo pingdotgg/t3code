@@ -12,10 +12,6 @@ export const windowControlsLayout: DesktopWindowControlsLayout | null =
   typeof window === "undefined"
     ? null
     : (window.desktopBridge?.getWindowControlsLayout?.() ?? null);
-export const usesCustomLinuxWindowControls =
-  desktopPlatform === "linux" &&
-  runningLinuxTitleBarMode === "custom" &&
-  windowControlsLayout !== null;
 export const usesWCO =
   desktopPlatform === "windows" ||
   (desktopPlatform === "linux" && runningLinuxTitleBarMode === "overlay");

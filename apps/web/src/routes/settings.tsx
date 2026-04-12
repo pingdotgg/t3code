@@ -8,9 +8,9 @@ import {
   resolveInitialServerAuthGateState,
 } from "../environments/primary";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { usesDesktopChromeHeader, usesWCO } from "../env";
 import { Button } from "../components/ui/button";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
-import { usesDesktopChromeHeader, usesWCO } from "../env";
 
 function SettingsContentLayout() {
   const [restoreSignal, setRestoreSignal] = useState(0);
@@ -66,7 +66,7 @@ function SettingsContentLayout() {
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
             </span>
-            <div className="ms-auto flex items-center gap-2">
+            <div className="ms-auto flex items-center gap-2 pr-[var(--desktop-chrome-safe-inline-end,0px)]">
               <Button
                 size="xs"
                 variant="outline"

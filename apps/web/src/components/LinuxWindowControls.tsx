@@ -1,11 +1,11 @@
 import { MinusIcon, SquareIcon, XIcon } from "lucide-react";
 
-import { windowControlsLayout } from "../env";
+import type { DesktopWindowControl } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
 
 import { Button } from "./ui/button";
 
-function LinuxWindowControlButton(props: { action: "minimize" | "maximize" | "close" }) {
+function LinuxWindowControlButton(props: { action: DesktopWindowControl }) {
   const bridge = window.desktopBridge;
 
   const onClick = async () => {
@@ -26,7 +26,7 @@ function LinuxWindowControlButton(props: { action: "minimize" | "maximize" | "cl
     <Button
       aria-label={props.action}
       className={cn(
-        "[-webkit-app-region:no-drag] text-muted-foreground/80 hover:text-foreground",
+        "pointer-events-auto [-webkit-app-region:no-drag] text-muted-foreground/80 hover:text-foreground",
         props.action === "close" && "hover:bg-destructive/16 hover:text-destructive-foreground",
       )}
       size="icon-xs"
@@ -46,33 +46,16 @@ function LinuxWindowControlButton(props: { action: "minimize" | "maximize" | "cl
   );
 }
 
-function LinuxWindowControlBank(props: {
-  actions: readonly ("minimize" | "maximize" | "close")[];
-  align: "left" | "right";
-}) {
-  return (
-    <div
-      className={cn(
-        "flex min-w-0 flex-1 items-center gap-1",
-        props.align === "right" && "justify-end",
-      )}
-    >
-      {props.actions.map((action) => (
-        <LinuxWindowControlButton key={action} action={action} />
-      ))}
-    </div>
-  );
-}
-
-export function LinuxWindowControls() {
-  if (!windowControlsLayout) {
+export function LinuxWindowControls(props: { actions: readonly DesktopWindowControl[] }) {
+  if (props.actions.length === 0) {
     return null;
   }
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
-      <LinuxWindowControlBank actions={windowControlsLayout.left} align="left" />
-      <LinuxWindowControlBank actions={windowControlsLayout.right} align="right" />
+    <div className="flex shrink-0 items-center gap-1">
+      {props.actions.map((action) => (
+        <LinuxWindowControlButton key={action} action={action} />
+      ))}
     </div>
   );
 }

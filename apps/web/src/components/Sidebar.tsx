@@ -11,7 +11,6 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { LinuxWindowControls } from "./LinuxWindowControls";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -54,14 +53,7 @@ import {
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
-import {
-  desktopPlatform,
-  isElectron,
-  windowControlsLayout,
-  usesCustomLinuxWindowControls,
-  usesDesktopChromeHeader,
-  usesWCO,
-} from "../env";
+import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
@@ -1974,49 +1966,12 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader() {
     </div>
   );
 
-  const linuxLeftControlsCount = windowControlsLayout?.left.length ?? 0;
-  const linuxWordmarkPaddingStyle = usesCustomLinuxWindowControls
-    ? {
-        paddingLeft:
-          linuxLeftControlsCount === 0 ? undefined : `${linuxLeftControlsCount * 1.75 + 0.5}rem`,
-      }
-    : undefined;
-
-  const desktopHeaderClassName =
-    desktopPlatform === "macos"
-      ? "bg-background drag-region relative h-[52px] flex-row items-center gap-2 py-0 px-4 pl-[90px]"
-      : usesCustomLinuxWindowControls
-        ? "bg-background drag-region relative h-[52px] flex-row items-center gap-2 px-3 py-0"
-        : usesWCO
-          ? "bg-background drag-region relative h-[52px] flex-row items-center gap-2 py-0 titlebar-overlay-safe titlebar-overlay-safe-md"
-          : "bg-background drag-region relative h-[52px] flex-row items-center gap-2 px-4 py-0";
-
-  if (!usesDesktopChromeHeader) {
-    return (
-      <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
-        {wordmark}
-      </SidebarHeader>
-    );
-  }
-
-  return (
-    <SidebarHeader className={desktopHeaderClassName}>
-      {usesCustomLinuxWindowControls ? (
-        <div className="absolute inset-x-3 top-1/2 flex -translate-y-1/2 items-center">
-          <LinuxWindowControls />
-        </div>
-      ) : null}
-      {usesCustomLinuxWindowControls ? (
-        <div
-          className="relative z-[1] flex min-w-0 flex-1 items-center"
-          style={linuxWordmarkPaddingStyle}
-        >
-          {wordmark}
-        </div>
-      ) : (
-        wordmark
-      )}
+  return isElectron ? (
+    <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[var(--desktop-chrome-safe-inline-start)]">
+      {wordmark}
     </SidebarHeader>
+  ) : (
+    <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">{wordmark}</SidebarHeader>
   );
 });
 

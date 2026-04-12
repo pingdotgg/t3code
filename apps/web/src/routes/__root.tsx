@@ -12,6 +12,12 @@ import { QueryClient, useQueryClient } from "@tanstack/react-query";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { DesktopChromeOverlay } from "../components/DesktopChromeOverlay";
+import {
+  type DesktopChromeSafeAreaStyle,
+  resolveDesktopChromeSafeAreaStyle,
+  DESKTOP_CHROME_TITLEBAR_HEIGHT_PX,
+} from "../components/desktopChromeLayout";
 import {
   SlowRpcAckToastCoordinator,
   WebSocketConnectionCoordinator,
@@ -21,6 +27,7 @@ import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { readLocalApi } from "../localApi";
+import { windowControlsLayout } from "../env";
 import {
   getServerConfigUpdatedNotification,
   ServerConfigUpdatedNotification,
@@ -66,6 +73,15 @@ export const Route = createRootRouteWithContext<{
 function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
+  const desktopChromeStyle: DesktopChromeSafeAreaStyle | undefined = windowControlsLayout
+    ? {
+        ...resolveDesktopChromeSafeAreaStyle({
+          leftControlCount: windowControlsLayout.left.length,
+          rightControlCount: windowControlsLayout.right.length,
+        }),
+        "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
+      }
+    : undefined;
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -92,11 +108,14 @@ function RootRouteView() {
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
-        <WebSocketConnectionSurface>
-          <AppSidebarLayout>
-            <Outlet />
-          </AppSidebarLayout>
-        </WebSocketConnectionSurface>
+        <div className="relative min-h-dvh" style={desktopChromeStyle}>
+          <WebSocketConnectionSurface>
+            <AppSidebarLayout>
+              <Outlet />
+            </AppSidebarLayout>
+          </WebSocketConnectionSurface>
+          <DesktopChromeOverlay layout={windowControlsLayout} />
+        </div>
       </AnchoredToastProvider>
     </ToastProvider>
   );
