@@ -2709,7 +2709,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ),
       );
       const claudeBinaryPath = claudeSettings.binaryPath;
-      const launchArgs = claudeSettings.launchArgs;
+      const extraArgs = parseLaunchArgs(claudeSettings.launchArgs);
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
@@ -2749,9 +2749,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         env: process.env,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
-        ...(Object.keys(parseLaunchArgs(launchArgs)).length > 0
-          ? { extraArgs: parseLaunchArgs(launchArgs) }
-          : {}),
+        ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };
 
       const queryRuntime = yield* Effect.try({
