@@ -2081,7 +2081,7 @@ export default function Sidebar() {
           className={cn(
             "drag-region relative flex-row items-center gap-2 py-0",
             isWindowsElectron
-              ? "h-[var(--desktop-titlebar-height)] bg-white px-4 pl-4 after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:border-b after:border-border/70 dark:bg-[#0e1218]"
+              ? "h-[var(--desktop-titlebar-height)] bg-[var(--desktop-titlebar-surface)] px-4 pl-4 after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:border-b after:border-border/70"
               : "h-[52px] px-4 pl-[90px]",
           )}
         >

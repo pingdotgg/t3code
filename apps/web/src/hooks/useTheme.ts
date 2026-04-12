@@ -12,6 +12,7 @@ const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let lastDesktopTheme: Theme | null = null;
+let pendingDesktopThemeSyncFrame: number | null = null;
 function emitChange() {
   for (const listener of listeners) listener();
 }
@@ -32,7 +33,13 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   }
   const isDark = theme === "dark" || (theme === "system" && getSystemDark());
   document.documentElement.classList.toggle("dark", isDark);
-  syncDesktopTheme(theme);
+  if (pendingDesktopThemeSyncFrame !== null) {
+    cancelAnimationFrame(pendingDesktopThemeSyncFrame);
+  }
+  pendingDesktopThemeSyncFrame = requestAnimationFrame(() => {
+    pendingDesktopThemeSyncFrame = null;
+    syncDesktopTheme(theme);
+  });
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     // oxlint-disable-next-line no-unused-expressions

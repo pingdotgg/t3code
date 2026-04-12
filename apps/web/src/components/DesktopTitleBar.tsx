@@ -20,7 +20,7 @@ export function DesktopTitleBar(props: DesktopTitleBarProps) {
   return (
     <div
       className={cn(
-        "drag-region relative flex h-[52px] shrink-0 items-center border-b border-border/70 bg-background ps-5 pe-0 desktop-windows:h-[var(--desktop-titlebar-height)] desktop-windows:border-b-0 desktop-windows:bg-white desktop-windows:ps-4 desktop-windows:after:pointer-events-none desktop-windows:after:absolute desktop-windows:after:inset-x-0 desktop-windows:after:-bottom-px desktop-windows:after:border-b desktop-windows:after:border-border/70 dark:desktop-windows:bg-[#0e1218]",
+        "drag-region relative flex h-[52px] shrink-0 items-center border-b border-border/70 bg-background ps-5 pe-0 desktop-windows:h-[var(--desktop-titlebar-height)] desktop-windows:border-b-0 desktop-windows:bg-[var(--desktop-titlebar-surface)] desktop-windows:ps-4 desktop-windows:after:pointer-events-none desktop-windows:after:absolute desktop-windows:after:inset-x-0 desktop-windows:after:-bottom-px desktop-windows:after:border-b desktop-windows:after:border-border/70",
         props.className,
       )}
     >

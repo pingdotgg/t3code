@@ -85,7 +85,7 @@ const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 const WINDOWS_TITLEBAR_HEIGHT = 40;
 const WINDOWS_TITLEBAR_LIGHT_COLOR = "#ffffff";
 const WINDOWS_TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
-const WINDOWS_TITLEBAR_DARK_COLOR = "#0e1218";
+const WINDOWS_TITLEBAR_DARK_COLOR = "#161616";
 const WINDOWS_TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
@@ -1209,9 +1209,7 @@ function registerIpcHandlers(): void {
     }
 
     nativeTheme.themeSource = theme;
-    if (mainWindow) {
-      syncWindowsTitleBarOverlay(mainWindow);
-    }
+    syncAllWindowsTitleBarOverlays();
   });
 
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
@@ -1346,7 +1344,9 @@ function getIconOption(): { icon: string } | Record<string, never> {
 }
 
 function getWindowsTitleBarOverlayOptions() {
-  const isDark = nativeTheme.shouldUseDarkColors;
+  const isDark =
+    nativeTheme.themeSource === "dark" ||
+    (nativeTheme.themeSource === "system" && nativeTheme.shouldUseDarkColors);
   return {
     height: WINDOWS_TITLEBAR_HEIGHT,
     color: isDark ? WINDOWS_TITLEBAR_DARK_COLOR : WINDOWS_TITLEBAR_LIGHT_COLOR,
@@ -1360,6 +1360,17 @@ function syncWindowsTitleBarOverlay(window: BrowserWindow) {
   }
 
   window.setTitleBarOverlay(getWindowsTitleBarOverlayOptions());
+}
+
+function syncAllWindowsTitleBarOverlays() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) continue;
+    syncWindowsTitleBarOverlay(window);
+  }
 }
 
 function createWindow(): BrowserWindow {
@@ -1495,6 +1506,9 @@ app
   .then(() => {
     writeDesktopLogHeader("app ready");
     configureAppIdentity();
+    nativeTheme.on("updated", () => {
+      syncAllWindowsTitleBarOverlays();
+    });
     configureApplicationMenu();
     registerDesktopProtocol();
     configureAutoUpdater();

@@ -47,7 +47,7 @@ export function DiffPanelShell(props: {
           className={cn(
             "relative border-b border-border/70 bg-background",
             isWindowsElectron &&
-              "border-b-0 bg-white after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:border-b after:border-border/70 dark:bg-[#0e1218]",
+              "border-b-0 bg-[var(--desktop-titlebar-surface)] after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:border-b after:border-border/70",
           )}
         >
           <div className={getDiffPanelHeaderRowClassName(props.mode)}>
