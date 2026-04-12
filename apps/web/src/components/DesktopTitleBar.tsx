@@ -14,6 +14,7 @@ interface DesktopTitleBarProps {
   titleViewportPaddingClassName?: string;
   titleAlignment?: "center" | "left";
   reserveNativeWindowControlsOverlay?: boolean;
+  tone?: "default" | "subtle";
 }
 
 export function DesktopTitleBar(props: DesktopTitleBarProps) {
@@ -23,13 +24,12 @@ export function DesktopTitleBar(props: DesktopTitleBarProps) {
   const titleAlignment = props.titleAlignment ?? "center";
   const reserveNativeWindowControlsOverlay =
     props.reserveNativeWindowControlsOverlay ?? isWindowsElectron;
+  const tone = props.tone ?? "default";
 
   return (
     <div
       className={cn(
-        isWindowsElectron
-          ? "drag-region relative flex h-[var(--desktop-titlebar-height)] shrink-0 items-center border-b-0 bg-white ps-4 pe-0 after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:border-b after:border-border/70 dark:bg-[#0e1218]"
-          : "drag-region relative flex h-[44px] shrink-0 items-center border-b border-border/70 bg-[linear-gradient(90deg,color-mix(in_srgb,var(--background)_95%,var(--color-black)_5%)_0%,var(--background)_65%,color-mix(in_srgb,var(--background)_94%,var(--color-black)_6%)_100%)] ps-3 pe-0",
+        "drag-region relative flex h-[52px] shrink-0 items-center border-b border-border/70 bg-background ps-5 pe-0 desktop-windows:h-[var(--desktop-titlebar-height)] desktop-windows:border-b-0 desktop-windows:bg-white desktop-windows:ps-4 desktop-windows:after:pointer-events-none desktop-windows:after:absolute desktop-windows:after:inset-x-0 desktop-windows:after:-bottom-px desktop-windows:after:border-b desktop-windows:after:border-border/70 dark:desktop-windows:bg-[#0e1218]",
         props.className,
       )}
     >
@@ -59,9 +59,27 @@ export function DesktopTitleBar(props: DesktopTitleBarProps) {
           )}
         >
           <div className="min-w-0 text-center">
-            <div className="truncate text-[12px] font-medium text-foreground/90">{props.title}</div>
+            <div
+              className={cn(
+                "truncate",
+                tone === "subtle"
+                  ? "text-xs font-medium tracking-wide text-muted-foreground/70"
+                  : "text-[12px] font-medium text-foreground/90",
+              )}
+            >
+              {props.title}
+            </div>
             {props.subtitle ? (
-              <div className="truncate text-[10px] text-muted-foreground/85">{props.subtitle}</div>
+              <div
+                className={cn(
+                  "truncate",
+                  tone === "subtle"
+                    ? "text-[10px] text-muted-foreground/50"
+                    : "text-[10px] text-muted-foreground/85",
+                )}
+              >
+                {props.subtitle}
+              </div>
             ) : null}
           </div>
         </div>
@@ -69,11 +87,25 @@ export function DesktopTitleBar(props: DesktopTitleBarProps) {
         <div className="min-w-0 flex-1 pe-4 desktop-windows:pe-3">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-col desktop-windows:flex-row desktop-windows:items-center desktop-windows:gap-2">
-              <div className="truncate text-[12px] font-medium tracking-tight text-foreground/92">
+              <div
+                className={cn(
+                  "truncate",
+                  tone === "subtle"
+                    ? "text-xs font-medium tracking-wide text-muted-foreground/70"
+                    : "text-[12px] font-medium tracking-tight text-foreground/92",
+                )}
+              >
                 {props.title}
               </div>
               {props.subtitle ? (
-                <div className="truncate text-[10px] text-muted-foreground/85 desktop-windows:text-[11px]">
+                <div
+                  className={cn(
+                    "truncate desktop-windows:text-[11px]",
+                    tone === "subtle"
+                      ? "text-[10px] text-muted-foreground/50"
+                      : "text-[10px] text-muted-foreground/85",
+                  )}
+                >
                   {props.subtitle}
                 </div>
               ) : null}

@@ -3911,19 +3911,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
             </div>
           </header>
         )}
-        {isWindowsElectron && (
+        {isElectron && (
           <DesktopTitleBar
             title="No active thread"
             contextLabel="Workspace"
             contextValue="Threads"
             showContextChip={false}
             titleAlignment="left"
+            tone={isWindowsElectron ? "default" : "subtle"}
           />
-        )}
-        {isElectron && !isWindowsElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
-            <span className="text-xs text-muted-foreground/50">No active thread</span>
-          </div>
         )}
         <div className="flex flex-1 items-center justify-center">
           <div className="text-center">
