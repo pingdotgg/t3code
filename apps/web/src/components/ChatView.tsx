@@ -3295,7 +3295,7 @@ export default function ChatView(props: ChatViewProps) {
         className={cn(
           "border-b border-border px-3 sm:px-5",
           isElectron
-            ? "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+2em)]"
+            ? "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
             : "py-2 sm:py-3",
         )}
       >
