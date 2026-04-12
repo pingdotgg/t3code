@@ -59,14 +59,13 @@ function SettingsContentLayout() {
         {usesDesktopChromeHeader && (
           <div
             className={cn(
-              "drag-region flex h-[52px] shrink-0 items-center border-b border-border",
-              usesWCO ? "titlebar-overlay-safe titlebar-overlay-safe-lg" : "px-5",
+              "drag-region flex h-[var(--desktop-chrome-titlebar-height)] shrink-0 items-center border-b border-border pl-5 pr-[var(--desktop-chrome-safe-inline-end,0px)]",
             )}
           >
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
             </span>
-            <div className="ms-auto flex items-center gap-2 pr-[var(--desktop-chrome-safe-inline-end,0px)]">
+            <div className="ms-auto flex items-center gap-2">
               <Button
                 size="xs"
                 variant="outline"

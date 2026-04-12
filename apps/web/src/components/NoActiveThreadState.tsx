@@ -4,19 +4,17 @@ import { usesDesktopChromeHeader, usesWCO } from "../env";
 import { cn } from "~/lib/utils";
 
 export function NoActiveThreadState() {
-  let headerClassName = "px-3 py-2 sm:px-5 sm:py-3";
-  if (usesDesktopChromeHeader) {
-    headerClassName = "drag-region flex h-[52px] items-center px-3 sm:px-5";
-  }
-  if (usesWCO) {
-    headerClassName =
-      "drag-region flex h-[52px] items-center titlebar-overlay-safe titlebar-overlay-safe-sm titlebar-overlay-safe-sm-up-lg";
-  }
-
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
-        <header className={cn("border-b border-border", headerClassName)}>
+        <header
+          className={cn(
+            "border-b border-border py-2 sm:py-3 flex items-center",
+            usesDesktopChromeHeader
+              ? "drag-region h-[var(--desktop-chrome-titlebar-height)] pl-3 pr-[var(--desktop-chrome-safe-inline-end,0px)]"
+              : "px-3 sm:px-5",
+          )}
+        >
           {usesDesktopChromeHeader ? (
             <span className="text-xs text-muted-foreground/50">No active thread</span>
           ) : (

@@ -1,3 +1,4 @@
+import { cn } from "~/lib/utils";
 import type { DesktopWindowControl, DesktopWindowControlsLayout } from "@t3tools/contracts";
 import { LinuxWindowControls } from "./LinuxWindowControls";
 
@@ -20,11 +21,10 @@ function DesktopChromeOverlayBank(props: {
 
   return (
     <div
-      className={
-        props.side === "left"
-          ? "fixed left-3 top-0 z-50 flex h-[52px] w-fit items-center sm:left-5"
-          : "fixed right-3 top-0 z-50 flex h-[52px] w-fit items-center sm:right-5"
-      }
+      className={cn(
+        "fixed top-0 z-50 flex h-[var(--desktop-chrome-titlebar-height)] w-fit items-center",
+        props.side === "left" ? "left-3" : "right-3",
+      )}
     >
       <LinuxWindowControls actions={props.actions} />
     </div>

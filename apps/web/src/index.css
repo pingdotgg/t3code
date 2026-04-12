@@ -180,32 +180,6 @@ code {
   -webkit-app-region: no-drag;
 }
 
-.titlebar-overlay-safe {
-  padding-inline-start: calc(env(titlebar-area-x, 0px) + var(--titlebar-safe-inline, 0px));
-  padding-inline-end: calc(
-    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) +
-      var(--titlebar-safe-inline, 0px)
-  );
-}
-
-.titlebar-overlay-safe-sm {
-  --titlebar-safe-inline: 0.75rem;
-}
-
-.titlebar-overlay-safe-md {
-  --titlebar-safe-inline: 1rem;
-}
-
-.titlebar-overlay-safe-lg {
-  --titlebar-safe-inline: 1.25rem;
-}
-
-@media (min-width: 640px) {
-  .titlebar-overlay-safe-sm-up-lg {
-    --titlebar-safe-inline: 1.25rem;
-  }
-}
-
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;

@@ -74,15 +74,20 @@ export const Route = createRootRouteWithContext<{
 function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
-  const desktopChromeStyle: DesktopChromeSafeAreaStyle | undefined = windowControlsLayout
-    ? {
-        ...resolveDesktopChromeSafeAreaStyle({
-          leftControlCount: windowControlsLayout.left.length,
-          rightControlCount: usesCustomWindowControls ? windowControlsLayout.right.length : 0,
-        }),
-        "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
-      }
-    : undefined;
+  const desktopChromeStyle: DesktopChromeSafeAreaStyle =
+    usesCustomWindowControls && windowControlsLayout
+      ? {
+          ...resolveDesktopChromeSafeAreaStyle({
+            leftControlCount: windowControlsLayout.left.length,
+            rightControlCount: windowControlsLayout.right.length,
+          }),
+          "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
+        }
+      : {
+          "--desktop-chrome-safe-inline-start": "env(safe-area-inset-left)",
+          "--desktop-chrome-safe-inline-end": "env(safe-area-inset-right)",
+          "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
+        };
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {

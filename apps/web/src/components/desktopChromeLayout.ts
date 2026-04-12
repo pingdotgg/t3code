@@ -11,6 +11,9 @@ export type DesktopChromeSafeAreaStyle = React.CSSProperties & {
 };
 
 export function resolveDesktopChromeSafeInlineSize(controlCount: number): string {
+  if (controlCount === 0) {
+    return "0";
+  }
   return `${Math.max(0, controlCount) * DESKTOP_CHROME_SAFE_INLINE_STEP_REM + DESKTOP_CHROME_SAFE_INLINE_BASE_REM}rem`;
 }
 

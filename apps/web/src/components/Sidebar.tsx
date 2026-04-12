@@ -54,7 +54,7 @@ import {
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
-import { isElectron } from "../env";
+import { isElectron, usesDesktopChromeHeader } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
@@ -1969,8 +1969,8 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader() {
     </div>
   );
 
-  return isElectron ? (
-    <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[var(--desktop-chrome-safe-inline-start)]">
+  return usesDesktopChromeHeader ? (
+    <SidebarHeader className="drag-region h-[var(--desktop-chrome-titlebar-height)] flex-row items-center gap-2 px-4 py-0 pl-[max(1em,var(--desktop-chrome-safe-inline-start,0))]">
       {wordmark}
     </SidebarHeader>
   ) : (
