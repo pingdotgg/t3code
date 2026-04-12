@@ -145,6 +145,8 @@ export interface DesktopBridge {
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
+  writeClipboardText: (text: string) => Promise<void>;
+  readClipboardText: () => Promise<string>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
