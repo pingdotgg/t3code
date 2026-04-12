@@ -150,20 +150,20 @@ export const ProviderRegistryLive = Layer.effect(
       switch (provider) {
         case "codex":
           return yield* codexProvider.refresh.pipe(
-            Effect.flatMap((nextProvider) => syncProvider(nextProvider, { publish: false })),
+            Effect.flatMap((nextProvider) => syncProvider(nextProvider)),
           );
         case "claudeAgent":
           return yield* claudeProvider.refresh.pipe(
-            Effect.flatMap((nextProvider) => syncProvider(nextProvider, { publish: false })),
+            Effect.flatMap((nextProvider) => syncProvider(nextProvider)),
           );
         default:
           return yield* Effect.all(
             [
               codexProvider.refresh.pipe(
-                Effect.flatMap((nextProvider) => syncProvider(nextProvider, { publish: false })),
+                Effect.flatMap((nextProvider) => syncProvider(nextProvider)),
               ),
               claudeProvider.refresh.pipe(
-                Effect.flatMap((nextProvider) => syncProvider(nextProvider, { publish: false })),
+                Effect.flatMap((nextProvider) => syncProvider(nextProvider)),
               ),
             ],
             {
