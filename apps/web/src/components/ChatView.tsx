@@ -2626,16 +2626,40 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
       const title = truncate(titleSeed);
-      const threadCreateModelSelection: ModelSelection = {
-        provider: ctxSelectedProvider,
-        model:
-          ctxSelectedModel ||
-          activeProject.defaultModelSelection?.model ||
-          DEFAULT_MODEL_BY_PROVIDER.codex,
-        ...(ctxSelectedModelSelection.options
-          ? { options: ctxSelectedModelSelection.options }
-          : {}),
-      };
+      const createModel =
+        ctxSelectedModel ||
+        activeProject.defaultModelSelection?.model ||
+        DEFAULT_MODEL_BY_PROVIDER.codex;
+      const threadCreateModelSelection: ModelSelection =
+        ctxSelectedProvider === "codex"
+          ? ctxSelectedModelSelection.options
+            ? {
+                provider: ctxSelectedProvider,
+                model: createModel,
+                options: ctxSelectedModelSelection.options as NonNullable<
+                  Extract<ModelSelection, { provider: "codex" }>["options"]
+                >,
+              }
+            : { provider: ctxSelectedProvider, model: createModel }
+          : ctxSelectedProvider === "claudeAgent"
+            ? ctxSelectedModelSelection.options
+              ? {
+                  provider: ctxSelectedProvider,
+                  model: createModel,
+                  options: ctxSelectedModelSelection.options as NonNullable<
+                    Extract<ModelSelection, { provider: "claudeAgent" }>["options"]
+                  >,
+                }
+              : { provider: ctxSelectedProvider, model: createModel }
+            : ctxSelectedModelSelection.options
+              ? {
+                  provider: ctxSelectedProvider,
+                  model: createModel,
+                  options: ctxSelectedModelSelection.options as NonNullable<
+                    Extract<ModelSelection, { provider: "ollama" }>["options"]
+                  >,
+                }
+              : { provider: ctxSelectedProvider, model: createModel };
 
       // Auto-title from first message
       if (isFirstMessage && isServerThread) {

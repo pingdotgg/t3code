@@ -1,9 +1,12 @@
 import {
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type OllamaModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
   type ScopedThreadRef,
+  type ServerProvider,
+  type ServerProviderConnection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
@@ -30,6 +33,7 @@ import {
 } from "../ui/menu";
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
+import { useServerProviders } from "../../rpc/serverState";
 import { cn } from "~/lib/utils";
 
 type ProviderOptions = ProviderModelOptions[ProviderKind];
@@ -53,6 +57,9 @@ function getRawEffort(
   if (provider === "codex") {
     return trimOrNull((modelOptions as CodexModelOptions | undefined)?.reasoningEffort);
   }
+  if (provider === "ollama") {
+    return null;
+  }
   return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.effort);
 }
 
@@ -74,7 +81,16 @@ function buildNextOptions(
   if (provider === "codex") {
     return { ...(modelOptions as CodexModelOptions | undefined), ...patch } as CodexModelOptions;
   }
+  if (provider === "ollama") {
+    return { ...(modelOptions as OllamaModelOptions | undefined), ...patch } as OllamaModelOptions;
+  }
   return { ...(modelOptions as ClaudeModelOptions | undefined), ...patch } as ClaudeModelOptions;
+}
+
+function getOllamaConnections(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProviderConnection> {
+  return providers.find((provider) => provider.provider === "ollama")?.connections ?? [];
 }
 
 function getSelectedTraits(
@@ -162,6 +178,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
+  const providers = useServerProviders();
   const updateModelOptions = useCallback(
     (nextOptions: ProviderOptions | undefined) => {
       if ("onModelOptionsChange" in persistence) {
@@ -191,6 +208,14 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     ultrathinkInBodyText,
   } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
   const defaultEffort = getDefaultEffort(caps);
+  const ollamaConnections = provider === "ollama" ? getOllamaConnections(providers) : [];
+  const selectedConnectionId =
+    provider === "ollama"
+      ? (trimOrNull((modelOptions as OllamaModelOptions | undefined)?.connectionId) ??
+        ollamaConnections.find((connection) => connection.isDefault)?.id ??
+        ollamaConnections[0]?.id ??
+        null)
+      : null;
 
   const handleEffortChange = useCallback(
     (value: string) => {
@@ -228,7 +253,12 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     ],
   );
 
-  if (effort === null && thinkingEnabled === null && contextWindowOptions.length <= 1) {
+  if (
+    effort === null &&
+    thinkingEnabled === null &&
+    contextWindowOptions.length <= 1 &&
+    !(provider === "ollama" && ollamaConnections.length > 1)
+  ) {
     return null;
   }
 
@@ -322,6 +352,29 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           </MenuGroup>
         </>
       ) : null}
+      {provider === "ollama" && ollamaConnections.length > 1 ? (
+        <>
+          <MenuDivider />
+          <MenuGroup>
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Connection</div>
+            <MenuRadioGroup
+              value={selectedConnectionId ?? ""}
+              onValueChange={(value) => {
+                updateModelOptions(
+                  buildNextOptions(provider, modelOptions, { connectionId: value }),
+                );
+              }}
+            >
+              {ollamaConnections.map((connection) => (
+                <MenuRadioItem key={connection.id} value={connection.id}>
+                  {connection.name}
+                  {connection.isDefault ? " (default)" : ""}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuGroup>
+        </>
+      ) : null}
     </>
   );
 });
@@ -339,6 +392,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const providers = useServerProviders();
   const {
     caps,
     effort,
@@ -350,6 +404,19 @@ export const TraitsPicker = memo(function TraitsPicker({
     defaultContextWindow,
     ultrathinkPromptControlled,
   } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
+  const ollamaConnections = provider === "ollama" ? getOllamaConnections(providers) : [];
+  const selectedConnectionId =
+    provider === "ollama"
+      ? (trimOrNull((modelOptions as OllamaModelOptions | undefined)?.connectionId) ??
+        ollamaConnections.find((connection) => connection.isDefault)?.id ??
+        ollamaConnections[0]?.id ??
+        null)
+      : null;
+  const connectionLabel =
+    provider === "ollama" && ollamaConnections.length > 1
+      ? (ollamaConnections.find((connection) => connection.id === selectedConnectionId)?.name ??
+        null)
+      : null;
 
   const effortLabel = effort
     ? (effortLevels.find((l) => l.value === effort)?.label ?? effort)
@@ -368,6 +435,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           : `Thinking ${thinkingEnabled ? "On" : "Off"}`,
     ...(caps.supportsFastMode && fastModeEnabled ? ["Fast"] : []),
     ...(contextWindowLabel ? [contextWindowLabel] : []),
+    ...(connectionLabel ? [connectionLabel] : []),
   ]
     .filter(Boolean)
     .join(" · ");

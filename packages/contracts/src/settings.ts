@@ -6,6 +6,7 @@ import {
   ClaudeModelOptions,
   CodexModelOptions,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  OllamaModelOptions,
 } from "./model";
 import { ModelSelection } from "./orchestration";
 
@@ -73,6 +74,41 @@ export const ClaudeSettings = Schema.Struct({
 });
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
+export const OllamaAuthMode = Schema.Literals(["none", "bearer"]);
+export type OllamaAuthMode = typeof OllamaAuthMode.Type;
+
+export const OllamaConnectionSettings = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  baseUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("http://127.0.0.1:11434"))),
+  authMode: OllamaAuthMode.pipe(Schema.withDecodingDefault(Effect.succeed("none" as const))),
+  apiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  isDefault: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  requestTimeoutMs: Schema.optional(Schema.Number),
+});
+export type OllamaConnectionSettings = typeof OllamaConnectionSettings.Type;
+
+export const OllamaSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  connections: Schema.Array(OllamaConnectionSettings).pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed([
+        {
+          id: "local",
+          name: "Local Ollama",
+          baseUrl: "http://127.0.0.1:11434",
+          authMode: "none" as const,
+          apiKey: "",
+          customModels: [],
+          isDefault: true,
+        },
+      ]),
+    ),
+  ),
+});
+export type OllamaSettings = typeof OllamaSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -97,6 +133,7 @@ export const ServerSettings = Schema.Struct({
   providers: Schema.Struct({
     codex: CodexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    ollama: OllamaSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
@@ -150,6 +187,15 @@ const ModelSelectionPatch = Schema.Union([
     model: Schema.optionalKey(TrimmedNonEmptyString),
     options: Schema.optionalKey(ClaudeModelOptionsPatch),
   }),
+  Schema.Struct({
+    provider: Schema.optionalKey(Schema.Literal("ollama")),
+    model: Schema.optionalKey(TrimmedNonEmptyString),
+    options: Schema.optionalKey(
+      Schema.Struct({
+        connectionId: Schema.optionalKey(OllamaModelOptions.fields.connectionId),
+      }),
+    ),
+  }),
 ]);
 
 const CodexSettingsPatch = Schema.Struct({
@@ -163,6 +209,22 @@ const ClaudeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(Schema.String),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const OllamaConnectionSettingsPatch = Schema.Struct({
+  id: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(Schema.String),
+  baseUrl: Schema.optionalKey(Schema.String),
+  authMode: Schema.optionalKey(OllamaAuthMode),
+  apiKey: Schema.optionalKey(Schema.String),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  isDefault: Schema.optionalKey(Schema.Boolean),
+  requestTimeoutMs: Schema.optionalKey(Schema.Number),
+});
+
+const OllamaSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  connections: Schema.optionalKey(Schema.Array(OllamaConnectionSettingsPatch)),
 });
 
 export const ServerSettingsPatch = Schema.Struct({
@@ -179,6 +241,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
+      ollama: Schema.optionalKey(OllamaSettingsPatch),
     }),
   ),
 });

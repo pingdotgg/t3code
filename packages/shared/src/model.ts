@@ -6,6 +6,7 @@ import {
   type CodexModelOptions,
   type ModelCapabilities,
   type ModelSelection,
+  type OllamaModelOptions,
   type ProviderKind,
 } from "@t3tools/contracts";
 
@@ -117,6 +118,13 @@ export function normalizeClaudeModelOptionsWithCapabilities(
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
+export function normalizeOllamaModelOptions(
+  modelOptions: OllamaModelOptions | null | undefined,
+): OllamaModelOptions | undefined {
+  const connectionId = trimOrNull(modelOptions?.connectionId);
+  return connectionId ? { connectionId } : undefined;
+}
+
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }
@@ -216,6 +224,9 @@ export function resolveApiModelId(modelSelection: ModelSelection): string {
         default:
           return modelSelection.model;
       }
+    }
+    case "ollama": {
+      return modelSelection.model;
     }
     default: {
       return modelSelection.model;

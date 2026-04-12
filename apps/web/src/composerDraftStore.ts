@@ -528,7 +528,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" || value === "claudeAgent" ? value : null;
+  return value === "codex" || value === "claudeAgent" || value === "ollama" ? value : null;
 }
 
 function normalizeProviderModelOptions(
@@ -544,6 +544,10 @@ function normalizeProviderModelOptions(
   const claudeCandidate =
     candidate?.claudeAgent && typeof candidate.claudeAgent === "object"
       ? (candidate.claudeAgent as Record<string, unknown>)
+      : null;
+  const ollamaCandidate =
+    candidate?.ollama && typeof candidate.ollama === "object"
+      ? (candidate.ollama as Record<string, unknown>)
       : null;
 
   const codexReasoningEffort: CodexReasoningEffort | undefined =
@@ -613,12 +617,19 @@ function normalizeProviderModelOptions(
         }
       : undefined;
 
-  if (!codex && !claude) {
+  const ollamaConnectionId =
+    typeof ollamaCandidate?.connectionId === "string" && ollamaCandidate.connectionId.length > 0
+      ? ollamaCandidate.connectionId
+      : undefined;
+  const ollama = ollamaConnectionId ? { connectionId: ollamaConnectionId } : undefined;
+
+  if (!codex && !claude && !ollama) {
     return null;
   }
   return {
     ...(codex ? { codex } : {}),
     ...(claude ? { claudeAgent: claude } : {}),
+    ...(ollama ? { ollama } : {}),
   };
 }
 
@@ -649,12 +660,30 @@ function normalizeModelSelection(
     provider,
     provider === "codex" ? legacy?.legacyCodex : undefined,
   );
-  const options = provider === "codex" ? modelOptions?.codex : modelOptions?.claudeAgent;
-  return {
-    provider,
-    model,
-    ...(options ? { options } : {}),
-  };
+  const options =
+    provider === "codex"
+      ? modelOptions?.codex
+      : provider === "claudeAgent"
+        ? modelOptions?.claudeAgent
+        : modelOptions?.ollama;
+  switch (provider) {
+    case "codex":
+      return options
+        ? { provider, model, options: options as NonNullable<ProviderModelOptions["codex"]> }
+        : { provider, model };
+    case "claudeAgent":
+      return options
+        ? {
+            provider,
+            model,
+            options: options as NonNullable<ProviderModelOptions["claudeAgent"]>,
+          }
+        : { provider, model };
+    case "ollama":
+      return options
+        ? { provider, model, options: options as NonNullable<ProviderModelOptions["ollama"]> }
+        : { provider, model };
+  }
 }
 
 // ── Legacy sync helpers (used only during migration from v2 storage) ──
@@ -667,11 +696,32 @@ function legacySyncModelSelectionOptions(
     return null;
   }
   const options = modelOptions?.[modelSelection.provider];
-  return {
-    provider: modelSelection.provider,
-    model: modelSelection.model,
-    ...(options ? { options } : {}),
-  };
+  switch (modelSelection.provider) {
+    case "codex":
+      return options
+        ? {
+            provider: "codex",
+            model: modelSelection.model,
+            options: options as NonNullable<ProviderModelOptions["codex"]>,
+          }
+        : { provider: "codex", model: modelSelection.model };
+    case "claudeAgent":
+      return options
+        ? {
+            provider: "claudeAgent",
+            model: modelSelection.model,
+            options: options as NonNullable<ProviderModelOptions["claudeAgent"]>,
+          }
+        : { provider: "claudeAgent", model: modelSelection.model };
+    case "ollama":
+      return options
+        ? {
+            provider: "ollama",
+            model: modelSelection.model,
+            options: options as NonNullable<ProviderModelOptions["ollama"]>,
+          }
+        : { provider: "ollama", model: modelSelection.model };
+  }
 }
 
 function legacyMergeModelSelectionIntoProviderModelOptions(
@@ -715,17 +765,31 @@ function legacyToModelSelectionByProvider(
   const result: Partial<Record<ProviderKind, ModelSelection>> = {};
   // Add entries from the options bag (for non-active providers)
   if (modelOptions) {
-    for (const provider of ["codex", "claudeAgent"] as const) {
+    for (const provider of ["codex", "claudeAgent", "ollama"] as const) {
       const options = modelOptions[provider];
       if (options && Object.keys(options).length > 0) {
-        result[provider] = {
-          provider,
-          model:
-            modelSelection?.provider === provider
-              ? modelSelection.model
-              : DEFAULT_MODEL_BY_PROVIDER[provider],
-          options,
-        };
+        const model =
+          modelSelection?.provider === provider
+            ? modelSelection.model
+            : DEFAULT_MODEL_BY_PROVIDER[provider];
+        result[provider] =
+          provider === "codex"
+            ? {
+                provider,
+                model,
+                options: options as NonNullable<ProviderModelOptions["codex"]>,
+              }
+            : provider === "claudeAgent"
+              ? {
+                  provider,
+                  model,
+                  options: options as NonNullable<ProviderModelOptions["claudeAgent"]>,
+                }
+              : {
+                  provider,
+                  model,
+                  options: options as NonNullable<ProviderModelOptions["ollama"]>,
+                };
       }
     }
   }
@@ -734,6 +798,42 @@ function legacyToModelSelectionByProvider(
     result[modelSelection.provider] = modelSelection;
   }
   return result;
+}
+
+function createModelSelectionForProvider(
+  provider: ProviderKind,
+  model: string,
+  options?: ProviderModelOptions[ProviderKind],
+): ModelSelection {
+  switch (provider) {
+    case "codex":
+      if (options !== undefined) {
+        return {
+          provider,
+          model,
+          options: options as NonNullable<ProviderModelOptions["codex"]>,
+        };
+      }
+      return { provider, model };
+    case "claudeAgent":
+      if (options !== undefined) {
+        return {
+          provider,
+          model,
+          options: options as NonNullable<ProviderModelOptions["claudeAgent"]>,
+        };
+      }
+      return { provider, model };
+    case "ollama":
+      if (options !== undefined) {
+        return {
+          provider,
+          model,
+          options: options as NonNullable<ProviderModelOptions["ollama"]>,
+        };
+      }
+      return { provider, model };
+  }
 }
 
 export function deriveEffectiveComposerModelState(input: {
@@ -2212,11 +2312,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 nextMap[normalized.provider] = normalized;
               } else {
                 // No options in selection → preserve existing options, update provider+model
-                nextMap[normalized.provider] = {
-                  provider: normalized.provider,
-                  model: normalized.model,
-                  ...(current?.options ? { options: current.options } : {}),
-                };
+                nextMap[normalized.provider] = createModelSelectionForProvider(
+                  normalized.provider,
+                  normalized.model,
+                  current?.options,
+                );
               }
             }
             const nextActiveProvider = normalized?.provider ?? base.activeProvider;
@@ -2253,17 +2353,17 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const base = existing ?? createEmptyThreadDraft();
             const nextMap = { ...base.modelSelectionByProvider };
-            for (const provider of ["codex", "claudeAgent"] as const) {
+            for (const provider of ["codex", "claudeAgent", "ollama"] as const) {
               // Only touch providers explicitly present in the input
               if (!normalizedOpts || !(provider in normalizedOpts)) continue;
               const opts = normalizedOpts[provider];
               const current = nextMap[provider];
               if (opts) {
-                nextMap[provider] = {
+                nextMap[provider] = createModelSelectionForProvider(
                   provider,
-                  model: current?.model ?? DEFAULT_MODEL_BY_PROVIDER[provider],
-                  options: opts,
-                };
+                  current?.model ?? DEFAULT_MODEL_BY_PROVIDER[provider],
+                  opts,
+                );
               } else if (current?.options) {
                 // Remove options but keep the selection
                 const { options: _, ...rest } = current;
@@ -2310,11 +2410,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextMap = { ...base.modelSelectionByProvider };
             const currentForProvider = nextMap[normalizedProvider];
             if (providerOpts) {
-              nextMap[normalizedProvider] = {
-                provider: normalizedProvider,
-                model: currentForProvider?.model ?? DEFAULT_MODEL_BY_PROVIDER[normalizedProvider],
-                options: providerOpts,
-              };
+              nextMap[normalizedProvider] = createModelSelectionForProvider(
+                normalizedProvider,
+                currentForProvider?.model ?? DEFAULT_MODEL_BY_PROVIDER[normalizedProvider],
+                providerOpts,
+              );
             } else if (currentForProvider?.options) {
               const { options: _, ...rest } = currentForProvider;
               nextMap[normalizedProvider] = rest as ModelSelection;
@@ -2328,16 +2428,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               const stickyBase =
                 nextStickyMap[normalizedProvider] ??
                 base.modelSelectionByProvider[normalizedProvider] ??
-                ({
-                  provider: normalizedProvider,
-                  model: DEFAULT_MODEL_BY_PROVIDER[normalizedProvider],
-                } as ModelSelection);
+                createModelSelectionForProvider(
+                  normalizedProvider,
+                  DEFAULT_MODEL_BY_PROVIDER[normalizedProvider],
+                );
               if (providerOpts) {
-                nextStickyMap[normalizedProvider] = {
-                  ...stickyBase,
-                  provider: normalizedProvider,
-                  options: providerOpts,
-                };
+                nextStickyMap[normalizedProvider] = createModelSelectionForProvider(
+                  normalizedProvider,
+                  stickyBase.model,
+                  providerOpts,
+                );
               } else if (stickyBase.options) {
                 const { options: _, ...rest } = stickyBase;
                 nextStickyMap[normalizedProvider] = rest as ModelSelection;

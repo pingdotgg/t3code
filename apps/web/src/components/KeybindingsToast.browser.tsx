@@ -99,6 +99,20 @@ function createBaseServerConfig(): ServerConfig {
       providers: {
         codex: { enabled: true, binaryPath: "", homePath: "", customModels: [] },
         claudeAgent: { enabled: true, binaryPath: "", customModels: [] },
+        ollama: {
+          enabled: true,
+          connections: [
+            {
+              id: "local",
+              name: "Local Ollama",
+              baseUrl: "http://127.0.0.1:11434",
+              authMode: "none",
+              apiKey: "",
+              customModels: [],
+              isDefault: true,
+            },
+          ],
+        },
       },
     },
   };

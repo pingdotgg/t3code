@@ -44,7 +44,11 @@ export function resolveSelectableProvider(
   if (isProviderEnabled(providers, requested)) {
     return requested;
   }
-  return providers.find((candidate) => candidate.enabled)?.provider ?? requested;
+  return (
+    providers.find((candidate) => candidate.enabled && candidate.status === "ready")?.provider ??
+    providers.find((candidate) => candidate.enabled)?.provider ??
+    requested
+  );
 }
 
 export function getProviderModelCapabilities(

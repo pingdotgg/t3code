@@ -58,6 +58,21 @@ export const ServerProviderModel = Schema.Struct({
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 
+export const ServerProviderConnection = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  baseUrl: TrimmedNonEmptyString,
+  isDefault: Schema.Boolean,
+  enabled: Schema.Boolean,
+  version: Schema.NullOr(TrimmedNonEmptyString),
+  status: ServerProviderState,
+  auth: ServerProviderAuth,
+  checkedAt: IsoDateTime,
+  message: Schema.optional(TrimmedNonEmptyString),
+  models: Schema.Array(ServerProviderModel),
+});
+export type ServerProviderConnection = typeof ServerProviderConnection.Type;
+
 export const ServerProviderSlashCommandInput = Schema.Struct({
   hint: TrimmedNonEmptyString,
 });
@@ -91,6 +106,9 @@ export const ServerProvider = Schema.Struct({
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
+  connections: Schema.optionalKey(Schema.Array(ServerProviderConnection)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

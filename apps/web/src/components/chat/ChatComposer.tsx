@@ -581,14 +581,40 @@ export const ChatComposer = memo(
 
     const selectedPromptEffort = composerProviderState.promptEffort;
     const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-    const selectedModelSelection = useMemo<ModelSelection>(
-      () => ({
-        provider: selectedProvider,
-        model: selectedModel,
-        ...(selectedModelOptionsForDispatch ? { options: selectedModelOptionsForDispatch } : {}),
-      }),
-      [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
-    );
+    const selectedModelSelection = useMemo<ModelSelection>(() => {
+      switch (selectedProvider) {
+        case "codex":
+          return selectedModelOptionsForDispatch
+            ? {
+                provider: selectedProvider,
+                model: selectedModel,
+                options: selectedModelOptionsForDispatch as NonNullable<
+                  Extract<ModelSelection, { provider: "codex" }>["options"]
+                >,
+              }
+            : { provider: selectedProvider, model: selectedModel };
+        case "claudeAgent":
+          return selectedModelOptionsForDispatch
+            ? {
+                provider: selectedProvider,
+                model: selectedModel,
+                options: selectedModelOptionsForDispatch as NonNullable<
+                  Extract<ModelSelection, { provider: "claudeAgent" }>["options"]
+                >,
+              }
+            : { provider: selectedProvider, model: selectedModel };
+        case "ollama":
+          return selectedModelOptionsForDispatch
+            ? {
+                provider: selectedProvider,
+                model: selectedModel,
+                options: selectedModelOptionsForDispatch as NonNullable<
+                  Extract<ModelSelection, { provider: "ollama" }>["options"]
+                >,
+              }
+            : { provider: selectedProvider, model: selectedModel };
+      }
+    }, [selectedModel, selectedModelOptionsForDispatch, selectedProvider]);
     const selectedModelForPicker = selectedModel;
     const modelOptionsByProvider = useMemo<
       Record<ProviderKind, ReadonlyArray<ServerProvider["models"][number]>>
@@ -597,6 +623,7 @@ export const ChatComposer = memo(
         codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
         claudeAgent:
           providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
+        ollama: providerStatuses.find((provider) => provider.provider === "ollama")?.models ?? [],
       }),
       [providerStatuses],
     );

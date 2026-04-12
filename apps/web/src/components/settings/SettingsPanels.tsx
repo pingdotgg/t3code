@@ -11,9 +11,12 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
+  type ModelSelection,
+  type OllamaConnectionSettings,
   PROVIDER_DISPLAY_NAMES,
   type ScopedThreadRef,
   type ProviderKind,
+  type ProviderModelOptions,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -101,8 +104,9 @@ const TIMESTAMP_FORMAT_LABELS = {
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
-  binaryPlaceholder: string;
-  binaryDescription: ReactNode;
+  mode: "cli" | "connections";
+  binaryPlaceholder?: string;
+  binaryDescription?: ReactNode;
   homePathKey?: "codexHomePath";
   homePlaceholder?: string;
   homeDescription?: ReactNode;
@@ -112,6 +116,7 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
   {
     provider: "codex",
     title: "Codex",
+    mode: "cli",
     binaryPlaceholder: "Codex binary path",
     binaryDescription: "Path to the Codex binary",
     homePathKey: "codexHomePath",
@@ -121,10 +126,41 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
   {
     provider: "claudeAgent",
     title: "Claude",
+    mode: "cli",
     binaryPlaceholder: "Claude binary path",
     binaryDescription: "Path to the Claude binary",
   },
+  {
+    provider: "ollama",
+    title: "Ollama",
+    mode: "connections",
+  },
 ] as const;
+
+function createProviderModelSelection(
+  provider: ProviderKind,
+  model: string,
+  options?: ProviderModelOptions[ProviderKind],
+): ModelSelection {
+  switch (provider) {
+    case "codex":
+      return options !== undefined
+        ? { provider, model, options: options as NonNullable<ProviderModelOptions["codex"]> }
+        : { provider, model };
+    case "claudeAgent":
+      return options !== undefined
+        ? {
+            provider,
+            model,
+            options: options as NonNullable<ProviderModelOptions["claudeAgent"]>,
+          }
+        : { provider, model };
+    case "ollama":
+      return options !== undefined
+        ? { provider, model, options: options as NonNullable<ProviderModelOptions["ollama"]> }
+        : { provider, model };
+  }
+}
 
 const PROVIDER_STATUS_STYLES = {
   disabled: {
@@ -140,6 +176,22 @@ const PROVIDER_STATUS_STYLES = {
     dot: "bg-warning",
   },
 } as const;
+
+function normalizeOllamaConnections(
+  connections: ReadonlyArray<OllamaConnectionSettings>,
+): ReadonlyArray<OllamaConnectionSettings> {
+  if (connections.length === 0) {
+    return connections;
+  }
+  const hasDefault = connections.some((connection) => connection.isDefault);
+  const defaultId = hasDefault
+    ? connections.find((connection) => connection.isDefault)?.id
+    : connections[0]?.id;
+  return connections.map((connection) => ({
+    ...connection,
+    isDefault: connection.id === defaultId,
+  }));
+}
 
 function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider) {
@@ -442,12 +494,21 @@ export function GeneralSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
       settings.providers.claudeAgent.customModels.length > 0,
     ),
+    ollama: Boolean(
+      settings.providers.ollama.connections.length !==
+        DEFAULT_UNIFIED_SETTINGS.providers.ollama.connections.length ||
+      !Equal.equals(
+        settings.providers.ollama.connections,
+        DEFAULT_UNIFIED_SETTINGS.providers.ollama.connections,
+      ),
+    ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
     codex: "",
     claudeAgent: "",
+    ollama: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -549,6 +610,9 @@ export function GeneralSettingsPanel() {
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
+      if (provider === "ollama") {
+        return;
+      }
       const customModelInput = customModelInputByProvider[provider];
       const customModels = settings.providers[provider].customModels;
       const normalized = normalizeModelSlug(customModelInput, provider);
@@ -619,6 +683,9 @@ export function GeneralSettingsPanel() {
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
+      if (provider === "ollama") {
+        return;
+      }
       updateSettings({
         providers: {
           ...settings.providers,
@@ -638,6 +705,40 @@ export function GeneralSettingsPanel() {
     [settings, updateSettings],
   );
 
+  const updateOllamaConnections = useCallback(
+    (
+      updater: (
+        current: ReadonlyArray<OllamaConnectionSettings>,
+      ) => ReadonlyArray<OllamaConnectionSettings>,
+    ) => {
+      updateSettings({
+        providers: {
+          ...settings.providers,
+          ollama: {
+            ...settings.providers.ollama,
+            connections: normalizeOllamaConnections(updater(settings.providers.ollama.connections)),
+          },
+        },
+      });
+    },
+    [settings, updateSettings],
+  );
+
+  const addOllamaConnection = useCallback(() => {
+    updateOllamaConnections((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        name: `Ollama ${current.length + 1}`,
+        baseUrl: "http://127.0.0.1:11434",
+        authMode: "none",
+        apiKey: "",
+        customModels: [],
+        isDefault: current.length === 0,
+      },
+    ]);
+  }, [updateOllamaConnections]);
+
   const providerCards = PROVIDER_SETTINGS.map((providerSettings) => {
     const liveProvider = serverProviders.find(
       (candidate) => candidate.provider === providerSettings.provider,
@@ -646,9 +747,13 @@ export function GeneralSettingsPanel() {
     const defaultProviderConfig = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
     const statusKey = liveProvider?.status ?? (providerConfig.enabled ? "warning" : "disabled");
     const summary = getProviderSummary(liveProvider);
+    const fallbackModelSlugs =
+      providerSettings.provider === "ollama"
+        ? settings.providers.ollama.connections.flatMap((connection) => connection.customModels)
+        : settings.providers[providerSettings.provider].customModels;
     const models: ReadonlyArray<ServerProviderModel> =
       liveProvider?.models ??
-      providerConfig.customModels.map((slug) => ({
+      fallbackModelSlugs.map((slug: string) => ({
         slug,
         name: slug,
         isCustom: true,
@@ -658,12 +763,16 @@ export function GeneralSettingsPanel() {
     return {
       provider: providerSettings.provider,
       title: providerSettings.title,
+      mode: providerSettings.mode,
       binaryPlaceholder: providerSettings.binaryPlaceholder,
       binaryDescription: providerSettings.binaryDescription,
       homePathKey: providerSettings.homePathKey,
       homePlaceholder: providerSettings.homePlaceholder,
       homeDescription: providerSettings.homeDescription,
-      binaryPathValue: providerConfig.binaryPath,
+      binaryPathValue:
+        providerSettings.mode === "cli" && "binaryPath" in providerConfig
+          ? providerConfig.binaryPath
+          : "",
       isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
       liveProvider,
       models,
@@ -935,7 +1044,7 @@ export function GeneralSettingsPanel() {
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
                         ...settings,
-                        textGenerationModelSelection: { provider, model },
+                        textGenerationModelSelection: createProviderModelSelection(provider, model),
                       },
                       serverProviders,
                     ),
@@ -960,11 +1069,11 @@ export function GeneralSettingsPanel() {
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
                         ...settings,
-                        textGenerationModelSelection: {
-                          provider: textGenProvider,
-                          model: textGenModel,
-                          ...(nextOptions ? { options: nextOptions } : {}),
-                        },
+                        textGenerationModelSelection: createProviderModelSelection(
+                          textGenProvider,
+                          textGenModel,
+                          nextOptions,
+                        ),
                       },
                       serverProviders,
                     ),
@@ -1111,204 +1220,443 @@ export function GeneralSettingsPanel() {
               >
                 <CollapsibleContent>
                   <div className="space-y-0">
-                    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                      <label
-                        htmlFor={`provider-install-${providerCard.provider}-binary-path`}
-                        className="block"
-                      >
-                        <span className="text-xs font-medium text-foreground">
-                          {providerDisplayName} binary path
-                        </span>
-                        <Input
-                          id={`provider-install-${providerCard.provider}-binary-path`}
-                          className="mt-1.5"
-                          value={providerCard.binaryPathValue}
-                          onChange={(event) =>
-                            updateSettings({
-                              providers: {
-                                ...settings.providers,
-                                [providerCard.provider]: {
-                                  ...settings.providers[providerCard.provider],
-                                  binaryPath: event.target.value,
-                                },
-                              },
-                            })
-                          }
-                          placeholder={providerCard.binaryPlaceholder}
-                          spellCheck={false}
-                        />
-                        <span className="mt-1 block text-xs text-muted-foreground">
-                          {providerCard.binaryDescription}
-                        </span>
-                      </label>
-                    </div>
-
-                    {providerCard.homePathKey ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label
-                          htmlFor={`provider-install-${providerCard.homePathKey}`}
-                          className="block"
-                        >
-                          <span className="text-xs font-medium text-foreground">
-                            CODEX_HOME path
-                          </span>
-                          <Input
-                            id={`provider-install-${providerCard.homePathKey}`}
-                            className="mt-1.5"
-                            value={codexHomePath}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  codex: {
-                                    ...settings.providers.codex,
-                                    homePath: event.target.value,
-                                  },
-                                },
-                              })
-                            }
-                            placeholder={providerCard.homePlaceholder}
-                            spellCheck={false}
-                          />
-                          {providerCard.homeDescription ? (
-                            <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.homeDescription}
+                    {providerCard.mode === "cli" ? (
+                      <>
+                        <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                          <label
+                            htmlFor={`provider-install-${providerCard.provider}-binary-path`}
+                            className="block"
+                          >
+                            <span className="text-xs font-medium text-foreground">
+                              {providerDisplayName} binary path
                             </span>
-                          ) : null}
-                        </label>
-                      </div>
-                    ) : null}
+                            <Input
+                              id={`provider-install-${providerCard.provider}-binary-path`}
+                              className="mt-1.5"
+                              value={providerCard.binaryPathValue}
+                              onChange={(event) =>
+                                updateSettings({
+                                  providers: {
+                                    ...settings.providers,
+                                    [providerCard.provider]: {
+                                      ...settings.providers[providerCard.provider],
+                                      binaryPath: event.target.value,
+                                    },
+                                  },
+                                })
+                              }
+                              placeholder={providerCard.binaryPlaceholder}
+                              spellCheck={false}
+                            />
+                            <span className="mt-1 block text-xs text-muted-foreground">
+                              {providerCard.binaryDescription}
+                            </span>
+                          </label>
+                        </div>
 
-                    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                      <div className="text-xs font-medium text-foreground">Models</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {providerCard.models.length} model
-                        {providerCard.models.length === 1 ? "" : "s"} available.
-                      </div>
-                      <div
-                        ref={(el) => {
-                          modelListRefs.current[providerCard.provider] = el;
-                        }}
-                        className="mt-2 max-h-40 overflow-y-auto pb-1"
-                      >
-                        {providerCard.models.map((model) => {
-                          const caps = model.capabilities;
-                          const capLabels: string[] = [];
-                          if (caps?.supportsFastMode) capLabels.push("Fast mode");
-                          if (caps?.supportsThinkingToggle) capLabels.push("Thinking");
-                          if (
-                            caps?.reasoningEffortLevels &&
-                            caps.reasoningEffortLevels.length > 0
-                          ) {
-                            capLabels.push("Reasoning");
-                          }
-                          const hasDetails = capLabels.length > 0 || model.name !== model.slug;
-
-                          return (
-                            <div
-                              key={`${providerCard.provider}:${model.slug}`}
-                              className="flex items-center gap-2 py-1"
+                        {providerCard.homePathKey ? (
+                          <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                            <label
+                              htmlFor={`provider-install-${providerCard.homePathKey}`}
+                              className="block"
                             >
-                              <span className="min-w-0 truncate text-xs text-foreground/90">
-                                {model.name}
+                              <span className="text-xs font-medium text-foreground">
+                                CODEX_HOME path
                               </span>
-                              {hasDetails ? (
-                                <Tooltip>
-                                  <TooltipTrigger
-                                    render={
+                              <Input
+                                id={`provider-install-${providerCard.homePathKey}`}
+                                className="mt-1.5"
+                                value={codexHomePath}
+                                onChange={(event) =>
+                                  updateSettings({
+                                    providers: {
+                                      ...settings.providers,
+                                      codex: {
+                                        ...settings.providers.codex,
+                                        homePath: event.target.value,
+                                      },
+                                    },
+                                  })
+                                }
+                                placeholder={providerCard.homePlaceholder}
+                                spellCheck={false}
+                              />
+                              {providerCard.homeDescription ? (
+                                <span className="mt-1 block text-xs text-muted-foreground">
+                                  {providerCard.homeDescription}
+                                </span>
+                              ) : null}
+                            </label>
+                          </div>
+                        ) : null}
+
+                        <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                          <div className="text-xs font-medium text-foreground">Models</div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {providerCard.models.length} model
+                            {providerCard.models.length === 1 ? "" : "s"} available.
+                          </div>
+                          <div
+                            ref={(el) => {
+                              modelListRefs.current[providerCard.provider] = el;
+                            }}
+                            className="mt-2 max-h-40 overflow-y-auto pb-1"
+                          >
+                            {providerCard.models.map((model) => {
+                              const caps = model.capabilities;
+                              const capLabels: string[] = [];
+                              if (caps?.supportsFastMode) capLabels.push("Fast mode");
+                              if (caps?.supportsThinkingToggle) capLabels.push("Thinking");
+                              if (
+                                caps?.reasoningEffortLevels &&
+                                caps.reasoningEffortLevels.length > 0
+                              ) {
+                                capLabels.push("Reasoning");
+                              }
+                              const hasDetails = capLabels.length > 0 || model.name !== model.slug;
+
+                              return (
+                                <div
+                                  key={`${providerCard.provider}:${model.slug}`}
+                                  className="flex items-center gap-2 py-1"
+                                >
+                                  <span className="min-w-0 truncate text-xs text-foreground/90">
+                                    {model.name}
+                                  </span>
+                                  {hasDetails ? (
+                                    <Tooltip>
+                                      <TooltipTrigger
+                                        render={
+                                          <button
+                                            type="button"
+                                            className="shrink-0 text-muted-foreground/40 transition-colors hover:text-muted-foreground"
+                                            aria-label={`Details for ${model.name}`}
+                                          />
+                                        }
+                                      >
+                                        <InfoIcon className="size-3" />
+                                      </TooltipTrigger>
+                                      <TooltipPopup side="top" className="max-w-56">
+                                        <div className="space-y-1">
+                                          <code className="block text-[11px] text-foreground">
+                                            {model.slug}
+                                          </code>
+                                          {capLabels.length > 0 ? (
+                                            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                                              {capLabels.map((label) => (
+                                                <span
+                                                  key={label}
+                                                  className="text-[10px] text-muted-foreground"
+                                                >
+                                                  {label}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      </TooltipPopup>
+                                    </Tooltip>
+                                  ) : null}
+                                  {model.isCustom ? (
+                                    <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                                      <span className="text-[10px] text-muted-foreground">
+                                        custom
+                                      </span>
                                       <button
                                         type="button"
-                                        className="shrink-0 text-muted-foreground/40 transition-colors hover:text-muted-foreground"
-                                        aria-label={`Details for ${model.name}`}
-                                      />
-                                    }
-                                  >
-                                    <InfoIcon className="size-3" />
-                                  </TooltipTrigger>
-                                  <TooltipPopup side="top" className="max-w-56">
-                                    <div className="space-y-1">
-                                      <code className="block text-[11px] text-foreground">
-                                        {model.slug}
-                                      </code>
-                                      {capLabels.length > 0 ? (
-                                        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
-                                          {capLabels.map((label) => (
-                                            <span
-                                              key={label}
-                                              className="text-[10px] text-muted-foreground"
-                                            >
-                                              {label}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      ) : null}
+                                        className="text-muted-foreground transition-colors hover:text-foreground"
+                                        aria-label={`Remove ${model.slug}`}
+                                        onClick={() =>
+                                          removeCustomModel(providerCard.provider, model.slug)
+                                        }
+                                      >
+                                        <XIcon className="size-3" />
+                                      </button>
                                     </div>
-                                  </TooltipPopup>
-                                </Tooltip>
-                              ) : null}
-                              {model.isCustom ? (
-                                <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                                  <span className="text-[10px] text-muted-foreground">custom</span>
-                                  <button
-                                    type="button"
-                                    className="text-muted-foreground transition-colors hover:text-foreground"
-                                    aria-label={`Remove ${model.slug}`}
-                                    onClick={() =>
-                                      removeCustomModel(providerCard.provider, model.slug)
-                                    }
-                                  >
-                                    <XIcon className="size-3" />
-                                  </button>
+                                  ) : null}
                                 </div>
-                              ) : null}
+                              );
+                            })}
+                          </div>
+
+                          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                            <Input
+                              id={`custom-model-${providerCard.provider}`}
+                              value={customModelInput}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setCustomModelInputByProvider((existing) => ({
+                                  ...existing,
+                                  [providerCard.provider]: value,
+                                }));
+                                if (customModelError) {
+                                  setCustomModelErrorByProvider((existing) => ({
+                                    ...existing,
+                                    [providerCard.provider]: null,
+                                  }));
+                                }
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") return;
+                                event.preventDefault();
+                                addCustomModel(providerCard.provider);
+                              }}
+                              placeholder={
+                                providerCard.provider === "codex"
+                                  ? "gpt-6.7-codex-ultra-preview"
+                                  : "claude-sonnet-5-0"
+                              }
+                              spellCheck={false}
+                            />
+                            <Button
+                              className="shrink-0"
+                              variant="outline"
+                              onClick={() => addCustomModel(providerCard.provider)}
+                            >
+                              <PlusIcon className="size-3.5" />
+                              Add
+                            </Button>
+                          </div>
+
+                          {customModelError ? (
+                            <p className="mt-2 text-xs text-destructive">{customModelError}</p>
+                          ) : null}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-medium text-foreground">Connections</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              Configure one or more Ollama hosts and choose which one is the
+                              default.
                             </div>
-                          );
-                        })}
-                      </div>
+                          </div>
+                          <Button size="sm" variant="outline" onClick={addOllamaConnection}>
+                            <PlusIcon className="size-3.5" />
+                            Add connection
+                          </Button>
+                        </div>
+                        <div className="space-y-3">
+                          {settings.providers.ollama.connections.map((connection) => {
+                            const liveConnection = (
+                              providerCard.liveProvider?.connections ?? []
+                            ).find((candidate) => candidate.id === connection.id);
+                            return (
+                              <div
+                                key={connection.id}
+                                className="rounded-md border border-border/60 p-3"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-medium text-foreground">
+                                      {connection.name || "Unnamed connection"}
+                                    </div>
+                                    <div className="mt-1 text-[11px] text-muted-foreground">
+                                      {liveConnection?.message ??
+                                        liveConnection?.baseUrl ??
+                                        connection.baseUrl}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      size="xs"
+                                      variant={connection.isDefault ? "default" : "outline"}
+                                      onClick={() =>
+                                        updateOllamaConnections((current) =>
+                                          current.map((entry) => ({
+                                            ...entry,
+                                            isDefault: entry.id === connection.id,
+                                          })),
+                                        )
+                                      }
+                                    >
+                                      {connection.isDefault ? "Default" : "Make default"}
+                                    </Button>
+                                    <Button
+                                      size="xs"
+                                      variant="ghost"
+                                      disabled={settings.providers.ollama.connections.length <= 1}
+                                      onClick={() =>
+                                        updateOllamaConnections((current) =>
+                                          current.filter((entry) => entry.id !== connection.id),
+                                        )
+                                      }
+                                    >
+                                      Delete
+                                    </Button>
+                                  </div>
+                                </div>
 
-                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                        <Input
-                          id={`custom-model-${providerCard.provider}`}
-                          value={customModelInput}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setCustomModelInputByProvider((existing) => ({
-                              ...existing,
-                              [providerCard.provider]: value,
-                            }));
-                            if (customModelError) {
-                              setCustomModelErrorByProvider((existing) => ({
-                                ...existing,
-                                [providerCard.provider]: null,
-                              }));
-                            }
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter") return;
-                            event.preventDefault();
-                            addCustomModel(providerCard.provider);
-                          }}
-                          placeholder={
-                            providerCard.provider === "codex"
-                              ? "gpt-6.7-codex-ultra-preview"
-                              : "claude-sonnet-5-0"
-                          }
-                          spellCheck={false}
-                        />
-                        <Button
-                          className="shrink-0"
-                          variant="outline"
-                          onClick={() => addCustomModel(providerCard.provider)}
-                        >
-                          <PlusIcon className="size-3.5" />
-                          Add
-                        </Button>
-                      </div>
+                                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                  <label className="block">
+                                    <span className="text-xs font-medium text-foreground">
+                                      Name
+                                    </span>
+                                    <Input
+                                      className="mt-1.5"
+                                      value={connection.name}
+                                      onChange={(event) =>
+                                        updateOllamaConnections((current) =>
+                                          current.map((entry) =>
+                                            entry.id === connection.id
+                                              ? { ...entry, name: event.target.value }
+                                              : entry,
+                                          ),
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <label className="block">
+                                    <span className="text-xs font-medium text-foreground">
+                                      Base URL
+                                    </span>
+                                    <Input
+                                      className="mt-1.5"
+                                      value={connection.baseUrl}
+                                      onChange={(event) =>
+                                        updateOllamaConnections((current) =>
+                                          current.map((entry) =>
+                                            entry.id === connection.id
+                                              ? { ...entry, baseUrl: event.target.value }
+                                              : entry,
+                                          ),
+                                        )
+                                      }
+                                      spellCheck={false}
+                                    />
+                                  </label>
+                                  <label className="block">
+                                    <span className="text-xs font-medium text-foreground">
+                                      Auth mode
+                                    </span>
+                                    <Select
+                                      value={connection.authMode}
+                                      onValueChange={(value) => {
+                                        if (value !== "none" && value !== "bearer") return;
+                                        updateOllamaConnections((current) =>
+                                          current.map((entry) =>
+                                            entry.id === connection.id
+                                              ? { ...entry, authMode: value }
+                                              : entry,
+                                          ),
+                                        );
+                                      }}
+                                    >
+                                      <SelectTrigger className="mt-1.5">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectPopup align="end" alignItemWithTrigger={false}>
+                                        <SelectItem hideIndicator value="none">
+                                          None
+                                        </SelectItem>
+                                        <SelectItem hideIndicator value="bearer">
+                                          Bearer token
+                                        </SelectItem>
+                                      </SelectPopup>
+                                    </Select>
+                                  </label>
+                                  <label className="block">
+                                    <span className="text-xs font-medium text-foreground">
+                                      Request timeout (ms)
+                                    </span>
+                                    <Input
+                                      className="mt-1.5"
+                                      value={connection.requestTimeoutMs ?? ""}
+                                      onChange={(event) =>
+                                        updateOllamaConnections((current) =>
+                                          current.map((entry) =>
+                                            entry.id === connection.id
+                                              ? {
+                                                  ...entry,
+                                                  requestTimeoutMs:
+                                                    event.target.value.trim().length === 0
+                                                      ? undefined
+                                                      : Number(event.target.value),
+                                                }
+                                              : entry,
+                                          ),
+                                        )
+                                      }
+                                      spellCheck={false}
+                                    />
+                                  </label>
+                                </div>
 
-                      {customModelError ? (
-                        <p className="mt-2 text-xs text-destructive">{customModelError}</p>
-                      ) : null}
-                    </div>
+                                {connection.authMode === "bearer" ? (
+                                  <label className="mt-3 block">
+                                    <span className="text-xs font-medium text-foreground">
+                                      API key
+                                    </span>
+                                    <Input
+                                      className="mt-1.5"
+                                      type="password"
+                                      value={connection.apiKey}
+                                      onChange={(event) =>
+                                        updateOllamaConnections((current) =>
+                                          current.map((entry) =>
+                                            entry.id === connection.id
+                                              ? { ...entry, apiKey: event.target.value }
+                                              : entry,
+                                          ),
+                                        )
+                                      }
+                                      spellCheck={false}
+                                    />
+                                  </label>
+                                ) : null}
+
+                                <label className="mt-3 block">
+                                  <span className="text-xs font-medium text-foreground">
+                                    Custom models
+                                  </span>
+                                  <Input
+                                    className="mt-1.5"
+                                    value={connection.customModels.join(", ")}
+                                    onChange={(event) =>
+                                      updateOllamaConnections((current) =>
+                                        current.map((entry) =>
+                                          entry.id === connection.id
+                                            ? {
+                                                ...entry,
+                                                customModels: event.target.value
+                                                  .split(",")
+                                                  .map((value) =>
+                                                    normalizeModelSlug(value, "ollama"),
+                                                  )
+                                                  .filter((value): value is string =>
+                                                    Boolean(value),
+                                                  ),
+                                              }
+                                            : entry,
+                                        ),
+                                      )
+                                    }
+                                    placeholder="llama3.2, qwen3:14b"
+                                    spellCheck={false}
+                                  />
+                                  <span className="mt-1 block text-xs text-muted-foreground">
+                                    Comma-separated model slugs to expose even when the host does
+                                    not advertise them yet.
+                                  </span>
+                                </label>
+
+                                {liveConnection ? (
+                                  <div className="mt-3 text-[11px] text-muted-foreground">
+                                    Status: {liveConnection.status}
+                                    {liveConnection.version ? ` · ${liveConnection.version}` : ""}
+                                    {liveConnection.models.length > 0
+                                      ? ` · ${liveConnection.models.length} model${liveConnection.models.length === 1 ? "" : "s"}`
+                                      : ""}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </CollapsibleContent>
               </Collapsible>

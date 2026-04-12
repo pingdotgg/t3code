@@ -45,6 +45,13 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     placeholder: "your-claude-model-slug",
     example: "claude-sonnet-5-0",
   },
+  ollama: {
+    provider: "ollama",
+    title: "Ollama",
+    description: "Save additional Ollama model slugs for the picker and `/model` command.",
+    placeholder: "your-ollama-model-slug",
+    example: "qwen3:14b",
+  },
 };
 
 export const MODEL_PROVIDER_SETTINGS = Object.values(PROVIDER_CUSTOM_MODEL_CONFIG);
@@ -99,7 +106,10 @@ export function getAppModelOptions(
       .map((model) => model.slug),
   );
 
-  const customModels = settings.providers[provider].customModels;
+  const customModels =
+    provider === "ollama"
+      ? settings.providers.ollama.connections.flatMap((connection) => connection.customModels)
+      : settings.providers[provider].customModels;
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs, provider)) {
     if (seen.has(slug)) {
       continue;
@@ -165,6 +175,12 @@ export function getCustomModelOptionsByProvider(
       "claudeAgent",
       selectedProvider === "claudeAgent" ? selectedModel : undefined,
     ),
+    ollama: getAppModelOptions(
+      settings,
+      providers,
+      "ollama",
+      selectedProvider === "ollama" ? selectedModel : undefined,
+    ),
   };
 }
 
@@ -192,9 +208,36 @@ export function resolveAppModelSelectionState(
     },
   });
 
-  return {
-    provider,
-    model,
-    ...(modelOptionsForDispatch ? { options: modelOptionsForDispatch } : {}),
-  };
+  switch (provider) {
+    case "codex":
+      return modelOptionsForDispatch
+        ? {
+            provider,
+            model,
+            options: modelOptionsForDispatch as NonNullable<
+              Extract<ModelSelection, { provider: "codex" }>["options"]
+            >,
+          }
+        : { provider, model };
+    case "claudeAgent":
+      return modelOptionsForDispatch
+        ? {
+            provider,
+            model,
+            options: modelOptionsForDispatch as NonNullable<
+              Extract<ModelSelection, { provider: "claudeAgent" }>["options"]
+            >,
+          }
+        : { provider, model };
+    case "ollama":
+      return modelOptionsForDispatch
+        ? {
+            provider,
+            model,
+            options: modelOptionsForDispatch as NonNullable<
+              Extract<ModelSelection, { provider: "ollama" }>["options"]
+            >,
+          }
+        : { provider, model };
+  }
 }
