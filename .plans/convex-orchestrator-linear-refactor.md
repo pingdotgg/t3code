@@ -323,15 +323,101 @@ The reply can be intentionally simple in v1, but it must be deterministic, corre
 
 ### Acceptance criteria
 
-- [ ] Linear issue-thread and comment-thread routing both map to stable Convex control threads.
-- [ ] One completed worker run produces exactly one threaded Linear reply.
-- [ ] Duplicate Linear webhook delivery does not create duplicate control threads or duplicate replies.
-- [ ] The Linear reply is generated from Convex-owned run state rather than from direct T3 webhook logic.
-- [ ] The happy path is demoable without any manual data repair between systems.
+- [x] Top-level Linear issue comments and nested comment-thread replies both map to stable Convex control threads using adapter-compatible root-comment thread ids.
+- [x] One completed worker run produces exactly one threaded Linear reply.
+- [x] Duplicate Linear webhook delivery does not create duplicate control threads or duplicate replies.
+- [x] The Linear reply is generated from Convex-owned run state rather than from direct T3 webhook logic.
+- [x] The happy path is demoable without any manual data repair between systems.
+
+### Status
+
+Implemented on the current branch.
+
+This phase is now install/test-ready for the MVP path:
+
+- `GET /linear/oauth/install` starts the `actor=app` install flow
+- `GET /linear/oauth/callback` exchanges the returned authorization code and renders an operator completion page
+- `POST /linear/webhook` now verifies `Linear-Signature`, parses raw `Comment create` payloads, upserts control threads, and starts one worker run when the bot is mentioned
+- `POST /t3/execution-events` now attempts exactly-once Linear reply posting for final lifecycle states while keeping callback application idempotent
+
+### Implementation notes
+
+- We intentionally landed the MVP webhook/reply path as a minimal Convex-native Linear slice instead of mounting the full Chat SDK runtime into the webhook request path.
+- The current ingress logic mirrors the adapter's root-comment thread model: both top-level comments and nested replies resolve to `linear:{issueId}:c:{rootCommentId}`.
+- The install path uses OAuth `actor=app`, but runtime posting still uses client credentials because the bot only needs app-scoped server-to-server auth after installation.
+- Reply posting is lifecycle-based and intentionally simple for now; it confirms completion or failure without trying to surface rich artifact summaries before the later metadata phases land.
+
+### Implementation footprint
+
+Files added in phase 3:
+
+- `apps/orchestrator/convex/linearMvp.ts`
+- `apps/orchestrator/src/linear/client.ts`
+- `apps/orchestrator/src/linear/oauth.ts`
+- `apps/orchestrator/src/linear/replies.ts`
+- `apps/orchestrator/src/linear/replies.test.ts`
+
+Files changed in phase 3:
+
+- `apps/orchestrator/convex/controlThreads.ts`
+- `apps/orchestrator/convex/executionRuns.ts`
+- `apps/orchestrator/convex/http.ts`
+- `apps/orchestrator/convex/schema.ts`
+- `apps/orchestrator/src/chat/bot.ts`
+- `apps/orchestrator/src/index.ts`
+- `apps/orchestrator/src/linear/ingress.ts`
+- `apps/orchestrator/src/linear/ingress.test.ts`
+- `docs/orchestrator-deployment.md`
+- `docs/linear-agent-mvp-setup.md`
 
 ---
 
-## Phase 4: Execution State and Recovery
+## Phase 4: Linear Surface Validation
+
+**User stories**:
+- As an operator, I know exactly which Linear entities and fields reach the orchestrator through the Chat SDK adapter.
+- As the system, I do not accidentally design around unsupported Linear surfaces such as first-class file ingestion when the adapter only supports comment/message primitives.
+
+### What to build
+
+Add a focused validation slice for the real Linear integration surface area. This phase is about proving, with tests and controlled fixtures, what the adapter actually delivers for:
+
+- issue-level comments
+- comment-thread replies
+- mentions
+- reactions
+- issue metadata
+- attachment-adjacent content such as markdown links or attachment references in comment bodies
+
+The goal is to turn current assumptions into documented, repeatable evidence before later phases depend on those assumptions.
+
+This phase should explicitly answer whether issue attachments are available as structured adapter data or only indirectly via normal comment/markdown content. If attachments are not first-class in the adapter, that limitation should become a durable architectural constraint for the rest of the plan.
+
+### Acceptance criteria
+
+- [x] We have a deterministic test matrix for the Linear adapter inputs the MVP depends on.
+- [x] The team has a documented answer for whether issue attachments are exposed as structured data, only as links in comment bodies, or not at all.
+- [x] Unsupported adapter surfaces are recorded as explicit constraints in the orchestrator docs and plan, not as tribal knowledge.
+- [ ] Mention, comment-thread, and issue-thread behavior is validated against real or captured payloads, not only inferred from docs.
+- [x] Later phases are not allowed to assume first-class attachment ingestion unless this phase proves it.
+
+### Status
+
+Partially implemented on the current branch.
+
+What landed:
+
+- the ingress tests now lock down top-level comment routing, nested reply routing, mention detection, and the current attachment boundary
+- the docs now explicitly call out that attachments are only available indirectly via markdown links in comment bodies for this MVP
+- the plan now treats root-comment threading and attachment limits as durable constraints instead of assumptions
+
+What still remains:
+
+- validate the same thread behavior against a real installed Linear app or captured production payloads after the first live install
+
+---
+
+## Phase 5: Execution State and Recovery
 
 **User stories**:
 - As an operator, I can recover run state after retries, duplicate callbacks, or worker restarts.
@@ -353,7 +439,7 @@ This phase makes the architecture operationally credible before we add richer or
 
 ---
 
-## Phase 5: Run Continuation and Stop Control
+## Phase 6: Run Continuation and Stop Control
 
 **User stories**:
 - As a Linear user, I can send follow-up comments that continue an existing worker run context.
@@ -375,7 +461,7 @@ This phase turns the system from one-shot request/reply automation into an actua
 
 ---
 
-## Phase 6: Parent/Child Orchestration
+## Phase 7: Parent/Child Orchestration
 
 **User stories**:
 - As an orchestrator, I can decompose work into multiple child execution runs.
@@ -397,7 +483,7 @@ This phase should preserve the architecture decision that Convex is the orchestr
 
 ---
 
-## Phase 7: Artifact Metadata and Worker Observability
+## Phase 8: Artifact Metadata and Worker Observability
 
 **User stories**:
 - As an operator, I can inspect what each worker produced without moving raw artifacts into Convex.

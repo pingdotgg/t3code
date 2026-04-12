@@ -107,6 +107,23 @@ function hasLifecycleAlreadyBeenDelivered(input: {
   }
 }
 
+export function shouldForwardLifecycleCheckpoint(input: {
+  readonly type: ExecutionLifecycleCheckpoint;
+  readonly trackedRun: TrackedExecutionRun;
+}) {
+  if (hasLifecycleAlreadyBeenDelivered(input)) {
+    return false;
+  }
+
+  // Thread startup briefly emits a ready session before the first turn begins.
+  // We should only treat ready as a completion after we've already observed a started turn.
+  if (input.type === "completed" && input.trackedRun.startedEventId === null) {
+    return false;
+  }
+
+  return true;
+}
+
 const respondToExecutionBridgeError = (
   error: ExecutionBridgeAuthError | ExecutionBridgeRunStartError,
 ) => HttpServerResponse.jsonUnsafe({ error: error.message }, { status: error.status });
@@ -158,7 +175,7 @@ export const executionBridgeLifecycleCallbacksLive = Layer.effectDiscard(
           if (lifecycle === null) {
             return;
           }
-          if (hasLifecycleAlreadyBeenDelivered({ type: lifecycle.type, trackedRun })) {
+          if (!shouldForwardLifecycleCheckpoint({ type: lifecycle.type, trackedRun })) {
             return;
           }
 

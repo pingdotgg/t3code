@@ -3,27 +3,41 @@ export type LinearThreadKind = "issue" | "comment";
 export interface LinearIngressEnvelope {
   readonly eventId: string;
   readonly threadKind: LinearThreadKind;
+  readonly linearThreadKey: string;
   readonly issueId: string;
   readonly commentId?: string;
+  readonly messageId?: string;
   readonly teamId?: string;
   readonly title?: string;
   readonly summary?: string;
   readonly authorName?: string;
+  readonly body: string;
   readonly bodyPreview?: string;
+  readonly commentUrl?: string;
   readonly receivedAt: number;
+  readonly shouldStartRun: boolean;
 }
 
-export interface LinearWebhookInput {
-  readonly eventId?: unknown;
-  readonly issueId?: unknown;
-  readonly commentId?: unknown;
-  readonly teamId?: unknown;
-  readonly threadKind?: unknown;
-  readonly title?: unknown;
-  readonly summary?: unknown;
-  readonly authorName?: unknown;
-  readonly bodyPreview?: unknown;
+interface LinearWebhookActor {
+  readonly name?: unknown;
+  readonly type?: unknown;
+}
+
+interface LinearWebhookCommentData {
   readonly body?: unknown;
+  readonly createdAt?: unknown;
+  readonly id?: unknown;
+  readonly issueId?: unknown;
+  readonly parentId?: unknown;
+  readonly updatedAt?: unknown;
+  readonly url?: unknown;
+}
+
+interface LinearWebhookPayload {
+  readonly action?: unknown;
+  readonly actor?: LinearWebhookActor;
+  readonly data?: LinearWebhookCommentData;
+  readonly type?: unknown;
 }
 
 function asTrimmedString(value: unknown): string | undefined {
@@ -35,56 +49,95 @@ function asTrimmedString(value: unknown): string | undefined {
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
-function previewBody(value: unknown): string | undefined {
-  const body = asTrimmedString(value);
-  if (body === undefined) {
+function previewBody(value: string | undefined) {
+  if (value === undefined) {
     return undefined;
   }
 
-  return body.length > 240 ? `${body.slice(0, 237)}...` : body;
+  return value.length > 240 ? `${value.slice(0, 237)}...` : value;
+}
+
+function containsLinearBotMention(body: string, botUserName: string | undefined) {
+  const normalizedBotUserName = botUserName?.trim().toLowerCase();
+  if (!normalizedBotUserName) {
+    return false;
+  }
+
+  // Linear mentions are plain-text in webhook comment bodies, so a case-insensitive
+  // substring match is the least fragile MVP detector.
+  return body.toLowerCase().includes(`@${normalizedBotUserName}`);
+}
+
+function isHumanAuthored(actor: LinearWebhookActor | undefined, authorName: string | undefined) {
+  const actorType = asTrimmedString(actor?.type)?.toLowerCase();
+  if (actorType !== undefined && actorType !== "user") {
+    return false;
+  }
+
+  return authorName === undefined || actorType === "user";
 }
 
 export function linearThreadKeyFor(input: {
-  readonly threadKind: LinearThreadKind;
   readonly issueId: string;
   readonly commentId?: string;
 }) {
-  return input.threadKind === "comment" && input.commentId !== undefined
-    ? `linear:comment:${input.issueId}:${input.commentId}`
-    : `linear:issue:${input.issueId}`;
+  return input.commentId !== undefined
+    ? `linear:${input.issueId}:c:${input.commentId}`
+    : `linear:${input.issueId}`;
 }
 
-export function normalizeLinearWebhookInput(input: unknown): LinearIngressEnvelope {
+export function normalizeLinearWebhookInput(
+  input: unknown,
+  options?: {
+    readonly botUserName?: string;
+  },
+): LinearIngressEnvelope | null {
   if (input === null || typeof input !== "object") {
     throw new Error("Linear webhook payload must be an object");
   }
 
-  const payload = input as LinearWebhookInput;
-  const issueId = asTrimmedString(payload.issueId);
-  if (issueId === undefined) {
-    throw new Error("Linear webhook payload is missing issueId");
+  const payload = input as LinearWebhookPayload;
+  if (payload.type !== "Comment" || payload.action !== "create") {
+    return null;
   }
 
-  const eventId = asTrimmedString(payload.eventId) ?? `${issueId}:${Date.now()}`;
-  const commentId = asTrimmedString(payload.commentId);
-  const teamId = asTrimmedString(payload.teamId);
-  const title = asTrimmedString(payload.title);
-  const summary = asTrimmedString(payload.summary);
-  const authorName = asTrimmedString(payload.authorName);
-  const bodyPreview = previewBody(payload.bodyPreview ?? payload.body);
-  const threadKind =
-    payload.threadKind === "comment" || commentId !== undefined ? "comment" : "issue";
+  const issueId = asTrimmedString(payload.data?.issueId);
+  const messageId = asTrimmedString(payload.data?.id);
+  if (issueId === undefined || messageId === undefined) {
+    throw new Error("Linear comment webhook payload is missing issueId or comment id");
+  }
+
+  const rootCommentId = asTrimmedString(payload.data?.parentId) ?? messageId;
+  const body = asTrimmedString(payload.data?.body) ?? "";
+  const authorName = asTrimmedString(payload.actor?.name);
+  const updatedAt = asTrimmedString(payload.data?.updatedAt);
+  const createdAt = asTrimmedString(payload.data?.createdAt);
+  const eventTimestamp = updatedAt ?? createdAt ?? "unknown";
+  const eventId = `linear:comment:create:${messageId}:${eventTimestamp}`;
+  const bodyPreview = previewBody(body);
+  const commentUrl = asTrimmedString(payload.data?.url);
+  const shouldStartRun =
+    body.length > 0 &&
+    containsLinearBotMention(body, options?.botUserName) &&
+    isHumanAuthored(payload.actor, authorName);
 
   return {
     eventId,
+    threadKind: "comment",
+    linearThreadKey: linearThreadKeyFor({
+      issueId,
+      commentId: rootCommentId,
+    }),
     issueId,
-    threadKind,
+    commentId: rootCommentId,
+    messageId,
+    body,
     receivedAt: Date.now(),
-    ...(commentId !== undefined ? { commentId } : {}),
-    ...(teamId !== undefined ? { teamId } : {}),
-    ...(title !== undefined ? { title } : {}),
-    ...(summary !== undefined ? { summary } : {}),
+    shouldStartRun,
     ...(authorName !== undefined ? { authorName } : {}),
     ...(bodyPreview !== undefined ? { bodyPreview } : {}),
+    ...(commentUrl !== undefined ? { commentUrl } : {}),
   };
 }
+
+export { containsLinearBotMention };

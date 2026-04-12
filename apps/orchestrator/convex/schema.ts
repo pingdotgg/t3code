@@ -78,6 +78,9 @@ export default defineSchema({
     t3TurnId: v.optional(v.string()),
     failureSummary: v.optional(v.string()),
     lastEventId: v.optional(v.string()),
+    linearReplyCommentId: v.optional(v.string()),
+    linearReplyError: v.optional(v.string()),
+    linearReplyPostedAt: v.optional(v.number()),
   })
     .index("by_execution_run_id", ["executionRunId"])
     .index("by_control_thread_id", ["controlThreadId"]),

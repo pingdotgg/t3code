@@ -12,6 +12,7 @@ import type * as chatState from "../chatState.js";
 import type * as controlThreads from "../controlThreads.js";
 import type * as executionRuns from "../executionRuns.js";
 import type * as http from "../http.js";
+import type * as linearMvp from "../linearMvp.js";
 
 import type { ApiFromModules, FilterApi, FunctionReference } from "convex/server";
 
@@ -20,6 +21,7 @@ declare const fullApi: ApiFromModules<{
   controlThreads: typeof controlThreads;
   executionRuns: typeof executionRuns;
   http: typeof http;
+  linearMvp: typeof linearMvp;
 }>;
 
 /**

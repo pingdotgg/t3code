@@ -1,8 +1,8 @@
 import {
   type ExecutionRunCreateRequest,
-  type ProviderInteractionMode,
   type RuntimeMode,
   type ModelSelection,
+  type ProviderInteractionMode,
 } from "@t3tools/contracts";
 import { v } from "convex/values";
 
@@ -238,6 +238,84 @@ export const startSingleWorkerRun = internalAction({
   },
 });
 
+export const recordLinearReplyPosted = internalMutation({
+  args: {
+    executionRunId: v.string(),
+    replyCommentId: v.string(),
+    postedAt: v.number(),
+    bodyPreview: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const run = await ctx.db
+      .query("executionRuns")
+      .withIndex("by_execution_run_id", (query: any) =>
+        query.eq("executionRunId", args.executionRunId),
+      )
+      .unique();
+    if (run === null) {
+      throw new Error(`Execution run ${args.executionRunId} does not exist`);
+    }
+
+    await ctx.db.patch(run._id, {
+      linearReplyCommentId: args.replyCommentId,
+      linearReplyPostedAt: args.postedAt,
+      updatedAt: args.postedAt,
+    });
+
+    const existingMessage = await ctx.db
+      .query("controlThreadMessages")
+      .withIndex("by_external_message_key", (query: any) =>
+        query.eq("externalMessageKey", args.replyCommentId),
+      )
+      .unique();
+    if (existingMessage === null) {
+      await ctx.db.insert("controlThreadMessages", {
+        controlThreadId: run.controlThreadId,
+        externalMessageKey: args.replyCommentId,
+        authorName: process.env.LINEAR_BOT_USERNAME?.trim() || "Linear bot",
+        bodyPreview: args.bodyPreview,
+        createdAt: args.postedAt,
+        updatedAt: args.postedAt,
+      });
+      return null;
+    }
+
+    await ctx.db.patch(existingMessage._id, {
+      updatedAt: args.postedAt,
+      authorName: process.env.LINEAR_BOT_USERNAME?.trim() || "Linear bot",
+      bodyPreview: args.bodyPreview,
+    });
+    return null;
+  },
+});
+
+export const recordLinearReplyError = internalMutation({
+  args: {
+    executionRunId: v.string(),
+    errorMessage: v.string(),
+    updatedAt: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const run = await ctx.db
+      .query("executionRuns")
+      .withIndex("by_execution_run_id", (query: any) =>
+        query.eq("executionRunId", args.executionRunId),
+      )
+      .unique();
+    if (run === null) {
+      return null;
+    }
+
+    await ctx.db.patch(run._id, {
+      linearReplyError: args.errorMessage,
+      updatedAt: args.updatedAt,
+    });
+    return null;
+  },
+});
+
 export const getExecutionRun = internalQuery({
   args: {
     executionRunId: v.string(),
@@ -251,6 +329,8 @@ export const getExecutionRun = internalQuery({
       t3ThreadId: v.optional(v.string()),
       t3TurnId: v.optional(v.string()),
       failureSummary: v.optional(v.string()),
+      linearReplyCommentId: v.optional(v.string()),
+      linearReplyError: v.optional(v.string()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -271,6 +351,10 @@ export const getExecutionRun = internalQuery({
       ...(run.t3ThreadId !== undefined ? { t3ThreadId: run.t3ThreadId } : {}),
       ...(run.t3TurnId !== undefined ? { t3TurnId: run.t3TurnId } : {}),
       ...(run.failureSummary !== undefined ? { failureSummary: run.failureSummary } : {}),
+      ...(run.linearReplyCommentId !== undefined
+        ? { linearReplyCommentId: run.linearReplyCommentId }
+        : {}),
+      ...(run.linearReplyError !== undefined ? { linearReplyError: run.linearReplyError } : {}),
     };
   },
 });

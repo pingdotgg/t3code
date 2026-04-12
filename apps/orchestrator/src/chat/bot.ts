@@ -7,7 +7,7 @@ export function createOrchestratorBot() {
   // Phase 1 keeps the bot shell local; the durable Convex-backed adapter lands in a later slice.
   const linearAdapter = createLinearAdapter();
   return new Chat({
-    userName: "t3-orchestrator",
+    userName: process.env.LINEAR_BOT_USERNAME?.trim() || "linear-bot",
     adapters: {
       linear: linearAdapter as Omit<typeof linearAdapter, "botUserId">,
     },

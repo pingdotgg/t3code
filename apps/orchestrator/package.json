@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "convex dev",
+    "convex:disable-ai-files": "bunx convex ai-files disable",
+    "dev": "bun run convex:disable-ai-files && bunx convex dev",
+    "deploy": "bun run convex:disable-ai-files && bunx convex deploy",
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"

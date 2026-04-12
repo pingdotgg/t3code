@@ -12,9 +12,9 @@ The goal is to wire Linear, Convex, and the remote T3 worker together so we can 
 Important current status:
 
 - Phase 2 is implemented: the Convex-to-T3 worker bridge exists and T3 can callback lifecycle events into Convex. See [packages/contracts/src/executionBridge.ts](../packages/contracts/src/executionBridge.ts), [apps/orchestrator/convex/executionRuns.ts](../apps/orchestrator/convex/executionRuns.ts), and [apps/server/src/executionBridge/http.ts](../apps/server/src/executionBridge/http.ts).
-- The full Linear reply loop is still a Phase 3 slice in the plan. See [the plan](../.plans/convex-orchestrator-linear-refactor.md).
-- The current `POST /linear/webhook` handler in Convex accepts a normalized envelope, not raw Linear webhook payloads yet. See [apps/orchestrator/convex/http.ts](../apps/orchestrator/convex/http.ts) and [apps/orchestrator/src/linear/ingress.ts](../apps/orchestrator/src/linear/ingress.ts).
-- The current branch does not yet verify Linear webhook signatures or post replies back into Linear. Treat this guide as the operator setup for the MVP path, with those gaps called out explicitly below.
+- The first install/test-ready Linear slice is implemented: raw signed Linear comment webhooks can create a control thread, start one worker run, and post one final threaded reply from Convex-owned run state.
+- The app install path now has a real callback handler at `GET /linear/oauth/callback`, and the repo exposes a convenience install entrypoint at `GET /linear/oauth/install`.
+- The current branch still uses one default repo mapping through `LINEAR_DEFAULT_WORKSPACE_ROOT`, and worker restart recovery is still a later phase. See [the plan](../.plans/convex-orchestrator-linear-refactor.md).
 
 ## What must be running
 
@@ -40,6 +40,7 @@ Important nuance: `apps/orchestrator` is source code plus a Convex deployment ta
 Useful repo references:
 
 - Remote worker deployment: [docs/remote-deployment.md](./remote-deployment.md)
+- Orchestrator deployment: [docs/orchestrator-deployment.md](./orchestrator-deployment.md)
 - Headless remote pairing flow: [REMOTE.md](../REMOTE.md)
 - T3 runtime host and port defaults: [apps/server/src/config.ts](../apps/server/src/config.ts)
 - Headless `serve` command: [apps/server/src/cli.ts](../apps/server/src/cli.ts)
@@ -68,6 +69,36 @@ Recommended rules:
 - Put Nginx or Caddy in front of the VPS and expose only `POST /api/execution/runs` to the internet.
 - Keep the shared secret on both sides and use HTTPS everywhere public.
 
+### MVP shortcut: one public hostname first
+
+If the immediate goal is to get a remote browser UI working at `https://<your-subdomain.example.com>`, the fastest deployment path is to reuse that same public host for the worker bridge during the MVP.
+
+That means:
+
+- your chosen hostname reverse-proxies the full T3 server
+- the browser UI loads from that host
+- websocket RPC stays on the same host
+- Convex calls `https://<your-subdomain.example.com>/api/execution/runs`
+
+For this shortcut, prefer Caddy over Nginx:
+
+- less HTTPS setup overhead
+- cleaner websocket proxying
+- a one-block config that is easy to reproduce in the playbook
+
+Use this only as the fastest path to get the environment live. The more locked-down target shape is still:
+
+- private operator access for the full T3 UI
+- public exposure only for `POST /api/execution/runs`
+
+If you take the shortcut, set:
+
+```bash
+T3_EXECUTION_BRIDGE_BASE_URL="https://<your-subdomain.example.com>"
+```
+
+and make sure the EC2 host has built both `apps/web` and `apps/server` so the browser UI can actually load from the remote box.
+
 Why this shape fits the code today:
 
 - Convex calls the worker at `T3_EXECUTION_BRIDGE_BASE_URL + /api/execution/runs` in [apps/orchestrator/src/t3/client.ts](../apps/orchestrator/src/t3/client.ts).
@@ -88,6 +119,7 @@ These are needed by the new orchestrator path:
 | `LINEAR_CLIENT_SECRET`              | Yes for target agent path | OAuth app client secret for the Linear agent                                 |
 | `LINEAR_WEBHOOK_SECRET`             | Yes for target agent path | Linear webhook signing secret                                                |
 | `LINEAR_BOT_USERNAME`               | Optional                  | Mention/display name used by the adapter                                     |
+| `LINEAR_DEFAULT_WORKSPACE_ROOT`     | Yes for MVP trigger path  | Default repo path on the worker used when a Linear mention starts a run      |
 
 Repo references:
 
@@ -112,6 +144,35 @@ Repo references:
 - bridge auth: [apps/server/src/executionBridge/routeAuth.ts](../apps/server/src/executionBridge/routeAuth.ts)
 - callback config: [apps/server/src/executionBridge/http.ts](../apps/server/src/executionBridge/http.ts)
 - remote worker basics: [docs/remote-deployment.md](./remote-deployment.md)
+
+Provider CLI requirement on the worker:
+
+- install the provider CLIs on the worker host before expecting the browser UI to show them as available
+- for the systemd-based EC2 path in this repo, the simplest install is:
+
+```bash
+sudo npm install -g @openai/codex @anthropic-ai/claude-code
+```
+
+- authenticate as the same Unix user that runs `t3code.service`
+
+```bash
+codex login --device-auth
+claude auth login
+```
+
+- verify later with:
+
+```bash
+codex login status
+claude auth status
+```
+
+- for a headless worker, `codex login --device-auth` is the easier flow because it prints a browser URL and one-time code you can complete locally while the SSH session stays open
+- for Claude on Amazon Bedrock, configure Bedrock in Claude Code on the worker itself rather than expecting T3 to manage AWS auth directly
+- preferred flow: run `claude`, choose `3rd-party platform`, then `Amazon Bedrock`, and finish the Claude Code wizard as the same Unix user that runs `t3code.service`
+- if you need scripted setup instead of the wizard, configure Claude Code for Bedrock with `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION=<region>`, and normal AWS SDK credentials such as `AWS_PROFILE`, SSO, or access keys
+- prefer Claude Code `modelOverrides` for Bedrock inference profile IDs or ARNs; use T3 `customModels` only when you intentionally want extra selectable model entries in the T3 picker
 
 ## Linear-side configuration
 
@@ -162,13 +223,18 @@ The official docs also note that `actor=app` installs cannot request `admin`.
 
 ### 3. Webhook categories to enable
 
-For the target MVP path, enable:
+For the current MVP path, enable:
 
-- `Agent session events`
-- `Permission changes`
-- `Inbox notifications` if you want better operator visibility
+- `Comments` data change events: required
+- `Issues`: recommended
+- `Emoji reactions`: optional
+- `Agent session events`: optional for future operator visibility, but not required for the current comment-webhook runtime
 
-If you are experimenting with the current normalized comment-thread path before Phase 3 lands, you may also want comment-centric webhook categories, but that is not the long-term configuration target.
+Why this matters:
+
+- the current branch starts runs from raw `Comment create` webhooks
+- unsupported webhook resource types are safely ignored
+- reactions and richer agent-session flows remain future-facing validation work
 
 ### 4. Webhook URL to register
 
@@ -176,13 +242,12 @@ Target URL:
 
 - `https://<your-convex-site>/linear/webhook`
 
-Current implementation caveat:
+Current implementation:
 
 - the route exists in [apps/orchestrator/convex/http.ts](../apps/orchestrator/convex/http.ts)
-- the current handler expects a normalized envelope from [apps/orchestrator/src/linear/ingress.ts](../apps/orchestrator/src/linear/ingress.ts)
-- it does **not** yet parse raw Linear webhook payloads or verify the Linear signature
-
-That means direct production use of the Linear webhook is still provisional on this branch. For the real MVP, Phase 3 still needs to land the actual webhook adapter/normalizer path.
+- it verifies the raw `Linear-Signature` header against the request body
+- it normalizes raw `Comment create` payloads in [apps/orchestrator/src/linear/ingress.ts](../apps/orchestrator/src/linear/ingress.ts)
+- it starts one worker run for a matching mention and ignores unsupported webhook resource types
 
 ## How the orchestrator and worker fit together
 
@@ -215,7 +280,9 @@ At minimum:
 - install Bun
 - clone the repo
 - `bun install`
+- build `apps/web`
 - build `apps/server`
+- install provider CLIs on the worker machine
 - authenticate your provider on the worker machine
 - set `T3CODE_HOME`
 - run the server under `systemd`
@@ -241,6 +308,12 @@ Suggested shape:
 - only the bridge path is routed externally
 - keep desktop pairing on Tailscale or another private path
 
+Fastest MVP variant:
+
+- public `<your-subdomain.example.com>` -> Caddy -> local T3 server
+- the same host serves the browser UI and the bridge route
+- this is acceptable for a first bring-up if speed matters more than minimizing exposure
+
 ### 3. Deploy the Convex orchestrator
 
 From `apps/orchestrator`:
@@ -260,7 +333,14 @@ T3_EXECUTION_BRIDGE_SHARED_SECRET="<same-strong-random-secret>"
 LINEAR_CLIENT_ID="<linear-oauth-client-id>"
 LINEAR_CLIENT_SECRET="<linear-oauth-client-secret>"
 LINEAR_WEBHOOK_SECRET="<linear-webhook-secret>"
-LINEAR_BOT_USERNAME="t3-orchestrator"
+LINEAR_BOT_USERNAME="<your-bot-name>"
+LINEAR_DEFAULT_WORKSPACE_ROOT="/absolute/path/to/the-repo-on-the-worker"
+```
+
+If you are using the single-hostname MVP shortcut instead of a separate bridge hostname:
+
+```bash
+T3_EXECUTION_BRIDGE_BASE_URL="https://<your-subdomain.example.com>"
 ```
 
 ### 4. Create and install the Linear app
@@ -269,13 +349,19 @@ In Linear:
 
 1. Create a new OAuth application.
 2. Enable webhooks.
-3. Enable **Agent session events**.
-4. Enable client credentials tokens if you want the adapter-managed auth path.
+3. Enable client credentials tokens.
+4. Set the callback URL to `https://<your-convex-site>/linear/oauth/callback`.
 5. Install the app into the workspace with `actor=app`.
-6. Request at least `read`, `comments:create`, and `app:mentionable`.
+6. Request at least `read`, `write`, `comments:create`, and `app:mentionable`.
 7. Add `app:assignable` if you want delegation to trigger runs too.
 
 Also keep the webhook signing secret and client credentials in your secrets manager.
+
+The simplest operator path after the env vars are in Convex is:
+
+1. visit `https://<your-convex-site>/linear/oauth/install`
+2. complete the Linear `actor=app` authorize flow
+3. wait for the Convex callback page to confirm the code exchange succeeded
 
 ### 5. Register the webhook URL
 
@@ -283,20 +369,11 @@ Use:
 
 - `https://<your-convex-site>/linear/webhook`
 
-But treat this as **not fully live yet** until the branch gains:
+For the current branch, this path is live for:
 
-- raw Linear webhook parsing
-- signature verification
-- the Phase 3 reply loop
-
-If you want to test before Phase 3 lands, use a temporary relay that:
-
-1. receives the signed Linear webhook
-2. verifies the signature
-3. reshapes the payload into the normalized envelope expected by `apps/orchestrator/src/linear/ingress.ts`
-4. forwards that normalized payload to Convex
-
-That relay is not in the repo yet.
+- raw signed `Comment create` webhooks
+- top-level issue comments and nested replies, both routed to stable root-comment thread ids
+- one-run/one-final-reply behavior for the mention-trigger happy path
 
 ### 6. Confirm bidirectional bridge connectivity
 
@@ -319,7 +396,7 @@ This is the cleanest way to de-risk the deployment before Phase 3.
 - [ ] T3 lifecycle callbacks arrive at `POST /t3/execution-events`
 - [ ] Duplicate lifecycle callback delivery does not double-apply the event
 
-### MVP verification after Phase 3 lands
+### MVP verification for the current branch
 
 - [ ] Mentioning the Linear app on an issue or comment creates exactly one Convex control thread
 - [ ] The orchestrator starts exactly one T3 execution run
@@ -329,13 +406,12 @@ This is the cleanest way to de-risk the deployment before Phase 3.
 
 ## Known gaps and provisional assumptions
 
-These are the places where the deployment guide is ahead of the current implementation:
+These are the places where the branch is still intentionally limited:
 
-- `apps/orchestrator/convex/http.ts` currently exposes `/linear/webhook`, but it does not yet verify `LINEAR_WEBHOOK_SECRET`.
-- `apps/orchestrator/src/linear/ingress.ts` expects a normalized payload and does not yet parse raw Linear webhook bodies.
-- The Chat SDK bot shell exists in [apps/orchestrator/src/chat/bot.ts](../apps/orchestrator/src/chat/bot.ts), but it is not yet mounted into a real webhook/reply flow.
-- The first real Linear reply loop is still planned Phase 3 work, not completed behavior.
-- The server-side run registry in [apps/server/src/executionBridge/runStart.ts](../apps/server/src/executionBridge/runStart.ts) is intentionally in-memory for now, so worker restarts can lose run correlation until Phase 4 hardens recovery.
+- `LINEAR_DEFAULT_WORKSPACE_ROOT` is still a one-repo MVP mapping, not a durable project/team resolver
+- replies are lifecycle-based and minimal; they confirm completion/failure rather than posting rich run summaries
+- attachment handling is still markdown-link-only, not first-class file ingestion
+- the server-side run registry in [apps/server/src/executionBridge/runStart.ts](../apps/server/src/executionBridge/runStart.ts) is intentionally in-memory for now, so worker restarts can lose run correlation until the recovery phase lands
 
 ## Recommended next operator move
 
@@ -343,7 +419,8 @@ Before trying to test mentions in Linear, I would do the setup in this order:
 
 1. deploy the VPS worker and verify headless pairing
 2. deploy Convex and verify the worker bridge by hand
-3. create and install the Linear app
-4. wait for the Phase 3 webhook/reply slice before calling the Linear path production-ready
+3. set `LINEAR_DEFAULT_WORKSPACE_ROOT` in Convex
+4. create and install the Linear app
+5. send one mention in a Linear comment thread and verify the end-to-end path
 
 That sequencing keeps deployment work moving now without confusing infrastructure setup with the still-open product slice.

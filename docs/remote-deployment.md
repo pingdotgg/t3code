@@ -205,7 +205,12 @@ sudo apt-get install -y git curl ca-certificates build-essential unzip
 
 ### Section 3: Install Bun, clone the repo, and build
 
-Install Bun, clone the repo, install dependencies, and build the server package before you try to start it headlessly.
+Install Bun, clone the repo, install dependencies, and build both the web app and the server before you try to start it headlessly.
+
+Why both builds matter:
+
+- `apps/server` serves the browser UI from the built `apps/web/dist` output when no dev server is configured
+- if you only build `apps/server`, the remote host can start but browser requests can fall back to `503 No static directory configured and no dev URL set`
 
 ```bash
 curl -fsSL https://bun.com/install | bash
@@ -217,6 +222,9 @@ git clone <your-fork-url> ai.code
 cd ai.code
 bun install
 
+cd apps/web
+bun run build
+
 cd apps/server
 bun run build
 ```
@@ -225,14 +233,103 @@ bun run build
 
 At least one provider must be installed and authenticated on the EC2 machine before the server can do useful work.
 
-- Codex: install Codex CLI and run `codex login`
-- Claude: install Claude Code and run `claude auth login`
+For a host that runs T3 under `systemd`, install the provider CLIs onto the machine-wide PATH:
 
 ```bash
-codex login
+sudo npm install -g @openai/codex @anthropic-ai/claude-code
+```
+
+Verify the binaries are available:
+
+```bash
+which codex
+codex --version
+
+which claude
+claude --version
+```
+
+Expected result:
+
+- `codex` resolves on PATH and prints a version
+- `claude` resolves on PATH and prints a version such as `2.x.x (Claude Code)`
+
+Then authenticate whichever providers you plan to use on that worker:
+
+```bash
+codex login --device-auth
 # or
 claude auth login
 ```
+
+You can check auth status later with:
+
+```bash
+codex login status
+claude auth status
+```
+
+Operational notes:
+
+- run the login commands as the same Unix user that runs `t3code.service`
+- if you follow the example service in this guide, that user is `ubuntu`
+- a machine-wide install is simplest because the default service PATH already includes `/usr/bin` and `/usr/local/bin`
+- if you choose a user-local install instead, either add that bin directory to the service PATH or set an explicit provider binary path in T3 settings
+- on a headless EC2 machine, prefer `codex login --device-auth` because it prints a verification URL and one-time code you can open from your own browser
+- keep that SSH session open until the browser flow completes, then rerun `codex login status` to confirm the worker is authenticated
+
+#### Claude on Amazon Bedrock
+
+Current T3 behavior is important here:
+
+- T3 does not have first-class Bedrock settings for Claude today
+- the Claude provider surface in T3 is currently just the `claude` binary path plus optional `customModels`
+- T3 delegates Claude execution to Claude Code / the Claude Agent SDK, so the supported Bedrock path is to configure Bedrock in Claude Code on the worker machine and let T3 reuse that setup
+
+Recommended path:
+
+1. SSH into the worker as the same Unix user that runs `t3code.service`
+2. Run `claude`
+3. In the Claude Code login flow, choose `3rd-party platform`
+4. Choose `Amazon Bedrock`
+5. Follow the wizard to select your AWS credential source, region, and model pins
+
+Why this is the default recommendation:
+
+- Claude Code officially supports Bedrock
+- the wizard writes the resulting AWS and Bedrock settings into Claude Code's own settings file, which is easier than trying to keep extra shell exports in sync with `systemd`
+- T3 already calls the `claude` binary and Claude Agent SDK, so it benefits from Claude Code's Bedrock support without needing separate AWS auth plumbing in T3 itself
+
+If you prefer a non-interactive or scripted setup, Claude Code also supports manual Bedrock configuration with environment variables such as:
+
+```bash
+export CLAUDE_CODE_USE_BEDROCK=1
+export AWS_REGION=<your-bedrock-region>
+export AWS_PROFILE=<your-profile> # optional if you use profiles
+```
+
+Important notes:
+
+- `AWS_REGION` is required for Claude Code on Bedrock
+- AWS credentials still need to be available through the normal AWS SDK credential chain, for example `aws configure`, `aws sso login`, environment variables, or a Bedrock API key
+- when Bedrock is enabled, Claude authentication is handled by AWS credentials, not Anthropic account login
+
+Model guidance for T3:
+
+- prefer keeping T3 on the built-in Claude model slugs such as `claude-sonnet-4-6` and `claude-opus-4-6`
+- if you need Bedrock inference profile IDs or ARNs, prefer Claude Code's `modelOverrides` setting over stuffing those IDs directly into T3 `customModels`
+- this keeps T3's built-in Claude model capabilities and picker behavior aligned with known Anthropic model slugs while Claude Code translates them to Bedrock-specific model IDs underneath
+
+Use T3 `customModels` only when you intentionally want extra entries in the T3 model picker, for example:
+
+- dated Claude versions that are not already built into T3
+- custom Bedrock-routed variants you want operators to select explicitly
+
+If you use provider-specific Bedrock IDs directly in T3 `customModels`, expect rough edges:
+
+- T3's built-in Claude capability metadata is keyed off known Anthropic slugs
+- T3's Claude model mapping may append `[1m]` when the 1M context option is selected
+- using raw provider-specific IDs can make model capability detection and context-window behavior less predictable than the `modelOverrides` path
 
 ### Section 5: Install Tailscale and choose the bind host
 
@@ -393,25 +490,348 @@ Minimum concerns if you do this:
 - pairing URLs should only be shared over a trusted channel
 - `t3 auth` should be part of the operator workflow for revoking leaked or stale sessions
 
+### MVP shortcut: one public hostname
+
+If the immediate goal is "I want to open the remote box in a browser at `https://<your-subdomain.example.com>`", the fastest MVP is:
+
+1. point your chosen hostname at the EC2 instance
+2. terminate TLS at Caddy
+3. proxy all HTTP traffic and websocket upgrades to `127.0.0.1:3773`
+4. run `t3 serve --host 127.0.0.1 --port 3773` behind that proxy
+
+That gives you one hostname for:
+
+- the browser UI
+- remote pairing/bootstrap
+- websocket RPC on `/ws`
+- the worker bridge endpoint on `/api/execution/runs`
+
+Tradeoff:
+
+- this is simpler for an MVP, but less locked down than the split topology described in [docs/linear-agent-mvp-setup.md](./linear-agent-mvp-setup.md), where only the execution bridge is public and operator access stays private
+
+Why Caddy is the default recommendation for this shortcut:
+
+- automatic HTTPS with less operator setup than Nginx + Certbot
+- websocket proxying works without extra upgrade boilerplate
+- the config is tiny and easy to reproduce on a fresh VPS
+
+Recommended EC2 DNS note:
+
+- if this hostname matters beyond a quick experiment, attach an Elastic IP before creating the DNS record so the target IP does not drift
+
+How to allocate and attach an Elastic IP in AWS:
+
+1. open the EC2 console in the same region as the instance
+2. go to `Network & Security` -> `Elastic IPs`
+3. click `Allocate Elastic IP address`
+4. keep the default Amazon pool unless you have a specific requirement
+5. click `Allocate`
+6. select the new Elastic IP
+7. click `Actions` -> `Associate Elastic IP address`
+8. choose the EC2 instance
+9. choose the primary private IP
+10. click `Associate`
+
+After association:
+
+- use the Elastic IP, not the old public IP, for DNS
+- verify the instance now shows the Elastic IP in its networking details
+
+How to update the EC2 security group in the AWS Console:
+
+Fastest path from the instance page:
+
+1. open the EC2 console in the correct region
+2. click `Instances` in the left sidebar
+3. click the target EC2 instance
+4. in the lower details panel, open the `Security` tab
+5. under `Security groups`, click the attached security group link
+6. open the `Inbound rules` tab
+7. click `Edit inbound rules`
+8. add or confirm these rules:
+   - `SSH` on port `22` from `My IP`
+   - `HTTP` on port `80` from `Anywhere-IPv4` (`0.0.0.0/0`)
+   - `HTTPS` on port `443` from `Anywhere-IPv4` (`0.0.0.0/0`)
+9. save the rules
+
+Alternative path if the instance page is awkward:
+
+1. open the EC2 console in the correct region
+2. go to `Network & Security` -> `Security Groups`
+3. find the group attached to the instance
+4. click the security group
+5. open `Inbound rules`
+6. click `Edit inbound rules`
+
+Do not add:
+
+- public inbound `3773`
+- `SSH` from `Anywhere-IPv4`
+
+Common AWS console gotcha:
+
+- if you already have an `SSH` rule for your exact IP, adding another `SSH` rule with source `My IP` will fail because AWS treats it as a duplicate
+- in that case, keep the existing `SSH` rule and do not add a second one
+- only add the missing `HTTP` (`80`) and `HTTPS` (`443`) rules
+
+Security-group cleanup for the Caddy path:
+
+- if you see a public `Custom TCP` rule for port `3773`, delete it
+- the single-hostname Caddy setup should expose only `80` and `443` publicly
+- T3 itself should stay bound to `127.0.0.1:3773` behind the reverse proxy
+
+Recommended cutover order for an existing subdomain such as `agent.example.com`:
+
+1. allocate an Elastic IP in the same AWS region as the EC2 instance
+2. associate that Elastic IP to the instance
+3. confirm the instance security group allows inbound `80` and `443`
+4. update the DNS `A` record for the subdomain to the Elastic IP
+5. wait until `dig +short <hostname>` returns the Elastic IP
+6. install Caddy and point it at `127.0.0.1:3773`
+7. let Caddy obtain HTTPS certificates after DNS has propagated
+
+If the DNS zone is hosted in Vercel DNS:
+
+- open the Vercel project or team DNS settings for the domain
+- edit the `A` record for the subdomain
+- replace the old Vercel target with the new Elastic IP
+- save, then verify with `dig +short <your-subdomain.example.com>`
+
+Vercel DNS navigation:
+
+1. open the Vercel dashboard
+2. open the team or personal account that owns the domain
+3. go to `Domains`
+4. click the root domain
+5. find the row for the chosen subdomain
+6. edit the `A` record so it points to the Elastic IP
+7. remove any conflicting old `A` or `CNAME` record for the same hostname
+8. save, then verify with `dig`
+
+For a subdomain migration onto EC2:
+
+- remove any old `A` records that still point at the previous target
+- create or keep exactly one `A` record for the chosen subdomain pointing to the Elastic IP
+- do not use a CNAME at the same time for the same hostname
+
+If the hostname still appears to serve the old app after the `A` record cutover:
+
+- verify `dig +short <your-subdomain.example.com>` returns the Elastic IP
+- compare the public response with a forced-IP request
+- if `curl --resolve` reaches your EC2 reverse proxy but plain `curl` still serves the previous app, keep debugging the DNS zone before trusting the public hostname
+
+Example forced-IP check:
+
+```bash
+curl -i --resolve <your-subdomain.example.com>:443:<your-elastic-ip> \
+  https://<your-subdomain.example.com>
+```
+
+The expected result for the EC2 + Caddy path is a response that includes `via: 1.1 Caddy`.
+
+For this EC2 + Caddy path, you typically want:
+
+- inbound `22` from your IP only
+- inbound `80` from `0.0.0.0/0`
+- inbound `443` from `0.0.0.0/0`
+- no public inbound `3773` because Caddy terminates public traffic and proxies locally
+
+Minimal Caddyfile:
+
+```caddy
+<your-subdomain.example.com> {
+  reverse_proxy 127.0.0.1:3773
+}
+```
+
+If you use the single-hostname shortcut for the Linear MVP, set Convex to call the same host:
+
+```bash
+T3_EXECUTION_BRIDGE_BASE_URL="https://<your-subdomain.example.com>"
+```
+
+You can harden later by moving the public bridge onto a separate hostname and keeping the full T3 UI on Tailscale or another private path.
+
+Example host-level steps:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
+  sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
+  sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt-get update
+sudo apt-get install -y caddy
+```
+
+```bash
+sudo tee /etc/caddy/Caddyfile >/dev/null <<'EOF'
+<your-subdomain.example.com> {
+  reverse_proxy 127.0.0.1:3773
+}
+EOF
+
+sudo systemctl reload caddy
+```
+
+Keep this path for the single-hostname MVP. If you need more custom edge behavior later, moving to Nginx or a managed load balancer is still straightforward.
+
+### Post-DNS bring-up on the host
+
+Once `dig +short <your-subdomain.example.com>` returns the Elastic IP, finish the host setup in this order:
+
+1. create persistent directories for T3 state and workspaces
+2. install a `systemd` service that binds T3 to `127.0.0.1:3773`
+3. verify the local HTTP listener on `127.0.0.1:3773`
+4. install Caddy
+5. point the Caddyfile at `127.0.0.1:3773`
+6. verify that HTTPS works on the public hostname
+
+Create the persistent directories:
+
+```bash
+sudo mkdir -p /var/lib/t3code /srv/t3-workspaces
+sudo chown -R "$USER":"$USER" /var/lib/t3code /srv/t3-workspaces
+```
+
+Create a small environment file for the service:
+
+```bash
+sudo tee /etc/t3code.env >/dev/null <<'EOF'
+T3CODE_HOME=/var/lib/t3code
+EOF
+```
+
+Install the `systemd` service:
+
+```bash
+sudo tee /etc/systemd/system/t3code.service >/dev/null <<'EOF'
+[Unit]
+Description=T3 Code Headless Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/t3code/apps/server
+EnvironmentFile=/etc/t3code.env
+ExecStart=/usr/bin/env bash -lc 'node dist/bin.mjs serve --host 127.0.0.1 --port 3773 /srv/t3-workspaces'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now t3code
+sudo systemctl status t3code --no-pager
+```
+
+Verify the local server before touching Caddy:
+
+```bash
+curl -I http://127.0.0.1:3773
+```
+
+The expected result is `HTTP/1.1 200 OK`.
+
+Install Caddy:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
+  sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
+  sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y caddy
+```
+
+Write the Caddyfile:
+
+```bash
+sudo tee /etc/caddy/Caddyfile >/dev/null <<'EOF'
+<your-subdomain.example.com> {
+  reverse_proxy 127.0.0.1:3773
+}
+EOF
+
+sudo systemctl enable --now caddy
+sudo systemctl reload caddy
+sudo systemctl status caddy --no-pager
+```
+
+Verify public HTTPS:
+
+```bash
+curl -I https://<your-subdomain.example.com>
+```
+
+The expected result is `HTTP/2 200`.
+
+Operational note:
+
+- the first `t3 serve` startup prints pairing details and a QR code into the service logs
+- if you need to inspect that initial output later, use `journalctl -u t3code -n 100 --no-pager`
+- you can also create a fresh pairing credential with the auth commands listed below
+
+### If the web UI asks for a one-time token or pairing secret
+
+Generate a fresh pairing credential on the server:
+
+```bash
+cd /home/ubuntu/t3code/apps/server
+node dist/bin.mjs auth pairing create \
+  --base-dir /var/lib/t3code \
+  --base-url https://<your-subdomain.example.com>
+```
+
+The command prints:
+
+- a client pairing token id
+- a short `Token:` value to paste into the UI
+- a `Pair URL:` that opens `/pair#token=...` directly
+- an expiration timestamp
+
+Important:
+
+- generate pairing credentials against the same `T3CODE_HOME` used by the running `t3code.service`
+- if the service uses `EnvironmentFile=/etc/t3code.env` and that file contains `T3CODE_HOME=/var/lib/t3code`, then your auth CLI commands must use `--base-dir /var/lib/t3code` or export the same `T3CODE_HOME` first
+- if you mint a token against the wrong base dir, the browser will reject it with `Invalid bootstrap credential.`
+
+You can either:
+
+- paste the short `Token:` value into the browser prompt
+- or open the printed `Pair URL:` directly
+
+The token is a one-time bootstrap credential, not a long-lived password.
+
 ## Operator commands you will actually use
 
 Create a new pairing credential later:
 
 ```bash
 cd /path/to/ai.code/apps/server
-node dist/bin.mjs auth pairing create
+node dist/bin.mjs auth pairing create \
+  --base-dir /var/lib/t3code \
+  --base-url https://<your-subdomain.example.com>
 ```
 
 List active pairing links:
 
 ```bash
-node dist/bin.mjs auth pairing list
+node dist/bin.mjs auth pairing list --base-dir /var/lib/t3code
 ```
 
 Revoke a pairing link:
 
 ```bash
-node dist/bin.mjs auth pairing revoke --id <pairing-link-id>
+node dist/bin.mjs auth pairing revoke --base-dir /var/lib/t3code --id <pairing-link-id>
 ```
 
 Tail logs:
