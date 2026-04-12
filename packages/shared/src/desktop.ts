@@ -1,0 +1,1 @@
+export const DESKTOP_TITLEBAR_HEIGHT_PX = 52;

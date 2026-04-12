@@ -59,6 +59,10 @@
     "./qrCode": {
       "types": "./src/qrCode.ts",
       "import": "./src/qrCode.ts"
+    },
+    "./desktop": {
+      "types": "./src/desktop.ts",
+      "import": "./src/desktop.ts"
     }
   },
   "scripts": {

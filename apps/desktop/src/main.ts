@@ -475,6 +475,25 @@ function captureBackendOutput(child: ChildProcess.ChildProcess): void {
 
 initializePackagedLogging();
 
+function syncWindowChromeOverlay(window: BrowserWindow): void {
+  const overlay = getWindowChromeOptions({
+    darkMode: nativeTheme.shouldUseDarkColors,
+    linuxTitleBarMode: desktopSettings.linuxTitleBarMode,
+    platform,
+  }).titleBarOverlay;
+  if (!overlay || overlay === true) {
+    return;
+  }
+
+  window.setTitleBarOverlay(overlay);
+}
+
+nativeTheme.on("updated", () => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    syncWindowChromeOverlay(window);
+  }
+});
+
 if (platform === "linux") {
   app.commandLine.appendSwitch("class", LINUX_WM_CLASS);
 }
@@ -1553,6 +1572,9 @@ function registerIpcHandlers(): void {
     }
 
     nativeTheme.themeSource = theme;
+    for (const window of BrowserWindow.getAllWindows()) {
+      syncWindowChromeOverlay(window);
+    }
   });
 
   ipcMain.removeHandler(MINIMIZE_WINDOW_CHANNEL);
@@ -1729,7 +1751,11 @@ function createWindow(): BrowserWindow {
     backgroundColor: getInitialWindowBackgroundColor(),
     ...getIconOption(),
     title: APP_DISPLAY_NAME,
-    ...getWindowChromeOptions(desktopSettings.linuxTitleBarMode),
+    ...getWindowChromeOptions({
+      darkMode: nativeTheme.shouldUseDarkColors,
+      linuxTitleBarMode: desktopSettings.linuxTitleBarMode,
+      platform,
+    }),
     webPreferences: {
       preload: Path.join(__dirname, "preload.js"),
       contextIsolation: true,

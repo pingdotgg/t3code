@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { DESKTOP_TITLEBAR_HEIGHT_PX } from "@t3tools/shared/desktop";
 
 import {
-  DESKTOP_CHROME_TITLEBAR_HEIGHT_PX,
   resolveDesktopChromeRootStyle,
   resolveDesktopChromeSafeAreaStyle,
   resolveDesktopChromeSafeInlineSize,
@@ -35,7 +35,7 @@ describe("desktop chrome layout helpers", () => {
     ).toEqual({
       "--desktop-chrome-safe-inline-start": "90px",
       "--desktop-chrome-safe-inline-end": "0px",
-      "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
+      "--desktop-chrome-titlebar-height": `${DESKTOP_TITLEBAR_HEIGHT_PX}px`,
     });
   });
 
@@ -52,7 +52,7 @@ describe("desktop chrome layout helpers", () => {
     ).toEqual({
       "--desktop-chrome-safe-inline-start": "2.75rem",
       "--desktop-chrome-safe-inline-end": "4.5rem",
-      "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
+      "--desktop-chrome-titlebar-height": `${DESKTOP_TITLEBAR_HEIGHT_PX}px`,
     });
   });
 
@@ -67,7 +67,7 @@ describe("desktop chrome layout helpers", () => {
       "--desktop-chrome-safe-inline-start": "env(titlebar-area-x, 0px)",
       "--desktop-chrome-safe-inline-end":
         "calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px))",
-      "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
+      "--desktop-chrome-titlebar-height": `${DESKTOP_TITLEBAR_HEIGHT_PX}px`,
     });
   });
 

@@ -1,8 +1,7 @@
 import type { DesktopWindowControlsLayout, Platform } from "@t3tools/contracts";
 import type { LinuxTitleBarMode } from "@t3tools/contracts/settings";
+import { DESKTOP_TITLEBAR_HEIGHT_PX } from "@t3tools/shared/desktop";
 import type * as React from "react";
-
-export const DESKTOP_CHROME_TITLEBAR_HEIGHT_PX = 52;
 const DESKTOP_CHROME_MACOS_SAFE_INLINE_START_PX = 90;
 const DESKTOP_CHROME_SAFE_INLINE_BASE_REM = 1;
 const DESKTOP_CHROME_SAFE_INLINE_STEP_REM = 1.75;
@@ -38,7 +37,7 @@ function resolveDesktopChromeWcoSafeAreaStyle(): DesktopChromeSafeAreaStyle {
     "--desktop-chrome-safe-inline-start": "env(titlebar-area-x, 0px)",
     "--desktop-chrome-safe-inline-end":
       "calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px))",
-    "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
+    "--desktop-chrome-titlebar-height": `${DESKTOP_TITLEBAR_HEIGHT_PX}px`,
   };
 }
 
@@ -51,7 +50,7 @@ export function resolveDesktopChromeRootStyle(input: {
     return {
       "--desktop-chrome-safe-inline-start": `${DESKTOP_CHROME_MACOS_SAFE_INLINE_START_PX}px`,
       "--desktop-chrome-safe-inline-end": "0px",
-      "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
+      "--desktop-chrome-titlebar-height": `${DESKTOP_TITLEBAR_HEIGHT_PX}px`,
     };
   }
 
@@ -65,7 +64,7 @@ export function resolveDesktopChromeRootStyle(input: {
         leftControlCount: input.windowControlsLayout.left.length,
         rightControlCount: input.windowControlsLayout.right.length,
       }),
-      "--desktop-chrome-titlebar-height": `${DESKTOP_CHROME_TITLEBAR_HEIGHT_PX}px`,
+      "--desktop-chrome-titlebar-height": `${DESKTOP_TITLEBAR_HEIGHT_PX}px`,
     };
   }
 

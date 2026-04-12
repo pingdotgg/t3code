@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { getWindowControlsLayout } from "./env";
+import { getWindowChromeOptions, getWindowControlsLayout } from "./env";
 
 vi.mock("./linuxWindowControls", () => ({
   getLinuxWindowControlsLayout: vi.fn().mockReturnValue({
@@ -42,6 +42,69 @@ describe("getWindowControlsLayout", () => {
     expect(getWindowControlsLayout({ locale: "ar", platform: "linux" })).toEqual({
       left: [],
       right: ["minimize", "maximize", "close"],
+    });
+  });
+});
+
+describe("getWindowChromeOptions", () => {
+  it("uses transparent overlay and light symbols for windows in dark mode", () => {
+    expect(
+      getWindowChromeOptions({
+        darkMode: true,
+        linuxTitleBarMode: "native",
+        platform: "windows",
+      }),
+    ).toEqual({
+      titleBarStyle: "hidden",
+      titleBarOverlay: {
+        height: 52,
+        color: "#00000000",
+        symbolColor: "#ffffff",
+      },
+    });
+  });
+
+  it("uses transparent overlay and dark symbols for windows in light mode", () => {
+    expect(
+      getWindowChromeOptions({
+        darkMode: false,
+        linuxTitleBarMode: "native",
+        platform: "windows",
+      }),
+    ).toEqual({
+      titleBarStyle: "hidden",
+      titleBarOverlay: {
+        height: 52,
+        color: "#00000000",
+        symbolColor: "#000000",
+      },
+    });
+  });
+
+  it("keeps linux native titlebars unchanged", () => {
+    expect(
+      getWindowChromeOptions({
+        darkMode: true,
+        linuxTitleBarMode: "native",
+        platform: "linux",
+      }),
+    ).toEqual({});
+  });
+
+  it("keeps linux overlay transparent workaround and applies symbol contrast", () => {
+    expect(
+      getWindowChromeOptions({
+        darkMode: false,
+        linuxTitleBarMode: "overlay",
+        platform: "linux",
+      }),
+    ).toEqual({
+      titleBarStyle: "hidden",
+      titleBarOverlay: {
+        height: 52,
+        color: "#01000000",
+        symbolColor: "#000000",
+      },
     });
   });
 });
