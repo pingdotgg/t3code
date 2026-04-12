@@ -293,11 +293,16 @@ export const launchDetached = (launch: EditorLaunch) =>
     yield* Effect.callback<void, OpenError>((resume) => {
       let child;
       try {
-        child = spawn(launch.command, [...launch.args], {
-          detached: true,
-          stdio: "ignore",
-          shell: process.platform === "win32",
-        });
+        const isWin32 = process.platform === "win32";
+        child = spawn(
+          launch.command,
+          isWin32 ? launch.args.map((a) => `"${a}"`) : [...launch.args],
+          {
+            detached: true,
+            stdio: "ignore",
+            shell: isWin32,
+          },
+        );
       } catch (error) {
         return resume(
           Effect.fail(new OpenError({ message: "failed to spawn detached process", cause: error })),
