@@ -44,7 +44,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
   const serverThreadSelector = useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]);
   const serverThread = useStore(serverThreadSelector);
-  const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
+  const draftThread = useComposerDraftStore((store) =>
+    draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
+  );
   const activeProjectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
     : draftThread

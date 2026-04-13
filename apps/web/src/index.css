@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark, .dark *));
+/* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
+@custom-variant wco (&:is(.wco, .wco *));
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
@@ -339,12 +341,14 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown .chat-markdown-codeblock {
+  --chat-markdown-codeblock-copy-button-space: 1.5rem;
   position: relative;
   margin: 0.65rem 0;
 }
 
 .chat-markdown .chat-markdown-codeblock pre {
   margin: 0;
+  padding-right: calc(0.9rem + var(--chat-markdown-codeblock-copy-button-space));
 }
 
 .chat-markdown .chat-markdown-copy-button {
@@ -361,6 +365,7 @@ label:has(> select#reasoning-effort) select {
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--background) 82%, transparent);
   color: var(--muted-foreground);
+  cursor: pointer;
   opacity: 0;
   pointer-events: none;
   transition:

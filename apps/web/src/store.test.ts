@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  type OrchestrationShellSnapshot,
   ProjectId,
   ThreadId,
   TurnId,
@@ -18,9 +19,12 @@ import {
   applyOrchestrationEvents,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
+  selectThreadByRef,
+  selectThreadExistsByRef,
   setThreadBranch,
   selectThreadsAcrossEnvironments,
   syncServerReadModel,
+  syncServerShellSnapshot,
   type AppState,
   type EnvironmentState,
 } from "./store";
@@ -245,6 +249,128 @@ function makeEvent<T extends OrchestrationEvent["type"]>(
   } as Extract<OrchestrationEvent, { type: T }>;
 }
 
+describe("thread selection memoization", () => {
+  it("returns stable thread references for repeated reads of the same state", () => {
+    const thread = makeThread({
+      messages: [
+        {
+          id: MessageId.make("message-1"),
+          role: "user",
+          text: "hello",
+          createdAt: "2026-02-13T00:01:00.000Z",
+          streaming: false,
+        },
+      ],
+      activities: [
+        {
+          id: EventId.make("activity-1"),
+          tone: "info",
+          kind: "step",
+          summary: "working",
+          payload: {},
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-02-13T00:01:30.000Z",
+        },
+      ],
+      proposedPlans: [
+        {
+          id: "plan-1",
+          turnId: null,
+          planMarkdown: "plan",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: "2026-02-13T00:02:00.000Z",
+          updatedAt: "2026-02-13T00:02:00.000Z",
+        },
+      ],
+      turnDiffSummaries: [
+        {
+          turnId: TurnId.make("turn-1"),
+          completedAt: "2026-02-13T00:03:00.000Z",
+          files: [],
+        },
+      ],
+    });
+    const state = makeState(thread);
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+
+    const first = selectThreadByRef(state, ref);
+    const second = selectThreadByRef(state, ref);
+
+    expect(first).toBeDefined();
+    expect(second).toBe(first);
+    expect(second?.messages).toBe(first?.messages);
+    expect(second?.activities).toBe(first?.activities);
+    expect(second?.proposedPlans).toBe(first?.proposedPlans);
+    expect(second?.turnDiffSummaries).toBe(first?.turnDiffSummaries);
+  });
+
+  it("reuses the derived thread when the app state wrapper changes but thread data does not", () => {
+    const thread = makeThread({
+      messages: [
+        {
+          id: MessageId.make("message-1"),
+          role: "assistant",
+          text: "done",
+          createdAt: "2026-02-13T00:01:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const state = makeState(thread);
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+    const wrappedState: AppState = {
+      ...state,
+      environmentStateById: { ...state.environmentStateById },
+    };
+
+    const first = selectThreadByRef(state, ref);
+    const second = selectThreadByRef(wrappedState, ref);
+
+    expect(second).toBe(first);
+  });
+
+  it("updates the derived thread when the underlying thread data changes", () => {
+    const thread = makeThread();
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+    const firstState = makeState(thread);
+    const secondState = makeState({
+      ...thread,
+      messages: [
+        {
+          id: MessageId.make("message-2"),
+          role: "user",
+          text: "new",
+          createdAt: "2026-02-13T00:04:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+
+    const first = selectThreadByRef(firstState, ref);
+    const second = selectThreadByRef(secondState, ref);
+
+    expect(second).not.toBe(first);
+    expect(second?.messages).toHaveLength(1);
+    expect(second?.messages[0]?.text).toBe("new");
+  });
+
+  it("checks thread existence without materializing the full thread", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+
+    expect(selectThreadExistsByRef(state, ref)).toBe(true);
+    expect(
+      selectThreadExistsByRef(
+        state,
+        scopeThreadRef(thread.environmentId, ThreadId.make("missing")),
+      ),
+    ).toBe(false);
+    expect(selectThreadExistsByRef(state, null)).toBe(false);
+  });
+});
+
 function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"][number]>) {
   return {
     id: ThreadId.make("thread-1"),
@@ -369,6 +495,83 @@ describe("store read model sync", () => {
       localEnvironmentId,
     );
 
+    expect(localEnvironmentStateOf(next).bootstrapComplete).toBe(true);
+  });
+
+  it("updates shell state without discarding hydrated thread detail", () => {
+    const initialState = makeState(
+      makeThread({
+        title: "Initial thread",
+        messages: [
+          {
+            id: MessageId.make("message-1"),
+            role: "assistant",
+            text: "hydrated body",
+            createdAt: "2026-02-13T00:00:01.000Z",
+            completedAt: "2026-02-13T00:00:01.000Z",
+            streaming: false,
+          },
+        ],
+      }),
+    );
+    const shellSnapshot: OrchestrationShellSnapshot = {
+      snapshotSequence: 2,
+      projects: [
+        {
+          id: ProjectId.make("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          repositoryIdentity: null,
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          scripts: [],
+          createdAt: "2026-02-13T00:00:00.000Z",
+          updatedAt: "2026-02-13T00:00:00.000Z",
+        },
+      ],
+      threads: [
+        {
+          id: ThreadId.make("thread-1"),
+          projectId: ProjectId.make("project-1"),
+          title: "Renamed thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/renamed",
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: "2026-02-13T00:00:00.000Z",
+          updatedAt: "2026-02-13T00:00:02.000Z",
+          archivedAt: null,
+          session: null,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        },
+      ],
+      updatedAt: "2026-02-13T00:00:02.000Z",
+    };
+
+    const next = syncServerShellSnapshot(initialState, shellSnapshot, localEnvironmentId);
+    const thread = selectThreadByRef(
+      next,
+      scopeThreadRef(localEnvironmentId, ThreadId.make("thread-1")),
+    );
+
+    expect(thread?.title).toBe("Renamed thread");
+    expect(thread?.branch).toBe("feature/renamed");
+    expect(thread?.messages).toEqual([
+      expect.objectContaining({
+        id: MessageId.make("message-1"),
+        text: "hydrated body",
+      }),
+    ]);
     expect(localEnvironmentStateOf(next).bootstrapComplete).toBe(true);
   });
 

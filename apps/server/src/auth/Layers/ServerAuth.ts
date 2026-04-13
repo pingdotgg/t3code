@@ -20,7 +20,10 @@ import {
   AuthError,
   type ServerAuthShape,
 } from "../Services/ServerAuth.ts";
-import { SessionCredentialService } from "../Services/SessionCredentialService.ts";
+import {
+  SessionCredentialError,
+  SessionCredentialService,
+} from "../Services/SessionCredentialService.ts";
 import { AuthControlPlaneLive, AuthCoreLive } from "./AuthControlPlane.ts";
 
 type BootstrapExchangeResult = {
@@ -65,6 +68,13 @@ export const makeServerAuth = Effect.gen(function* () {
 
   const authenticateToken = (token: string): Effect.Effect<AuthenticatedSession, AuthError> =>
     sessions.verify(token).pipe(
+      Effect.tapError((cause: SessionCredentialError) =>
+        Effect.logWarning("Rejected authenticated session credential.").pipe(
+          Effect.annotateLogs({
+            reason: cause.message,
+          }),
+        ),
+      ),
       Effect.map((session) => ({
         sessionId: session.sessionId,
         subject: session.subject,

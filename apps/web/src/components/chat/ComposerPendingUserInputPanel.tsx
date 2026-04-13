@@ -100,7 +100,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
         return;
       }
-      if (target instanceof HTMLElement && target.isContentEditable) {
+      if (
+        target instanceof HTMLElement &&
+        target.closest('[contenteditable]:not([contenteditable="false"])')
+      ) {
         return;
       }
       const digit = Number.parseInt(event.key, 10);
