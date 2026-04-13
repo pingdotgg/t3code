@@ -1629,21 +1629,32 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       }
+
+      const rawBlock = block as {
+        readonly type?: string;
+        readonly name?: unknown;
+        readonly input?: unknown;
+        readonly id?: unknown;
+      };
       if (
-        block.type !== "tool_use" &&
-        block.type !== "server_tool_use" &&
-        block.type !== "mcp_tool_use"
+        rawBlock.type !== "tool_use" &&
+        rawBlock.type !== "server_tool_use" &&
+        rawBlock.type !== "mcp_tool_use"
       ) {
         return;
       }
 
-      const toolName = block.name;
+      if (typeof rawBlock.name !== "string" || typeof rawBlock.id !== "string") {
+        return;
+      }
+
+      const toolName = rawBlock.name;
       const itemType = classifyToolItemType(toolName);
       const toolInput =
-        typeof block.input === "object" && block.input !== null
-          ? (block.input as Record<string, unknown>)
+        typeof rawBlock.input === "object" && rawBlock.input !== null
+          ? (rawBlock.input as Record<string, unknown>)
           : {};
-      const itemId = block.id;
+      const itemId = rawBlock.id;
       const detail = summarizeToolRequest(toolName, toolInput);
       const inputFingerprint =
         Object.keys(toolInput).length > 0 ? toolInputFingerprint(toolInput) : undefined;

@@ -1682,7 +1682,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <SidebarMenuButton
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
           size="sm"
-          className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
+          className={`gap-2 pl-2 pr-8 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
             isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
           }`}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
@@ -1732,7 +1732,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                       ? "Remote project"
                       : "Available in multiple environments"
                   }
-                  className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/50 transition-opacity duration-150 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0"
+                  className="pointer-events-none absolute top-1 right-1.5 hidden size-5 items-center justify-center rounded-md text-muted-foreground/50 transition-opacity duration-150 md:inline-flex md:group-hover/project-header:opacity-0 md:group-focus-within/project-header:opacity-0"
                 />
               }
             >
@@ -1746,7 +1746,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <Tooltip>
           <TooltipTrigger
             render={
-              <div className="pointer-events-none absolute top-1 right-1.5 opacity-0 transition-opacity duration-150 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+              <div className="pointer-events-auto absolute top-1 right-1.5 opacity-100 transition-opacity duration-150 md:pointer-events-none md:opacity-0 md:group-hover/project-header:pointer-events-auto md:group-hover/project-header:opacity-100 md:group-focus-within/project-header:pointer-events-auto md:group-focus-within/project-header:opacity-100">
                 <button
                   type="button"
                   aria-label={`Create new thread in ${project.name}`}

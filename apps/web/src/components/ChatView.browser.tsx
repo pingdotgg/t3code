@@ -3474,6 +3474,45 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it("shows the project new-thread action on mobile without hover", async () => {
+    const mounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-mobile-new-thread-test" as MessageId,
+        targetText: "mobile new thread target",
+      }),
+    });
+
+    try {
+      await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+      await waitForLayout();
+
+      const newThreadButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('[data-testid="new-thread-button"]'),
+        "Unable to find new thread button.",
+      );
+      const newThreadAction = newThreadButton.parentElement;
+
+      expect(
+        newThreadAction,
+        "New-thread button should render inside a visibility wrapper.",
+      ).not.toBeNull();
+      expect(getComputedStyle(newThreadAction!).opacity).toBe("1");
+      expect(getComputedStyle(newThreadAction!).pointerEvents).toBe("auto");
+
+      await newThreadButton.click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Mobile new-thread action should create a draft thread without hover.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("creates a fresh draft after the previous draft thread is promoted", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
