@@ -32,7 +32,7 @@ import { Debouncer } from "@tanstack/react-pacer";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
-import { useGitStatus } from "~/lib/gitStatusState";
+import { refreshGitStatus, useGitStatus } from "~/lib/gitStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
@@ -2047,7 +2047,38 @@ export default function ChatView(props: ChatViewProps) {
     activeWorktreePath,
     hasServerThread: isServerThread,
     draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
+    isGitRepo,
   });
+  const draftThreadEnvMode = draftThread?.envMode;
+  const draftThreadBranch = draftThread?.branch;
+
+  useEffect(() => {
+    if (!isLocalDraftThread) {
+      return;
+    }
+    if (!draftThread) {
+      return;
+    }
+    if (gitStatusQuery.data?.isRepo !== false) {
+      return;
+    }
+    if (draftThreadEnvMode !== "worktree" && draftThreadBranch === null) {
+      return;
+    }
+    setDraftThreadContext(composerDraftTarget, {
+      envMode: "local",
+      branch: null,
+      worktreePath: null,
+    });
+  }, [
+    composerDraftTarget,
+    draftThread,
+    draftThreadBranch,
+    draftThreadEnvMode,
+    gitStatusQuery.data?.isRepo,
+    isLocalDraftThread,
+    setDraftThreadContext,
+  ]);
 
   useEffect(() => {
     if (!activeThreadId) {
@@ -2359,16 +2390,48 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
-        ? activeThread.branch
-        : null;
+    let envModeForSend = envMode;
+    let threadBranchForSend = activeThread.branch;
+
+    if (
+      isFirstMessage &&
+      envMode === "worktree" &&
+      !activeThread.worktreePath &&
+      !threadBranchForSend &&
+      gitCwd
+    ) {
+      const latestGitStatus = await refreshGitStatus({
+        environmentId,
+        cwd: gitCwd,
+      }).catch(() => gitStatusQuery.data);
+
+      if (latestGitStatus?.isRepo === false) {
+        envModeForSend = "local";
+        threadBranchForSend = null;
+        if (isLocalDraftThread) {
+          setDraftThreadContext(composerDraftTarget, {
+            envMode: "local",
+            branch: null,
+            worktreePath: null,
+          });
+        }
+      } else if (latestGitStatus?.branch) {
+        threadBranchForSend = latestGitStatus.branch;
+        if (isLocalDraftThread) {
+          setDraftThreadContext(composerDraftTarget, {
+            envMode: "worktree",
+            branch: latestGitStatus.branch,
+          });
+        }
+      }
+    }
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThread.branch) {
+      isFirstMessage && envModeForSend === "worktree" && !activeThread.worktreePath;
+    const baseBranchForWorktree = shouldCreateWorktree ? threadBranchForSend : null;
+    if (shouldCreateWorktree && !threadBranchForSend) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
@@ -2507,7 +2570,7 @@ export default function ChatView(props: ChatViewProps) {
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode,
-                      branch: activeThread.branch,
+                      branch: threadBranchForSend,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                     },

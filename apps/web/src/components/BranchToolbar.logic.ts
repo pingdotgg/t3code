@@ -54,8 +54,12 @@ export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;
   draftThreadEnvMode: EnvMode | undefined;
+  isGitRepo?: boolean;
 }): EnvMode {
-  const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
+  const { activeWorktreePath, hasServerThread, draftThreadEnvMode, isGitRepo = true } = input;
+  if (!isGitRepo) {
+    return "local";
+  }
   if (!hasServerThread) {
     if (activeWorktreePath) {
       return "local";

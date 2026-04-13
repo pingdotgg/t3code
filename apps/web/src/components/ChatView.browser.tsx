@@ -49,10 +49,23 @@ import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test
 
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
+const { gitStatusStateRef, refreshGitStatusResultRef, refreshGitStatusSpy } = vi.hoisted(() => ({
+  gitStatusStateRef: {
+    current: { data: null, error: null, cause: null, isPending: false } as {
+      data: unknown;
+      error: unknown;
+      cause: unknown;
+      isPending: boolean;
+    },
+  },
+  refreshGitStatusResultRef: { current: null as unknown },
+  refreshGitStatusSpy: vi.fn(() => Promise.resolve(refreshGitStatusResultRef.current)),
+}));
+
 vi.mock("../lib/gitStatusState", () => ({
-  useGitStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
+  useGitStatus: () => gitStatusStateRef.current,
   useGitStatuses: () => new Map(),
-  refreshGitStatus: () => Promise.resolve(null),
+  refreshGitStatus: refreshGitStatusSpy,
   resetGitStatusStateForTests: () => undefined,
 }));
 
@@ -1523,6 +1536,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     document.body.innerHTML = "";
     wsRequests.length = 0;
     customWsRpcResolver = null;
+    gitStatusStateRef.current = { data: null, error: null, cause: null, isPending: false };
+    refreshGitStatusResultRef.current = null;
+    refreshGitStatusSpy.mockClear();
     useComposerDraftStore.setState({
       draftsByThreadKey: {},
       draftThreadsByThreadKey: {},
@@ -2354,6 +2370,204 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
     } finally {
       resolveDispatch({ sequence: fixture.snapshot.snapshotSequence + 1 });
+      await mounted.cleanup();
+    }
+  });
+
+  it("falls back to local send behavior for non-git drafts even when worktree mode is persisted", async () => {
+    const draftId = draftIdFromPath("/draft/draft-non-git-local-fallback");
+    gitStatusStateRef.current = {
+      data: {
+        isRepo: false,
+        hasOriginRemote: false,
+        isDefaultBranch: false,
+        branch: null,
+        hasWorkingTreeChanges: false,
+        workingTree: { files: [], insertions: 0, deletions: 0 },
+        hasUpstream: false,
+        aheadCount: 0,
+        behindCount: 0,
+        pr: null,
+      },
+      error: null,
+      cause: null,
+      isPending: false,
+    };
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [draftId]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [PROJECT_DRAFT_KEY]: draftId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialPath: `/draft/${draftId}`,
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitListBranches) {
+          return new Promise<never>(() => {});
+        }
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Ship it");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequest = wsRequests.find(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          ) as
+            | {
+                _tag: string;
+                bootstrap?: {
+                  createThread?: { projectId?: string };
+                  prepareWorktree?: unknown;
+                };
+              }
+            | undefined;
+          expect(dispatchRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            bootstrap: {
+              createThread: {
+                projectId: PROJECT_ID,
+              },
+            },
+          });
+          expect(dispatchRequest?.bootstrap?.prepareWorktree).toBeUndefined();
+          expect(document.querySelector('button[aria-label="Preparing worktree"]')).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(useComposerDraftStore.getState().getDraftThread(THREAD_REF)?.envMode ?? null).toBe(
+        "local",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("refreshes pending git status before tripping the worktree base-branch guard", async () => {
+    const draftId = draftIdFromPath("/draft/draft-non-git-race");
+    gitStatusStateRef.current = {
+      data: null,
+      error: null,
+      cause: null,
+      isPending: true,
+    };
+    refreshGitStatusResultRef.current = {
+      isRepo: false,
+      hasOriginRemote: false,
+      isDefaultBranch: false,
+      branch: null,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: false,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    };
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [draftId]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [PROJECT_DRAFT_KEY]: draftId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialPath: `/draft/${draftId}`,
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitListBranches) {
+          return new Promise<never>(() => {});
+        }
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Ship it");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(refreshGitStatusSpy).toHaveBeenCalledWith({
+            environmentId: LOCAL_ENVIRONMENT_ID,
+            cwd: "/repo/project",
+          });
+          const dispatchRequest = wsRequests.find(
+            (request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          ) as
+            | {
+                _tag: string;
+                bootstrap?: {
+                  createThread?: { projectId?: string };
+                  prepareWorktree?: unknown;
+                };
+              }
+            | undefined;
+          expect(dispatchRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            bootstrap: {
+              createThread: {
+                projectId: PROJECT_ID,
+              },
+            },
+          });
+          expect(dispatchRequest?.bootstrap?.prepareWorktree).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
       await mounted.cleanup();
     }
   });
