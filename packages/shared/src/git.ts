@@ -83,6 +83,11 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   return branchName.slice(firstSeparatorIndex + 1);
 }
 
+export function buildTemporaryWorktreeBranchName(): string {
+  const token = crypto.randomUUID().slice(0, 8).toLowerCase();
+  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+}
+
 export function isTemporaryWorktreeBranch(branch: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(branch.trim().toLowerCase());
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyGitStatusStreamEvent,
+  buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
@@ -53,6 +54,10 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
 });
 
 describe("isTemporaryWorktreeBranch", () => {
+  it("matches the generated temporary worktree branch format", () => {
+    expect(isTemporaryWorktreeBranch(buildTemporaryWorktreeBranchName())).toBe(true);
+  });
+
   it("matches generated temporary worktree branches", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
     expect(isTemporaryWorktreeBranch(` ${WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
