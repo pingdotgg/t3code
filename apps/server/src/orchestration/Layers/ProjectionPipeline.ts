@@ -1282,6 +1282,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               });
               return;
             }
+            return;
           }
           if (Option.isSome(existingRow) && existingRow.value.status === "resolved") {
             return;
