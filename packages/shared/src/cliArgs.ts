@@ -3,6 +3,10 @@ export interface ParsedCliArgs {
   readonly positionals: string[];
 }
 
+export interface ParseCliArgsOptions {
+  readonly booleanFlags?: readonly string[];
+}
+
 /**
  * Parse CLI-style arguments into flags and positionals.
  *
@@ -21,12 +25,13 @@ export interface ParsedCliArgs {
  *   parseCliArgs("--effort=high")
  *     → { flags: { effort: "high" }, positionals: [] }
  *
- *   parseCliArgs(["1.2.3", "--root", "/path", "--github-output"])
+ *   parseCliArgs(["1.2.3", "--root", "/path", "--github-output"], { booleanFlags: ["github-output"] })
  *     → { flags: { root: "/path", "github-output": null }, positionals: ["1.2.3"] }
  */
-export function parseCliArgs(args: string | readonly string[]): ParsedCliArgs {
+export function parseCliArgs(args: string | readonly string[], options?: ParseCliArgsOptions): ParsedCliArgs {
   const tokens =
     typeof args === "string" ? args.trim().split(/\s+/).filter(Boolean) : Array.from(args);
+  const booleanSet = options?.booleanFlags ? new Set(options.booleanFlags) : undefined;
 
   const flags: Record<string, string | null> = {};
   const positionals: string[] = [];
@@ -42,6 +47,12 @@ export function parseCliArgs(args: string | readonly string[]): ParsedCliArgs {
       const eqIndex = rest.indexOf("=");
       if (eqIndex !== -1) {
         flags[rest.slice(0, eqIndex)] = rest.slice(eqIndex + 1);
+        continue;
+      }
+
+      // Known boolean flag — never consumes next token
+      if (booleanSet?.has(rest)) {
+        flags[rest] = null;
         continue;
       }
 

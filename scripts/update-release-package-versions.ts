@@ -47,7 +47,7 @@ export function parseArgs(argv: ReadonlyArray<string>): {
   rootDir: string | undefined;
   writeGithubOutput: boolean;
 } {
-  const { flags, positionals } = parseCliArgs(argv);
+  const { flags, positionals } = parseCliArgs(argv, { booleanFlags: ["github-output"] });
 
   const unknownFlags = Object.keys(flags).filter((k) => k !== "github-output" && k !== "root");
   if (unknownFlags.length > 0) {

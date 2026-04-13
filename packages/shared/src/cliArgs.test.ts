@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCliArgs } from "./cliArgs.ts";
+import { parseCliArgs } from "./cliArgs";
 
 describe("parseCliArgs", () => {
   it("returns empty result for empty string", () => {
@@ -101,5 +101,34 @@ describe("parseCliArgs", () => {
 
   it("ignores bare -- with no flag name", () => {
     expect(parseCliArgs("--")).toEqual({ flags: {}, positionals: [] });
+  });
+
+  it("boolean flag does not consume next token as value", () => {
+    expect(parseCliArgs(["--github-output", "1.2.3"], { booleanFlags: ["github-output"] })).toEqual(
+      {
+        flags: { "github-output": null },
+        positionals: ["1.2.3"],
+      },
+    );
+  });
+
+  it("non-boolean flag still consumes next token", () => {
+    expect(parseCliArgs(["--root", "/path", "1.2.3"], { booleanFlags: ["github-output"] })).toEqual(
+      {
+        flags: { root: "/path" },
+        positionals: ["1.2.3"],
+      },
+    );
+  });
+
+  it("mixes boolean and value flags with positionals", () => {
+    expect(
+      parseCliArgs(["--github-output", "--root", "/path", "1.2.3"], {
+        booleanFlags: ["github-output"],
+      }),
+    ).toEqual({
+      flags: { "github-output": null, root: "/path" },
+      positionals: ["1.2.3"],
+    });
   });
 });

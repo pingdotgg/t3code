@@ -60,4 +60,12 @@ describe("parseArgs", () => {
   it("throws on --root without value", () => {
     expect(() => parseArgs(["1.2.3", "--root"])).toThrow("Missing value for --root.");
   });
+
+  it("does not consume version as --github-output value", () => {
+    expect(parseArgs(["--github-output", "1.2.3"])).toEqual({
+      version: "1.2.3",
+      rootDir: undefined,
+      writeGithubOutput: true,
+    });
+  });
 });
