@@ -8,7 +8,6 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
-import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
 import { selectThreadByRef, useStore } from "../store";
@@ -17,10 +16,10 @@ import {
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
+import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
-const WORKTREE_BRANCH_PREFIX = "t3code";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -157,10 +156,11 @@ export function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export function buildTemporaryWorktreeBranchName(): string {
-  // Keep the 8-hex suffix shape for backend temporary-branch detection.
-  const token = randomUUID().slice(0, 8).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+export function resolveSendEnvMode(input: {
+  requestedEnvMode: DraftThreadEnvMode;
+  isGitRepo: boolean;
+}): DraftThreadEnvMode {
+  return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
 export function cloneComposerImageForRetry(

@@ -49,6 +49,9 @@ interface BranchToolbarBranchSelectorProps {
   threadId: ThreadId;
   draftId?: DraftId;
   envLocked: boolean;
+  effectiveEnvModeOverride?: "local" | "worktree";
+  activeThreadBranchOverride?: string | null;
+  onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
@@ -77,6 +80,9 @@ export function BranchToolbarBranchSelector({
   threadId,
   draftId,
   envLocked,
+  effectiveEnvModeOverride,
+  activeThreadBranchOverride,
+  onActiveThreadBranchOverrideChange,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
@@ -108,16 +114,21 @@ export function BranchToolbarBranchSelector({
   const activeProject = useStore(activeProjectSelector);
 
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
-  const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
+  const activeThreadBranch =
+    activeThreadBranchOverride !== undefined
+      ? activeThreadBranchOverride
+      : (serverThread?.branch ?? draftThread?.branch ?? null);
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== undefined;
-  const effectiveEnvMode = resolveEffectiveEnvMode({
-    activeWorktreePath,
-    hasServerThread,
-    draftThreadEnvMode: draftThread?.envMode,
-  });
+  const effectiveEnvMode =
+    effectiveEnvModeOverride ??
+    resolveEffectiveEnvMode({
+      activeWorktreePath,
+      hasServerThread,
+      draftThreadEnvMode: draftThread?.envMode,
+    });
 
   // ---------------------------------------------------------------------------
   // Thread branch mutation (colocated — only this component calls it)
@@ -146,6 +157,7 @@ export function BranchToolbarBranchSelector({
         });
       }
       if (hasServerThread) {
+        onActiveThreadBranchOverrideChange?.(branch);
         setThreadBranchAction(threadRef, branch, worktreePath);
         return;
       }
@@ -167,6 +179,7 @@ export function BranchToolbarBranchSelector({
       serverSession,
       activeWorktreePath,
       hasServerThread,
+      onActiveThreadBranchOverrideChange,
       setThreadBranchAction,
       setDraftThreadContext,
       draftId,

@@ -20,6 +20,9 @@ interface BranchToolbarProps {
   threadId: ThreadId;
   draftId?: DraftId;
   onEnvModeChange: (mode: EnvMode) => void;
+  effectiveEnvModeOverride?: EnvMode;
+  activeThreadBranchOverride?: string | null;
+  onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
@@ -32,6 +35,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   threadId,
   draftId,
   onEnvModeChange,
+  effectiveEnvModeOverride,
+  activeThreadBranchOverride,
+  onActiveThreadBranchOverrideChange,
   envLocked,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
@@ -59,11 +65,13 @@ export const BranchToolbar = memo(function BranchToolbar({
   const activeProject = useStore(activeProjectSelector);
   const hasActiveThread = serverThread !== undefined || draftThread !== null;
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
-  const effectiveEnvMode = resolveEffectiveEnvMode({
-    activeWorktreePath,
-    hasServerThread: serverThread !== undefined,
-    draftThreadEnvMode: draftThread?.envMode,
-  });
+  const effectiveEnvMode =
+    effectiveEnvModeOverride ??
+    resolveEffectiveEnvMode({
+      activeWorktreePath,
+      hasServerThread: serverThread !== undefined,
+      draftThreadEnvMode: draftThread?.envMode,
+    });
   const envModeLocked = envLocked || (serverThread !== undefined && activeWorktreePath !== null);
 
   const showEnvironmentPicker =
@@ -98,6 +106,9 @@ export const BranchToolbar = memo(function BranchToolbar({
         threadId={threadId}
         {...(draftId ? { draftId } : {})}
         envLocked={envLocked}
+        {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+        {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+        {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
         {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
         {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
       />

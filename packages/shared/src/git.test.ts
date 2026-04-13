@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyGitStatusStreamEvent,
+  buildTemporaryWorktreeBranchName,
+  isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  WORKTREE_BRANCH_PREFIX,
 } from "./git";
 
 describe("normalizeGitRemoteUrl", () => {
@@ -47,6 +50,24 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
     expect(
       parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/T3Tools/T3Code.git"),
     ).toBe("T3Tools/T3Code");
+  });
+});
+
+describe("isTemporaryWorktreeBranch", () => {
+  it("matches the generated temporary worktree branch format", () => {
+    expect(isTemporaryWorktreeBranch(buildTemporaryWorktreeBranchName())).toBe(true);
+  });
+
+  it("matches generated temporary worktree branches", () => {
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
+    expect(isTemporaryWorktreeBranch(` ${WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/DEADBEEF`)).toBe(true);
+  });
+
+  it("rejects non-temporary branch names", () => {
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
+    expect(isTemporaryWorktreeBranch("main")).toBe(false);
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
   });
 });
 

@@ -11,6 +11,7 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
+import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -72,8 +73,6 @@ const serverCommandId = (tag: string): CommandId =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-const WORKTREE_BRANCH_PREFIX = "t3code";
-const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 const DEFAULT_THREAD_TITLE = "New thread";
 
 function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
@@ -117,10 +116,6 @@ function stalePendingRequestDetail(
   requestId: string,
 ): string {
   return `Stale pending ${requestKind} request: ${requestId}. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`;
-}
-
-function isTemporaryWorktreeBranch(branch: string): boolean {
-  return TEMP_WORKTREE_BRANCH_PATTERN.test(branch.trim().toLowerCase());
 }
 
 function buildGeneratedWorktreeBranchName(raw: string): string {

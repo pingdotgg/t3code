@@ -50,6 +50,10 @@ export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null):
   return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
 }
 
+export function resolveLockedWorkspaceLabel(activeWorktreePath: string | null): string {
+  return activeWorktreePath ? "Worktree" : "Local checkout";
+}
+
 export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;
