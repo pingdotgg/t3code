@@ -319,9 +319,6 @@ function relaunchDesktopApp(reason: string): void {
 }
 
 function writeDesktopLogHeader(message: string): void {
-  if (!app.isPackaged) {
-    console.log(`[desktop] ${message}`);
-  }
   if (!desktopLogSink) return;
   desktopLogSink.write(`[${logTimestamp()}] [${logScope("desktop")}] ${message}\n`);
 }
@@ -552,22 +549,16 @@ function initializePackagedLogging(): void {
 }
 
 function captureBackendOutput(child: ChildProcess.ChildProcess): void {
-  const attachStream = (
-    stream: NodeJS.ReadableStream | null | undefined,
-    output: NodeJS.WriteStream,
-  ): void => {
+  const attachStream = (stream: NodeJS.ReadableStream | null | undefined): void => {
     stream?.on("data", (chunk: unknown) => {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8");
       backendLogSink?.write(buffer);
       backendListeningDetector?.push(buffer);
-      if (!app.isPackaged) {
-        output.write(buffer);
-      }
     });
   };
 
-  attachStream(child.stdout, process.stdout);
-  attachStream(child.stderr, process.stderr);
+  attachStream(child.stdout);
+  attachStream(child.stderr);
 }
 
 initializePackagedLogging();

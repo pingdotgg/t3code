@@ -1,7 +1,6 @@
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
-import sonda from "sonda/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { defineConfig } from "vite";
 import pkg from "./package.json" with { type: "json" };
@@ -11,10 +10,7 @@ const host = process.env.HOST?.trim() || "localhost";
 const configuredHttpUrl = process.env.VITE_HTTP_URL?.trim();
 const configuredWsUrl = process.env.VITE_WS_URL?.trim();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
-const analyzeBundleEnv = process.env.T3CODE_WEB_ANALYZE?.trim().toLowerCase();
 const autoCodeSplittingEnv = process.env.T3CODE_WEB_AUTO_CODE_SPLITTING?.trim().toLowerCase();
-const analyzeBundle =
-  analyzeBundleEnv === "1" || analyzeBundleEnv === "true" || analyzeBundleEnv === "yes";
 const autoCodeSplitting =
   autoCodeSplittingEnv === undefined
     ? true
@@ -69,14 +65,6 @@ export default defineConfig({
       presets: [reactCompilerPreset()],
     }),
     tailwindcss(),
-    analyzeBundle
-      ? sonda({
-          filename: autoCodeSplitting ? "web-bundle" : "web-bundle-no-split",
-          format: ["html", "json"],
-          gzip: true,
-          brotli: true,
-        })
-      : null,
   ],
   optimizeDeps: {
     include: ["@pierre/diffs", "@pierre/diffs/react", "@pierre/diffs/worker/worker.js"],

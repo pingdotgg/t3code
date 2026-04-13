@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:analyze": "T3CODE_WEB_ANALYZE=1 vite build",
     "prepare": "effect-language-service patch",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
@@ -57,7 +56,6 @@
     "babel-plugin-react-compiler": "^19.0.0-beta-e552027-20250112",
     "msw": "2.12.11",
     "playwright": "^1.58.2",
-    "sonda": "^0.11.1",
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:",
     "vite": "^8.0.0",

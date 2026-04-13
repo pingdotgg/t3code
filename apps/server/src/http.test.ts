@@ -1,65 +1,27 @@
 import { describe, expect, it } from "vitest";
 
-import { summarizeStaticClientLog } from "./http";
+import { isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
 
-describe("summarizeStaticClientLog", () => {
-  it("classifies the app root as a shell request", () => {
-    expect(
-      summarizeStaticClientLog({
-        requestId: "static-1",
-        requestPath: "/",
-        status: 200,
-        source: "spa-fallback",
-        startedAt: 100,
-        finishedAt: 145,
-      }),
-    ).toEqual({
-      requestId: "static-1",
-      requestPath: "/",
-      requestType: "shell",
-      status: 200,
-      source: "spa-fallback",
-      durationMs: 45,
-    });
+describe("http dev routing", () => {
+  it("treats localhost and loopback addresses as local", () => {
+    expect(isLoopbackHostname("127.0.0.1")).toBe(true);
+    expect(isLoopbackHostname("localhost")).toBe(true);
+    expect(isLoopbackHostname("::1")).toBe(true);
+    expect(isLoopbackHostname("[::1]")).toBe(true);
   });
 
-  it("classifies bundled assets as asset requests", () => {
-    expect(
-      summarizeStaticClientLog({
-        requestId: "static-2",
-        requestPath: "/assets/index-ABC123.js",
-        status: 200,
-        source: "static-file",
-        startedAt: 500,
-        finishedAt: 507,
-      }),
-    ).toEqual({
-      requestId: "static-2",
-      requestPath: "/assets/index-ABC123.js",
-      requestType: "asset",
-      status: 200,
-      source: "static-file",
-      durationMs: 7,
-    });
+  it("does not treat LAN addresses as local", () => {
+    expect(isLoopbackHostname("192.168.86.35")).toBe(false);
+    expect(isLoopbackHostname("10.0.0.24")).toBe(false);
+    expect(isLoopbackHostname("example.local")).toBe(false);
   });
 
-  it("clamps negative durations to zero", () => {
-    expect(
-      summarizeStaticClientLog({
-        requestId: "static-3",
-        requestPath: "/settings/general",
-        status: 200,
-        source: "spa-fallback",
-        startedAt: 250,
-        finishedAt: 200,
-      }),
-    ).toEqual({
-      requestId: "static-3",
-      requestPath: "/settings/general",
-      requestType: "shell",
-      status: 200,
-      source: "spa-fallback",
-      durationMs: 0,
-    });
+  it("preserves path and query when redirecting to the dev server", () => {
+    const devUrl = new URL("http://127.0.0.1:5173/");
+    const requestUrl = new URL("http://127.0.0.1:3774/pair?token=test-token");
+
+    expect(resolveDevRedirectUrl(devUrl, requestUrl)).toBe(
+      "http://127.0.0.1:5173/pair?token=test-token",
+    );
   });
 });

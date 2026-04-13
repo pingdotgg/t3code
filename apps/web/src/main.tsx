@@ -1,5 +1,3 @@
-console.log("main.tsx loaded at", new Date().toISOString());
-
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
@@ -28,5 +26,3 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <RouterProvider router={router} />
   </React.StrictMode>,
 );
-
-console.log("main.tsx rendered at", new Date().toISOString());
