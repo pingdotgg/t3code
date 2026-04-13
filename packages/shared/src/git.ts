@@ -6,6 +6,8 @@ import type {
   GitStatusResult,
   GitStatusStreamEvent,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Random from "effect/Random";
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
@@ -84,7 +86,7 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
 }
 
 export function buildTemporaryWorktreeBranchName(): string {
-  const token = crypto.randomUUID().slice(0, 8).toLowerCase();
+  const token = Effect.runSync(Random.nextUUIDv4).replace(/-/g, "").slice(0, 8).toLowerCase();
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
