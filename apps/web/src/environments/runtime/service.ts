@@ -54,6 +54,7 @@ import { createEnvironmentConnection, type EnvironmentConnection } from "./conne
 import {
   useStore,
   selectProjectsAcrossEnvironments,
+  selectSidebarThreadSummaryByRef,
   selectThreadByRef,
   selectThreadsAcrossEnvironments,
 } from "~/store";
@@ -86,8 +87,15 @@ const threadDetailSubscriptions = new Map<string, ThreadDetailSubscriptionEntry>
 let activeService: EnvironmentServiceState | null = null;
 let needsProviderInvalidation = false;
 
-const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS = 2 * 60 * 1000;
-const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS = 8;
+// Thread detail subscription cache policy:
+// - Active consumers keep a subscription retained via refCount.
+// - Released subscriptions stay warm for a longer idle TTL to avoid churn
+//   while moving around the UI.
+// - Threads with active work or pending user action are sticky and are never
+//   evicted while they remain non-idle.
+// - Capacity eviction only targets idle cached subscriptions.
+const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS = 15 * 60 * 1000;
+const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS = 32;
 const NOOP = () => undefined;
 
 function getThreadDetailSubscriptionKey(environmentId: EnvironmentId, threadId: ThreadId): string {
@@ -102,6 +110,55 @@ function clearThreadDetailSubscriptionEviction(
     entry.evictionTimeoutId = null;
   }
   return entry;
+}
+
+function isNonIdleThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): boolean {
+  const threadRef = scopeThreadRef(entry.environmentId, entry.threadId);
+  const state = useStore.getState();
+  const sidebarThread = selectSidebarThreadSummaryByRef(state, threadRef);
+
+  // Prefer shell/sidebar state first because it carries the coarse thread
+  // readiness flags used throughout the UI (pending approvals/input/plan).
+  if (sidebarThread) {
+    if (
+      sidebarThread.hasPendingApprovals ||
+      sidebarThread.hasPendingUserInput ||
+      sidebarThread.hasActionableProposedPlan
+    ) {
+      return true;
+    }
+
+    const orchestrationStatus = sidebarThread.session?.orchestrationStatus;
+    if (
+      orchestrationStatus &&
+      orchestrationStatus !== "idle" &&
+      orchestrationStatus !== "stopped"
+    ) {
+      return true;
+    }
+
+    if (sidebarThread.latestTurn?.state === "running") {
+      return true;
+    }
+  }
+
+  const thread = selectThreadByRef(state, threadRef);
+  if (!thread) {
+    return false;
+  }
+
+  const orchestrationStatus = thread.session?.orchestrationStatus;
+  return (
+    Boolean(
+      orchestrationStatus && orchestrationStatus !== "idle" && orchestrationStatus !== "stopped",
+    ) ||
+    thread.latestTurn?.state === "running" ||
+    thread.pendingSourceProposedPlan !== undefined
+  );
+}
+
+function shouldEvictThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): boolean {
+  return entry.refCount === 0 && !isNonIdleThreadDetailSubscription(entry);
 }
 
 function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): boolean {
@@ -181,11 +238,20 @@ function reconcileThreadDetailSubscriptionsForEnvironment(
 
 function scheduleThreadDetailSubscriptionEviction(entry: ThreadDetailSubscriptionEntry): void {
   clearThreadDetailSubscriptionEviction(entry);
+  if (!shouldEvictThreadDetailSubscription(entry)) {
+    return;
+  }
+
   entry.evictionTimeoutId = setTimeout(() => {
     const currentEntry = threadDetailSubscriptions.get(
       getThreadDetailSubscriptionKey(entry.environmentId, entry.threadId),
     );
-    if (!currentEntry || currentEntry.refCount > 0) {
+    if (!currentEntry) {
+      return;
+    }
+
+    currentEntry.evictionTimeoutId = null;
+    if (!shouldEvictThreadDetailSubscription(currentEntry)) {
       return;
     }
     disposeThreadDetailSubscriptionByKey(
@@ -200,7 +266,7 @@ function evictIdleThreadDetailSubscriptionsToCapacity(): void {
   }
 
   const idleEntries = [...threadDetailSubscriptions.entries()]
-    .filter(([, entry]) => entry.refCount === 0)
+    .filter(([, entry]) => shouldEvictThreadDetailSubscription(entry))
     .toSorted(([, left], [, right]) => left.lastAccessedAt - right.lastAccessedAt);
 
   for (const [key] of idleEntries) {
@@ -209,6 +275,42 @@ function evictIdleThreadDetailSubscriptionsToCapacity(): void {
     }
     disposeThreadDetailSubscriptionByKey(key);
   }
+}
+
+function reconcileThreadDetailSubscriptionEvictionState(
+  entry: ThreadDetailSubscriptionEntry,
+): void {
+  clearThreadDetailSubscriptionEviction(entry);
+  if (!shouldEvictThreadDetailSubscription(entry)) {
+    return;
+  }
+
+  scheduleThreadDetailSubscriptionEviction(entry);
+}
+
+function reconcileThreadDetailSubscriptionEvictionForThread(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): void {
+  const entry = threadDetailSubscriptions.get(
+    getThreadDetailSubscriptionKey(environmentId, threadId),
+  );
+  if (!entry) {
+    return;
+  }
+
+  reconcileThreadDetailSubscriptionEvictionState(entry);
+}
+
+function reconcileThreadDetailSubscriptionEvictionForEnvironment(
+  environmentId: EnvironmentId,
+): void {
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.environmentId === environmentId) {
+      reconcileThreadDetailSubscriptionEvictionState(entry);
+    }
+  }
+  evictIdleThreadDetailSubscriptionsToCapacity();
 }
 
 export function retainThreadDetailSubscription(
@@ -233,7 +335,7 @@ export function retainThreadDetailSubscription(
       existing.refCount = Math.max(0, existing.refCount - 1);
       existing.lastAccessedAt = Date.now();
       if (existing.refCount === 0) {
-        scheduleThreadDetailSubscriptionEviction(existing);
+        reconcileThreadDetailSubscriptionEvictionState(existing);
         evictIdleThreadDetailSubscriptionsToCapacity();
       }
     };
@@ -263,7 +365,7 @@ export function retainThreadDetailSubscription(
     entry.refCount = Math.max(0, entry.refCount - 1);
     entry.lastAccessedAt = Date.now();
     if (entry.refCount === 0) {
-      scheduleThreadDetailSubscriptionEviction(entry);
+      reconcileThreadDetailSubscriptionEvictionState(entry);
       evictIdleThreadDetailSubscriptionsToCapacity();
     }
   };
@@ -473,6 +575,8 @@ function applyRecoveredEventBatch(
   for (const threadId of batchEffects.removeTerminalStateThreadIds) {
     useTerminalStateStore.getState().removeTerminalState(scopeThreadRef(environmentId, threadId));
   }
+
+  reconcileThreadDetailSubscriptionEvictionForEnvironment(environmentId);
 }
 
 export function applyEnvironmentThreadDetailEvent(
@@ -507,6 +611,8 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
       if (previousThread?.archivedAt === null && event.thread.archivedAt !== null && threadRef) {
         useTerminalStateStore.getState().removeTerminalState(threadRef);
       }
+      reconcileThreadDetailSubscriptionEvictionForThread(environmentId, event.thread.id);
+      evictIdleThreadDetailSubscriptionsToCapacity();
       return;
     case "thread-removed":
       if (threadRef) {
@@ -529,6 +635,7 @@ function createEnvironmentConnectionHandlers() {
         environmentId,
         snapshot.threads.map((thread) => thread.id),
       );
+      reconcileThreadDetailSubscriptionEvictionForEnvironment(environmentId);
       reconcileSnapshotDerivedState();
     },
     applyTerminalEvent: (event: TerminalEvent, environmentId: EnvironmentId) => {

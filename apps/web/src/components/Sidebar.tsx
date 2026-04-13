@@ -81,6 +81,7 @@ import { useGitStatus } from "../lib/gitStatusState";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { retainThreadDetailSubscription } from "../environments/runtime/service";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import {
@@ -122,6 +123,7 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
@@ -2878,6 +2880,30 @@ export default function Sidebar() {
     ? threadJumpLabelByKey
     : EMPTY_THREAD_JUMP_LABELS;
   const orderedSidebarThreadKeys = visibleSidebarThreadKeys;
+  const prewarmedSidebarThreadKeys = useMemo(
+    () => getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys),
+    [visibleSidebarThreadKeys],
+  );
+  const prewarmedSidebarThreads = useMemo(
+    () =>
+      prewarmedSidebarThreadKeys.flatMap((threadKey) => {
+        const thread = sidebarThreadByKey.get(threadKey);
+        return thread ? [thread] : [];
+      }),
+    [prewarmedSidebarThreadKeys, sidebarThreadByKey],
+  );
+
+  useEffect(() => {
+    const releases = prewarmedSidebarThreads.map((thread) =>
+      retainThreadDetailSubscription(thread.environmentId, thread.id),
+    );
+
+    return () => {
+      for (const release of releases) {
+        release();
+      }
+    };
+  }, [prewarmedSidebarThreads]);
 
   useEffect(() => {
     const clearThreadJumpHints = () => {
