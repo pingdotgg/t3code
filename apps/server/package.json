@@ -20,7 +20,8 @@
     "start": "node dist/bin.mjs",
     "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:perf": "vitest run integration/perf"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.77",

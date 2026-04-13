@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:browser": "vitest run --config vitest.browser.config.ts",
-    "test:browser:install": "playwright install --with-deps chromium"
+    "test:browser:install": "playwright install --with-deps chromium",
+    "test:perf": "vitest run --config vitest.perf.config.ts",
+    "test:perf:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",

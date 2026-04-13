@@ -21,5 +21,14 @@
       }
     ]
   },
-  "include": ["src", "vite.config.ts", "test"]
+  "include": [
+    "src",
+    "vite.config.ts",
+    "test",
+    "../../packages/shared/src/perf/artifact.ts",
+    "../../test/perf/support/artifact.ts",
+    "../../test/perf/support/browserMetrics.ts",
+    "../../test/perf/support/serverSampler.ts",
+    "../../test/perf/support/thresholds.ts"
+  ]
 }

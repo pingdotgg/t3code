@@ -2,6 +2,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
+import { configDefaults } from "vitest/config";
 import { defineConfig } from "vite";
 import pkg from "./package.json" with { type: "json" };
 
@@ -101,5 +102,8 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: buildSourcemap,
+  },
+  test: {
+    exclude: [...configDefaults.exclude, "test/perf/**/*.perf.test.ts"],
   },
 });

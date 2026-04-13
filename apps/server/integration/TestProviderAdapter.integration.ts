@@ -488,7 +488,9 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       readThread,
       rollbackThread,
       stopAll,
-      streamEvents: Stream.fromQueue(runtimeEvents),
+      get streamEvents() {
+        return Stream.fromQueue(runtimeEvents);
+      },
     };
 
     const queueTurnResponse = (

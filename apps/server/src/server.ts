@@ -72,6 +72,9 @@ import {
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http";
+import { isPerfProviderEnabled } from "./perf/config";
+import { PerfProviderRegistryLive } from "./perf/PerfProviderRegistry";
+import { PerfProviderLayerLive } from "./perf/PerfProviderLayers";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -134,7 +137,7 @@ const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointStoreLive),
 );
 
-const ProviderLayerLive = Layer.unwrap(
+const DefaultProviderLayerLive = Layer.unwrap(
   Effect.gen(function* () {
     const { providerEventLogPath } = yield* ServerConfig;
     const nativeEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
@@ -162,6 +165,14 @@ const ProviderLayerLive = Layer.unwrap(
     ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
   }),
 );
+
+const SelectedProviderLayerLive = isPerfProviderEnabled()
+  ? PerfProviderLayerLive
+  : DefaultProviderLayerLive;
+
+const SelectedProviderRegistryLayerLive = isPerfProviderEnabled()
+  ? PerfProviderRegistryLive
+  : ProviderRegistryLive;
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
@@ -199,11 +210,11 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
-  Layer.provideMerge(ProviderLayerLive),
+  Layer.provideMerge(SelectedProviderLayerLive),
   Layer.provideMerge(TerminalLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(KeybindingsLive),
-  Layer.provideMerge(ProviderRegistryLive),
+  Layer.provideMerge(SelectedProviderRegistryLayerLive),
   Layer.provideMerge(ServerSettingsLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),

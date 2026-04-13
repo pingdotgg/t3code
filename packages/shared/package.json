@@ -59,6 +59,14 @@
     "./qrCode": {
       "types": "./src/qrCode.ts",
       "import": "./src/qrCode.ts"
+    },
+    "./perf/scenarioCatalog": {
+      "types": "./src/perf/scenarioCatalog.ts",
+      "import": "./src/perf/scenarioCatalog.ts"
+    },
+    "./perf/artifact": {
+      "types": "./src/perf/artifact.ts",
+      "import": "./src/perf/artifact.ts"
     }
   },
   "scripts": {
