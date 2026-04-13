@@ -32,6 +32,7 @@ import {
   type CodexAccountSnapshot,
 } from "./provider/codexAccount";
 import { buildCodexInitializeParams, killCodexChildProcess } from "./provider/codexAppServer";
+import { parseCodexModelListResult } from "./provider/codexModels";
 
 export { buildCodexInitializeParams } from "./provider/codexAppServer";
 export { readCodexAccountSnapshot, resolveCodexModelForAccount } from "./provider/codexAccount";
@@ -73,6 +74,7 @@ interface CodexUserInputAnswer {
 interface CodexSessionContext {
   session: ProviderSession;
   account: CodexAccountSnapshot;
+  availableModels?: ReadonlySet<string>;
   child: ChildProcessWithoutNullStreams;
   output: readline.Interface;
   pending: Map<PendingRequestKey, PendingRequest>;
@@ -509,6 +511,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       try {
         const modelListResponse = await this.sendRequest(context, "model/list", {});
         console.log("codex model/list response", modelListResponse);
+        context.availableModels = new Set(
+          parseCodexModelListResult(modelListResponse).map((model) => model.slug),
+        );
       } catch (error) {
         console.log("codex model/list failed", error);
       }
@@ -528,6 +533,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const normalizedModel = resolveCodexModelForAccount(
         normalizeCodexModelSlug(input.model),
         context.account,
+        context.availableModels,
       );
       const sessionOverrides = {
         model: normalizedModel ?? null,
@@ -710,6 +716,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     const normalizedModel = resolveCodexModelForAccount(
       normalizeCodexModelSlug(input.model ?? context.session.model),
       context.account,
+      context.availableModels,
     );
     if (normalizedModel) {
       turnStartParams.model = normalizedModel;

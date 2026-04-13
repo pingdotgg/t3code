@@ -310,6 +310,20 @@ describe("readCodexAccountSnapshot", () => {
     });
   });
 
+  it("keeps spark enabled for chatgpt pro lite accounts", () => {
+    expect(
+      readCodexAccountSnapshot({
+        type: "chatgpt",
+        email: "prolite@example.com",
+        planType: "prolite",
+      }),
+    ).toEqual({
+      type: "chatgpt",
+      planType: "prolite",
+      sparkEnabled: true,
+    });
+  });
+
   it("disables spark for api key accounts", () => {
     expect(
       readCodexAccountSnapshot({
@@ -354,6 +368,20 @@ describe("resolveCodexModelForAccount", () => {
         planType: "pro",
         sparkEnabled: true,
       }),
+    ).toBe("gpt-5.3-codex-spark");
+  });
+
+  it("keeps spark when the app-server reports it for an unknown chatgpt plan", () => {
+    expect(
+      resolveCodexModelForAccount(
+        "gpt-5.3-codex-spark",
+        {
+          type: "chatgpt",
+          planType: "unknown",
+          sparkEnabled: false,
+        },
+        new Set(["gpt-5.3-codex", "gpt-5.3-codex-spark"]),
+      ),
     ).toBe("gpt-5.3-codex-spark");
   });
 

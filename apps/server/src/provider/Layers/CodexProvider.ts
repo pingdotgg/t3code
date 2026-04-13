@@ -46,136 +46,20 @@ import {
   type CodexAccountSnapshot,
 } from "../codexAccount";
 import { probeCodexDiscovery } from "../codexAppServer";
+import {
+  BUILT_IN_CODEX_MODELS,
+  DEFAULT_CODEX_MODEL_CAPABILITIES,
+  getCodexModelCapabilities as getSharedCodexModelCapabilities,
+} from "../codexModels";
 import { CodexProvider } from "../Services/CodexProvider";
 import { ServerSettingsService } from "../../serverSettings";
 import { ServerSettingsError } from "@t3tools/contracts";
 
-const DEFAULT_CODEX_MODEL_CAPABILITIES: ModelCapabilities = {
-  reasoningEffortLevels: [
-    { value: "xhigh", label: "Extra High" },
-    { value: "high", label: "High", isDefault: true },
-    { value: "medium", label: "Medium" },
-    { value: "low", label: "Low" },
-  ],
-  supportsFastMode: true,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-};
-
 const PROVIDER = "codex" as const;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
-const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
-  {
-    slug: "gpt-5.4",
-    name: "GPT-5.4",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "gpt-5.4-mini",
-    name: "GPT-5.4 Mini",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "gpt-5.3-codex",
-    name: "GPT-5.3 Codex",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "gpt-5.3-codex-spark",
-    name: "GPT-5.3 Codex Spark",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "gpt-5.2-codex",
-    name: "GPT-5.2 Codex",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "gpt-5.2",
-    name: "GPT-5.2",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-];
 
 export function getCodexModelCapabilities(model: string | null | undefined): ModelCapabilities {
-  const slug = model?.trim();
-  return (
-    BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
-    DEFAULT_CODEX_MODEL_CAPABILITIES
-  );
+  return getSharedCodexModelCapabilities(model);
 }
 
 export function parseAuthStatusFromOutput(result: CommandResult): {
@@ -341,6 +225,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly homePath?: string;
     readonly cwd: string;
   }) => Effect.Effect<ReadonlyArray<ServerProviderSkill> | undefined>,
+  resolveModels?: (input: {
+    readonly binaryPath: string;
+    readonly homePath?: string;
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<ServerProviderModel> | undefined>,
 ): Effect.fn.Return<
   ServerProvider,
   ServerSettingsError,
@@ -355,7 +244,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   );
   const checkedAt = new Date().toISOString();
   const models = providerModelsFromSettings(
-    BUILT_IN_MODELS,
+    BUILT_IN_CODEX_MODELS,
     PROVIDER,
     codexSettings.customModels,
     DEFAULT_CODEX_MODEL_CAPABILITIES,
@@ -492,7 +381,22 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         homePath: codexSettings.homePath,
       })
     : undefined;
-  const resolvedModels = adjustCodexModelsForAccount(models, account);
+  const reportedModels = resolveModels
+    ? yield* resolveModels({
+        binaryPath: codexSettings.binaryPath,
+        homePath: codexSettings.homePath,
+        cwd: process.cwd(),
+      }).pipe(Effect.orElseSucceed(() => undefined))
+    : undefined;
+  const resolvedModels =
+    reportedModels && reportedModels.length > 0
+      ? providerModelsFromSettings(
+          reportedModels,
+          PROVIDER,
+          codexSettings.customModels,
+          DEFAULT_CODEX_MODEL_CAPABILITIES,
+        )
+      : adjustCodexModelsForAccount(models, account);
 
   if (Result.isFailure(authProbe)) {
     const error = authProbe.failure;
@@ -586,6 +490,7 @@ export const CodexProviderLive = Layer.effect(
           cwd: process.cwd(),
         }).pipe(Effect.map((discovery) => discovery?.account)),
       (input) => getDiscovery(input).pipe(Effect.map((discovery) => discovery?.skills)),
+      (input) => getDiscovery(input).pipe(Effect.map((discovery) => discovery?.models)),
     ).pipe(
       Effect.provideService(ServerSettingsService, serverSettings),
       Effect.provideService(FileSystem.FileSystem, fileSystem),

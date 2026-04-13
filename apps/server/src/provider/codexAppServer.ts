@@ -1,7 +1,8 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { ServerProviderModel, ServerProviderSkill } from "@t3tools/contracts";
 import { readCodexAccountSnapshot, type CodexAccountSnapshot } from "./codexAccount";
+import { parseCodexModelListResult } from "./codexModels";
 
 interface JsonRpcProbeResponse {
   readonly id?: unknown;
@@ -14,6 +15,7 @@ interface JsonRpcProbeResponse {
 export interface CodexDiscoverySnapshot {
   readonly account: CodexAccountSnapshot;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
 function readErrorMessage(response: JsonRpcProbeResponse): string | undefined {
@@ -125,6 +127,7 @@ export async function probeCodexDiscovery(input: {
     let completed = false;
     let account: CodexAccountSnapshot | undefined;
     let skills: ReadonlyArray<ServerProviderSkill> | undefined;
+    let models: ReadonlyArray<ServerProviderModel> | undefined;
 
     const cleanup = () => {
       output.removeAllListeners();
@@ -152,10 +155,17 @@ export async function probeCodexDiscovery(input: {
       );
 
     const maybeResolve = () => {
-      if (account && skills !== undefined) {
+      if (account && skills !== undefined && models !== undefined) {
         const resolvedAccount = account;
         const resolvedSkills = skills;
-        finish(() => resolve({ account: resolvedAccount, skills: resolvedSkills }));
+        const resolvedModels = models;
+        finish(() =>
+          resolve({
+            account: resolvedAccount,
+            skills: resolvedSkills,
+            models: resolvedModels,
+          }),
+        );
       }
     };
 
@@ -200,6 +210,7 @@ export async function probeCodexDiscovery(input: {
         writeMessage({ method: "initialized" });
         writeMessage({ id: 2, method: "skills/list", params: { cwds: [input.cwd] } });
         writeMessage({ id: 3, method: "account/read", params: {} });
+        writeMessage({ id: 4, method: "model/list", params: {} });
         return;
       }
 
@@ -218,6 +229,13 @@ export async function probeCodexDiscovery(input: {
         }
 
         account = readCodexAccountSnapshot(response.result);
+        maybeResolve();
+        return;
+      }
+
+      if (response.id === 4) {
+        const errorMessage = readErrorMessage(response);
+        models = errorMessage ? [] : parseCodexModelListResult(response.result);
         maybeResolve();
       }
     });

@@ -221,6 +221,104 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ),
       );
 
+      it.effect("returns the prolite plan type in auth and keeps spark for supported plans", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(() =>
+            Effect.succeed({
+              type: "chatgpt" as const,
+              planType: "prolite" as const,
+              sparkEnabled: true,
+            }),
+          );
+
+          assert.strictEqual(status.provider, "codex");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "prolite");
+          assert.strictEqual(status.auth.label, "ChatGPT Pro Lite Subscription");
+          assert.deepStrictEqual(
+            status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
+            true,
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("prefers models reported by codex app-server over account-plan spark gating", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(
+            () =>
+              Effect.succeed({
+                type: "chatgpt" as const,
+                planType: "unknown" as const,
+                sparkEnabled: false,
+              }),
+            undefined,
+            () =>
+              Effect.succeed([
+                {
+                  slug: "gpt-5.3-codex",
+                  name: "GPT-5.3 Codex",
+                  isCustom: false,
+                  capabilities: {
+                    reasoningEffortLevels: [
+                      { value: "low", label: "Low" },
+                      { value: "medium", label: "Medium", isDefault: true },
+                      { value: "high", label: "High" },
+                    ],
+                    supportsFastMode: true,
+                    supportsThinkingToggle: false,
+                    contextWindowOptions: [],
+                    promptInjectedEffortLevels: [],
+                  },
+                },
+                {
+                  slug: "gpt-5.3-codex-spark",
+                  name: "GPT-5.3 Codex Spark",
+                  isCustom: false,
+                  capabilities: {
+                    reasoningEffortLevels: [
+                      { value: "low", label: "Low" },
+                      { value: "medium", label: "Medium" },
+                      { value: "high", label: "High", isDefault: true },
+                    ],
+                    supportsFastMode: true,
+                    supportsThinkingToggle: false,
+                    contextWindowOptions: [],
+                    promptInjectedEffortLevels: [],
+                  },
+                },
+              ]),
+          );
+
+          assert.strictEqual(status.provider, "codex");
+          assert.strictEqual(status.auth.type, "chatgpt");
+          assert.deepStrictEqual(
+            status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
+            true,
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("includes probed codex skills in the provider snapshot", () =>
         Effect.gen(function* () {
           yield* withTempCodexHome();
