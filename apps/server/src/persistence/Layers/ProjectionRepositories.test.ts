@@ -88,6 +88,10 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
         archivedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
         deletedAt: null,
       });
 

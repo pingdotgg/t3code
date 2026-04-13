@@ -530,6 +530,142 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(true);
   });
 
+  it("does not clear local dispatch while the session is running a newer turn than latestTurn", () => {
+    const localDispatch = createLocalDispatchSnapshot({
+      id: ThreadId.make("thread-1"),
+      environmentId: localEnvironmentId,
+      codexThreadId: null,
+      projectId,
+      title: "Thread",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      session: previousSession,
+      messages: [],
+      proposedPlans: [],
+      error: null,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      archivedAt: null,
+      updatedAt: "2026-03-29T00:00:10.000Z",
+      latestTurn: previousLatestTurn,
+      branch: null,
+      worktreePath: null,
+      turnDiffSummaries: [],
+      activities: [],
+    });
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: previousLatestTurn,
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.make("turn-2"),
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not clear local dispatch while the session is running but latestTurn has not advanced yet", () => {
+    const localDispatch = createLocalDispatchSnapshot({
+      id: ThreadId.make("thread-1"),
+      environmentId: localEnvironmentId,
+      codexThreadId: null,
+      projectId,
+      title: "Thread",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      session: previousSession,
+      messages: [],
+      proposedPlans: [],
+      error: null,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      archivedAt: null,
+      updatedAt: "2026-03-29T00:00:10.000Z",
+      latestTurn: previousLatestTurn,
+      branch: null,
+      worktreePath: null,
+      turnDiffSummaries: [],
+      activities: [],
+    });
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: previousLatestTurn,
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: undefined,
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears local dispatch once the running latestTurn matches the active session turn", () => {
+    const localDispatch = createLocalDispatchSnapshot({
+      id: ThreadId.make("thread-1"),
+      environmentId: localEnvironmentId,
+      codexThreadId: null,
+      projectId,
+      title: "Thread",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      session: previousSession,
+      messages: [],
+      proposedPlans: [],
+      error: null,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      archivedAt: null,
+      updatedAt: "2026-03-29T00:00:10.000Z",
+      latestTurn: previousLatestTurn,
+      branch: null,
+      worktreePath: null,
+      turnDiffSummaries: [],
+      activities: [],
+    });
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: {
+          ...previousLatestTurn,
+          turnId: TurnId.make("turn-2"),
+          state: "running",
+          requestedAt: "2026-03-29T00:01:00.000Z",
+          startedAt: "2026-03-29T00:01:01.000Z",
+          completedAt: null,
+        },
+        session: {
+          ...previousSession,
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.make("turn-2"),
+          updatedAt: "2026-03-29T00:01:01.000Z",
+        },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
   it("clears local dispatch when the session changes without an observed running phase", () => {
     const localDispatch = createLocalDispatchSnapshot({
       id: ThreadId.make("thread-1"),

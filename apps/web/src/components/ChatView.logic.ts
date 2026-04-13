@@ -322,23 +322,37 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (!input.localDispatch) {
     return false;
   }
-  if (
-    input.phase === "running" ||
-    input.hasPendingApproval ||
-    input.hasPendingUserInput ||
-    Boolean(input.threadError)
-  ) {
+  if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
     return true;
   }
 
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
-
-  return (
+  const latestTurnChanged =
     input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
     input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
     input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
-    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null) ||
+    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
+
+  if (input.phase === "running") {
+    if (!latestTurnChanged) {
+      return false;
+    }
+    if (latestTurn?.startedAt === null || latestTurn === null) {
+      return false;
+    }
+    if (
+      session?.activeTurnId !== undefined &&
+      session.activeTurnId !== null &&
+      latestTurn?.turnId !== session.activeTurnId
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  return (
+    latestTurnChanged ||
     input.localDispatch.sessionOrchestrationStatus !== (session?.orchestrationStatus ?? null) ||
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );

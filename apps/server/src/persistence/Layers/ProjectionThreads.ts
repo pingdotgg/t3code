@@ -40,6 +40,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           created_at,
           updated_at,
           archived_at,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
           deleted_at
         )
         VALUES (
@@ -55,6 +59,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.createdAt},
           ${row.updatedAt},
           ${row.archivedAt},
+          ${row.latestUserMessageAt},
+          ${row.pendingApprovalCount},
+          ${row.pendingUserInputCount},
+          ${row.hasActionableProposedPlan},
           ${row.deletedAt}
         )
         ON CONFLICT (thread_id)
@@ -70,6 +78,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
           archived_at = excluded.archived_at,
+          latest_user_message_at = excluded.latest_user_message_at,
+          pending_approval_count = excluded.pending_approval_count,
+          pending_user_input_count = excluded.pending_user_input_count,
+          has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
           deleted_at = excluded.deleted_at
       `,
   });
@@ -92,6 +104,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
+          latest_user_message_at AS "latestUserMessageAt",
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount",
+          has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -116,6 +132,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
+          latest_user_message_at AS "latestUserMessageAt",
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount",
+          has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}

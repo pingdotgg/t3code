@@ -2,10 +2,6 @@ import { RotateCcwIcon } from "lucide-react";
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import {
-  ensurePrimaryEnvironmentReady,
-  resolveInitialServerAuthGateState,
-} from "../environments/primary";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 import { Button } from "../components/ui/button";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
@@ -87,12 +83,8 @@ function SettingsRouteLayout() {
 }
 
 export const Route = createFileRoute("/settings")({
-  beforeLoad: async ({ location }) => {
-    const [, authGateState] = await Promise.all([
-      ensurePrimaryEnvironmentReady(),
-      resolveInitialServerAuthGateState(),
-    ]);
-    if (authGateState.status !== "authenticated") {
+  beforeLoad: async ({ context, location }) => {
+    if (context.authGateState.status !== "authenticated") {
       throw redirect({ to: "/pair", replace: true });
     }
 

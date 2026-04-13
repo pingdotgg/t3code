@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  type OrchestrationShellSnapshot,
   ProjectId,
   ThreadId,
   TurnId,
@@ -23,6 +24,7 @@ import {
   setThreadBranch,
   selectThreadsAcrossEnvironments,
   syncServerReadModel,
+  syncServerShellSnapshot,
   type AppState,
   type EnvironmentState,
 } from "./store";
@@ -493,6 +495,83 @@ describe("store read model sync", () => {
       localEnvironmentId,
     );
 
+    expect(localEnvironmentStateOf(next).bootstrapComplete).toBe(true);
+  });
+
+  it("updates shell state without discarding hydrated thread detail", () => {
+    const initialState = makeState(
+      makeThread({
+        title: "Initial thread",
+        messages: [
+          {
+            id: MessageId.make("message-1"),
+            role: "assistant",
+            text: "hydrated body",
+            createdAt: "2026-02-13T00:00:01.000Z",
+            completedAt: "2026-02-13T00:00:01.000Z",
+            streaming: false,
+          },
+        ],
+      }),
+    );
+    const shellSnapshot: OrchestrationShellSnapshot = {
+      snapshotSequence: 2,
+      projects: [
+        {
+          id: ProjectId.make("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          repositoryIdentity: null,
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          scripts: [],
+          createdAt: "2026-02-13T00:00:00.000Z",
+          updatedAt: "2026-02-13T00:00:00.000Z",
+        },
+      ],
+      threads: [
+        {
+          id: ThreadId.make("thread-1"),
+          projectId: ProjectId.make("project-1"),
+          title: "Renamed thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/renamed",
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: "2026-02-13T00:00:00.000Z",
+          updatedAt: "2026-02-13T00:00:02.000Z",
+          archivedAt: null,
+          session: null,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        },
+      ],
+      updatedAt: "2026-02-13T00:00:02.000Z",
+    };
+
+    const next = syncServerShellSnapshot(initialState, shellSnapshot, localEnvironmentId);
+    const thread = selectThreadByRef(
+      next,
+      scopeThreadRef(localEnvironmentId, ThreadId.make("thread-1")),
+    );
+
+    expect(thread?.title).toBe("Renamed thread");
+    expect(thread?.branch).toBe("feature/renamed");
+    expect(thread?.messages).toEqual([
+      expect.objectContaining({
+        id: MessageId.make("message-1"),
+        text: "hydrated body",
+      }),
+    ]);
     expect(localEnvironmentStateOf(next).bootstrapComplete).toBe(true);
   });
 

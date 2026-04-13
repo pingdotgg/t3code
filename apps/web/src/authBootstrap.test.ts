@@ -424,7 +424,7 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(fetchMock.mock.calls[3]?.[0]).toBe("http://localhost:3773/api/auth/session");
   });
 
-  it("revalidates the server session state after a previous authenticated result", async () => {
+  it("memoizes the authenticated gate state after the first successful read", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -459,15 +459,9 @@ describe("resolveInitialServerAuthGateState", () => {
       status: "authenticated",
     });
     await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
-      status: "requires-auth",
-      auth: {
-        policy: "loopback-browser",
-        bootstrapMethods: ["one-time-token"],
-        sessionMethods: ["browser-session-cookie"],
-        sessionCookieName: "t3_session",
-      },
+      status: "authenticated",
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("creates a pairing credential from the authenticated auth endpoint", async () => {

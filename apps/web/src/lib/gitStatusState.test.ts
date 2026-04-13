@@ -123,12 +123,11 @@ function createRegisteredGitStatusClient(environmentId: EnvironmentId) {
       subscribeAuthAccess: vi.fn(() => () => undefined),
     },
     orchestration: {
-      getSnapshot: vi.fn(async () => ({ snapshotSequence: 1, projects: [], threads: [] }) as any),
       dispatchCommand: vi.fn(async () => undefined),
       getTurnDiff: vi.fn(async () => undefined),
       getFullThreadDiff: vi.fn(async () => undefined),
-      replayEvents: vi.fn(async () => []),
-      onDomainEvent: vi.fn(() => () => undefined),
+      subscribeShell: vi.fn(() => () => undefined),
+      subscribeThread: vi.fn(() => () => undefined),
     },
   } as unknown as WsRpcClient;
 

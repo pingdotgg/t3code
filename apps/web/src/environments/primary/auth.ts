@@ -57,6 +57,7 @@ type ServerAuthGateState =
     };
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
+let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
 
@@ -224,6 +225,7 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
     throw new Error("Enter a pairing token to continue.");
   }
 
+  resolvedAuthenticatedGateState = null;
   await exchangeBootstrapCredential(trimmedCredential);
   bootstrapPromise = null;
   stripPairingTokenFromUrl();
@@ -341,19 +343,31 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
+  if (resolvedAuthenticatedGateState?.status === "authenticated") {
+    return resolvedAuthenticatedGateState;
+  }
+
   if (bootstrapPromise) {
     return bootstrapPromise;
   }
 
   const nextPromise = bootstrapServerAuth();
   bootstrapPromise = nextPromise;
-  return nextPromise.finally(() => {
-    if (bootstrapPromise === nextPromise) {
-      bootstrapPromise = null;
-    }
-  });
+  return nextPromise
+    .then((result) => {
+      if (result.status === "authenticated") {
+        resolvedAuthenticatedGateState = result;
+      }
+      return result;
+    })
+    .finally(() => {
+      if (bootstrapPromise === nextPromise) {
+        bootstrapPromise = null;
+      }
+    });
 }
 
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
+  resolvedAuthenticatedGateState = null;
 }
