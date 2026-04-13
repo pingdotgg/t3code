@@ -1,8 +1,6 @@
-import { type MessageId } from "@t3tools/contracts";
 import { type TimelineEntry, type WorkLogEntry } from "../../session-logic";
-import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { estimateTimelineMessageHeight } from "../timelineHeight";
+import { type MessageId } from "@t3tools/contracts";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 
@@ -28,6 +26,8 @@ export type MessagesTimelineRow =
       durationStart: string;
       showCompletionDivider: boolean;
       showAssistantCopyButton: boolean;
+      assistantTurnDiffSummary?: TurnDiffSummary | undefined;
+      revertTurnCount?: number | undefined;
     }
   | {
       kind: "proposed-plan";
@@ -36,6 +36,11 @@ export type MessagesTimelineRow =
       proposedPlan: ProposedPlan;
     }
   | { kind: "working"; id: string; createdAt: string | null };
+
+export interface StableMessagesTimelineRowsState {
+  byId: Map<string, MessagesTimelineRow>;
+  result: MessagesTimelineRow[];
+}
 
 export function computeMessageDurationStart(
   messages: ReadonlyArray<TimelineDurationMessage>,
@@ -107,6 +112,8 @@ export function deriveMessagesTimelineRows(input: {
   completionDividerBeforeEntryId: string | null;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
+  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
   const durationStartByMessageId = computeMessageDurationStart(
@@ -162,6 +169,14 @@ export function deriveMessagesTimelineRows(input: {
       showAssistantCopyButton:
         timelineEntry.message.role === "assistant" &&
         terminalAssistantMessageIds.has(timelineEntry.message.id),
+      assistantTurnDiffSummary:
+        timelineEntry.message.role === "assistant"
+          ? input.turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
+          : undefined,
+      revertTurnCount:
+        timelineEntry.message.role === "user"
+          ? input.revertTurnCountByUserMessageId.get(timelineEntry.message.id)
+          : undefined,
     });
   }
 
@@ -176,71 +191,50 @@ export function deriveMessagesTimelineRows(input: {
   return nextRows;
 }
 
-export function estimateMessagesTimelineRowHeight(
-  row: MessagesTimelineRow,
-  input: {
-    timelineWidthPx: number | null;
-    expandedWorkGroups?: Readonly<Record<string, boolean>>;
-    turnDiffSummaryByAssistantMessageId?: ReadonlyMap<MessageId, TurnDiffSummary>;
-  },
-): number {
-  switch (row.kind) {
-    case "work":
-      return estimateWorkRowHeight(row, input);
-    case "proposed-plan":
-      return estimateTimelineProposedPlanHeight(row.proposedPlan);
+export function computeStableMessagesTimelineRows(
+  rows: MessagesTimelineRow[],
+  previous: StableMessagesTimelineRowsState,
+): StableMessagesTimelineRowsState {
+  const next = new Map<string, MessagesTimelineRow>();
+  let anyChanged = rows.length !== previous.byId.size;
+
+  const result = rows.map((row, index) => {
+    const prevRow = previous.byId.get(row.id);
+    const nextRow = prevRow && isRowUnchanged(prevRow, row) ? prevRow : row;
+    next.set(row.id, nextRow);
+    if (!anyChanged && previous.result[index] !== nextRow) {
+      anyChanged = true;
+    }
+    return nextRow;
+  });
+
+  return anyChanged ? { byId: next, result } : previous;
+}
+
+/** Shallow field comparison per row variant — avoids deep equality cost. */
+function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean {
+  if (a.kind !== b.kind || a.id !== b.id) return false;
+
+  switch (a.kind) {
     case "working":
-      return 40;
+      return a.createdAt === (b as typeof a).createdAt;
+
+    case "proposed-plan":
+      return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "work":
+      return a.groupedEntries === (b as typeof a).groupedEntries;
+
     case "message": {
-      let estimate = estimateTimelineMessageHeight(row.message, {
-        timelineWidthPx: input.timelineWidthPx,
-      });
-      const turnDiffSummary = input.turnDiffSummaryByAssistantMessageId?.get(row.message.id);
-      if (turnDiffSummary && turnDiffSummary.files.length > 0) {
-        estimate += estimateChangedFilesCardHeight(turnDiffSummary);
-      }
-      return estimate;
+      const bm = b as typeof a;
+      return (
+        a.message === bm.message &&
+        a.durationStart === bm.durationStart &&
+        a.showCompletionDivider === bm.showCompletionDivider &&
+        a.showAssistantCopyButton === bm.showAssistantCopyButton &&
+        a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
+        a.revertTurnCount === bm.revertTurnCount
+      );
     }
   }
-}
-
-function estimateWorkRowHeight(
-  row: Extract<MessagesTimelineRow, { kind: "work" }>,
-  input: {
-    expandedWorkGroups?: Readonly<Record<string, boolean>>;
-  },
-): number {
-  const isExpanded = input.expandedWorkGroups?.[row.id] ?? false;
-  const hasOverflow = row.groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
-  const visibleEntries =
-    hasOverflow && !isExpanded ? MAX_VISIBLE_WORK_LOG_ENTRIES : row.groupedEntries.length;
-  const onlyToolEntries = row.groupedEntries.every((entry) => entry.tone === "tool");
-  const showHeader = hasOverflow || !onlyToolEntries;
-
-  // Card chrome, optional header, and one compact work-entry row per visible entry.
-  return 28 + (showHeader ? 26 : 0) + visibleEntries * 32;
-}
-
-function estimateTimelineProposedPlanHeight(proposedPlan: ProposedPlan): number {
-  const estimatedLines = Math.max(1, Math.ceil(proposedPlan.planMarkdown.length / 72));
-  return 120 + Math.min(estimatedLines * 22, 880);
-}
-
-function estimateChangedFilesCardHeight(turnDiffSummary: TurnDiffSummary): number {
-  const treeNodes = buildTurnDiffTree(turnDiffSummary.files);
-  const visibleNodeCount = countTurnDiffTreeNodes(treeNodes);
-
-  // Card chrome: top/bottom padding, header row, and tree spacing.
-  return 60 + visibleNodeCount * 25;
-}
-
-function countTurnDiffTreeNodes(nodes: ReadonlyArray<TurnDiffTreeNode>): number {
-  let count = 0;
-  for (const node of nodes) {
-    count += 1;
-    if (node.kind === "directory") {
-      count += countTurnDiffTreeNodes(node.children);
-    }
-  }
-  return count;
 }
