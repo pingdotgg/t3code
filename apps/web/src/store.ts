@@ -3,6 +3,7 @@ import type {
   MessageId,
   OrchestrationCheckpointSummary,
   OrchestrationEvent,
+  OrchestrationLatestTurn,
   OrchestrationMessage,
   OrchestrationProposedPlan,
   OrchestrationReadModel,
@@ -23,12 +24,6 @@ import type {
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import {
-  derivePendingApprovals,
-  derivePendingUserInputs,
-  findLatestProposedPlan,
-  hasActionableProposedPlan,
-} from "./session-logic";
-import {
   type ChatMessage,
   type Project,
   type ProposedPlan,
@@ -46,11 +41,33 @@ import { getThreadFromEnvironmentState } from "./threadDerivation";
 export interface EnvironmentState {
   projectIds: ProjectId[];
   projectById: Record<ProjectId, Project>;
+
+  // ---------------------------------------------------------------------------
+  // Thread bookkeeping — written by BOTH shell stream and detail stream.
+  // Both streams ensure the thread is registered here; the bookkeeping is
+  // additive (append-only IDs) so concurrent writes are safe.
+  // ---------------------------------------------------------------------------
   threadIds: ThreadId[];
   threadIdsByProjectId: Record<ProjectId, ThreadId[]>;
+
+  // ---------------------------------------------------------------------------
+  // Thread shell / session / turn — written by BOTH shell stream and detail
+  // stream.  The shell stream is the *authoritative* source (server pre-
+  // computes these from the projection pipeline), but the detail stream also
+  // writes them so the active thread has up-to-date state even if the shell
+  // event hasn't arrived yet.  Structural equality checks in both write
+  // functions prevent unnecessary React re-renders when both streams deliver
+  // equivalent data.
+  // ---------------------------------------------------------------------------
   threadShellById: Record<ThreadId, ThreadShell>;
   threadSessionById: Record<ThreadId, ThreadSession | null>;
   threadTurnStateById: Record<ThreadId, ThreadTurnState>;
+
+  // ---------------------------------------------------------------------------
+  // Thread detail content — written ONLY by the detail stream
+  // (writeThreadState / syncServerThreadDetail).  The shell stream never
+  // touches these.
+  // ---------------------------------------------------------------------------
   messageIdsByThreadId: Record<ThreadId, MessageId[]>;
   messageByThreadId: Record<ThreadId, Record<MessageId, ChatMessage>>;
   activityIdsByThreadId: Record<ThreadId, string[]>;
@@ -59,7 +76,16 @@ export interface EnvironmentState {
   proposedPlanByThreadId: Record<ThreadId, Record<string, ProposedPlan>>;
   turnDiffIdsByThreadId: Record<ThreadId, TurnId[]>;
   turnDiffSummaryByThreadId: Record<ThreadId, Record<TurnId, TurnDiffSummary>>;
+
+  // ---------------------------------------------------------------------------
+  // Sidebar summary — written ONLY by the shell stream
+  // (writeThreadShellState / mapThreadShell).  Pre-computed server-side with
+  // fields like latestUserMessageAt, hasPendingApprovals, etc.  The detail
+  // stream must NOT write here; the shell stream is the single source of
+  // truth for sidebar data.
+  // ---------------------------------------------------------------------------
   sidebarThreadSummaryById: Record<ThreadId, SidebarThreadSummary>;
+
   bootstrapComplete: boolean;
 }
 
@@ -308,40 +334,47 @@ function toThreadTurnState(thread: Thread): ThreadTurnState {
   };
 }
 
-function getLatestUserMessageAt(messages: ReadonlyArray<ChatMessage>): string | null {
-  let latestUserMessageAt: string | null = null;
-  for (const message of messages) {
-    if (message.role !== "user") {
-      continue;
-    }
-    if (latestUserMessageAt === null || message.createdAt > latestUserMessageAt) {
-      latestUserMessageAt = message.createdAt;
-    }
-  }
-  return latestUserMessageAt;
+function sourceProposedPlansEqual(
+  left: OrchestrationLatestTurn["sourceProposedPlan"] | undefined,
+  right: OrchestrationLatestTurn["sourceProposedPlan"] | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  return left.threadId === right.threadId && left.planId === right.planId;
 }
 
-function buildSidebarThreadSummary(thread: Thread): SidebarThreadSummary {
-  return {
-    id: thread.id,
-    environmentId: thread.environmentId,
-    projectId: thread.projectId,
-    title: thread.title,
-    interactionMode: thread.interactionMode,
-    session: thread.session,
-    createdAt: thread.createdAt,
-    archivedAt: thread.archivedAt,
-    updatedAt: thread.updatedAt,
-    latestTurn: thread.latestTurn,
-    branch: thread.branch,
-    worktreePath: thread.worktreePath,
-    latestUserMessageAt: getLatestUserMessageAt(thread.messages),
-    hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
-    hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
-    hasActionableProposedPlan: hasActionableProposedPlan(
-      findLatestProposedPlan(thread.proposedPlans, thread.latestTurn?.turnId ?? null),
-    ),
-  };
+function latestTurnsEqual(
+  left: OrchestrationLatestTurn | null | undefined,
+  right: OrchestrationLatestTurn | null | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left == null || right == null) return false;
+  return (
+    left.turnId === right.turnId &&
+    left.state === right.state &&
+    left.requestedAt === right.requestedAt &&
+    left.startedAt === right.startedAt &&
+    left.completedAt === right.completedAt &&
+    left.assistantMessageId === right.assistantMessageId &&
+    sourceProposedPlansEqual(left.sourceProposedPlan, right.sourceProposedPlan)
+  );
+}
+
+function threadSessionsEqual(
+  left: ThreadSession | null | undefined,
+  right: ThreadSession | null | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left == null || right == null) return false;
+  return (
+    left.provider === right.provider &&
+    left.status === right.status &&
+    left.orchestrationStatus === right.orchestrationStatus &&
+    left.activeTurnId === right.activeTurnId &&
+    left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt &&
+    left.lastError === right.lastError
+  );
 }
 
 function sidebarThreadSummariesEqual(
@@ -354,11 +387,11 @@ function sidebarThreadSummariesEqual(
     left.projectId === right.projectId &&
     left.title === right.title &&
     left.interactionMode === right.interactionMode &&
-    left.session === right.session &&
+    threadSessionsEqual(left.session, right.session) &&
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
     left.updatedAt === right.updatedAt &&
-    left.latestTurn === right.latestTurn &&
+    latestTurnsEqual(left.latestTurn, right.latestTurn) &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
     left.latestUserMessageAt === right.latestUserMessageAt &&
@@ -391,8 +424,8 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
 function threadTurnStatesEqual(left: ThreadTurnState | undefined, right: ThreadTurnState): boolean {
   return (
     left !== undefined &&
-    left.latestTurn === right.latestTurn &&
-    left.pendingSourceProposedPlan === right.pendingSourceProposedPlan
+    latestTurnsEqual(left.latestTurn, right.latestTurn) &&
+    sourceProposedPlansEqual(left.pendingSourceProposedPlan, right.pendingSourceProposedPlan)
   );
 }
 
@@ -466,34 +499,32 @@ function getThreads(state: EnvironmentState): Thread[] {
   });
 }
 
-function writeThreadState(
+/**
+ * Ensure a thread is registered in the bookkeeping indices (threadIds,
+ * threadIdsByProjectId).  Shared by both the shell stream and detail stream
+ * write paths — the bookkeeping is additive (append-only IDs) so concurrent
+ * writes from both streams are safe.
+ */
+function ensureThreadRegistered(
   state: EnvironmentState,
-  nextThread: Thread,
-  previousThread?: Thread,
+  threadId: ThreadId,
+  nextProjectId: ProjectId,
+  previousProjectId: ProjectId | undefined,
 ): EnvironmentState {
-  const nextShell = toThreadShell(nextThread);
-  const nextTurnState = toThreadTurnState(nextThread);
-  const previousShell = state.threadShellById[nextThread.id];
-  const previousTurnState = state.threadTurnStateById[nextThread.id];
-  const previousSummary = state.sidebarThreadSummaryById[nextThread.id];
-  const nextSummary = buildSidebarThreadSummary(nextThread);
-
   let nextState = state;
 
-  if (!state.threadIds.includes(nextThread.id)) {
+  if (!state.threadIds.includes(threadId)) {
     nextState = {
       ...nextState,
-      threadIds: [...nextState.threadIds, nextThread.id],
+      threadIds: [...nextState.threadIds, threadId],
     };
   }
 
-  const previousProjectId = previousThread?.projectId;
-  const nextProjectId = nextThread.projectId;
   if (previousProjectId !== nextProjectId) {
     let threadIdsByProjectId = nextState.threadIdsByProjectId;
     if (previousProjectId) {
       const previousIds = threadIdsByProjectId[previousProjectId] ?? EMPTY_THREAD_IDS;
-      const nextIds = removeId(previousIds, nextThread.id);
+      const nextIds = removeId(previousIds, threadId);
       if (nextIds.length === 0) {
         const { [previousProjectId]: _removed, ...rest } = threadIdsByProjectId;
         threadIdsByProjectId = rest as Record<ProjectId, ThreadId[]>;
@@ -505,7 +536,7 @@ function writeThreadState(
       }
     }
     const projectThreadIds = threadIdsByProjectId[nextProjectId] ?? EMPTY_THREAD_IDS;
-    const nextProjectThreadIds = appendId(projectThreadIds, nextThread.id);
+    const nextProjectThreadIds = appendId(projectThreadIds, threadId);
     if (!arraysEqual(projectThreadIds, nextProjectThreadIds)) {
       threadIdsByProjectId = {
         ...threadIdsByProjectId,
@@ -520,6 +551,36 @@ function writeThreadState(
     }
   }
 
+  return nextState;
+}
+
+/**
+ * Write thread state from the **detail stream** (per-thread subscription).
+ *
+ * Owns: messages, activities, proposed plans, turn diff summaries.
+ * Also writes threadShellById / threadSessionById / threadTurnStateById so
+ * the active thread has up-to-date state even if the shell stream event
+ * hasn't arrived yet (both streams use structural equality checks to avoid
+ * unnecessary re-renders when delivering equivalent data).
+ * Does NOT write sidebarThreadSummaryById — that is shell-stream-only.
+ */
+function writeThreadState(
+  state: EnvironmentState,
+  nextThread: Thread,
+  previousThread?: Thread,
+): EnvironmentState {
+  const nextShell = toThreadShell(nextThread);
+  const nextTurnState = toThreadTurnState(nextThread);
+  const previousShell = state.threadShellById[nextThread.id];
+  const previousTurnState = state.threadTurnStateById[nextThread.id];
+
+  let nextState = ensureThreadRegistered(
+    state,
+    nextThread.id,
+    nextThread.projectId,
+    previousThread?.projectId,
+  );
+
   if (!threadShellsEqual(previousShell, nextShell)) {
     nextState = {
       ...nextState,
@@ -530,7 +591,7 @@ function writeThreadState(
     };
   }
 
-  if ((previousThread?.session ?? null) !== nextThread.session) {
+  if (!threadSessionsEqual(previousThread?.session ?? null, nextThread.session)) {
     nextState = {
       ...nextState,
       threadSessionById: {
@@ -610,19 +671,20 @@ function writeThreadState(
     };
   }
 
-  if (!sidebarThreadSummariesEqual(previousSummary, nextSummary)) {
-    nextState = {
-      ...nextState,
-      sidebarThreadSummaryById: {
-        ...nextState.sidebarThreadSummaryById,
-        [nextThread.id]: nextSummary,
-      },
-    };
-  }
-
   return nextState;
 }
 
+/**
+ * Write thread state from the **shell stream** (all-threads subscription).
+ *
+ * Owns: sidebarThreadSummaryById (pre-computed server-side sidebar data).
+ * Also writes threadShellById / threadSessionById / threadTurnStateById as
+ * the authoritative source for these fields.  The detail stream may also
+ * write them for the focused thread (see writeThreadState); structural
+ * equality checks prevent unnecessary re-renders.
+ * Does NOT write message/activity/proposedPlan/turnDiff content — that is
+ * detail-stream-only.
+ */
 function writeThreadShellState(
   state: EnvironmentState,
   nextThread: {
@@ -632,49 +694,14 @@ function writeThreadShellState(
     summary: SidebarThreadSummary;
   },
 ): EnvironmentState {
-  let nextState = state;
   const previousShell = state.threadShellById[nextThread.shell.id];
-  const previousProjectId = previousShell?.projectId;
-  const nextProjectId = nextThread.shell.projectId;
 
-  if (!state.threadIds.includes(nextThread.shell.id)) {
-    nextState = {
-      ...nextState,
-      threadIds: [...nextState.threadIds, nextThread.shell.id],
-    };
-  }
-
-  if (previousProjectId !== nextProjectId) {
-    let threadIdsByProjectId = nextState.threadIdsByProjectId;
-    if (previousProjectId) {
-      const previousIds = threadIdsByProjectId[previousProjectId] ?? EMPTY_THREAD_IDS;
-      const nextIds = removeId(previousIds, nextThread.shell.id);
-      if (nextIds.length === 0) {
-        const { [previousProjectId]: _removed, ...rest } = threadIdsByProjectId;
-        threadIdsByProjectId = rest as Record<ProjectId, ThreadId[]>;
-      } else if (!arraysEqual(previousIds, nextIds)) {
-        threadIdsByProjectId = {
-          ...threadIdsByProjectId,
-          [previousProjectId]: nextIds,
-        };
-      }
-    }
-
-    const projectThreadIds = threadIdsByProjectId[nextProjectId] ?? EMPTY_THREAD_IDS;
-    const nextProjectThreadIds = appendId(projectThreadIds, nextThread.shell.id);
-    if (!arraysEqual(projectThreadIds, nextProjectThreadIds)) {
-      threadIdsByProjectId = {
-        ...threadIdsByProjectId,
-        [nextProjectId]: nextProjectThreadIds,
-      };
-    }
-    if (threadIdsByProjectId !== nextState.threadIdsByProjectId) {
-      nextState = {
-        ...nextState,
-        threadIdsByProjectId,
-      };
-    }
-  }
+  let nextState = ensureThreadRegistered(
+    state,
+    nextThread.shell.id,
+    nextThread.shell.projectId,
+    previousShell?.projectId,
+  );
 
   if (!threadShellsEqual(previousShell, nextThread.shell)) {
     nextState = {
@@ -686,7 +713,9 @@ function writeThreadShellState(
     };
   }
 
-  if ((state.threadSessionById[nextThread.shell.id] ?? null) !== nextThread.session) {
+  if (
+    !threadSessionsEqual(state.threadSessionById[nextThread.shell.id] ?? null, nextThread.session)
+  ) {
     nextState = {
       ...nextState,
       threadSessionById: {
@@ -1009,82 +1038,6 @@ function buildProjectState(
   };
 }
 
-function buildThreadState(
-  threads: ReadonlyArray<Thread>,
-): Pick<
-  EnvironmentState,
-  | "threadIds"
-  | "threadIdsByProjectId"
-  | "threadShellById"
-  | "threadSessionById"
-  | "threadTurnStateById"
-  | "messageIdsByThreadId"
-  | "messageByThreadId"
-  | "activityIdsByThreadId"
-  | "activityByThreadId"
-  | "proposedPlanIdsByThreadId"
-  | "proposedPlanByThreadId"
-  | "turnDiffIdsByThreadId"
-  | "turnDiffSummaryByThreadId"
-  | "sidebarThreadSummaryById"
-> {
-  const threadIds: ThreadId[] = [];
-  const threadIdsByProjectId: Record<ProjectId, ThreadId[]> = {};
-  const threadShellById: Record<ThreadId, ThreadShell> = {};
-  const threadSessionById: Record<ThreadId, ThreadSession | null> = {};
-  const threadTurnStateById: Record<ThreadId, ThreadTurnState> = {};
-  const messageIdsByThreadId: Record<ThreadId, MessageId[]> = {};
-  const messageByThreadId: Record<ThreadId, Record<MessageId, ChatMessage>> = {};
-  const activityIdsByThreadId: Record<ThreadId, string[]> = {};
-  const activityByThreadId: Record<ThreadId, Record<string, OrchestrationThreadActivity>> = {};
-  const proposedPlanIdsByThreadId: Record<ThreadId, string[]> = {};
-  const proposedPlanByThreadId: Record<ThreadId, Record<string, ProposedPlan>> = {};
-  const turnDiffIdsByThreadId: Record<ThreadId, TurnId[]> = {};
-  const turnDiffSummaryByThreadId: Record<ThreadId, Record<TurnId, TurnDiffSummary>> = {};
-  const sidebarThreadSummaryById: Record<ThreadId, SidebarThreadSummary> = {};
-
-  for (const thread of threads) {
-    threadIds.push(thread.id);
-    threadIdsByProjectId[thread.projectId] = [
-      ...(threadIdsByProjectId[thread.projectId] ?? EMPTY_THREAD_IDS),
-      thread.id,
-    ];
-    threadShellById[thread.id] = toThreadShell(thread);
-    threadSessionById[thread.id] = thread.session;
-    threadTurnStateById[thread.id] = toThreadTurnState(thread);
-    const messageSlice = buildMessageSlice(thread);
-    messageIdsByThreadId[thread.id] = messageSlice.ids;
-    messageByThreadId[thread.id] = messageSlice.byId;
-    const activitySlice = buildActivitySlice(thread);
-    activityIdsByThreadId[thread.id] = activitySlice.ids;
-    activityByThreadId[thread.id] = activitySlice.byId;
-    const proposedPlanSlice = buildProposedPlanSlice(thread);
-    proposedPlanIdsByThreadId[thread.id] = proposedPlanSlice.ids;
-    proposedPlanByThreadId[thread.id] = proposedPlanSlice.byId;
-    const turnDiffSlice = buildTurnDiffSlice(thread);
-    turnDiffIdsByThreadId[thread.id] = turnDiffSlice.ids;
-    turnDiffSummaryByThreadId[thread.id] = turnDiffSlice.byId;
-    sidebarThreadSummaryById[thread.id] = buildSidebarThreadSummary(thread);
-  }
-
-  return {
-    threadIds,
-    threadIdsByProjectId,
-    threadShellById,
-    threadSessionById,
-    threadTurnStateById,
-    messageIdsByThreadId,
-    messageByThreadId,
-    activityIdsByThreadId,
-    activityByThreadId,
-    proposedPlanIdsByThreadId,
-    proposedPlanByThreadId,
-    turnDiffIdsByThreadId,
-    turnDiffSummaryByThreadId,
-    sidebarThreadSummaryById,
-  };
-}
-
 function getStoredEnvironmentState(
   state: AppState,
   environmentId: EnvironmentId,
@@ -1113,25 +1066,6 @@ function commitEnvironmentState(
   return {
     ...state,
     environmentStateById,
-  };
-}
-
-function syncEnvironmentReadModel(
-  state: EnvironmentState,
-  readModel: OrchestrationReadModel,
-  environmentId: EnvironmentId,
-): EnvironmentState {
-  const projects = readModel.projects
-    .filter((project) => project.deletedAt === null)
-    .map((project) => mapProject(project, environmentId));
-  const threads = readModel.threads
-    .filter((thread) => thread.deletedAt === null)
-    .map((thread) => mapThread(thread, environmentId));
-  return {
-    ...state,
-    ...buildProjectState(projects),
-    ...buildThreadState(threads),
-    bootstrapComplete: true,
   };
 }
 
@@ -1173,22 +1107,6 @@ function syncEnvironmentShellSnapshot(
   }
 
   return nextState;
-}
-
-export function syncServerReadModel(
-  state: AppState,
-  readModel: OrchestrationReadModel,
-  environmentId: EnvironmentId,
-): AppState {
-  return commitEnvironmentState(
-    state,
-    environmentId,
-    syncEnvironmentReadModel(
-      getStoredEnvironmentState(state, environmentId),
-      readModel,
-      environmentId,
-    ),
-  );
 }
 
 export function syncServerShellSnapshot(
@@ -2007,7 +1925,6 @@ export function setThreadBranch(
 
 interface AppStore extends AppState {
   setActiveEnvironmentId: (environmentId: EnvironmentId) => void;
-  syncServerReadModel: (readModel: OrchestrationReadModel, environmentId: EnvironmentId) => void;
   syncServerShellSnapshot: (
     snapshot: OrchestrationShellSnapshot,
     environmentId: EnvironmentId,
@@ -2031,8 +1948,6 @@ export const useStore = create<AppStore>((set) => ({
   ...initialState,
   setActiveEnvironmentId: (environmentId) =>
     set((state) => setActiveEnvironmentId(state, environmentId)),
-  syncServerReadModel: (readModel, environmentId) =>
-    set((state) => syncServerReadModel(state, readModel, environmentId)),
   syncServerShellSnapshot: (snapshot, environmentId) =>
     set((state) => syncServerShellSnapshot(state, snapshot, environmentId)),
   syncServerThreadDetail: (thread, environmentId) =>

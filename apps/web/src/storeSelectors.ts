@@ -1,6 +1,6 @@
 import { type ScopedProjectRef, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import { selectEnvironmentState, type AppState, type EnvironmentState } from "./store";
-import { type Project, type SidebarThreadSummary, type Thread } from "./types";
+import { type Project, type Thread } from "./types";
 import { getThreadFromEnvironmentState } from "./threadDerivation";
 
 export function createProjectSelectorByRef(
@@ -8,15 +8,6 @@ export function createProjectSelectorByRef(
 ): (state: AppState) => Project | undefined {
   return (state) =>
     ref ? selectEnvironmentState(state, ref.environmentId).projectById[ref.projectId] : undefined;
-}
-
-export function createSidebarThreadSummarySelectorByRef(
-  ref: ScopedThreadRef | null | undefined,
-): (state: AppState) => SidebarThreadSummary | undefined {
-  return (state) =>
-    ref
-      ? selectEnvironmentState(state, ref.environmentId).sidebarThreadSummaryById[ref.threadId]
-      : undefined;
 }
 
 function createScopedThreadSelector(

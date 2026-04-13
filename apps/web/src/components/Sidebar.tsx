@@ -759,7 +759,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         : "text-muted-foreground/40"
                     }`}
                   >
-                    {formatRelativeTimeLabel(thread.updatedAt ?? thread.createdAt)}
+                    {formatRelativeTimeLabel(
+                      thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+                    )}
                   </span>
                 )}
               </span>
@@ -1115,6 +1117,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       ),
     [allSidebarThreads],
   );
+  // Keep a ref so callbacks can read the latest map without appearing in
+  // dependency arrays (avoids invalidating every thread-row memo on each
+  // thread-list change).
+  const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
+  sidebarThreadByKeyRef.current = sidebarThreadByKey;
   // All threads from the representative + other member environments are
   // already fetched into allSidebarThreads, so we can use them directly.
   const projectThreads = allSidebarThreads;
@@ -1458,7 +1465,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "mark-unread") {
         for (const threadKey of threadKeys) {
-          const thread = sidebarThreadByKey.get(threadKey);
+          const thread = sidebarThreadByKeyRef.current.get(threadKey);
           markThreadUnread(threadKey, thread?.latestTurn?.completedAt);
         }
         clearSelection();
@@ -1479,7 +1486,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       const deletedThreadKeys = new Set(threadKeys);
       for (const threadKey of threadKeys) {
-        const thread = sidebarThreadByKey.get(threadKey);
+        const thread = sidebarThreadByKeyRef.current.get(threadKey);
         if (!thread) continue;
         await deleteThread(scopeThreadRef(thread.environmentId, thread.id), {
           deletedThreadKeys,
@@ -1493,7 +1500,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       deleteThread,
       markThreadUnread,
       removeFromSelection,
-      sidebarThreadByKey,
     ],
   );
 
@@ -1622,12 +1628,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const api = readLocalApi();
       if (!api) return;
       const threadKey = scopedThreadKey(threadRef);
-      const thread =
-        projectThreads.find(
-          (projectThread) =>
-            projectThread.environmentId === threadRef.environmentId &&
-            projectThread.id === threadRef.threadId,
-        ) ?? null;
+      const thread = sidebarThreadByKeyRef.current.get(threadKey) ?? null;
       if (!thread) return;
       const threadWorkspacePath = thread.worktreePath ?? project.cwd ?? null;
       const clicked = await api.contextMenu.show(
@@ -1689,7 +1690,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       deleteThread,
       markThreadUnread,
       project.cwd,
-      projectThreads,
     ],
   );
 

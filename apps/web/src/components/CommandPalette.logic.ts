@@ -114,7 +114,9 @@ export function buildThreadActionItems(input: {
       searchTerms: [thread.title, projectTitle ?? "", thread.branch ?? ""],
       title: thread.title,
       description: descriptionParts.join(" · "),
-      timestamp: formatRelativeTimeLabel(thread.updatedAt ?? thread.createdAt),
+      timestamp: formatRelativeTimeLabel(
+        thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+      ),
       icon: input.icon,
       run: async () => {
         await input.runThread(thread);
