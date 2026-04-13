@@ -647,7 +647,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               onClick={handleRenameInputClick}
             />
           ) : (
-            <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    className="min-w-0 flex-1 truncate text-xs"
+                    data-testid={`thread-title-${thread.id}`}
+                  >
+                    {thread.title}
+                  </span>
+                }
+              />
+              <TooltipPopup side="top" className="max-w-80 whitespace-normal leading-tight">
+                {thread.title}
+              </TooltipPopup>
+            </Tooltip>
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">

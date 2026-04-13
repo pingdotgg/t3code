@@ -57,6 +57,7 @@ vi.mock("../lib/gitStatusState", () => ({
 }));
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
+const THREAD_TITLE = "Browser test thread";
 const ARCHIVED_SECONDARY_THREAD_ID = "thread-secondary-project-archived" as ThreadId;
 const PROJECT_ID = "project-1" as ProjectId;
 const SECOND_PROJECT_ID = "project-2" as ProjectId;
@@ -288,7 +289,7 @@ function createSnapshotForTargetUser(options: {
       {
         id: THREAD_ID,
         projectId: PROJECT_ID,
-        title: "Browser test thread",
+        title: THREAD_TITLE,
         modelSelection: {
           provider: "codex",
           model: "gpt-5",
@@ -3407,6 +3408,34 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(getComputedStyle(archiveAction!).opacity).toBe("0");
         },
         { timeout: 4_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("exposes the full thread title on the sidebar row tooltip", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-thread-tooltip-target" as MessageId,
+        targetText: "thread tooltip target",
+      }),
+    });
+
+    try {
+      const threadTitle = page.getByTestId(`thread-title-${THREAD_ID}`);
+
+      await expect.element(threadTitle).toBeInTheDocument();
+      await threadTitle.hover();
+
+      await vi.waitFor(
+        () => {
+          const tooltip = document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]');
+          expect(tooltip).not.toBeNull();
+          expect(tooltip?.textContent).toContain(THREAD_TITLE);
+        },
+        { timeout: 8_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();
