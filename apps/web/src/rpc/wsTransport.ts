@@ -12,6 +12,7 @@ import {
 import { RpcClient } from "effect/unstable/rpc";
 
 import { ClientTracingLive } from "../observability/clientTracing";
+import { clearAllTrackedRpcRequests } from "./requestLatencyState";
 import {
   createWsRpcProtocolLayer,
   makeWsRpcProtocolClient,
@@ -189,6 +190,7 @@ export class WsTransport {
         throw new Error("Transport disposed");
       }
 
+      clearAllTrackedRpcRequests();
       const previousSession = this.session;
       this.session = this.createSession();
       await this.closeSession(previousSession);
