@@ -157,7 +157,18 @@ export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
   model: DEFAULT_MODEL_BY_PROVIDER.codex,
 });
 
-const autoBootstrapWelcome = Effect.gen(function* () {
+export const resolveWelcomeBase = Effect.gen(function* () {
+  const serverConfig = yield* ServerConfig;
+  const segments = serverConfig.cwd.split(/[/\\]/).filter(Boolean);
+  const projectName = segments[segments.length - 1] ?? "project";
+
+  return {
+    cwd: serverConfig.cwd,
+    projectName,
+  } as const;
+});
+
+export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngineService;
@@ -221,12 +232,7 @@ const autoBootstrapWelcome = Effect.gen(function* () {
     });
   }
 
-  const segments = serverConfig.cwd.split(/[/\\]/).filter(Boolean);
-  const projectName = segments[segments.length - 1] ?? "project";
-
   return {
-    cwd: serverConfig.cwd,
-    projectName,
     ...(bootstrapProjectId ? { bootstrapProjectId } : {}),
     ...(bootstrapThreadId ? { bootstrapThreadId } : {}),
   } as const;
@@ -271,7 +277,7 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
     Effect.withSpan(`server.startup.${phase}`),
   );
 
-const makeServerRuntimeStartup = Effect.gen(function* () {
+export const makeServerRuntimeStartup = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const keybindings = yield* Keybindings;
   const orchestrationReactor = yield* OrchestrationReactor;
@@ -322,15 +328,13 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
       orchestrationReactor.start().pipe(Scope.provide(reactorScope)),
     );
 
-    yield* Effect.logDebug("startup phase: preparing welcome payload");
-    const welcome = yield* runStartupPhase("welcome.prepare", autoBootstrapWelcome);
+    const welcomeBase = yield* resolveWelcomeBase;
     const environment = yield* serverEnvironment.getDescriptor;
+    yield* Effect.logDebug("startup phase: preparing welcome payload");
     yield* Effect.logDebug("startup phase: publishing welcome event", {
       environmentId: environment.environmentId,
-      cwd: welcome.cwd,
-      projectName: welcome.projectName,
-      bootstrapProjectId: welcome.bootstrapProjectId,
-      bootstrapThreadId: welcome.bootstrapThreadId,
+      cwd: welcomeBase.cwd,
+      projectName: welcomeBase.projectName,
     });
     yield* runStartupPhase(
       "welcome.publish",
@@ -339,10 +343,47 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
         type: "welcome",
         payload: {
           environment,
-          ...welcome,
+          ...welcomeBase,
         },
       }),
     );
+
+    if (serverConfig.autoBootstrapProjectFromCwd) {
+      yield* Effect.forkScoped(
+        runStartupPhase(
+          "welcome.autobootstrap",
+          Effect.gen(function* () {
+            const bootstrapTargets = yield* resolveAutoBootstrapWelcomeTargets;
+            if (!bootstrapTargets.bootstrapProjectId && !bootstrapTargets.bootstrapThreadId) {
+              return;
+            }
+
+            yield* Effect.logDebug("startup phase: publishing bootstrapped welcome event", {
+              environmentId: environment.environmentId,
+              cwd: welcomeBase.cwd,
+              projectName: welcomeBase.projectName,
+              bootstrapProjectId: bootstrapTargets.bootstrapProjectId,
+              bootstrapThreadId: bootstrapTargets.bootstrapThreadId,
+            });
+            yield* lifecycleEvents.publish({
+              version: 1,
+              type: "welcome",
+              payload: {
+                environment,
+                ...welcomeBase,
+                ...bootstrapTargets,
+              },
+            });
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("startup auto-bootstrap welcome failed", {
+                cause,
+              }),
+            ),
+          ),
+        ),
+      );
+    }
   }).pipe(
     Effect.annotateSpans({
       "server.mode": serverConfig.mode,
