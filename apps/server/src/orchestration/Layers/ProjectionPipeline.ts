@@ -1268,6 +1268,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               if (Option.isNone(existingRow)) {
                 return;
               }
+              if (existingRow.value.status === "resolved") {
+                return;
+              }
               yield* projectionPendingApprovalRepository.upsert({
                 requestId,
                 threadId: existingRow.value.threadId,
