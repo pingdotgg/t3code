@@ -417,6 +417,56 @@ describe("WsTransport", () => {
     await transport.dispose();
   }, 5_000);
 
+  it("clears slow unary request tracking when the transport reconnects", async () => {
+    const slowAckThresholdMs = 25;
+    setSlowRpcAckThresholdMsForTests(slowAckThresholdMs);
+    const transport = createTransport("ws://localhost:3020");
+
+    const requestPromise = transport.request((client) =>
+      client[WS_METHODS.serverUpsertKeybinding]({
+        command: "terminal.toggle",
+        key: "ctrl+k",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(firstSocket.sent).toHaveLength(1);
+    });
+
+    const firstRequest = JSON.parse(firstSocket.sent[0] ?? "{}") as { id: string };
+
+    await waitFor(() => {
+      expect(getSlowRpcAckRequests()).toMatchObject([
+        {
+          requestId: firstRequest.id,
+          tag: WS_METHODS.serverUpsertKeybinding,
+        },
+      ]);
+    }, 1_000);
+
+    void requestPromise.catch(() => undefined);
+
+    await transport.reconnect();
+
+    expect(getSlowRpcAckRequests()).toEqual([]);
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    });
+
+    const secondSocket = getSocket();
+    secondSocket.open();
+
+    await transport.dispose();
+  }, 5_000);
+
   it("sends unary RPC requests and resolves successful exits", async () => {
     const transport = createTransport("ws://localhost:3020");
 
