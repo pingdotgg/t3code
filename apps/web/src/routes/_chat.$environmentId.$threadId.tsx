@@ -269,6 +269,7 @@ function ChatThreadRouteView() {
             environmentId={threadRef.environmentId}
             threadId={threadRef.threadId}
             onDiffPanelOpen={markDiffOpened}
+            reserveTitleBarControlInset={!diffOpen}
             routeKind="server"
           />
         </SidebarInset>
