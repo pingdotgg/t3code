@@ -3,6 +3,7 @@ import type {
   MessageId,
   OrchestrationCheckpointSummary,
   OrchestrationEvent,
+  OrchestrationLatestTurn,
   OrchestrationMessage,
   OrchestrationProposedPlan,
   OrchestrationReadModel,
@@ -344,6 +345,49 @@ function buildSidebarThreadSummary(thread: Thread): SidebarThreadSummary {
   };
 }
 
+function sourceProposedPlansEqual(
+  left: OrchestrationLatestTurn["sourceProposedPlan"] | undefined,
+  right: OrchestrationLatestTurn["sourceProposedPlan"] | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  return left.threadId === right.threadId && left.planId === right.planId;
+}
+
+function latestTurnsEqual(
+  left: OrchestrationLatestTurn | null | undefined,
+  right: OrchestrationLatestTurn | null | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left == null || right == null) return false;
+  return (
+    left.turnId === right.turnId &&
+    left.state === right.state &&
+    left.requestedAt === right.requestedAt &&
+    left.startedAt === right.startedAt &&
+    left.completedAt === right.completedAt &&
+    left.assistantMessageId === right.assistantMessageId &&
+    sourceProposedPlansEqual(left.sourceProposedPlan, right.sourceProposedPlan)
+  );
+}
+
+function threadSessionsEqual(
+  left: ThreadSession | null | undefined,
+  right: ThreadSession | null | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left == null || right == null) return false;
+  return (
+    left.provider === right.provider &&
+    left.status === right.status &&
+    left.orchestrationStatus === right.orchestrationStatus &&
+    left.activeTurnId === right.activeTurnId &&
+    left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt &&
+    left.lastError === right.lastError
+  );
+}
+
 function sidebarThreadSummariesEqual(
   left: SidebarThreadSummary | undefined,
   right: SidebarThreadSummary,
@@ -354,11 +398,11 @@ function sidebarThreadSummariesEqual(
     left.projectId === right.projectId &&
     left.title === right.title &&
     left.interactionMode === right.interactionMode &&
-    left.session === right.session &&
+    threadSessionsEqual(left.session, right.session) &&
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
     left.updatedAt === right.updatedAt &&
-    left.latestTurn === right.latestTurn &&
+    latestTurnsEqual(left.latestTurn, right.latestTurn) &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
     left.latestUserMessageAt === right.latestUserMessageAt &&
@@ -391,8 +435,8 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
 function threadTurnStatesEqual(left: ThreadTurnState | undefined, right: ThreadTurnState): boolean {
   return (
     left !== undefined &&
-    left.latestTurn === right.latestTurn &&
-    left.pendingSourceProposedPlan === right.pendingSourceProposedPlan
+    latestTurnsEqual(left.latestTurn, right.latestTurn) &&
+    sourceProposedPlansEqual(left.pendingSourceProposedPlan, right.pendingSourceProposedPlan)
   );
 }
 
@@ -475,8 +519,6 @@ function writeThreadState(
   const nextTurnState = toThreadTurnState(nextThread);
   const previousShell = state.threadShellById[nextThread.id];
   const previousTurnState = state.threadTurnStateById[nextThread.id];
-  const previousSummary = state.sidebarThreadSummaryById[nextThread.id];
-  const nextSummary = buildSidebarThreadSummary(nextThread);
 
   let nextState = state;
 
@@ -530,7 +572,7 @@ function writeThreadState(
     };
   }
 
-  if ((previousThread?.session ?? null) !== nextThread.session) {
+  if (!threadSessionsEqual(previousThread?.session ?? null, nextThread.session)) {
     nextState = {
       ...nextState,
       threadSessionById: {
@@ -610,16 +652,6 @@ function writeThreadState(
     };
   }
 
-  if (!sidebarThreadSummariesEqual(previousSummary, nextSummary)) {
-    nextState = {
-      ...nextState,
-      sidebarThreadSummaryById: {
-        ...nextState.sidebarThreadSummaryById,
-        [nextThread.id]: nextSummary,
-      },
-    };
-  }
-
   return nextState;
 }
 
@@ -686,7 +718,7 @@ function writeThreadShellState(
     };
   }
 
-  if ((state.threadSessionById[nextThread.shell.id] ?? null) !== nextThread.session) {
+  if (!threadSessionsEqual(state.threadSessionById[nextThread.shell.id] ?? null, nextThread.session)) {
     nextState = {
       ...nextState,
       threadSessionById: {
