@@ -1881,13 +1881,18 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               [draftId]: nextDraftThread,
             };
             let nextDraftsByThreadKey = state.draftsByThreadKey;
+            const previousDraftThread =
+              previousThreadKeyForLogicalProject === undefined
+                ? undefined
+                : nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
             if (
               previousThreadKeyForLogicalProject &&
               previousThreadKeyForLogicalProject !== draftId &&
               !isComposerThreadKeyInUse(
                 nextLogicalProjectDraftThreadKeyByLogicalProjectKey,
                 previousThreadKeyForLogicalProject,
-              )
+              ) &&
+              !isDraftThreadPromoting(previousDraftThread)
             ) {
               delete nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
               if (state.draftsByThreadKey[previousThreadKeyForLogicalProject] !== undefined) {
