@@ -1093,7 +1093,7 @@ function createBaseUpdateState(
 function applyAutoUpdaterChannel(channel: DesktopUpdateChannel): void {
   autoUpdater.channel = channel;
   autoUpdater.allowPrerelease = channel === "nightly";
-  autoUpdater.allowDowngrade = true;
+  autoUpdater.allowDowngrade = channel === "nightly";
   console.info(
     `[desktop-updater] Using update channel '${channel}' (allowPrerelease=${channel === "nightly"}).`,
   );
