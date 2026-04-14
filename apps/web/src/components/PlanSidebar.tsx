@@ -54,6 +54,7 @@ function stepStatusIcon(status: string): React.ReactNode {
 interface PlanSidebarProps {
   activePlan: ActivePlanState | null;
   activeProposedPlan: LatestProposedPlanState | null;
+  label?: string;
   environmentId: EnvironmentId;
   markdownCwd: string | undefined;
   workspaceRoot: string | undefined;
@@ -64,6 +65,7 @@ interface PlanSidebarProps {
 const PlanSidebar = memo(function PlanSidebar({
   activePlan,
   activeProposedPlan,
+  label = "Plan",
   environmentId,
   markdownCwd,
   workspaceRoot,
@@ -129,7 +131,7 @@ const PlanSidebar = memo(function PlanSidebar({
             variant="secondary"
             className="rounded-md bg-blue-500/10 px-1.5 py-0 text-[10px] font-semibold tracking-wide text-blue-400 uppercase"
           >
-            Plan
+            {label}
           </Badge>
           {activePlan ? (
             <span className="text-[11px] text-muted-foreground/60">
@@ -170,7 +172,7 @@ const PlanSidebar = memo(function PlanSidebar({
             size="icon-xs"
             variant="ghost"
             onClick={onClose}
-            aria-label="Close plan sidebar"
+            aria-label={`Close ${label.toLowerCase()} sidebar`}
             className="text-muted-foreground/50 hover:text-foreground/70"
           >
             <PanelRightCloseIcon className="size-3.5" />
