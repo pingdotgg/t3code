@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname as nodeDirname, join, resolve as resolveNodePath } from "node:path";
 
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
@@ -154,6 +154,83 @@ function resolvePythonForNodeGyp(): string | undefined {
   return executable;
 }
 
+function resolveNodeExecutable(): string | undefined {
+  const configured = process.env.npm_node_execpath ?? process.env.NODE;
+  if (configured && existsSync(configured)) {
+    return configured;
+  }
+
+  if (existsSync(process.execPath) && /(^|[\\/])node(?:\.exe)?$/i.test(process.execPath)) {
+    return process.execPath;
+  }
+
+  const probe = spawnSync("node", ["-p", "process.execPath"], {
+    encoding: "utf8",
+  });
+  if (probe.status !== 0) {
+    return undefined;
+  }
+
+  const executable = probe.stdout.trim();
+  if (!executable || !existsSync(executable)) {
+    return undefined;
+  }
+
+  return executable;
+}
+
+function resolveNodeGypScript(nodeExecutable: string | undefined): string | undefined {
+  const configured = process.env.npm_config_node_gyp;
+  if (configured && existsSync(configured)) {
+    return configured;
+  }
+
+  const candidates: string[] = [];
+  const npmRootProbe = spawnSync("npm", ["root", "-g"], {
+    encoding: "utf8",
+  });
+  if (npmRootProbe.status === 0) {
+    const npmRoot = npmRootProbe.stdout.trim();
+    if (npmRoot) {
+      candidates.push(join(npmRoot, "node-gyp", "bin", "node-gyp.js"));
+      candidates.push(join(npmRoot, "npm", "node_modules", "node-gyp", "bin", "node-gyp.js"));
+    }
+  }
+
+  if (nodeExecutable) {
+    const nodePrefix = resolveNodePath(nodeDirname(nodeExecutable), "..");
+    candidates.push(join(nodePrefix, "lib", "node_modules", "node-gyp", "bin", "node-gyp.js"));
+    candidates.push(
+      join(
+        nodePrefix,
+        "lib",
+        "node_modules",
+        "npm",
+        "node_modules",
+        "node-gyp",
+        "bin",
+        "node-gyp.js",
+      ),
+    );
+    candidates.push(join(nodePrefix, "node_modules", "node-gyp", "bin", "node-gyp.js"));
+    candidates.push(
+      join(nodePrefix, "node_modules", "npm", "node_modules", "node-gyp", "bin", "node-gyp.js"),
+    );
+  }
+
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function quoteForPosixShell(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+interface NodeGypShim {
+  readonly shimDir: string;
+  readonly shimPath: string;
+  readonly nodeExecutable: string;
+}
+
 interface ResolvedBuildOptions {
   readonly platform: typeof BuildPlatform.Type;
   readonly target: string;
@@ -176,6 +253,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly description: string;
   readonly author: string;
+  readonly homepage: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
@@ -389,6 +467,51 @@ function stageWindowsIcons(stageResourcesDir: string) {
   });
 }
 
+function createNodeGypShim(stageRoot: string, verbose: boolean) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const nodeExecutable = resolveNodeExecutable();
+    const nodeGypScript = resolveNodeGypScript(nodeExecutable);
+    if (!nodeExecutable || !nodeGypScript) {
+      return undefined;
+    }
+
+    const shimDir = path.join(stageRoot, ".tooling-bin");
+    yield* fs.makeDirectory(shimDir, { recursive: true });
+
+    if (process.platform === "win32") {
+      const shimPath = path.join(shimDir, "node-gyp.cmd");
+      yield* fs.writeFileString(
+        shimPath,
+        `@"${nodeExecutable.replaceAll('"', '""')}" "${nodeGypScript.replaceAll('"', '""')}" %*\r\n`,
+      );
+      return {
+        shimDir,
+        shimPath,
+        nodeExecutable,
+      } satisfies NodeGypShim;
+    }
+
+    const shimPath = path.join(shimDir, "node-gyp");
+    yield* fs.writeFileString(
+      shimPath,
+      `#!/bin/sh\nexec ${quoteForPosixShell(nodeExecutable)} ${quoteForPosixShell(nodeGypScript)} "$@"\n`,
+    );
+    yield* runCommand(
+      ChildProcess.make({
+        ...commandOutputOptions(verbose),
+      })`chmod +x ${shimPath}`,
+    );
+
+    return {
+      shimDir,
+      shimPath,
+      nodeExecutable,
+    } satisfies NodeGypShim;
+  });
+}
+
 function validateBundledClientAssets(clientDir: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -466,6 +589,14 @@ function resolveGitHubPublishConfig():
   };
 }
 
+function resolveProjectHomepage(): string | undefined {
+  const repository = serverPackageJson.repository;
+
+  if (!repository) return undefined;
+  if (typeof repository === "string") return repository;
+  return repository.url;
+}
+
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -508,6 +639,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       executableName: "t3code",
       icon: "icon.png",
       category: "Development",
+      maintainer: process.env.T3CODE_DESKTOP_LINUX_MAINTAINER ?? "T3 Tools",
       desktop: {
         entry: {
           StartupWMClass: "t3code",
@@ -615,6 +747,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const appVersion = options.version ?? serverPackageJson.version;
   const commitHash = resolveGitCommitHash(repoRoot);
+  const homepage = resolveProjectHomepage() ?? "https://github.com/pingdotgg/t3code";
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
     prefix: `t3code-desktop-${options.platform}-stage-`,
@@ -678,6 +811,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     description: "T3 Code desktop build",
     author: "T3 Tools",
+    homepage,
     main: "apps/desktop/dist-electron/main.js",
     build: yield* createBuildConfig(
       options.platform,
@@ -700,16 +834,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
-  yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
-  yield* runCommand(
-    ChildProcess.make({
-      cwd: stageAppDir,
-      ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
-      shell: process.platform === "win32",
-    })`bun install --production`,
-  );
+  const nodeGypShim = yield* createNodeGypShim(stageRoot, options.verbose);
 
+  yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
   };
@@ -718,6 +845,23 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       delete buildEnv[key];
     }
   }
+  if (nodeGypShim) {
+    buildEnv.PATH = [nodeGypShim.shimDir, buildEnv.PATH]
+      .filter(Boolean)
+      .join(process.platform === "win32" ? ";" : ":");
+    buildEnv.npm_config_node_gyp = nodeGypShim.shimPath;
+    buildEnv.npm_node_execpath = nodeGypShim.nodeExecutable;
+  }
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stageAppDir,
+      env: buildEnv,
+      ...commandOutputOptions(options.verbose),
+      // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
+      shell: process.platform === "win32",
+    })`bun install --production`,
+  );
+
   if (!options.signed) {
     buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
     delete buildEnv.CSC_LINK;

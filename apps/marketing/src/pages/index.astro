@@ -59,6 +59,8 @@ import Layout from "../layouts/Layout.astro";
     if (platform.os === "linux") {
       return (
         assets.find((a) => a.name.endsWith(".AppImage"))
+          ?.browser_download_url ??
+        assets.find((a) => a.name.endsWith(".deb"))
           ?.browser_download_url ?? null
       );
     }
