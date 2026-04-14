@@ -429,7 +429,7 @@ function resolveDesktopRuntimeDependencies(
   return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");
 }
 
-function resolveGitHubPublishConfig():
+function resolveGitHubPublishConfig(updateChannel: "latest" | "nightly"):
   | {
       readonly provider: "github";
       readonly owner: string;
@@ -451,7 +451,8 @@ function resolveGitHubPublishConfig():
     provider: "github",
     owner,
     repo,
-    releaseType: "release",
+    releaseType: updateChannel === "nightly" ? "prerelease" : "release",
+    ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
   };
 }
 
@@ -475,9 +476,26 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
   };
 }
 
-export function resolveMockUpdateServerUrl(mockUpdateServerPort: string | undefined): string {
+export function resolveMockUpdateServerPort(mockUpdateServerPort: string | undefined): number {
   const port = mockUpdateServerPort?.trim();
-  return `http://localhost:${port && port.length > 0 ? port : 3000}`;
+  if (!port) {
+    return 3000;
+  }
+
+  if (!/^\d+$/.test(port)) {
+    throw new Error(`Invalid mock update server port '${mockUpdateServerPort}'.`);
+  }
+
+  const parsedPort = Number(port);
+  if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+    throw new Error(`Invalid mock update server port '${mockUpdateServerPort}'.`);
+  }
+
+  return parsedPort;
+}
+
+export function resolveMockUpdateServerUrl(mockUpdateServerPort: string | undefined): string {
+  return `http://localhost:${resolveMockUpdateServerPort(mockUpdateServerPort)}`;
 }
 
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -498,22 +516,22 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     },
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
-  const publishConfig = resolveGitHubPublishConfig();
+  const publishConfig = resolveGitHubPublishConfig(updateChannel);
   if (publishConfig) {
-    buildConfig.publish = [
-      updateChannel === "nightly"
-        ? {
-            ...publishConfig,
-            releaseType: "prerelease" as const,
-            channel: "nightly" as const,
-          }
-        : publishConfig,
-    ];
+    buildConfig.publish = [publishConfig];
   } else if (mockUpdates) {
+    const mockUpdateServerUrl = yield* Effect.try({
+      try: () => resolveMockUpdateServerUrl(mockUpdateServerPort),
+      catch: (cause) =>
+        new BuildScriptError({
+          message: "Invalid mock update server URL configuration.",
+          cause,
+        }),
+    });
     buildConfig.publish = [
       {
         provider: "generic",
-        url: resolveMockUpdateServerUrl(mockUpdateServerPort),
+        url: mockUpdateServerUrl,
       },
     ];
   }

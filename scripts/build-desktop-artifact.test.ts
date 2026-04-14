@@ -6,6 +6,7 @@ import {
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopUpdateChannel,
+  resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
@@ -35,6 +36,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveMockUpdateServerUrl(""), "http://localhost:3000");
     assert.equal(resolveMockUpdateServerUrl("   "), "http://localhost:3000");
     assert.equal(resolveMockUpdateServerUrl("4123"), "http://localhost:4123");
+  });
+
+  it("rejects non-numeric or out-of-range mock update ports", () => {
+    assert.throws(() => resolveMockUpdateServerPort("abc"), /Invalid mock update server port/);
+    assert.throws(() => resolveMockUpdateServerPort("12.5"), /Invalid mock update server port/);
+    assert.throws(() => resolveMockUpdateServerPort("0"), /Invalid mock update server port/);
+    assert.throws(() => resolveMockUpdateServerPort("65536"), /Invalid mock update server port/);
   });
 
   it.effect("preserves explicit false boolean flags over true env defaults", () =>
