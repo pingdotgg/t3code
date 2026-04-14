@@ -23,6 +23,7 @@ import {
 import {
   ApprovalRequestId,
   type CanonicalItemType,
+  type CanonicalToolLifecycleData,
   type CanonicalRequestType,
   EventId,
   type ProviderApprovalDecision,
@@ -739,6 +740,116 @@ function tryParseJsonRecord(value: string): Record<string, unknown> | undefined 
   }
 }
 
+function normalizeCommandValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const parts = value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0);
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
+  if (typeof value !== "string") {
+    return;
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0 || seen.has(normalized)) {
+    return;
+  }
+  seen.add(normalized);
+  target.push(normalized);
+}
+
+function collectChangedFiles(value: unknown, target: string[], seen: Set<string>, depth: number) {
+  if (depth > 4 || target.length >= 12) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectChangedFiles(entry, target, seen, depth + 1);
+      if (target.length >= 12) {
+        return;
+      }
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  pushChangedFile(target, seen, record.path);
+  pushChangedFile(target, seen, record.filePath);
+  pushChangedFile(target, seen, record.relativePath);
+  pushChangedFile(target, seen, record.filename);
+  pushChangedFile(target, seen, record.newPath);
+  pushChangedFile(target, seen, record.oldPath);
+  for (const nestedKey of ["result", "input", "content", "files", "edits", "changes"]) {
+    if (nestedKey in record) {
+      collectChangedFiles(record[nestedKey], target, seen, depth + 1);
+    }
+  }
+}
+
+function canonicalToolLifecycleData(input: {
+  itemType?: CanonicalItemType | undefined;
+  toolName?: string | undefined;
+  input?: Record<string, unknown> | undefined;
+  result?: unknown;
+}): CanonicalToolLifecycleData | undefined {
+  const command = normalizeCommandValue(input.input?.command);
+  const changedFiles: string[] = [];
+  const seen = new Set<string>();
+  collectChangedFiles(input.input, changedFiles, seen, 0);
+  collectChangedFiles(input.result, changedFiles, seen, 0);
+  if (input.itemType === "command_execution" && command) {
+    const resultRecord =
+      input.result && typeof input.result === "object" && !Array.isArray(input.result)
+        ? (input.result as Record<string, unknown>)
+        : undefined;
+    return {
+      kind: "command_execution",
+      command,
+      ...(input.toolName ? { toolName: input.toolName } : {}),
+      ...(input.input ? { input: input.input as CanonicalToolLifecycleData["input"] } : {}),
+      ...(typeof resultRecord?.content === "string" ? { output: resultRecord.content } : {}),
+      ...(typeof resultRecord?.is_error === "boolean" && resultRecord.is_error === false
+        ? { exitCode: 0 }
+        : {}),
+      ...(input.result !== undefined
+        ? { result: input.result as CanonicalToolLifecycleData["result"] }
+        : {}),
+    };
+  }
+  if (input.itemType === "file_change" && changedFiles.length > 0) {
+    return {
+      kind: "file_change",
+      changedFiles,
+      ...(input.toolName ? { toolName: input.toolName } : {}),
+      ...(input.input ? { input: input.input as CanonicalToolLifecycleData["input"] } : {}),
+      ...(input.result !== undefined
+        ? { result: input.result as CanonicalToolLifecycleData["result"] }
+        : {}),
+    };
+  }
+  if (input.toolName || input.input || input.result !== undefined) {
+    return {
+      kind: "generic",
+      ...(input.toolName ? { toolName: input.toolName } : {}),
+      ...(input.input ? { input: input.input as CanonicalToolLifecycleData["input"] } : {}),
+      ...(input.result !== undefined
+        ? { result: input.result as CanonicalToolLifecycleData["result"] }
+        : {}),
+    };
+  }
+  return undefined;
+}
+
 function toolInputFingerprint(input: Record<string, unknown>): string | undefined {
   try {
     return JSON.stringify(input);
@@ -1384,8 +1495,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         payload: {
           state: status,
           ...(result?.stop_reason !== undefined ? { stopReason: result.stop_reason } : {}),
-          ...(result?.usage ? { usage: result.usage } : {}),
-          ...(result?.modelUsage ? { modelUsage: result.modelUsage } : {}),
+          ...(usageSnapshot ? { usage: usageSnapshot } : {}),
           ...(typeof result?.total_cost_usd === "number"
             ? { totalCostUsd: result.total_cost_usd }
             : {}),
@@ -1411,10 +1521,19 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: status === "completed" ? "completed" : "failed",
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
-          data: {
+          ...(canonicalToolLifecycleData({
+            itemType: tool.itemType,
             toolName: tool.toolName,
             input: tool.input,
-          },
+          })
+            ? {
+                data: canonicalToolLifecycleData({
+                  itemType: tool.itemType,
+                  toolName: tool.toolName,
+                  input: tool.input,
+                }),
+              }
+            : {}),
         },
         providerRefs: nativeProviderRefs(context, { providerItemId: tool.itemId }),
         raw: {
@@ -1468,8 +1587,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       payload: {
         state: status,
         ...(result?.stop_reason !== undefined ? { stopReason: result.stop_reason } : {}),
-        ...(result?.usage ? { usage: result.usage } : {}),
-        ...(result?.modelUsage ? { modelUsage: result.modelUsage } : {}),
+        ...(usageSnapshot ? { usage: usageSnapshot } : {}),
         ...(typeof result?.total_cost_usd === "number"
           ? { totalCostUsd: result.total_cost_usd }
           : {}),
@@ -1604,10 +1722,19 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             status: "inProgress",
             title: nextTool.title,
             ...(nextTool.detail ? { detail: nextTool.detail } : {}),
-            data: {
+            ...(canonicalToolLifecycleData({
+              itemType: nextTool.itemType,
               toolName: nextTool.toolName,
               input: nextTool.input,
-            },
+            })
+              ? {
+                  data: canonicalToolLifecycleData({
+                    itemType: nextTool.itemType,
+                    toolName: nextTool.toolName,
+                    input: nextTool.input,
+                  }),
+                }
+              : {}),
           },
           providerRefs: nativeProviderRefs(context, { providerItemId: nextTool.itemId }),
           raw: {
@@ -1673,10 +1800,19 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: "inProgress",
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
-          data: {
+          ...(canonicalToolLifecycleData({
+            itemType: tool.itemType,
             toolName: tool.toolName,
             input: toolInput,
-          },
+          })
+            ? {
+                data: canonicalToolLifecycleData({
+                  itemType: tool.itemType,
+                  toolName: tool.toolName,
+                  input: toolInput,
+                }),
+              }
+            : {}),
         },
         providerRefs: nativeProviderRefs(context, { providerItemId: tool.itemId }),
         raw: {
@@ -1728,11 +1864,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const [index, tool] = toolEntry;
       const itemStatus = toolResult.isError ? "failed" : "completed";
-      const toolData = {
+      const toolData = canonicalToolLifecycleData({
+        itemType: tool.itemType,
         toolName: tool.toolName,
         input: tool.input,
         result: toolResult.block,
-      };
+      });
 
       const updatedStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -1748,7 +1885,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: toolResult.isError ? "failed" : "inProgress",
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
-          data: toolData,
+          ...(toolData ? { data: toolData } : {}),
         },
         providerRefs: nativeProviderRefs(context, { providerItemId: tool.itemId }),
         raw: {
@@ -1796,7 +1933,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: itemStatus,
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
-          data: toolData,
+          ...(toolData ? { data: toolData } : {}),
         },
         providerRefs: nativeProviderRefs(context, { providerItemId: tool.itemId }),
         raw: {
@@ -1940,15 +2077,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     };
 
     switch (message.subtype) {
-      case "init":
-        yield* offerRuntimeEvent({
-          ...base,
-          type: "session.configured",
-          payload: {
-            config: message as Record<string, unknown>,
-          },
-        });
-        return;
       case "status":
         yield* offerRuntimeEvent({
           ...base,
@@ -1967,43 +2095,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: {
             state: "compacted",
             detail: message,
-          },
-        });
-        return;
-      case "hook_started":
-        yield* offerRuntimeEvent({
-          ...base,
-          type: "hook.started",
-          payload: {
-            hookId: message.hook_id,
-            hookName: message.hook_name,
-            hookEvent: message.hook_event,
-          },
-        });
-        return;
-      case "hook_progress":
-        yield* offerRuntimeEvent({
-          ...base,
-          type: "hook.progress",
-          payload: {
-            hookId: message.hook_id,
-            output: message.output,
-            stdout: message.stdout,
-            stderr: message.stderr,
-          },
-        });
-        return;
-      case "hook_response":
-        yield* offerRuntimeEvent({
-          ...base,
-          type: "hook.completed",
-          payload: {
-            hookId: message.hook_id,
-            outcome: message.outcome,
-            output: message.output,
-            stdout: message.stdout,
-            stderr: message.stderr,
-            ...(typeof message.exit_code === "number" ? { exitCode: message.exit_code } : {}),
           },
         });
         return;
@@ -2045,7 +2136,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             taskId: RuntimeTaskId.make(message.task_id),
             description: message.description,
             ...(message.summary ? { summary: message.summary } : {}),
-            ...(message.usage ? { usage: message.usage } : {}),
+            ...(message.usage
+              ? { usage: normalizeClaudeTokenUsage(message.usage, context.lastKnownContextWindow) }
+              : {}),
             ...(message.last_tool_name ? { lastToolName: message.last_tool_name } : {}),
           },
         });
@@ -2077,28 +2170,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             taskId: RuntimeTaskId.make(message.task_id),
             status: message.status,
             ...(message.summary ? { summary: message.summary } : {}),
-            ...(message.usage ? { usage: message.usage } : {}),
-          },
-        });
-        return;
-      case "files_persisted":
-        yield* offerRuntimeEvent({
-          ...base,
-          type: "files.persisted",
-          payload: {
-            files: Array.isArray(message.files)
-              ? message.files.map((file: { filename: string; file_id: string }) => ({
-                  filename: file.filename,
-                  fileId: file.file_id,
-                }))
-              : [],
-            ...(Array.isArray(message.failed)
-              ? {
-                  failed: message.failed.map((entry: { filename: string; error: string }) => ({
-                    filename: entry.filename,
-                    error: entry.error,
-                  })),
-                }
+            ...(message.usage
+              ? { usage: normalizeClaudeTokenUsage(message.usage, context.lastKnownContextWindow) }
               : {}),
           },
         });
@@ -2113,78 +2186,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
-  const handleSdkTelemetryMessage = Effect.fn("handleSdkTelemetryMessage")(function* (
-    context: ClaudeSessionContext,
-    message: SDKMessage,
-  ) {
-    const stamp = yield* makeEventStamp();
-    const base = {
-      eventId: stamp.eventId,
-      provider: PROVIDER,
-      createdAt: stamp.createdAt,
-      threadId: context.session.threadId,
-      ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
-      providerRefs: nativeProviderRefs(context),
-      raw: {
-        source: "claude.sdk.message" as const,
-        method: sdkNativeMethod(message),
-        messageType: message.type,
-        payload: message,
-      },
-    };
-
-    if (message.type === "tool_progress") {
-      yield* offerRuntimeEvent({
-        ...base,
-        type: "tool.progress",
-        payload: {
-          toolUseId: message.tool_use_id,
-          toolName: message.tool_name,
-          elapsedSeconds: message.elapsed_time_seconds,
-          ...(message.task_id ? { summary: `task:${message.task_id}` } : {}),
-        },
-      });
-      return;
-    }
-
-    if (message.type === "tool_use_summary") {
-      yield* offerRuntimeEvent({
-        ...base,
-        type: "tool.summary",
-        payload: {
-          summary: message.summary,
-          ...(message.preceding_tool_use_ids.length > 0
-            ? { precedingToolUseIds: message.preceding_tool_use_ids }
-            : {}),
-        },
-      });
-      return;
-    }
-
-    if (message.type === "auth_status") {
-      yield* offerRuntimeEvent({
-        ...base,
-        type: "auth.status",
-        payload: {
-          isAuthenticating: message.isAuthenticating,
-          output: message.output,
-          ...(message.error ? { error: message.error } : {}),
-        },
-      });
-      return;
-    }
-
-    if (message.type === "rate_limit_event") {
-      yield* offerRuntimeEvent({
-        ...base,
-        type: "account.rate-limits.updated",
-        payload: {
-          rateLimits: message,
-        },
-      });
-      return;
-    }
-  });
+  const handleSdkTelemetryMessage = (
+    _context: ClaudeSessionContext,
+    _message: SDKMessage,
+  ): Effect.Effect<void> => Effect.void;
 
   const handleSdkMessage = Effect.fn("handleSdkMessage")(function* (
     context: ClaudeSessionContext,
@@ -2785,25 +2790,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         createdAt: sessionStartedStamp.createdAt,
         threadId,
         payload: input.resumeCursor !== undefined ? { resume: input.resumeCursor } : {},
-        providerRefs: {},
-      });
-
-      const configuredStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
-        type: "session.configured",
-        eventId: configuredStamp.eventId,
-        provider: PROVIDER,
-        createdAt: configuredStamp.createdAt,
-        threadId,
-        payload: {
-          config: {
-            ...(apiModelId ? { model: apiModelId } : {}),
-            ...(input.cwd ? { cwd: input.cwd } : {}),
-            ...(effectiveEffort ? { effort: effectiveEffort } : {}),
-            ...(permissionMode ? { permissionMode } : {}),
-            ...(fastMode ? { fastMode: true } : {}),
-          },
-        },
         providerRefs: {},
       });
 

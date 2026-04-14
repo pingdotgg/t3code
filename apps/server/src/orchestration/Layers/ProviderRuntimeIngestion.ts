@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
+  type CanonicalJsonValue,
   CommandId,
   MessageId,
   type OrchestrationEvent,
@@ -18,7 +19,6 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
-import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -96,6 +96,16 @@ function proposedPlanIdFromEvent(event: ProviderRuntimeEvent, threadId: ThreadId
     return `plan:${threadId}:item:${event.itemId}`;
   }
   return `plan:${threadId}:event:${event.eventId}`;
+}
+
+function toCanonicalJsonValue(value: unknown): CanonicalJsonValue | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const normalized = JSON.parse(
+    JSON.stringify(value, (_key, nestedValue) => (nestedValue === undefined ? null : nestedValue)),
+  ) as CanonicalJsonValue | null;
+  return normalized ?? undefined;
 }
 
 function buildContextWindowActivityPayload(
@@ -250,7 +260,9 @@ function runtimeEventToActivities(
           summary: "Runtime warning",
           payload: {
             message: truncateDetail(event.payload.message),
-            ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
+            ...(event.payload.detail !== undefined
+              ? { detail: toCanonicalJsonValue(event.payload.detail) }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -400,7 +412,9 @@ function runtimeEventToActivities(
           summary: "Context compacted",
           payload: {
             state: event.payload.state,
-            ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
+            ...(event.payload.detail !== undefined
+              ? { detail: toCanonicalJsonValue(event.payload.detail) }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -1264,7 +1278,4 @@ const make = Effect.fn("make")(function* () {
   } satisfies ProviderRuntimeIngestionShape;
 });
 
-export const ProviderRuntimeIngestionLive = Layer.effect(
-  ProviderRuntimeIngestionService,
-  make(),
-).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+export const ProviderRuntimeIngestionLive = Layer.effect(ProviderRuntimeIngestionService, make());

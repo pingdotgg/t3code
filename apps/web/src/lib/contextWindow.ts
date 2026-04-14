@@ -1,17 +1,5 @@
 import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
-
-function asFiniteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function asBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
-}
-
 type NullableContextWindowUsage = {
   readonly [Key in keyof ThreadTokenUsageSnapshot]: undefined extends ThreadTokenUsageSnapshot[Key]
     ? Exclude<ThreadTokenUsageSnapshot[Key], undefined> | null
@@ -34,38 +22,56 @@ export function deriveLatestContextWindowSnapshot(
       continue;
     }
 
-    const payload = asRecord(activity.payload);
-    const usedTokens = asFiniteNumber(payload?.usedTokens);
-    if (usedTokens === null || usedTokens <= 0) {
+    const {
+      payload: {
+        usedTokens,
+        totalProcessedTokens,
+        maxTokens,
+        inputTokens,
+        cachedInputTokens,
+        outputTokens,
+        reasoningOutputTokens,
+        lastUsedTokens,
+        lastInputTokens,
+        lastCachedInputTokens,
+        lastOutputTokens,
+        lastReasoningOutputTokens,
+        toolUses,
+        durationMs,
+        compactsAutomatically,
+      },
+    } = activity;
+    if (!Number.isFinite(usedTokens) || usedTokens <= 0) {
       continue;
     }
 
-    const maxTokens = asFiniteNumber(payload?.maxTokens);
     const usedPercentage =
-      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
+      maxTokens !== undefined && maxTokens > 0
+        ? Math.min(100, (usedTokens / maxTokens) * 100)
+        : null;
     const remainingTokens =
-      maxTokens !== null ? Math.max(0, Math.round(maxTokens - usedTokens)) : null;
+      maxTokens !== undefined ? Math.max(0, Math.round(maxTokens - usedTokens)) : null;
     const remainingPercentage = usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null;
 
     return {
       usedTokens,
-      totalProcessedTokens: asFiniteNumber(payload?.totalProcessedTokens),
-      maxTokens,
+      totalProcessedTokens: totalProcessedTokens ?? null,
+      maxTokens: maxTokens ?? null,
       remainingTokens,
       usedPercentage,
       remainingPercentage,
-      inputTokens: asFiniteNumber(payload?.inputTokens),
-      cachedInputTokens: asFiniteNumber(payload?.cachedInputTokens),
-      outputTokens: asFiniteNumber(payload?.outputTokens),
-      reasoningOutputTokens: asFiniteNumber(payload?.reasoningOutputTokens),
-      lastUsedTokens: asFiniteNumber(payload?.lastUsedTokens),
-      lastInputTokens: asFiniteNumber(payload?.lastInputTokens),
-      lastCachedInputTokens: asFiniteNumber(payload?.lastCachedInputTokens),
-      lastOutputTokens: asFiniteNumber(payload?.lastOutputTokens),
-      lastReasoningOutputTokens: asFiniteNumber(payload?.lastReasoningOutputTokens),
-      toolUses: asFiniteNumber(payload?.toolUses),
-      durationMs: asFiniteNumber(payload?.durationMs),
-      compactsAutomatically: asBoolean(payload?.compactsAutomatically) ?? false,
+      inputTokens: inputTokens ?? null,
+      cachedInputTokens: cachedInputTokens ?? null,
+      outputTokens: outputTokens ?? null,
+      reasoningOutputTokens: reasoningOutputTokens ?? null,
+      lastUsedTokens: lastUsedTokens ?? null,
+      lastInputTokens: lastInputTokens ?? null,
+      lastCachedInputTokens: lastCachedInputTokens ?? null,
+      lastOutputTokens: lastOutputTokens ?? null,
+      lastReasoningOutputTokens: lastReasoningOutputTokens ?? null,
+      toolUses: toolUses ?? null,
+      durationMs: durationMs ?? null,
+      compactsAutomatically: compactsAutomatically ?? false,
       updatedAt: activity.createdAt,
     };
   }

@@ -615,7 +615,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -732,7 +732,6 @@ describe("ClaudeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
-          "session.configured",
           "session.state.changed",
           "turn.started",
           "thread.started",
@@ -744,7 +743,7 @@ describe("ClaudeAdapterLive", () => {
         ],
       );
 
-      const turnStarted = runtimeEvents[3];
+      const turnStarted = runtimeEvents[2];
       assert.equal(turnStarted?.type, "turn.started");
       if (turnStarted?.type === "turn.started") {
         assert.equal(String(turnStarted.turnId), String(turn.turnId));
@@ -792,7 +791,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 11).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -898,7 +897,6 @@ describe("ClaudeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
-          "session.configured",
           "session.state.changed",
           "turn.started",
           "thread.started",
@@ -929,12 +927,13 @@ describe("ClaudeAdapterLive", () => {
       const toolInputUpdated = runtimeEvents.find(
         (event) =>
           event.type === "item.updated" &&
-          (event.payload.data as { input?: { pattern?: string; path?: string } } | undefined)?.input
-            ?.pattern === "foo",
+          event.payload.data?.kind === "generic" &&
+          event.payload.data.input?.pattern === "foo",
       );
       assert.equal(toolInputUpdated?.type, "item.updated");
       if (toolInputUpdated?.type === "item.updated") {
         assert.deepEqual(toolInputUpdated.payload.data, {
+          kind: "generic",
           toolName: "Grep",
           input: {
             pattern: "foo",
@@ -946,17 +945,25 @@ describe("ClaudeAdapterLive", () => {
       const toolResultUpdated = runtimeEvents.find(
         (event) =>
           event.type === "item.updated" &&
-          (event.payload.data as { result?: { tool_use_id?: string } } | undefined)?.result
-            ?.tool_use_id === "tool-grep-1",
+          event.payload.data?.kind === "generic" &&
+          event.payload.data.result !== undefined &&
+          event.payload.data.result !== null &&
+          typeof event.payload.data.result === "object" &&
+          !Array.isArray(event.payload.data.result) &&
+          "tool_use_id" in event.payload.data.result &&
+          event.payload.data.result.tool_use_id === "tool-grep-1",
       );
       assert.equal(toolResultUpdated?.type, "item.updated");
       if (toolResultUpdated?.type === "item.updated") {
         assert.equal(
-          (
-            toolResultUpdated.payload.data as {
-              result?: { content?: string };
-            }
-          ).result?.content,
+          toolResultUpdated.payload.data?.kind === "generic" &&
+            toolResultUpdated.payload.data.result !== undefined &&
+            toolResultUpdated.payload.data.result !== null &&
+            typeof toolResultUpdated.payload.data.result === "object" &&
+            !Array.isArray(toolResultUpdated.payload.data.result) &&
+            "content" in toolResultUpdated.payload.data.result
+            ? toolResultUpdated.payload.data.result.content
+            : undefined,
           "src/example.ts:1:foo",
         );
       }
@@ -971,7 +978,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1047,7 +1054,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 5).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1079,7 +1086,6 @@ describe("ClaudeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
-          "session.configured",
           "session.state.changed",
           "turn.started",
           "thread.started",
@@ -1140,7 +1146,6 @@ describe("ClaudeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
-          "session.configured",
           "session.state.changed",
           "turn.started",
           "turn.completed",
@@ -1148,7 +1153,7 @@ describe("ClaudeAdapterLive", () => {
         ],
       );
 
-      const turnCompleted = runtimeEvents[4];
+      const turnCompleted = runtimeEvents.find((event) => event.type === "turn.completed");
       assert.equal(turnCompleted?.type, "turn.completed");
       if (turnCompleted?.type === "turn.completed") {
         assert.equal(String(turnCompleted.turnId), String(turn.turnId));
@@ -1156,7 +1161,7 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(turnCompleted.payload.errorMessage, "Claude runtime interrupted.");
       }
 
-      const sessionExited = runtimeEvents[5];
+      const sessionExited = runtimeEvents.find((event) => event.type === "session.exited");
       assert.equal(sessionExited?.type, "session.exited");
 
       assert.equal(yield* adapter.hasSession(THREAD_ID), false);
@@ -1245,7 +1250,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 5).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1292,7 +1297,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 5).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1346,7 +1351,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1559,7 +1564,7 @@ describe("ClaudeAdapterLive", () => {
       return Effect.gen(function* () {
         const adapter = yield* ClaudeAdapter;
 
-        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
           Stream.runCollect,
           Effect.forkChild,
         );
@@ -1618,7 +1623,6 @@ describe("ClaudeAdapterLive", () => {
           runtimeEvents.map((event) => event.type),
           [
             "session.started",
-            "session.configured",
             "session.state.changed",
             "turn.started",
             "thread.started",
@@ -1763,7 +1767,6 @@ describe("ClaudeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
-          "session.configured",
           "session.state.changed",
           "turn.started",
           "thread.started",
@@ -1771,6 +1774,7 @@ describe("ClaudeAdapterLive", () => {
           "item.completed",
           "content.delta",
           "item.completed",
+          "turn.completed",
         ],
       );
 
@@ -1816,7 +1820,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1858,7 +1862,6 @@ describe("ClaudeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
-          "session.configured",
           "session.state.changed",
           "turn.started",
           "thread.started",
@@ -1885,7 +1888,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 13).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 12).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -2046,7 +2049,6 @@ describe("ClaudeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
-          "session.configured",
           "session.state.changed",
           "turn.started",
           "thread.started",
@@ -2153,10 +2155,10 @@ describe("ClaudeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
-          "session.configured",
           "session.state.changed",
           "turn.started",
           "thread.started",
+          "turn.completed",
         ],
       );
 
@@ -2166,7 +2168,7 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(sessionStarted.threadId, THREAD_ID);
       }
 
-      const threadStarted = runtimeEvents[4];
+      const threadStarted = runtimeEvents.find((event) => event.type === "thread.started");
       assert.equal(threadStarted?.type, "thread.started");
       if (threadStarted?.type === "thread.started") {
         assert.equal(threadStarted.threadId, THREAD_ID);
@@ -2191,7 +2193,7 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "approval-required",
       });
 
-      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+      yield* Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain);
 
       yield* adapter.sendTurn({
         threadId: session.threadId,
@@ -2300,7 +2302,7 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "approval-required",
       });
 
-      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+      yield* Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain);
 
       const createInput = harness.getLastCreateQueryInput();
       const canUseTool = createInput?.options.canUseTool;
@@ -2733,7 +2735,7 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+      yield* Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain);
 
       yield* adapter.sendTurn({
         threadId: session.threadId,
@@ -2799,7 +2801,7 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+      yield* Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain);
 
       yield* adapter.sendTurn({
         threadId: session.threadId,
@@ -2871,8 +2873,8 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "approval-required",
       });
 
-      // Drain the session startup events (started, configured, state.changed).
-      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+      // Drain the session startup events (started, state.changed).
+      yield* Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain);
 
       yield* adapter.sendTurn({
         threadId: session.threadId,
@@ -2994,7 +2996,7 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+      yield* Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain);
 
       const createInput = harness.getLastCreateQueryInput();
       const canUseTool = createInput?.options.canUseTool;
@@ -3060,7 +3062,7 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "approval-required",
       });
 
-      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+      yield* Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain);
 
       const createInput = harness.getLastCreateQueryInput();
       const canUseTool = createInput?.options.canUseTool;

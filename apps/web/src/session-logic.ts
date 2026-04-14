@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type CanonicalToolLifecycleData,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
@@ -486,22 +487,10 @@ function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): bool
   if (activity.kind !== "tool.updated" && activity.kind !== "tool.completed") {
     return false;
   }
-
-  const payload =
-    activity.payload && typeof activity.payload === "object"
-      ? (activity.payload as Record<string, unknown>)
-      : null;
-  return typeof payload?.detail === "string" && payload.detail.startsWith("ExitPlanMode:");
+  return activity.payload.detail?.startsWith("ExitPlanMode:") ?? false;
 }
 
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
-  const payload =
-    activity.payload && typeof activity.payload === "object"
-      ? (activity.payload as Record<string, unknown>)
-      : null;
-  const commandPreview = extractToolCommand(payload);
-  const changedFiles = extractChangedFiles(payload);
-  const title = extractToolTitle(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
@@ -509,12 +498,24 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     tone: activity.tone === "approval" ? "info" : activity.tone,
     activityKind: activity.kind,
   };
-  const itemType = extractWorkLogItemType(payload);
-  const requestKind = extractWorkLogRequestKind(payload);
-  if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
-    const detail = stripTrailingExitCode(payload.detail).output;
-    if (detail) {
-      entry.detail = detail;
+  const toolPayload = toolLifecyclePayloadFromActivity(activity);
+  const detail =
+    "detail" in activity.payload && typeof activity.payload.detail === "string"
+      ? activity.payload.detail
+      : undefined;
+  const toolData = toolPayload && "data" in toolPayload ? toolPayload.data : undefined;
+  const commandPreview = extractToolCommand(toolData, detail);
+  const changedFiles = extractChangedFiles(toolData);
+  const title =
+    "title" in activity.payload && typeof activity.payload.title === "string"
+      ? extractToolTitle(activity.payload.title)
+      : null;
+  const itemType = extractWorkLogItemType(toolPayload);
+  const requestKind = extractWorkLogRequestKind(activity);
+  if (detail && detail.length > 0) {
+    const normalizedDetail = stripTrailingExitCode(detail).output;
+    if (normalizedDetail) {
+      entry.detail = normalizedDetail;
     }
   }
   if (commandPreview.command) {
@@ -540,6 +541,24 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     entry.collapseKey = collapseKey;
   }
   return entry;
+}
+
+function toolLifecyclePayloadFromActivity(
+  activity: OrchestrationThreadActivity,
+):
+  | Extract<
+      OrchestrationThreadActivity,
+      { kind: "tool.started" | "tool.updated" | "tool.completed" }
+    >["payload"]
+  | null {
+  switch (activity.kind) {
+    case "tool.started":
+    case "tool.updated":
+    case "tool.completed":
+      return activity.payload;
+    default:
+      return null;
+  }
 }
 
 function collapseDerivedWorkLogEntries(
@@ -637,10 +656,6 @@ function toLatestProposedPlanState(proposedPlan: ProposedPlan): LatestProposedPl
     implementedAt: proposedPlan.implementedAt,
     implementationThreadId: proposedPlan.implementationThreadId,
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
 function asTrimmedString(value: unknown): string | null {
@@ -795,22 +810,17 @@ function toRawToolCommand(value: unknown, normalizedCommand: string | null): str
   return formatted === normalizedCommand ? null : formatted;
 }
 
-function extractToolCommand(payload: Record<string, unknown> | null): {
+function extractToolCommand(
+  data: CanonicalToolLifecycleData | undefined,
+  detail: string | undefined,
+): {
   command: string | null;
   rawCommand: string | null;
 } {
-  const data = asRecord(payload?.data);
-  const item = asRecord(data?.item);
-  const itemResult = asRecord(item?.result);
-  const itemInput = asRecord(item?.input);
-  const itemType = asTrimmedString(payload?.itemType);
-  const detail = asTrimmedString(payload?.detail);
   const candidates: unknown[] = [
-    item?.command,
-    itemInput?.command,
-    itemResult?.command,
-    data?.command,
-    itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
+    data?.kind === "command_execution" ? data.command : null,
+    data?.input?.command,
+    data?.kind === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
   ];
 
   for (const candidate of candidates) {
@@ -830,8 +840,8 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   };
 }
 
-function extractToolTitle(payload: Record<string, unknown> | null): string | null {
-  return asTrimmedString(payload?.title);
+function extractToolTitle(value: string | undefined): string | null {
+  return asTrimmedString(value);
 }
 
 function stripTrailingExitCode(value: string): {
@@ -856,28 +866,36 @@ function stripTrailingExitCode(value: string): {
 }
 
 function extractWorkLogItemType(
-  payload: Record<string, unknown> | null,
+  payload:
+    | Extract<
+        OrchestrationThreadActivity,
+        { kind: "tool.started" | "tool.updated" | "tool.completed" }
+      >["payload"]
+    | null,
 ): WorkLogEntry["itemType"] | undefined {
-  if (typeof payload?.itemType === "string" && isToolLifecycleItemType(payload.itemType)) {
+  if (payload && isToolLifecycleItemType(payload.itemType)) {
     return payload.itemType;
   }
   return undefined;
 }
 
 function extractWorkLogRequestKind(
-  payload: Record<string, unknown> | null,
+  activity: OrchestrationThreadActivity,
 ): WorkLogEntry["requestKind"] | undefined {
-  if (
-    payload?.requestKind === "command" ||
-    payload?.requestKind === "file-read" ||
-    payload?.requestKind === "file-change"
-  ) {
-    return payload.requestKind;
+  if (activity.kind !== "approval.requested" && activity.kind !== "approval.resolved") {
+    return undefined;
   }
-  return requestKindFromRequestType(payload?.requestType) ?? undefined;
+  if (
+    activity.payload.requestKind === "command" ||
+    activity.payload.requestKind === "file-read" ||
+    activity.payload.requestKind === "file-change"
+  ) {
+    return activity.payload.requestKind;
+  }
+  return requestKindFromRequestType(activity.payload.requestType) ?? undefined;
 }
 
-function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
+function pushChangedFile(target: string[], seen: Set<string>, value: string | undefined) {
   const normalized = asTrimmedString(value);
   if (!normalized || seen.has(normalized)) {
     return;
@@ -886,58 +904,16 @@ function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
   target.push(normalized);
 }
 
-function collectChangedFiles(value: unknown, target: string[], seen: Set<string>, depth: number) {
-  if (depth > 4 || target.length >= 12) {
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      collectChangedFiles(entry, target, seen, depth + 1);
-      if (target.length >= 12) {
-        return;
-      }
-    }
-    return;
-  }
-
-  const record = asRecord(value);
-  if (!record) {
-    return;
-  }
-
-  pushChangedFile(target, seen, record.path);
-  pushChangedFile(target, seen, record.filePath);
-  pushChangedFile(target, seen, record.relativePath);
-  pushChangedFile(target, seen, record.filename);
-  pushChangedFile(target, seen, record.newPath);
-  pushChangedFile(target, seen, record.oldPath);
-
-  for (const nestedKey of [
-    "item",
-    "result",
-    "input",
-    "data",
-    "changes",
-    "files",
-    "edits",
-    "patch",
-    "patches",
-    "operations",
-  ]) {
-    if (!(nestedKey in record)) {
-      continue;
-    }
-    collectChangedFiles(record[nestedKey], target, seen, depth + 1);
-    if (target.length >= 12) {
-      return;
-    }
-  }
-}
-
-function extractChangedFiles(payload: Record<string, unknown> | null): string[] {
+function extractChangedFiles(data: CanonicalToolLifecycleData | undefined): string[] {
   const changedFiles: string[] = [];
   const seen = new Set<string>();
-  collectChangedFiles(asRecord(payload?.data), changedFiles, seen, 0);
+  const files = data?.kind === "file_change" ? data.changedFiles : [];
+  for (const file of files) {
+    pushChangedFile(changedFiles, seen, file);
+    if (changedFiles.length >= 12) {
+      break;
+    }
+  }
   return changedFiles;
 }
 

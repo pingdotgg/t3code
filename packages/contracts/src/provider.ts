@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { TrimmedNonEmptyString } from "./baseSchemas";
+import { ProviderUserInputAnswers } from "./userInput";
 import {
   ApprovalRequestId,
   EventId,
@@ -19,7 +20,6 @@ import {
   ProviderKind,
   ProviderRequestKind,
   ProviderSandboxMode,
-  ProviderUserInputAnswers,
   RuntimeMode,
 } from "./orchestration";
 

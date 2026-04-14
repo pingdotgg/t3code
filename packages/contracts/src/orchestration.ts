@@ -15,6 +15,10 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas";
+import { CanonicalJsonValueSchema } from "./jsonValue";
+import { CanonicalToolLifecycleData } from "./toolLifecycle";
+import { ThreadTokenUsageSnapshot } from "./threadUsage";
+import { ProviderUserInputAnswers, UserInputQuestion } from "./userInput";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -81,9 +85,6 @@ export const ProviderApprovalDecision = Schema.Literals([
   "cancel",
 ]);
 export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
-export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
-export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
-
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -244,16 +245,223 @@ export const OrchestrationThreadActivityTone = Schema.Literals([
 ]);
 export type OrchestrationThreadActivityTone = typeof OrchestrationThreadActivityTone.Type;
 
-export const OrchestrationThreadActivity = Schema.Struct({
+export const OrchestrationThreadActivityKind = Schema.Literals([
+  "approval.requested",
+  "approval.resolved",
+  "runtime.error",
+  "runtime.warning",
+  "turn.plan.updated",
+  "user-input.requested",
+  "user-input.resolved",
+  "task.started",
+  "task.progress",
+  "task.completed",
+  "setup-script.requested",
+  "setup-script.started",
+  "setup-script.failed",
+  "context-compaction",
+  "context-window.updated",
+  "tool.updated",
+  "tool.completed",
+  "tool.started",
+  "checkpoint.revert.failed",
+  "checkpoint.capture.failed",
+  "checkpoint.captured",
+  "provider.turn.start.failed",
+  "provider.turn.interrupt.failed",
+  "provider.approval.respond.failed",
+  "provider.user-input.respond.failed",
+]);
+export type OrchestrationThreadActivityKind = typeof OrchestrationThreadActivityKind.Type;
+
+const OrchestrationThreadActivityBaseFields = {
   id: EventId,
   tone: OrchestrationThreadActivityTone,
-  kind: TrimmedNonEmptyString,
   summary: TrimmedNonEmptyString,
-  payload: Schema.Unknown,
   turnId: Schema.NullOr(TurnId),
   sequence: Schema.optional(NonNegativeInt),
   createdAt: IsoDateTime,
+} as const;
+
+const ApprovalRequestedActivityPayload = Schema.Struct({
+  requestId: Schema.optional(TrimmedNonEmptyString),
+  requestKind: Schema.optional(ProviderRequestKind),
+  requestType: Schema.optional(TrimmedNonEmptyString),
+  detail: Schema.optional(TrimmedNonEmptyString),
 });
+
+const ApprovalResolvedActivityPayload = Schema.Struct({
+  requestId: Schema.optional(TrimmedNonEmptyString),
+  requestKind: Schema.optional(ProviderRequestKind),
+  requestType: Schema.optional(TrimmedNonEmptyString),
+  decision: Schema.optional(TrimmedNonEmptyString),
+});
+
+const RuntimeErrorActivityPayload = Schema.Struct({
+  message: TrimmedNonEmptyString,
+});
+
+const RuntimeWarningActivityPayload = Schema.Struct({
+  message: TrimmedNonEmptyString,
+  detail: Schema.optional(CanonicalJsonValueSchema),
+});
+
+const RuntimePlanStep = Schema.Struct({
+  step: TrimmedNonEmptyString,
+  status: TrimmedNonEmptyString,
+});
+
+const TurnPlanUpdatedActivityPayload = Schema.Struct({
+  plan: Schema.Array(RuntimePlanStep),
+  explanation: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+
+const UserInputRequestedActivityPayload = Schema.Struct({
+  requestId: Schema.optional(TrimmedNonEmptyString),
+  questions: Schema.Array(UserInputQuestion),
+});
+
+const UserInputResolvedActivityPayload = Schema.Struct({
+  requestId: Schema.optional(TrimmedNonEmptyString),
+  answers: ProviderUserInputAnswers,
+});
+
+const TaskStartedActivityPayload = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  taskType: Schema.optional(TrimmedNonEmptyString),
+  detail: Schema.optional(TrimmedNonEmptyString),
+});
+
+const TaskProgressActivityPayload = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  detail: TrimmedNonEmptyString,
+  summary: Schema.optional(TrimmedNonEmptyString),
+  lastToolName: Schema.optional(TrimmedNonEmptyString),
+  usage: Schema.optional(ThreadTokenUsageSnapshot),
+});
+
+const TaskCompletedActivityPayload = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  status: TrimmedNonEmptyString,
+  detail: Schema.optional(TrimmedNonEmptyString),
+  usage: Schema.optional(ThreadTokenUsageSnapshot),
+});
+
+const SetupScriptRequestedOrStartedActivityPayload = Schema.Struct({
+  scriptId: TrimmedNonEmptyString,
+  scriptName: TrimmedNonEmptyString,
+  terminalId: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+});
+
+const SetupScriptFailedActivityPayload = Schema.Struct({
+  detail: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+});
+
+const ContextCompactionActivityPayload = Schema.Struct({
+  state: Schema.Literal("compacted"),
+  detail: Schema.optional(CanonicalJsonValueSchema),
+});
+
+const ToolStartedOrCompletedActivityPayload = Schema.Struct({
+  itemType: TrimmedNonEmptyString,
+  detail: Schema.optional(TrimmedNonEmptyString),
+});
+
+const ToolUpdatedActivityPayload = Schema.Struct({
+  itemType: TrimmedNonEmptyString,
+  status: Schema.optional(TrimmedNonEmptyString),
+  detail: Schema.optional(TrimmedNonEmptyString),
+  data: Schema.optional(CanonicalToolLifecycleData),
+});
+
+const CheckpointRevertFailedActivityPayload = Schema.Struct({
+  turnCount: NonNegativeInt,
+  detail: TrimmedNonEmptyString,
+});
+
+const CheckpointCaptureFailedActivityPayload = Schema.Struct({
+  detail: TrimmedNonEmptyString,
+});
+
+const CheckpointCapturedActivityPayload = Schema.Struct({
+  turnCount: NonNegativeInt,
+  status: OrchestrationCheckpointStatus,
+});
+
+const ProviderFailureActivityPayload = Schema.Struct({
+  detail: TrimmedNonEmptyString,
+  requestId: Schema.optional(TrimmedNonEmptyString),
+});
+
+function makeThreadActivitySchema<
+  Kind extends OrchestrationThreadActivityKind,
+  Payload extends Schema.Schema<any>,
+>(kind: Kind, tone: OrchestrationThreadActivityTone, payload: Payload) {
+  return Schema.Struct({
+    ...OrchestrationThreadActivityBaseFields,
+    tone: Schema.Literal(tone),
+    kind: Schema.Literal(kind),
+    payload,
+  });
+}
+
+export const OrchestrationThreadActivity = Schema.Union([
+  makeThreadActivitySchema("approval.requested", "approval", ApprovalRequestedActivityPayload),
+  makeThreadActivitySchema("approval.resolved", "approval", ApprovalResolvedActivityPayload),
+  makeThreadActivitySchema("runtime.error", "error", RuntimeErrorActivityPayload),
+  makeThreadActivitySchema("runtime.warning", "info", RuntimeWarningActivityPayload),
+  makeThreadActivitySchema("turn.plan.updated", "info", TurnPlanUpdatedActivityPayload),
+  makeThreadActivitySchema("user-input.requested", "info", UserInputRequestedActivityPayload),
+  makeThreadActivitySchema("user-input.resolved", "info", UserInputResolvedActivityPayload),
+  makeThreadActivitySchema("task.started", "info", TaskStartedActivityPayload),
+  makeThreadActivitySchema("task.progress", "info", TaskProgressActivityPayload),
+  makeThreadActivitySchema("task.completed", "info", TaskCompletedActivityPayload),
+  makeThreadActivitySchema(
+    "setup-script.requested",
+    "info",
+    SetupScriptRequestedOrStartedActivityPayload,
+  ),
+  makeThreadActivitySchema(
+    "setup-script.started",
+    "info",
+    SetupScriptRequestedOrStartedActivityPayload,
+  ),
+  makeThreadActivitySchema("setup-script.failed", "error", SetupScriptFailedActivityPayload),
+  makeThreadActivitySchema("context-compaction", "info", ContextCompactionActivityPayload),
+  makeThreadActivitySchema("context-window.updated", "info", ThreadTokenUsageSnapshot),
+  makeThreadActivitySchema("tool.updated", "tool", ToolUpdatedActivityPayload),
+  makeThreadActivitySchema("tool.completed", "tool", ToolStartedOrCompletedActivityPayload),
+  makeThreadActivitySchema("tool.started", "tool", ToolStartedOrCompletedActivityPayload),
+  makeThreadActivitySchema(
+    "checkpoint.revert.failed",
+    "error",
+    CheckpointRevertFailedActivityPayload,
+  ),
+  makeThreadActivitySchema(
+    "checkpoint.capture.failed",
+    "error",
+    CheckpointCaptureFailedActivityPayload,
+  ),
+  makeThreadActivitySchema("checkpoint.captured", "info", CheckpointCapturedActivityPayload),
+  makeThreadActivitySchema("provider.turn.start.failed", "error", ProviderFailureActivityPayload),
+  makeThreadActivitySchema(
+    "provider.turn.interrupt.failed",
+    "error",
+    ProviderFailureActivityPayload,
+  ),
+  makeThreadActivitySchema(
+    "provider.approval.respond.failed",
+    "error",
+    ProviderFailureActivityPayload,
+  ),
+  makeThreadActivitySchema(
+    "provider.user-input.respond.failed",
+    "error",
+    ProviderFailureActivityPayload,
+  ),
+]);
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
 const OrchestrationLatestTurnState = Schema.Literals([

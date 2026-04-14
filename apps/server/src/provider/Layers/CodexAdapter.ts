@@ -8,6 +8,7 @@
  */
 import {
   type CanonicalItemType,
+  type CanonicalToolLifecycleData,
   type CanonicalRequestType,
   type ProviderEvent,
   type ProviderRuntimeEvent,
@@ -103,6 +104,111 @@ function asArray(value: unknown): unknown[] | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeCommandValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const parts = value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0);
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
+  if (typeof value !== "string") {
+    return;
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0 || seen.has(normalized)) {
+    return;
+  }
+  seen.add(normalized);
+  target.push(normalized);
+}
+
+function collectChangedFiles(value: unknown, target: string[], seen: Set<string>, depth: number) {
+  if (depth > 4 || target.length >= 12) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectChangedFiles(entry, target, seen, depth + 1);
+      if (target.length >= 12) {
+        return;
+      }
+    }
+    return;
+  }
+
+  const record = asObject(value);
+  if (!record) {
+    return;
+  }
+
+  pushChangedFile(target, seen, record.path);
+  pushChangedFile(target, seen, record.filePath);
+  pushChangedFile(target, seen, record.relativePath);
+  pushChangedFile(target, seen, record.filename);
+  pushChangedFile(target, seen, record.newPath);
+  pushChangedFile(target, seen, record.oldPath);
+
+  for (const nestedKey of ["item", "result", "input", "changes", "files", "edits", "patches"]) {
+    if (!(nestedKey in record)) {
+      continue;
+    }
+    collectChangedFiles(record[nestedKey], target, seen, depth + 1);
+  }
+}
+
+function buildCanonicalToolLifecycleData(
+  itemType: CanonicalItemType,
+  source: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): CanonicalToolLifecycleData | undefined {
+  const result = asObject(source.result);
+  const input = asObject(source.input);
+  const command = [
+    normalizeCommandValue(source.command),
+    normalizeCommandValue(input?.command),
+    normalizeCommandValue(result?.command),
+    normalizeCommandValue(payload.command),
+  ].find((candidate) => candidate !== undefined);
+  const changedFiles: string[] = [];
+  const seen = new Set<string>();
+  collectChangedFiles(source, changedFiles, seen, 0);
+  collectChangedFiles(payload, changedFiles, seen, 0);
+  if (itemType === "command_execution" && command) {
+    return {
+      kind: "command_execution",
+      command,
+      ...(input ? { input: input as CanonicalToolLifecycleData["input"] } : {}),
+      ...(result ? { result: result as CanonicalToolLifecycleData["result"] } : {}),
+      ...(typeof result?.content === "string" ? { output: result.content } : {}),
+      ...(asNumber(result?.exitCode) !== undefined ? { exitCode: asNumber(result?.exitCode) } : {}),
+    };
+  }
+  if (itemType === "file_change" && changedFiles.length > 0) {
+    return {
+      kind: "file_change",
+      changedFiles,
+      ...(input ? { input: input as CanonicalToolLifecycleData["input"] } : {}),
+      ...(result ? { result: result as CanonicalToolLifecycleData["result"] } : {}),
+    };
+  }
+  if (input || result) {
+    return {
+      kind: "generic",
+      ...(input ? { input: input as CanonicalToolLifecycleData["input"] } : {}),
+      ...(result ? { result: result as CanonicalToolLifecycleData["result"] } : {}),
+    };
+  }
+  return undefined;
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
@@ -319,27 +425,29 @@ function toCanonicalUserInputAnswers(
     return {};
   }
 
-  return Object.fromEntries(
-    Object.entries(answers).flatMap(([questionId, value]) => {
-      if (typeof value === "string") {
-        return [[questionId, value] as const];
-      }
+  const normalized: Record<string, string | readonly string[]> = {};
+  for (const [questionId, value] of Object.entries(answers)) {
+    if (typeof value === "string") {
+      normalized[questionId] = value;
+      continue;
+    }
 
-      if (Array.isArray(value)) {
-        const normalized = value.filter((entry): entry is string => typeof entry === "string");
-        return [[questionId, normalized.length === 1 ? normalized[0] : normalized] as const];
-      }
+    if (Array.isArray(value)) {
+      const entries = value.filter((entry): entry is string => typeof entry === "string");
+      normalized[questionId] = entries.length === 1 ? (entries[0] ?? entries) : entries;
+      continue;
+    }
 
-      const answerObject = asObject(value);
-      const answerList = asArray(answerObject?.answers)?.filter(
-        (entry): entry is string => typeof entry === "string",
-      );
-      if (!answerList) {
-        return [];
-      }
-      return [[questionId, answerList.length === 1 ? answerList[0] : answerList] as const];
-    }),
-  );
+    const answerObject = asObject(value);
+    const answerList = asArray(answerObject?.answers)?.filter(
+      (entry): entry is string => typeof entry === "string",
+    );
+    if (answerList) {
+      normalized[questionId] = answerList.length === 1 ? (answerList[0] ?? answerList) : answerList;
+    }
+  }
+
+  return normalized;
 }
 
 function toUserInputQuestions(payload: Record<string, unknown> | undefined) {
@@ -566,7 +674,9 @@ function mapItemLifecycle(
       ...(status ? { status } : {}),
       ...(itemTitle(itemType) ? { title: itemTitle(itemType) } : {}),
       ...(detail ? { detail } : {}),
-      ...(event.payload !== undefined ? { data: event.payload } : {}),
+      ...(buildCanonicalToolLifecycleData(itemType, source, payload ?? {})
+        ? { data: buildCanonicalToolLifecycleData(itemType, source, payload ?? {}) }
+        : {}),
     },
   };
 }
@@ -798,24 +908,13 @@ function mapToRuntimeEvents(
         payload: {
           state: toTurnStatus(turn?.status),
           ...(asString(turn?.stopReason) ? { stopReason: asString(turn?.stopReason) } : {}),
-          ...(turn?.usage !== undefined ? { usage: turn.usage } : {}),
-          ...(asObject(turn?.modelUsage) ? { modelUsage: asObject(turn?.modelUsage) } : {}),
+          ...(normalizeCodexTokenUsage(turn?.usage)
+            ? { usage: normalizeCodexTokenUsage(turn?.usage) }
+            : {}),
           ...(asNumber(turn?.totalCostUsd) !== undefined
             ? { totalCostUsd: asNumber(turn?.totalCostUsd) }
             : {}),
           ...(errorMessage ? { errorMessage } : {}),
-        },
-      },
-    ];
-  }
-
-  if (event.method === "turn/aborted") {
-    return [
-      {
-        ...runtimeEventBase(event, canonicalThreadId),
-        type: "turn.aborted",
-        payload: {
-          reason: event.message ?? "Turn aborted",
         },
       },
     ];
@@ -949,23 +1048,6 @@ function mapToRuntimeEvents(
             : {}),
           ...(typeof payload?.summaryIndex === "number"
             ? { summaryIndex: payload.summaryIndex }
-            : {}),
-        },
-      },
-    ];
-  }
-
-  if (event.method === "item/mcpToolCall/progress") {
-    return [
-      {
-        ...runtimeEventBase(event, canonicalThreadId),
-        type: "tool.progress",
-        payload: {
-          ...(asString(payload?.toolUseId) ? { toolUseId: asString(payload?.toolUseId) } : {}),
-          ...(asString(payload?.toolName) ? { toolName: asString(payload?.toolName) } : {}),
-          ...(asString(payload?.summary) ? { summary: asString(payload?.summary) } : {}),
-          ...(asNumber(payload?.elapsedSeconds) !== undefined
-            ? { elapsedSeconds: asNumber(payload?.elapsedSeconds) }
             : {}),
         },
       },
@@ -1106,148 +1188,6 @@ function mapToRuntimeEvents(
           ...(asNumber(msg?.summary_index) !== undefined
             ? { summaryIndex: asNumber(msg?.summary_index) }
             : {}),
-        },
-      },
-    ];
-  }
-
-  if (event.method === "model/rerouted") {
-    return [
-      {
-        type: "model.rerouted",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          fromModel: asString(payload?.fromModel) ?? "unknown",
-          toModel: asString(payload?.toModel) ?? "unknown",
-          reason: asString(payload?.reason) ?? "unknown",
-        },
-      },
-    ];
-  }
-
-  if (event.method === "deprecationNotice") {
-    return [
-      {
-        type: "deprecation.notice",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          summary: asString(payload?.summary) ?? "Deprecation notice",
-          ...(asString(payload?.details) ? { details: asString(payload?.details) } : {}),
-        },
-      },
-    ];
-  }
-
-  if (event.method === "configWarning") {
-    return [
-      {
-        type: "config.warning",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          summary: asString(payload?.summary) ?? "Configuration warning",
-          ...(asString(payload?.details) ? { details: asString(payload?.details) } : {}),
-          ...(asString(payload?.path) ? { path: asString(payload?.path) } : {}),
-          ...(payload?.range !== undefined ? { range: payload.range } : {}),
-        },
-      },
-    ];
-  }
-
-  if (event.method === "account/updated") {
-    return [
-      {
-        type: "account.updated",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          account: event.payload ?? {},
-        },
-      },
-    ];
-  }
-
-  if (event.method === "account/rateLimits/updated") {
-    return [
-      {
-        type: "account.rate-limits.updated",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          rateLimits: event.payload ?? {},
-        },
-      },
-    ];
-  }
-
-  if (event.method === "mcpServer/oauthLogin/completed") {
-    return [
-      {
-        type: "mcp.oauth.completed",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          success: payload?.success === true,
-          ...(asString(payload?.name) ? { name: asString(payload?.name) } : {}),
-          ...(asString(payload?.error) ? { error: asString(payload?.error) } : {}),
-        },
-      },
-    ];
-  }
-
-  if (event.method === "thread/realtime/started") {
-    const realtimeSessionId = asString(payload?.realtimeSessionId);
-    return [
-      {
-        type: "thread.realtime.started",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          realtimeSessionId,
-        },
-      },
-    ];
-  }
-
-  if (event.method === "thread/realtime/itemAdded") {
-    return [
-      {
-        type: "thread.realtime.item-added",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          item: event.payload ?? {},
-        },
-      },
-    ];
-  }
-
-  if (event.method === "thread/realtime/outputAudio/delta") {
-    return [
-      {
-        type: "thread.realtime.audio.delta",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          audio: event.payload ?? {},
-        },
-      },
-    ];
-  }
-
-  if (event.method === "thread/realtime/error") {
-    const message = asString(payload?.message) ?? event.message ?? "Realtime error";
-    return [
-      {
-        type: "thread.realtime.error",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          message,
-        },
-      },
-    ];
-  }
-
-  if (event.method === "thread/realtime/closed") {
-    return [
-      {
-        type: "thread.realtime.closed",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          reason: event.message,
         },
       },
     ];

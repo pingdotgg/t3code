@@ -161,27 +161,56 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           clientSessions: serverAuth.listClientSessions(currentSessionId).pipe(Effect.orDie),
         });
 
-      const appendSetupScriptActivity = (input: {
-        readonly threadId: ThreadId;
-        readonly kind: "setup-script.requested" | "setup-script.started" | "setup-script.failed";
-        readonly summary: string;
-        readonly createdAt: string;
-        readonly payload: Record<string, unknown>;
-        readonly tone: "info" | "error";
-      }) =>
+      const appendSetupScriptActivity = (
+        input: {
+          readonly threadId: ThreadId;
+          readonly summary: string;
+          readonly createdAt: string;
+        } & (
+          | {
+              readonly kind: "setup-script.requested" | "setup-script.started";
+              readonly payload: {
+                readonly scriptId: string;
+                readonly scriptName: string;
+                readonly terminalId: string;
+                readonly worktreePath: string;
+              };
+              readonly tone: "info";
+            }
+          | {
+              readonly kind: "setup-script.failed";
+              readonly payload: {
+                readonly detail: string;
+                readonly worktreePath: string;
+              };
+              readonly tone: "error";
+            }
+        ),
+      ) =>
         orchestrationEngine.dispatch({
           type: "thread.activity.append",
           commandId: serverCommandId("setup-script-activity"),
           threadId: input.threadId,
-          activity: {
-            id: EventId.make(crypto.randomUUID()),
-            tone: input.tone,
-            kind: input.kind,
-            summary: input.summary,
-            payload: input.payload,
-            turnId: null,
-            createdAt: input.createdAt,
-          },
+          activity:
+            input.kind === "setup-script.failed"
+              ? {
+                  id: EventId.make(crypto.randomUUID()),
+                  tone: input.tone,
+                  kind: input.kind,
+                  summary: input.summary,
+                  payload: input.payload,
+                  turnId: null,
+                  createdAt: input.createdAt,
+                }
+              : {
+                  id: EventId.make(crypto.randomUUID()),
+                  tone: input.tone,
+                  kind: input.kind,
+                  summary: input.summary,
+                  payload: input.payload,
+                  turnId: null,
+                  createdAt: input.createdAt,
+                },
           createdAt: input.createdAt,
         });
 

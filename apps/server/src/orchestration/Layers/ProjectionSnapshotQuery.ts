@@ -818,7 +818,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   turnId: row.turnId,
                   ...(row.sequence !== null ? { sequence: row.sequence } : {}),
                   createdAt: row.createdAt,
-                });
+                } as OrchestrationThreadActivity);
                 activitiesByThread.set(row.threadId, threadActivities);
               }
 

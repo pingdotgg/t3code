@@ -157,9 +157,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'thread-1',
           'turn-1',
           'info',
-          'runtime.note',
-          'provider started',
-          '{"stage":"start"}',
+          'runtime.warning',
+          'Runtime warning',
+          '{"message":"provider started"}',
           '2026-02-24T00:00:06.000Z'
         )
       `;
@@ -324,9 +324,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             {
               id: asEventId("activity-1"),
               tone: "info",
-              kind: "runtime.note",
-              summary: "provider started",
-              payload: { stage: "start" },
+              kind: "runtime.warning",
+              summary: "Runtime warning",
+              payload: { message: "provider started" },
               turnId: asTurnId("turn-1"),
               createdAt: "2026-02-24T00:00:06.000Z",
             },

@@ -1,18 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { EventId, type OrchestrationThreadActivity, TurnId } from "@t3tools/contracts";
+import {
+  EventId,
+  type OrchestrationThreadActivity,
+  type OrchestrationThreadActivityKind,
+  TurnId,
+} from "@t3tools/contracts";
 
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
 
-function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
+function makeActivity(
+  id: string,
+  kind: OrchestrationThreadActivityKind,
+  payload: unknown,
+): OrchestrationThreadActivity {
   return {
     id: EventId.make(id),
-    tone: "info",
+    tone: kind.startsWith("tool.") ? "tool" : "info",
     kind,
     summary: kind,
     payload,
     turnId: TurnId.make("turn-1"),
     createdAt: "2026-03-23T00:00:00.000Z",
-  };
+  } as OrchestrationThreadActivity;
 }
 
 describe("contextWindow", () => {

@@ -9,6 +9,7 @@ import {
   type ProviderKind,
   type ProjectId,
   type ProviderApprovalDecision,
+  type ProviderUserInputAnswers,
   type ServerProvider,
   type ScopedThreadRef,
   type ThreadId,
@@ -2658,7 +2659,7 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onRespondToUserInput = useCallback(
-    async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
+    async (requestId: ApprovalRequestId, answers: ProviderUserInputAnswers) => {
       const api = readEnvironmentApi(environmentId);
       if (!api || !activeThreadId) return;
 
