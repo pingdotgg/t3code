@@ -184,6 +184,19 @@ export function ThreadGitControls(props: {
           <Stack.Toolbar.Label>{quickAction.label}</Stack.Toolbar.Label>
         </Stack.Toolbar.MenuAction>
         <Stack.Toolbar.MenuAction
+          icon="text.bubble"
+          disabled={!isRepo}
+          onPress={() =>
+            router.push({
+              pathname: "/threads/[environmentId]/[threadId]/git/review",
+              params: { environmentId, threadId },
+            })
+          }
+          subtitle="Turn diffs and worktree changes"
+        >
+          <Stack.Toolbar.Label>Review changes</Stack.Toolbar.Label>
+        </Stack.Toolbar.MenuAction>
+        <Stack.Toolbar.MenuAction
           icon="ellipsis.circle"
           onPress={() =>
             router.push({

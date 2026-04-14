@@ -216,6 +216,19 @@ export function GitOverviewSheet() {
           ) : null}
           <View className="ml-12 h-px" style={{ backgroundColor: borderColor }} />
           <SheetListRow
+            icon="text.bubble"
+            title="Review changes"
+            subtitle="Inspect turn diffs, worktree changes, and base branch diff"
+            disabled={busy || !isRepo}
+            onPress={() =>
+              router.push({
+                pathname: "/threads/[environmentId]/[threadId]/git/review",
+                params: { environmentId, threadId },
+              })
+            }
+          />
+          <View className="ml-12 h-px" style={{ backgroundColor: borderColor }} />
+          <SheetListRow
             icon="point.topleft.down.curvedto.point.bottomright.up"
             title="Branches & worktrees"
             subtitle="Switch branch, create branch, or move to a worktree"

@@ -69,6 +69,7 @@ const rpcClientMock = {
     init: vi.fn(),
     resolvePullRequest: vi.fn(),
     preparePullRequestThread: vi.fn(),
+    getReviewDiffs: vi.fn(),
   },
   server: {
     getConfig: vi.fn(),
@@ -113,6 +114,7 @@ vi.mock("./environments/runtime", () => ({
   resetEnvironmentServiceForTests: vi.fn(),
   resetSavedEnvironmentRegistryStoreForTests: vi.fn(),
   resetSavedEnvironmentRuntimeStoreForTests: vi.fn(),
+  subscribeEnvironmentConnections: vi.fn(() => () => undefined),
 }));
 
 vi.mock("./contextMenuFallback", () => ({

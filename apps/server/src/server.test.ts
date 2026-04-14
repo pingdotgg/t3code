@@ -2259,6 +2259,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             createBranch: (input) => Effect.succeed({ branch: input.branch }),
             checkoutBranch: (input) => Effect.succeed({ branch: input.branch }),
             initRepo: () => Effect.void,
+            getReviewDiffs: (input) =>
+              Effect.succeed({
+                cwd: input.cwd,
+                generatedAt: new Date(0).toISOString(),
+                sections: [
+                  {
+                    kind: "dirty",
+                    title: "Dirty worktree",
+                    baseRef: "HEAD",
+                    headRef: null,
+                    diff: "dirty-diff",
+                  },
+                  {
+                    kind: "base",
+                    title: "Against main",
+                    baseRef: "main",
+                    headRef: "feature/demo",
+                    diff: "base-diff",
+                  },
+                ],
+              }),
           },
         },
       });
@@ -2368,6 +2389,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
         ),
       );
+
+      const reviewDiffs = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitGetReviewDiffs]({ cwd: "/tmp/repo" }),
+        ),
+      );
+      assert.equal(reviewDiffs.sections[0]?.diff, "dirty-diff");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

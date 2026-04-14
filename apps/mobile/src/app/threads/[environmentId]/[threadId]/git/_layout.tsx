@@ -42,6 +42,17 @@ export default function GitSheetLayout() {
           headerStyle: headerBg,
         }}
       />
+      <Stack.Screen
+        name="review"
+        options={{
+          animation: "slide_from_right",
+          headerShown: true,
+          headerTitle: "Review changes",
+          headerBackTitle: "",
+          headerShadowVisible: false,
+          headerStyle: headerBg,
+        }}
+      />
     </Stack>
   );
 }

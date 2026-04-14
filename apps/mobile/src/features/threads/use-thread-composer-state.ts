@@ -89,6 +89,24 @@ function appendDraftMessage(threadKey: string, value: string): void {
   });
 }
 
+export function appendReviewCommentToDraft(input: {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly text: string;
+}): void {
+  const threadKey = scopedThreadKey(
+    EnvironmentId.make(input.environmentId),
+    ThreadId.make(input.threadId),
+  );
+  const current = appAtomRegistry.get(draftMessageByThreadKeyAtom);
+  const existing = current[threadKey] ?? "";
+  const separator = existing.trim().length > 0 && !existing.endsWith("\n") ? "\n\n" : "";
+  appAtomRegistry.set(draftMessageByThreadKeyAtom, {
+    ...current,
+    [threadKey]: `${existing}${separator}${input.text}`,
+  });
+}
+
 function clearDraft(threadKey: string): void {
   const draftMessages = appAtomRegistry.get(draftMessageByThreadKeyAtom);
   const draftAttachments = appAtomRegistry.get(draftAttachmentsByThreadKeyAtom);

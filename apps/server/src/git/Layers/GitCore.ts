@@ -18,7 +18,7 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { GitCommandError, type GitBranch } from "@t3tools/contracts";
+import { GitCommandError, type GitBranch, type GitReviewDiffSection } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "../../observability/Attributes.ts";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../../observability/Metrics.ts";
@@ -46,6 +46,8 @@ const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
+const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 180_000;
+const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 40_000;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
@@ -1628,6 +1630,116 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     },
   );
 
+  const readUntrackedReviewDiffs = Effect.fn("readUntrackedReviewDiffs")(function* (cwd: string) {
+    const untrackedOutput = yield* runGitStdoutWithOptions(
+      "GitCore.readUntrackedReviewDiffs.list",
+      cwd,
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      {
+        maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+        truncateOutputAtMaxBytes: true,
+      },
+    );
+    const untrackedPaths = splitNullSeparatedPaths(untrackedOutput, false);
+    if (untrackedPaths.length === 0) {
+      return "";
+    }
+
+    const diffs = yield* Effect.forEach(
+      untrackedPaths,
+      (relativePath) =>
+        executeGit(
+          "GitCore.readUntrackedReviewDiffs.diff",
+          cwd,
+          ["diff", "--no-index", "--patch", "--minimal", "--", "/dev/null", relativePath],
+          {
+            allowNonZeroExit: true,
+            maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
+            truncateOutputAtMaxBytes: true,
+          },
+        ).pipe(
+          Effect.map((result) =>
+            result.stdoutTruncated ? `${result.stdout}${OUTPUT_TRUNCATED_MARKER}` : result.stdout,
+          ),
+        ),
+      { concurrency: 4 },
+    );
+
+    return diffs.filter((diff) => diff.trim().length > 0).join("\n");
+  });
+
+  const getReviewDiffs: GitCoreShape["getReviewDiffs"] = Effect.fn("getReviewDiffs")(
+    function* (input) {
+      const details = yield* statusDetailsLocal(input.cwd);
+      if (!details.isRepo) {
+        return {
+          cwd: input.cwd,
+          generatedAt: new Date().toISOString(),
+          sections: [],
+        };
+      }
+
+      const branch = details.branch;
+      const baseRef = branch
+        ? yield* resolveBaseBranchForNoUpstream(input.cwd, branch).pipe(
+            Effect.catch(() => Effect.succeed(null)),
+          )
+        : null;
+
+      const dirtyTrackedDiff = yield* runGitStdoutWithOptions(
+        "GitCore.getReviewDiffs.dirtyTracked",
+        input.cwd,
+        ["diff", "--patch", "--minimal", "HEAD", "--"],
+        {
+          maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+          truncateOutputAtMaxBytes: true,
+        },
+      ).pipe(Effect.catch(() => Effect.succeed("")));
+      const dirtyUntrackedDiff = yield* readUntrackedReviewDiffs(input.cwd).pipe(
+        Effect.catch(() => Effect.succeed("")),
+      );
+      const dirtyDiff = [dirtyTrackedDiff.trimEnd(), dirtyUntrackedDiff.trimEnd()]
+        .filter((diff) => diff.length > 0)
+        .join("\n");
+
+      const baseDiff =
+        baseRef && branch
+          ? yield* runGitStdoutWithOptions(
+              "GitCore.getReviewDiffs.base",
+              input.cwd,
+              ["diff", "--patch", "--minimal", `${baseRef}...HEAD`],
+              {
+                maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+                truncateOutputAtMaxBytes: true,
+              },
+            ).pipe(Effect.catch(() => Effect.succeed("")))
+          : "";
+
+      const sections: GitReviewDiffSection[] = [
+        {
+          kind: "dirty",
+          title: "Dirty worktree",
+          baseRef: "HEAD",
+          headRef: null,
+          diff: dirtyDiff,
+        },
+        {
+          kind: "base",
+          title: baseRef ? `Against ${baseRef}` : "Against base branch",
+          baseRef,
+          headRef: branch ?? "HEAD",
+          diff: baseDiff,
+        },
+      ];
+
+      return {
+        cwd: input.cwd,
+        generatedAt: new Date().toISOString(),
+        sections,
+      };
+    },
+  );
+
   const readConfigValue: GitCoreShape["readConfigValue"] = (cwd, key) =>
     runGitStdout("GitCore.readConfigValue", cwd, ["config", "--get", key], true).pipe(
       Effect.map((stdout) => stdout.trim()),
@@ -2184,6 +2296,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     pushCurrentBranch,
     pullCurrentBranch,
     readRangeContext,
+    getReviewDiffs,
     readConfigValue,
     isInsideWorkTree,
     listWorkspaceFiles,
