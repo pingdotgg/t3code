@@ -38,6 +38,9 @@ jobs:
         with:
           node-version-file: package.json
 
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
       - id: release_meta
         name: Resolve nightly release version
         shell: bash
@@ -53,9 +56,6 @@ jobs:
             --run-number "$NIGHTLY_RUN_NUMBER" \
             --sha "$NIGHTLY_SHA" \
             --github-output
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
 
       - name: Lint
         run: bun run lint

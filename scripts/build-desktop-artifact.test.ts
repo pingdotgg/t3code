@@ -6,6 +6,7 @@ import {
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopUpdateChannel,
+  resolveMockUpdateServerUrl,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 
@@ -27,6 +28,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     });
+  });
+
+  it("falls back to the default mock update port when the configured port is blank", () => {
+    assert.equal(resolveMockUpdateServerUrl(undefined), "http://localhost:3000");
+    assert.equal(resolveMockUpdateServerUrl(""), "http://localhost:3000");
+    assert.equal(resolveMockUpdateServerUrl("   "), "http://localhost:3000");
+    assert.equal(resolveMockUpdateServerUrl("4123"), "http://localhost:4123");
   });
 
   it.effect("preserves explicit false boolean flags over true env defaults", () =>

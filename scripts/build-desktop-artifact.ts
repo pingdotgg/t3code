@@ -475,6 +475,11 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
   };
 }
 
+export function resolveMockUpdateServerUrl(mockUpdateServerPort: string | undefined): string {
+  const port = mockUpdateServerPort?.trim();
+  return `http://localhost:${port && port.length > 0 ? port : 3000}`;
+}
+
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -508,7 +513,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.publish = [
       {
         provider: "generic",
-        url: `http://localhost:${mockUpdateServerPort ?? 3000}`,
+        url: resolveMockUpdateServerUrl(mockUpdateServerPort),
       },
     ];
   }
