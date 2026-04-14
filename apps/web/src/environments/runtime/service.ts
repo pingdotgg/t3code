@@ -1,5 +1,7 @@
 import {
   type AuthSessionRole,
+  type DesktopSshEnvironmentBootstrap,
+  type DesktopSshEnvironmentTarget,
   type EnvironmentId,
   type OrchestrationEvent,
   type OrchestrationShellSnapshot,
@@ -33,6 +35,7 @@ import {
   bootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor,
   fetchRemoteSessionState,
+  isRemoteEnvironmentAuthHttpError,
   resolveRemoteWebSocketConnectionUrl,
 } from "../remote/api";
 import { resolveRemotePairingTarget } from "../remote/target";
@@ -85,6 +88,7 @@ type ThreadDetailSubscriptionEntry = {
 };
 
 const environmentConnections = new Map<EnvironmentId, EnvironmentConnection>();
+const pendingSavedEnvironmentConnections = new Map<EnvironmentId, Promise<EnvironmentConnection>>();
 const environmentConnectionListeners = new Set<() => void>();
 const threadDetailSubscriptions = new Map<string, ThreadDetailSubscriptionEntry>();
 const lastAppliedProjectionVersionByEnvironment = new Map<
@@ -491,6 +495,163 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
+function serializeSavedEnvironmentRecord(record: SavedEnvironmentRecord) {
+  return {
+    environmentId: record.environmentId,
+    label: record.label,
+    httpBaseUrl: record.httpBaseUrl,
+    wsBaseUrl: record.wsBaseUrl,
+    createdAt: record.createdAt,
+    lastConnectedAt: record.lastConnectedAt,
+    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
+  } as const;
+}
+
+function isDesktopSshTargetEqual(
+  left: DesktopSshEnvironmentTarget | undefined,
+  right: DesktopSshEnvironmentTarget | undefined,
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    left.alias === right.alias &&
+    left.hostname === right.hostname &&
+    left.username === right.username &&
+    left.port === right.port
+  );
+}
+
+function findSavedEnvironmentRecordByDesktopSshTarget(
+  target: DesktopSshEnvironmentTarget | undefined,
+): SavedEnvironmentRecord | null {
+  if (!target) {
+    return null;
+  }
+
+  return (
+    listSavedEnvironmentRecords().find((record) =>
+      isDesktopSshTargetEqual(record.desktopSsh, target),
+    ) ?? null
+  );
+}
+
+async function persistSavedEnvironmentRegistryRollback(): Promise<void> {
+  await ensureLocalApi().persistence.setSavedEnvironmentRegistry(
+    listSavedEnvironmentRecords().map((entry) => serializeSavedEnvironmentRecord(entry)),
+  );
+}
+
+async function resolveDesktopSshEnvironmentBootstrap(
+  target: DesktopSshEnvironmentTarget,
+  options?: { readonly issuePairingToken?: boolean },
+): Promise<DesktopSshEnvironmentBootstrap> {
+  const desktopBridge = window.desktopBridge;
+  if (!desktopBridge) {
+    throw new Error("SSH launch is only available in the desktop app.");
+  }
+
+  return await desktopBridge.ensureSshEnvironment(target, options);
+}
+
+function getDesktopSshBridge() {
+  const desktopBridge = window.desktopBridge;
+  if (!desktopBridge) {
+    throw new Error("SSH launch is only available in the desktop app.");
+  }
+  return desktopBridge;
+}
+
+async function fetchDesktopSshEnvironmentDescriptor(httpBaseUrl: string) {
+  return await getDesktopSshBridge().fetchSshEnvironmentDescriptor(httpBaseUrl);
+}
+
+async function bootstrapDesktopSshBearerSession(httpBaseUrl: string, credential: string) {
+  return await getDesktopSshBridge().bootstrapSshBearerSession(httpBaseUrl, credential);
+}
+
+async function fetchDesktopSshSessionState(httpBaseUrl: string, bearerToken: string) {
+  return await getDesktopSshBridge().fetchSshSessionState(httpBaseUrl, bearerToken);
+}
+
+async function resolveDesktopSshWebSocketConnectionUrl(
+  wsBaseUrl: string,
+  httpBaseUrl: string,
+  bearerToken: string,
+) {
+  const issued = await getDesktopSshBridge().issueSshWebSocketToken(httpBaseUrl, bearerToken);
+  const url = new URL(wsBaseUrl, window.location.origin);
+  url.searchParams.set("wsToken", issued.token);
+  return url.toString();
+}
+
+async function prepareSavedEnvironmentRecordForConnection(
+  record: SavedEnvironmentRecord,
+  options?: { readonly issuePairingToken?: boolean },
+): Promise<{
+  readonly record: SavedEnvironmentRecord;
+  readonly pairingToken: string | null;
+}> {
+  if (!record.desktopSsh) {
+    return { record, pairingToken: null };
+  }
+
+  const bootstrap = await resolveDesktopSshEnvironmentBootstrap(record.desktopSsh, options);
+  const nextRecord: SavedEnvironmentRecord = {
+    ...record,
+    httpBaseUrl: bootstrap.httpBaseUrl,
+    wsBaseUrl: bootstrap.wsBaseUrl,
+    desktopSsh: bootstrap.target,
+  };
+
+  if (
+    nextRecord.httpBaseUrl !== record.httpBaseUrl ||
+    nextRecord.wsBaseUrl !== record.wsBaseUrl ||
+    !isDesktopSshTargetEqual(nextRecord.desktopSsh, record.desktopSsh)
+  ) {
+    await persistSavedEnvironmentRecord(nextRecord);
+    useSavedEnvironmentRegistryStore.getState().upsert(nextRecord);
+  }
+
+  return {
+    record: nextRecord,
+    pairingToken: bootstrap.pairingToken,
+  };
+}
+
+async function issueDesktopSshBearerSession(record: SavedEnvironmentRecord): Promise<{
+  readonly record: SavedEnvironmentRecord;
+  readonly bearerToken: string;
+  readonly role: AuthSessionRole | null;
+}> {
+  const prepared = await prepareSavedEnvironmentRecordForConnection(record, {
+    issuePairingToken: true,
+  });
+  if (!prepared.pairingToken) {
+    throw new Error("Desktop SSH launch did not return a pairing token.");
+  }
+
+  const bearerSession = await bootstrapDesktopSshBearerSession(
+    prepared.record.httpBaseUrl,
+    prepared.pairingToken,
+  );
+  const didPersistBearerToken = await writeSavedEnvironmentBearerToken(
+    prepared.record.environmentId,
+    bearerSession.sessionToken,
+  );
+  if (!didPersistBearerToken) {
+    await persistSavedEnvironmentRegistryRollback();
+    throw new Error("Unable to persist saved environment credentials.");
+  }
+
+  return {
+    record: prepared.record,
+    bearerToken: bearerSession.sessionToken,
+    role: bearerSession.role ?? null,
+  };
+}
+
 function setRuntimeConnecting(environmentId: EnvironmentId) {
   useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
     connectionState: "connecting",
@@ -802,35 +963,46 @@ function createPrimaryEnvironmentClient(
 }
 
 function createSavedEnvironmentClient(
-  record: SavedEnvironmentRecord,
+  environmentId: EnvironmentId,
   bearerToken: string,
 ): WsRpcClient {
-  useSavedEnvironmentRuntimeStore.getState().ensure(record.environmentId);
+  useSavedEnvironmentRuntimeStore.getState().ensure(environmentId);
 
   return createWsRpcClient(
     new WsTransport(
-      () =>
-        resolveRemoteWebSocketConnectionUrl({
-          wsBaseUrl: record.wsBaseUrl,
-          httpBaseUrl: record.httpBaseUrl,
-          bearerToken,
-        }),
+      async () => {
+        const record = getSavedEnvironmentRecord(environmentId);
+        if (!record) {
+          throw new Error(`Saved environment ${environmentId} not found.`);
+        }
+        return record.desktopSsh
+          ? await resolveDesktopSshWebSocketConnectionUrl(
+              record.wsBaseUrl,
+              record.httpBaseUrl,
+              bearerToken,
+            )
+          : await resolveRemoteWebSocketConnectionUrl({
+              wsBaseUrl: record.wsBaseUrl,
+              httpBaseUrl: record.httpBaseUrl,
+              bearerToken,
+            });
+      },
       {
         onAttempt: () => {
-          setRuntimeConnecting(record.environmentId);
+          setRuntimeConnecting(environmentId);
         },
         onOpen: () => {
-          setRuntimeConnected(record.environmentId);
+          setRuntimeConnected(environmentId);
         },
         onError: (message: string) => {
-          useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
+          useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
             connectionState: "error",
             lastError: message,
             lastErrorAt: isoNow(),
           });
         },
         onClose: (details: { readonly code: number; readonly reason: string }) => {
-          setRuntimeDisconnected(record.environmentId, details.reason);
+          setRuntimeDisconnected(environmentId, details.reason);
         },
       },
     ),
@@ -838,18 +1010,25 @@ function createSavedEnvironmentClient(
 }
 
 async function refreshSavedEnvironmentMetadata(
-  record: SavedEnvironmentRecord,
+  environmentId: EnvironmentId,
   bearerToken: string,
   client: WsRpcClient,
   roleHint?: AuthSessionRole | null,
   configHint?: ServerConfig | null,
 ): Promise<void> {
+  const record = getSavedEnvironmentRecord(environmentId);
+  if (!record) {
+    throw new Error(`Saved environment ${environmentId} not found.`);
+  }
+
   const [serverConfig, sessionState] = await Promise.all([
     configHint ? Promise.resolve(configHint) : client.server.getConfig(),
-    fetchRemoteSessionState({
-      httpBaseUrl: record.httpBaseUrl,
-      bearerToken,
-    }),
+    record.desktopSsh
+      ? fetchDesktopSshSessionState(record.httpBaseUrl, bearerToken)
+      : fetchRemoteSessionState({
+          httpBaseUrl: record.httpBaseUrl,
+          bearerToken,
+        }),
   ]);
 
   useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
@@ -923,69 +1102,124 @@ async function ensureSavedEnvironmentConnection(
     return existing;
   }
 
-  const bearerToken =
-    options?.bearerToken ?? (await readSavedEnvironmentBearerToken(record.environmentId));
-  if (!bearerToken) {
-    useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
-      authState: "requires-auth",
-      role: null,
-      connectionState: "disconnected",
-      lastError: "Saved environment is missing its saved credential. Pair it again.",
-      lastErrorAt: isoNow(),
+  const pending = pendingSavedEnvironmentConnections.get(record.environmentId);
+  if (pending) {
+    return pending;
+  }
+
+  const nextConnection = (async () => {
+    let activeRecord = record;
+    let roleHint = options?.role ?? null;
+    let bearerToken =
+      options?.bearerToken ?? (await readSavedEnvironmentBearerToken(record.environmentId));
+    if (!bearerToken) {
+      if (record.desktopSsh) {
+        const issued = await issueDesktopSshBearerSession(record);
+        activeRecord = issued.record;
+        bearerToken = issued.bearerToken;
+        roleHint = issued.role;
+      } else {
+        useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
+          authState: "requires-auth",
+          role: null,
+          connectionState: "disconnected",
+          lastError: "Saved environment is missing its saved credential. Pair it again.",
+          lastErrorAt: isoNow(),
+        });
+        throw new Error("Saved environment is missing its saved credential.");
+      }
+    } else {
+      const prepared = await prepareSavedEnvironmentRecordForConnection(record);
+      activeRecord = prepared.record;
+    }
+
+    const activeBearerToken = bearerToken;
+    const client =
+      options?.client ??
+      createSavedEnvironmentClient(activeRecord.environmentId, activeBearerToken);
+    const knownEnvironment = createKnownEnvironment({
+      id: activeRecord.environmentId,
+      label: activeRecord.label,
+      source: "manual",
+      target: {
+        httpBaseUrl: activeRecord.httpBaseUrl,
+        wsBaseUrl: activeRecord.wsBaseUrl,
+      },
     });
-    throw new Error("Saved environment is missing its saved credential.");
-  }
-
-  const client = options?.client ?? createSavedEnvironmentClient(record, bearerToken);
-  const knownEnvironment = createKnownEnvironment({
-    id: record.environmentId,
-    label: record.label,
-    source: "manual",
-    target: {
-      httpBaseUrl: record.httpBaseUrl,
-      wsBaseUrl: record.wsBaseUrl,
-    },
-  });
-  const connection = createEnvironmentConnection({
-    kind: "saved",
-    knownEnvironment: {
-      ...knownEnvironment,
-      environmentId: record.environmentId,
-    },
-    client,
-    refreshMetadata: async () => {
-      await refreshSavedEnvironmentMetadata(record, bearerToken, client);
-    },
-    onConfigSnapshot: (config) => {
-      useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
-        descriptor: config.environment,
-        serverConfig: config,
-      });
-    },
-    onWelcome: (payload) => {
-      useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
-        descriptor: payload.environment,
-      });
-    },
-    ...createEnvironmentConnectionHandlers(),
-  });
-
-  registerConnection(connection);
-
-  try {
-    await refreshSavedEnvironmentMetadata(
-      record,
-      bearerToken,
+    const connection = createEnvironmentConnection({
+      kind: "saved",
+      knownEnvironment: {
+        ...knownEnvironment,
+        environmentId: activeRecord.environmentId,
+      },
       client,
-      options?.role ?? null,
-      options?.serverConfig ?? null,
-    );
-    return connection;
-  } catch (error) {
-    setRuntimeError(record.environmentId, error);
-    await removeConnection(record.environmentId).catch(() => false);
-    throw error;
-  }
+      refreshMetadata: async () => {
+        await refreshSavedEnvironmentMetadata(
+          activeRecord.environmentId,
+          activeBearerToken,
+          client,
+        );
+      },
+      onConfigSnapshot: (config) => {
+        useSavedEnvironmentRuntimeStore.getState().patch(activeRecord.environmentId, {
+          descriptor: config.environment,
+          serverConfig: config,
+        });
+      },
+      onWelcome: (payload) => {
+        useSavedEnvironmentRuntimeStore.getState().patch(activeRecord.environmentId, {
+          descriptor: payload.environment,
+        });
+      },
+      ...createEnvironmentConnectionHandlers(),
+    });
+
+    registerConnection(connection);
+
+    try {
+      try {
+        await refreshSavedEnvironmentMetadata(
+          activeRecord.environmentId,
+          activeBearerToken,
+          client,
+          roleHint,
+          options?.serverConfig ?? null,
+        );
+      } catch (error) {
+        if (
+          !record.desktopSsh ||
+          !isRemoteEnvironmentAuthHttpError(error) ||
+          error.status !== 401
+        ) {
+          throw error;
+        }
+
+        const issued = await issueDesktopSshBearerSession(activeRecord);
+        activeRecord = issued.record;
+        bearerToken = issued.bearerToken;
+        roleHint = issued.role;
+        await removeConnection(activeRecord.environmentId).catch(() => false);
+        pendingSavedEnvironmentConnections.delete(activeRecord.environmentId);
+        return await ensureSavedEnvironmentConnection(activeRecord, {
+          bearerToken,
+          role: roleHint,
+          serverConfig: options?.serverConfig ?? null,
+        });
+      }
+      return connection;
+    } catch (error) {
+      setRuntimeError(activeRecord.environmentId, error);
+      await removeConnection(activeRecord.environmentId).catch(() => false);
+      throw error;
+    }
+  })();
+
+  pendingSavedEnvironmentConnections.set(record.environmentId, nextConnection);
+  return await nextConnection.finally(() => {
+    if (pendingSavedEnvironmentConnections.get(record.environmentId) === nextConnection) {
+      pendingSavedEnvironmentConnections.delete(record.environmentId);
+    }
+  });
 }
 
 async function syncSavedEnvironmentConnections(
@@ -1063,8 +1297,22 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
 
   setRuntimeConnecting(environmentId);
   try {
+    if (record.desktopSsh) {
+      await prepareSavedEnvironmentRecordForConnection(record);
+    }
     await connection.reconnect();
   } catch (error) {
+    if (record.desktopSsh) {
+      const issued = await issueDesktopSshBearerSession(
+        getSavedEnvironmentRecord(environmentId) ?? record,
+      );
+      await removeConnection(environmentId).catch(() => false);
+      await ensureSavedEnvironmentConnection(issued.record, {
+        bearerToken: issued.bearerToken,
+        role: issued.role,
+      });
+      return;
+    }
     setRuntimeError(environmentId, error);
     throw error;
   }
@@ -1081,33 +1329,40 @@ export async function addSavedEnvironment(input: {
   readonly pairingUrl?: string;
   readonly host?: string;
   readonly pairingCode?: string;
+  readonly desktopSsh?: DesktopSshEnvironmentTarget;
 }): Promise<SavedEnvironmentRecord> {
   const resolvedTarget = resolveRemotePairingTarget({
     ...(input.pairingUrl !== undefined ? { pairingUrl: input.pairingUrl } : {}),
     ...(input.host !== undefined ? { host: input.host } : {}),
     ...(input.pairingCode !== undefined ? { pairingCode: input.pairingCode } : {}),
   });
-  const descriptor = await fetchRemoteEnvironmentDescriptor({
-    httpBaseUrl: resolvedTarget.httpBaseUrl,
-  });
+  const descriptor = input.desktopSsh
+    ? await fetchDesktopSshEnvironmentDescriptor(resolvedTarget.httpBaseUrl)
+    : await fetchRemoteEnvironmentDescriptor({
+        httpBaseUrl: resolvedTarget.httpBaseUrl,
+      });
   const environmentId = descriptor.environmentId;
+  const existingRecord =
+    getSavedEnvironmentRecord(environmentId) ??
+    findSavedEnvironmentRecordByDesktopSshTarget(input.desktopSsh);
 
-  if (environmentConnections.has(environmentId)) {
-    throw new Error("This environment is already connected.");
-  }
-
-  const bearerSession = await bootstrapRemoteBearerSession({
-    httpBaseUrl: resolvedTarget.httpBaseUrl,
-    credential: resolvedTarget.credential,
-  });
+  const bearerSession = input.desktopSsh
+    ? await bootstrapDesktopSshBearerSession(resolvedTarget.httpBaseUrl, resolvedTarget.credential)
+    : await bootstrapRemoteBearerSession({
+        httpBaseUrl: resolvedTarget.httpBaseUrl,
+        credential: resolvedTarget.credential,
+      });
 
   const record: SavedEnvironmentRecord = {
     environmentId,
-    label: input.label.trim() || descriptor.label,
+    label: input.label.trim() || existingRecord?.label || descriptor.label,
     wsBaseUrl: resolvedTarget.wsBaseUrl,
     httpBaseUrl: resolvedTarget.httpBaseUrl,
-    createdAt: isoNow(),
+    createdAt: existingRecord?.createdAt ?? isoNow(),
     lastConnectedAt: isoNow(),
+    ...((input.desktopSsh ?? existingRecord?.desktopSsh)
+      ? { desktopSsh: input.desktopSsh ?? existingRecord?.desktopSsh }
+      : {}),
   };
 
   await persistSavedEnvironmentRecord(record);
@@ -1116,24 +1371,35 @@ export async function addSavedEnvironment(input: {
     bearerSession.sessionToken,
   );
   if (!didPersistBearerToken) {
-    await ensureLocalApi().persistence.setSavedEnvironmentRegistry(
-      listSavedEnvironmentRecords().map((entry) => ({
-        environmentId: entry.environmentId,
-        label: entry.label,
-        httpBaseUrl: entry.httpBaseUrl,
-        wsBaseUrl: entry.wsBaseUrl,
-        createdAt: entry.createdAt,
-        lastConnectedAt: entry.lastConnectedAt,
-      })),
-    );
+    await persistSavedEnvironmentRegistryRollback();
     throw new Error("Unable to persist saved environment credentials.");
   }
+  useSavedEnvironmentRegistryStore.getState().upsert(record);
+  await removeConnection(environmentId).catch(() => false);
   await ensureSavedEnvironmentConnection(record, {
     bearerToken: bearerSession.sessionToken,
     role: bearerSession.role,
   });
-  useSavedEnvironmentRegistryStore.getState().upsert(record);
   return record;
+}
+
+export async function connectDesktopSshEnvironment(
+  target: DesktopSshEnvironmentTarget,
+  options?: { label?: string },
+): Promise<SavedEnvironmentRecord> {
+  const bootstrap = await resolveDesktopSshEnvironmentBootstrap(target, {
+    issuePairingToken: true,
+  });
+  if (!bootstrap.pairingToken) {
+    throw new Error("Desktop SSH launch did not return a pairing token.");
+  }
+
+  return await addSavedEnvironment({
+    label: options?.label?.trim() || bootstrap.target.alias,
+    host: bootstrap.httpBaseUrl,
+    pairingCode: bootstrap.pairingToken,
+    desktopSsh: bootstrap.target,
+  });
 }
 
 export async function ensureEnvironmentConnectionBootstrapped(
@@ -1211,6 +1477,7 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
 export async function resetEnvironmentServiceForTests(): Promise<void> {
   stopActiveService();
   lastAppliedProjectionVersionByEnvironment.clear();
+  pendingSavedEnvironmentConnections.clear();
   for (const key of Array.from(threadDetailSubscriptions.keys())) {
     disposeThreadDetailSubscriptionByKey(key);
   }

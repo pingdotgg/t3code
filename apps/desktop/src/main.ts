@@ -20,7 +20,13 @@ import {
 } from "electron";
 import type { MenuItemConstructorOptions, OpenDialogOptions } from "electron";
 import type {
+  AuthBearerBootstrapResult,
+  AuthSessionState,
+  AuthWebSocketTokenResult,
   ClientSettings,
+  DesktopSshPasswordPromptRequest,
+  ExecutionEnvironmentDescriptor,
+  DesktopSshEnvironmentTarget,
   DesktopTheme,
   DesktopAppBranding,
   DesktopServerExposureMode,
@@ -59,6 +65,7 @@ import {
   resolveDesktopCoreAdvertisedEndpoints,
   resolveDesktopServerExposure,
 } from "./serverExposure.ts";
+import { DesktopSshEnvironmentManager } from "./sshEnvironment.ts";
 import { syncShellEnvironment } from "./syncShellEnvironment.ts";
 import { waitForBackendStartupReady } from "./backendStartupReadiness.ts";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState.ts";
@@ -104,6 +111,14 @@ const SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL = "desktop:set-saved-environment-re
 const GET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:get-saved-environment-secret";
 const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secret";
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
+const DISCOVER_SSH_HOSTS_CHANNEL = "desktop:discover-ssh-hosts";
+const ENSURE_SSH_ENVIRONMENT_CHANNEL = "desktop:ensure-ssh-environment";
+const FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL = "desktop:fetch-ssh-environment-descriptor";
+const BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL = "desktop:bootstrap-ssh-bearer-session";
+const FETCH_SSH_SESSION_STATE_CHANNEL = "desktop:fetch-ssh-session-state";
+const ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL = "desktop:issue-ssh-websocket-token";
+const SSH_PASSWORD_PROMPT_CHANNEL = "desktop:ssh-password-prompt";
+const RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL = "desktop:resolve-ssh-password-prompt";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
 const GET_ADVERTISED_ENDPOINTS_CHANNEL = "desktop:get-advertised-endpoints";
@@ -162,6 +177,7 @@ function resolvePickFolderDefaultPath(rawOptions: unknown): string | undefined {
 }
 const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
 const DESKTOP_REQUIRED_PORT_PROBE_HOSTS = ["0.0.0.0", "::"] as const;
+const SSH_PASSWORD_PROMPT_TIMEOUT_MS = 3 * 60 * 1000;
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
@@ -206,6 +222,12 @@ type LinuxDesktopNamedApp = Electron.App & {
   setDesktopName?: (desktopName: string) => void;
 };
 
+interface PendingSshPasswordPrompt {
+  readonly resolve: (password: string | null) => void;
+  readonly reject: (error: Error) => void;
+  readonly timeout: ReturnType<typeof setTimeout>;
+}
+
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
@@ -229,6 +251,7 @@ let restoreStdIoCapture: (() => void) | null = null;
 let backendObservabilitySettings = readPersistedBackendObservabilitySettings();
 let desktopSettings = readDesktopSettings(DESKTOP_SETTINGS_PATH, app.getVersion());
 let desktopServerExposureMode: DesktopServerExposureMode = desktopSettings.serverExposureMode;
+const pendingSshPasswordPrompts = new Map<string, PendingSshPasswordPrompt>();
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
@@ -405,6 +428,7 @@ function relaunchDesktopApp(reason: string): void {
           `desktop relaunch backend shutdown warning message=${formatErrorMessage(error)}`,
         );
       })
+      .then(() => desktopSshEnvironmentManager.dispose().catch(() => undefined))
       .finally(() => {
         restoreStdIoCapture?.();
         if (isDevelopment) {
@@ -465,6 +489,128 @@ function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
   }
 
   return null;
+}
+
+function getSafeDesktopSshTarget(rawTarget: unknown): DesktopSshEnvironmentTarget | null {
+  if (typeof rawTarget !== "object" || rawTarget === null) {
+    return null;
+  }
+
+  const target = rawTarget as Partial<DesktopSshEnvironmentTarget>;
+  if (typeof target.alias !== "string" || typeof target.hostname !== "string") {
+    return null;
+  }
+  if (
+    target.username !== null &&
+    target.username !== undefined &&
+    typeof target.username !== "string"
+  ) {
+    return null;
+  }
+  if (target.port !== null && target.port !== undefined && !Number.isInteger(target.port)) {
+    return null;
+  }
+
+  return {
+    alias: target.alias.trim(),
+    hostname: target.hostname.trim(),
+    username: target.username?.trim() || null,
+    port: target.port ?? null,
+  };
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, "$1");
+  return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
+}
+
+function resolveLoopbackSshHttpUrl(rawHttpBaseUrl: unknown, pathname: string): URL {
+  if (typeof rawHttpBaseUrl !== "string" || rawHttpBaseUrl.trim().length === 0) {
+    throw new Error("Invalid SSH forwarded http base URL.");
+  }
+
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(rawHttpBaseUrl);
+  } catch {
+    throw new Error("Invalid SSH forwarded http base URL.");
+  }
+
+  if (!isLoopbackHostname(baseUrl.hostname)) {
+    throw new Error("SSH desktop bridge only supports loopback forwarded URLs.");
+  }
+
+  const url = new URL(baseUrl.toString());
+  url.pathname = pathname;
+  url.search = "";
+  url.hash = "";
+  return url;
+}
+
+async function readRemoteFetchErrorMessage(
+  response: Response,
+  fallbackMessage: string,
+): Promise<string> {
+  const text = await response.text();
+  if (!text) {
+    return fallbackMessage;
+  }
+
+  try {
+    const parsed = JSON.parse(text) as { readonly error?: string };
+    if (typeof parsed.error === "string" && parsed.error.trim().length > 0) {
+      return parsed.error;
+    }
+  } catch {
+    // Fall back to the raw text below.
+  }
+
+  return text;
+}
+
+async function fetchLoopbackSshJson<T>(input: {
+  readonly httpBaseUrl: unknown;
+  readonly pathname: string;
+  readonly method?: "GET" | "POST";
+  readonly bearerToken?: unknown;
+  readonly body?: unknown;
+}): Promise<T> {
+  const requestUrl = resolveLoopbackSshHttpUrl(input.httpBaseUrl, input.pathname).toString();
+  const bearerToken =
+    typeof input.bearerToken === "string" && input.bearerToken.trim().length > 0
+      ? input.bearerToken
+      : null;
+
+  let response: Response;
+  try {
+    response = await fetch(requestUrl, {
+      method: input.method ?? "GET",
+      headers: {
+        ...(input.body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}),
+      },
+      ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
+    });
+  } catch (error) {
+    throw new Error(
+      `Failed to reach SSH forwarded endpoint ${requestUrl} (${error instanceof Error ? error.message : String(error)}).`,
+      { cause: error },
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      await readRemoteFetchErrorMessage(
+        response,
+        `SSH forwarded request failed (${response.status}).`,
+      ),
+    );
+  }
+
+  return (await response.json()) as T;
 }
 
 async function waitForBackendHttpReady(
@@ -660,6 +806,56 @@ let updateDownloadInFlight = false;
 let updateInstallInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
+
+function rejectPendingSshPasswordPrompts(message: string): void {
+  for (const [requestId, pending] of pendingSshPasswordPrompts) {
+    clearTimeout(pending.timeout);
+    pendingSshPasswordPrompts.delete(requestId);
+    pending.reject(new Error(message));
+  }
+}
+
+async function requestSshPasswordFromRenderer(input: {
+  readonly destination: string;
+  readonly username: string | null;
+  readonly prompt: string;
+}): Promise<string | null> {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) {
+    throw new Error("T3 Code window is not available for SSH authentication.");
+  }
+
+  const request: DesktopSshPasswordPromptRequest = {
+    requestId: Crypto.randomUUID(),
+    destination: input.destination,
+    username: input.username,
+    prompt: input.prompt,
+  };
+
+  return await new Promise<string | null>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingSshPasswordPrompts.delete(request.requestId);
+      reject(new Error(`SSH authentication timed out for ${input.destination}.`));
+    }, SSH_PASSWORD_PROMPT_TIMEOUT_MS);
+    timeout.unref();
+
+    pendingSshPasswordPrompts.set(request.requestId, {
+      resolve,
+      reject,
+      timeout,
+    });
+
+    window.webContents.send(SSH_PASSWORD_PROMPT_CHANNEL, request);
+    if (window.isMinimized()) {
+      window.restore();
+    }
+    window.focus();
+  });
+}
+
+const desktopSshEnvironmentManager = new DesktopSshEnvironmentManager({
+  passwordProvider: requestSshPasswordFromRenderer,
+});
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
   if (updateInstallInFlight) return "install";
@@ -1679,6 +1875,101 @@ function registerIpcHandlers(): void {
     },
   );
 
+  ipcMain.removeHandler(DISCOVER_SSH_HOSTS_CHANNEL);
+  ipcMain.handle(DISCOVER_SSH_HOSTS_CHANNEL, async () =>
+    desktopSshEnvironmentManager.discoverHosts(),
+  );
+
+  ipcMain.removeHandler(ENSURE_SSH_ENVIRONMENT_CHANNEL);
+  ipcMain.handle(
+    ENSURE_SSH_ENVIRONMENT_CHANNEL,
+    async (_event, rawTarget: unknown, rawOptions: unknown) => {
+      const target = getSafeDesktopSshTarget(rawTarget);
+      if (!target) {
+        throw new Error("Invalid desktop SSH target.");
+      }
+
+      const issuePairingToken =
+        typeof rawOptions === "object" &&
+        rawOptions !== null &&
+        "issuePairingToken" in rawOptions &&
+        (rawOptions as { issuePairingToken?: unknown }).issuePairingToken === true;
+
+      return await desktopSshEnvironmentManager.ensureEnvironment(target, {
+        issuePairingToken,
+      });
+    },
+  );
+
+  ipcMain.removeHandler(FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL);
+  ipcMain.handle(
+    FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL,
+    async (_event, rawHttpBaseUrl: unknown) =>
+      fetchLoopbackSshJson<ExecutionEnvironmentDescriptor>({
+        httpBaseUrl: rawHttpBaseUrl,
+        pathname: "/.well-known/t3/environment",
+      }),
+  );
+
+  ipcMain.removeHandler(BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL);
+  ipcMain.handle(
+    BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL,
+    async (_event, rawHttpBaseUrl: unknown, rawCredential: unknown) =>
+      fetchLoopbackSshJson<AuthBearerBootstrapResult>({
+        httpBaseUrl: rawHttpBaseUrl,
+        pathname: "/api/auth/bootstrap/bearer",
+        method: "POST",
+        body: {
+          credential: rawCredential,
+        },
+      }),
+  );
+
+  ipcMain.removeHandler(FETCH_SSH_SESSION_STATE_CHANNEL);
+  ipcMain.handle(
+    FETCH_SSH_SESSION_STATE_CHANNEL,
+    async (_event, rawHttpBaseUrl: unknown, rawBearerToken: unknown) =>
+      fetchLoopbackSshJson<AuthSessionState>({
+        httpBaseUrl: rawHttpBaseUrl,
+        pathname: "/api/auth/session",
+        bearerToken: rawBearerToken,
+      }),
+  );
+
+  ipcMain.removeHandler(ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL);
+  ipcMain.handle(
+    ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL,
+    async (_event, rawHttpBaseUrl: unknown, rawBearerToken: unknown) =>
+      fetchLoopbackSshJson<AuthWebSocketTokenResult>({
+        httpBaseUrl: rawHttpBaseUrl,
+        pathname: "/api/auth/ws-token",
+        method: "POST",
+        bearerToken: rawBearerToken,
+      }),
+  );
+
+  ipcMain.removeHandler(RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL);
+  ipcMain.handle(
+    RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL,
+    async (_event, rawRequestId: unknown, rawPassword: unknown) => {
+      if (typeof rawRequestId !== "string" || rawRequestId.trim().length === 0) {
+        throw new Error("Invalid SSH password prompt id.");
+      }
+      if (rawPassword !== null && typeof rawPassword !== "string") {
+        throw new Error("Invalid SSH password prompt response.");
+      }
+
+      const pending = pendingSshPasswordPrompts.get(rawRequestId);
+      if (!pending) {
+        throw new Error("SSH password prompt is no longer pending.");
+      }
+
+      clearTimeout(pending.timeout);
+      pendingSshPasswordPrompts.delete(rawRequestId);
+      pending.resolve(rawPassword);
+    },
+  );
+
   ipcMain.removeHandler(GET_SERVER_EXPOSURE_STATE_CHANNEL);
   ipcMain.handle(GET_SERVER_EXPOSURE_STATE_CHANNEL, async () => getDesktopServerExposureState());
 
@@ -2054,6 +2345,9 @@ function createWindow(): BrowserWindow {
   }
 
   window.on("closed", () => {
+    rejectPendingSshPasswordPrompts(
+      "SSH authentication was cancelled because the app window closed.",
+    );
     if (mainWindow === window) {
       mainWindow = null;
     }
@@ -2145,6 +2439,7 @@ app.on("before-quit", () => {
   clearUpdatePollTimer();
   cancelBackendReadinessWait();
   stopBackend();
+  void desktopSshEnvironmentManager.dispose().catch(() => undefined);
   restoreStdIoCapture?.();
 });
 
@@ -2194,6 +2489,7 @@ if (process.platform !== "win32") {
     clearUpdatePollTimer();
     cancelBackendReadinessWait();
     stopBackend();
+    void desktopSshEnvironmentManager.dispose().catch(() => undefined);
     restoreStdIoCapture?.();
     app.quit();
   });
@@ -2204,6 +2500,7 @@ if (process.platform !== "win32") {
     writeDesktopLogHeader("SIGTERM received");
     clearUpdatePollTimer();
     stopBackend();
+    void desktopSshEnvironmentManager.dispose().catch(() => undefined);
     restoreStdIoCapture?.();
     app.quit();
   });
