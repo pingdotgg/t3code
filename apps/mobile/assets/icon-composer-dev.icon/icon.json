@@ -1,0 +1,45 @@
+{
+  "fill": {
+    "solid": "display-p3:0.00000,0.00000,0.00000,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "hidden": false,
+          "image-name": "gpt-image-1.5-jd70szmrd03p36z4zv48ycsbax81egvr.png",
+          "name": "gpt-image-1.5-jd70szmrd03p36z4zv48ycsbax81egvr",
+          "position": {
+            "scale": 1.1,
+            "translation-in-points": [0, 0]
+          }
+        },
+        {
+          "image-name": "T3.svg",
+          "name": "T3",
+          "position": {
+            "scale": 10,
+            "translation-in-points": [0, 0]
+          }
+        },
+        {
+          "hidden": true,
+          "image-name": "Texturelabs_Paper_381XL.jpg",
+          "name": "Texturelabs_Paper_381XL"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "circles": ["watchOS"],
+    "squares": "shared"
+  }
+}

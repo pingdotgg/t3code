@@ -1,0 +1,192 @@
+@import "tailwindcss";
+@import "uniwind";
+
+/* ─── Theme tokens ──────────────────────────────────────────────────── */
+@layer theme {
+  :root {
+    @variant light {
+      /* Page backgrounds */
+      --color-screen: #f2f2f7;
+      --color-sheet: rgba(242, 242, 247, 0.98);
+
+      /* Card / surface */
+      --color-card: #ffffff;
+      --color-card-alt: #f5f5f5;
+      --color-card-translucent: rgba(255, 255, 255, 0.94);
+
+      /* Text */
+      --color-foreground: #262626;
+      --color-foreground-secondary: #525252;
+      --color-foreground-muted: #737373;
+      --color-foreground-tertiary: #a3a3a3;
+
+      /* Borders & separators */
+      --color-border: rgba(0, 0, 0, 0.08);
+      --color-border-subtle: rgba(0, 0, 0, 0.06);
+      --color-separator: rgba(0, 0, 0, 0.04);
+
+      /* Subtle backgrounds (badges, pills, overlays) */
+      --color-subtle: rgba(0, 0, 0, 0.04);
+      --color-subtle-strong: rgba(0, 0, 0, 0.08);
+
+      /* Primary action */
+      --color-primary: #262626;
+      --color-primary-foreground: #ffffff;
+      --color-primary-shadow: rgba(0, 0, 0, 0.18);
+
+      /* Secondary action */
+      --color-secondary: #ffffff;
+      --color-secondary-foreground: #262626;
+      --color-secondary-border: rgba(0, 0, 0, 0.08);
+
+      /* Danger */
+      --color-danger: #fef2f2;
+      --color-danger-border: rgba(239, 68, 68, 0.12);
+      --color-danger-foreground: #dc2626;
+
+      /* Inputs */
+      --color-input: #ffffff;
+      --color-input-border: rgba(0, 0, 0, 0.1);
+      --color-placeholder: #a3a3a3;
+
+      /* Icons */
+      --color-icon: #262626;
+      --color-icon-muted: #525252;
+      --color-icon-subtle: #a3a3a3;
+
+      /* Header / glass chrome */
+      --color-header: rgba(255, 255, 255, 0.97);
+      --color-header-border: rgba(0, 0, 0, 0.06);
+
+      /* StatusBar */
+      --color-status-bar: #f2f2f7;
+
+      /* Markdown */
+      --color-md-body: #262626;
+      --color-md-strong: #171717;
+      --color-md-link: #2563eb;
+      --color-md-blockquote-border: rgba(0, 0, 0, 0.08);
+      --color-md-blockquote-bg: rgba(0, 0, 0, 0.02);
+      --color-md-code-bg: rgba(0, 0, 0, 0.04);
+      --color-md-code-text: #262626;
+      --color-md-user-code-bg: rgba(255, 255, 255, 0.55);
+      --color-md-user-code-text: #262626;
+      --color-md-user-fence-bg: rgba(0, 0, 0, 0.04);
+      --color-md-user-fence-text: #1e3a5f;
+      --color-md-hr: rgba(0, 0, 0, 0.08);
+
+      /* Drawer / modal backdrop */
+      --color-backdrop: rgba(0, 0, 0, 0.22);
+      --color-drawer: rgba(255, 255, 255, 0.99);
+      --color-drawer-shadow: rgba(0, 0, 0, 0.12);
+
+      /* Misc */
+      --color-dot-separator: rgba(0, 0, 0, 0.2);
+      --color-wordmark: #262626;
+      --color-chevron: rgba(0, 0, 0, 0.2);
+    }
+
+    @variant dark {
+      /* Page backgrounds */
+      --color-screen: #0a0a0a;
+      --color-sheet: rgba(14, 14, 14, 0.98);
+
+      /* Card / surface */
+      --color-card: #171717;
+      --color-card-alt: #1c1c1c;
+      --color-card-translucent: rgba(17, 17, 17, 0.94);
+
+      /* Text */
+      --color-foreground: #f5f5f5;
+      --color-foreground-secondary: #a3a3a3;
+      --color-foreground-muted: #737373;
+      --color-foreground-tertiary: #525252;
+
+      /* Borders & separators */
+      --color-border: rgba(255, 255, 255, 0.06);
+      --color-border-subtle: rgba(255, 255, 255, 0.04);
+      --color-separator: rgba(255, 255, 255, 0.03);
+
+      /* Subtle backgrounds (badges, pills, overlays) */
+      --color-subtle: rgba(255, 255, 255, 0.04);
+      --color-subtle-strong: rgba(255, 255, 255, 0.08);
+
+      /* Primary action */
+      --color-primary: #f5f5f5;
+      --color-primary-foreground: #0a0a0a;
+      --color-primary-shadow: rgba(0, 0, 0, 0.22);
+
+      /* Secondary action */
+      --color-secondary: rgba(255, 255, 255, 0.04);
+      --color-secondary-foreground: #f5f5f5;
+      --color-secondary-border: rgba(255, 255, 255, 0.06);
+
+      /* Danger */
+      --color-danger: rgba(239, 68, 68, 0.14);
+      --color-danger-border: rgba(248, 113, 113, 0.18);
+      --color-danger-foreground: #fca5a5;
+
+      /* Inputs */
+      --color-input: #141414;
+      --color-input-border: rgba(255, 255, 255, 0.08);
+      --color-placeholder: #737373;
+
+      /* Icons */
+      --color-icon: #f5f5f5;
+      --color-icon-muted: #a3a3a3;
+      --color-icon-subtle: #737373;
+
+      /* Header / glass chrome */
+      --color-header: rgba(10, 10, 10, 0.97);
+      --color-header-border: rgba(255, 255, 255, 0.06);
+
+      /* StatusBar */
+      --color-status-bar: #0a0a0a;
+
+      /* Markdown */
+      --color-md-body: #e5e5e5;
+      --color-md-strong: #f5f5f5;
+      --color-md-link: #60a5fa;
+      --color-md-blockquote-border: rgba(255, 255, 255, 0.1);
+      --color-md-blockquote-bg: rgba(255, 255, 255, 0.03);
+      --color-md-code-bg: rgba(255, 255, 255, 0.06);
+      --color-md-code-text: #e5e5e5;
+      --color-md-user-code-bg: rgba(255, 255, 255, 0.1);
+      --color-md-user-code-text: #e5e5e5;
+      --color-md-user-fence-bg: rgba(255, 255, 255, 0.08);
+      --color-md-user-fence-text: #e5e5e5;
+      --color-md-hr: rgba(255, 255, 255, 0.08);
+
+      /* Drawer / modal backdrop */
+      --color-backdrop: rgba(0, 0, 0, 0.48);
+      --color-drawer: rgba(14, 14, 14, 0.99);
+      --color-drawer-shadow: rgba(0, 0, 0, 0.32);
+
+      /* Misc */
+      --color-dot-separator: rgba(255, 255, 255, 0.2);
+      --color-wordmark: #f5f5f5;
+      --color-chevron: rgba(255, 255, 255, 0.2);
+    }
+  }
+}
+
+/* ─── Font family ───────────────────────────────────────────────────── */
+@theme {
+  --font-sans: "DMSans_400Regular";
+  --font-medium: "DMSans_500Medium";
+  --font-bold: "DMSans_700Bold";
+}
+
+/* ─── Custom utilities ──────────────────────────────────────────────── */
+@utility font-t3-medium {
+  font-family: "DMSans_500Medium";
+}
+
+@utility font-t3-bold {
+  font-family: "DMSans_700Bold";
+}
+
+@utility font-t3-extrabold {
+  font-family: "DMSans_700Bold";
+  font-weight: 800;
+}

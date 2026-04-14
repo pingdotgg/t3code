@@ -18,7 +18,6 @@ import {
   type SettingSource,
   type SDKUserMessage,
   ModelUsage,
-  NonNullableUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
@@ -290,7 +289,7 @@ function maxClaudeContextWindowFromModelUsage(
 }
 
 function normalizeClaudeTokenUsage(
-  value: NonNullableUsage | undefined,
+  value: unknown,
   contextWindow?: number,
 ): ThreadTokenUsageSnapshot | undefined {
   if (!value || typeof value !== "object") {

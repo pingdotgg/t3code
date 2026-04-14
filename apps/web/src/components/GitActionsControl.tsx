@@ -12,6 +12,7 @@ import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  getGitActionDisabledReason,
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
@@ -115,74 +116,6 @@ function resolveProgressDescription(progress: ActiveGitActionProgress): string |
     return progress.lastOutputLine;
   }
   return formatElapsedDescription(progress.hookStartedAtMs ?? progress.phaseStartedAtMs);
-}
-
-function getMenuActionDisabledReason({
-  item,
-  gitStatus,
-  isBusy,
-  hasOriginRemote,
-}: {
-  item: GitActionMenuItem;
-  gitStatus: GitStatusResult | null;
-  isBusy: boolean;
-  hasOriginRemote: boolean;
-}): string | null {
-  if (!item.disabled) return null;
-  if (isBusy) return "Git action in progress.";
-  if (!gitStatus) return "Git status is unavailable.";
-
-  const hasBranch = gitStatus.branch !== null;
-  const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
-  const isAhead = gitStatus.aheadCount > 0;
-  const isBehind = gitStatus.behindCount > 0;
-
-  if (item.id === "commit") {
-    if (!hasChanges) {
-      return "Worktree is clean. Make changes before committing.";
-    }
-    return "Commit is currently unavailable.";
-  }
-
-  if (item.id === "push") {
-    if (!hasBranch) {
-      return "Detached HEAD: checkout a branch before pushing.";
-    }
-    if (hasChanges) {
-      return "Commit or stash local changes before pushing.";
-    }
-    if (isBehind) {
-      return "Branch is behind upstream. Pull/rebase before pushing.";
-    }
-    if (!gitStatus.hasUpstream && !hasOriginRemote) {
-      return 'Add an "origin" remote before pushing.';
-    }
-    if (!isAhead) {
-      return "No local commits to push.";
-    }
-    return "Push is currently unavailable.";
-  }
-
-  if (hasOpenPr) {
-    return "View PR is currently unavailable.";
-  }
-  if (!hasBranch) {
-    return "Detached HEAD: checkout a branch before creating a PR.";
-  }
-  if (hasChanges) {
-    return "Commit local changes before creating a PR.";
-  }
-  if (!gitStatus.hasUpstream && !hasOriginRemote) {
-    return 'Add an "origin" remote before creating a PR.';
-  }
-  if (!isAhead) {
-    return "No local commits to include in a PR.";
-  }
-  if (isBehind) {
-    return "Branch is behind upstream. Pull/rebase before creating a PR.";
-  }
-  return "Create PR is currently unavailable.";
 }
 
 const COMMIT_DIALOG_TITLE = "Commit changes";
@@ -912,7 +845,7 @@ export default function GitActionsControl({
             </MenuTrigger>
             <MenuPopup align="end" className="w-full">
               {gitActionMenuItems.map((item) => {
-                const disabledReason = getMenuActionDisabledReason({
+                const disabledReason = getGitActionDisabledReason({
                   item,
                   gitStatus: gitStatusForActions,
                   isBusy: isGitActionRunning,

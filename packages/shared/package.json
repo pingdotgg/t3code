@@ -52,6 +52,14 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
+    "./orchestrationTiming": {
+      "types": "./src/orchestrationTiming.ts",
+      "import": "./src/orchestrationTiming.ts"
+    },
+    "./remote": {
+      "types": "./src/remote.ts",
+      "import": "./src/remote.ts"
+    },
     "./searchRanking": {
       "types": "./src/searchRanking.ts",
       "import": "./src/searchRanking.ts"
@@ -67,6 +75,10 @@
     "./path": {
       "types": "./src/path.ts",
       "import": "./src/path.ts"
+    },
+    "./composerTrigger": {
+      "types": "./src/composerTrigger.ts",
+      "import": "./src/composerTrigger.ts"
     }
   },
   "scripts": {

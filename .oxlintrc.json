@@ -6,7 +6,8 @@
     "node_modules",
     "bun.lock",
     "*.tsbuildinfo",
-    "**/routeTree.gen.ts"
+    "**/routeTree.gen.ts",
+    "apps/mobile/uniwind-types.d.ts"
   ],
   "plugins": ["eslint", "oxc", "react", "unicorn", "typescript"],
   "categories": {
@@ -15,6 +16,7 @@
     "perf": "warn"
   },
   "rules": {
+    "unicorn/no-array-sort": "off",
     "react-in-jsx-scope": "off",
     "eslint/no-shadow": "off",
     "eslint/no-await-in-loop": "off"

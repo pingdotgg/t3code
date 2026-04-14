@@ -410,7 +410,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
   const threadEnvironmentLabel = isRemoteThread
     ? (remoteEnvLabel ?? remoteEnvSavedLabel ?? "Remote")
-    : null;
+    : "Local";
   // For grouped projects, the thread may belong to a different environment
   // than the representative project.  Look up the thread's own project cwd
   // so git status (and thus PR detection) queries the correct path.
@@ -729,21 +729,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ) : null}
             <span className={threadMetaClassName}>
               <span className="inline-flex items-center gap-1">
-                {isRemoteThread && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span
-                          aria-label={threadEnvironmentLabel ?? "Remote"}
-                          className="inline-flex items-center justify-center"
-                        />
-                      }
-                    >
-                      <CloudIcon className="size-3 text-muted-foreground/40" />
-                    </TooltipTrigger>
-                    <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
-                  </Tooltip>
-                )}
+                <span
+                  title={threadEnvironmentLabel}
+                  className={`inline-flex max-w-18 items-center truncate rounded-full border border-border/70 bg-background/85 px-1.5 py-0.5 text-[9px] font-medium tracking-[0.08em] ${
+                    isHighlighted
+                      ? "text-foreground/72 dark:text-foreground/82"
+                      : "text-muted-foreground/60"
+                  }`}
+                >
+                  {threadEnvironmentLabel}
+                </span>
                 {jumpLabel ? (
                   <span
                     className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[10px] font-medium tracking-tight text-foreground shadow-sm"
@@ -864,7 +859,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   return (
     <SidebarMenuSub
       ref={attachThreadListAutoAnimateRef}
-      className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
+      className="mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5"
     >
       {shouldShowThreadPanel && showEmptyThreadState ? (
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
@@ -1699,7 +1694,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <SidebarMenuButton
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
           size="sm"
-          className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
+          className={`gap-2 px-2 py-1 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground sm:py-1.5 ${
             isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
           }`}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}

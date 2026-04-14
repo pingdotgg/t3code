@@ -1,4 +1,9 @@
 import { WsRpcGroup } from "@t3tools/contracts";
+import {
+  DEFAULT_RECONNECT_BACKOFF,
+  getReconnectDelayMs,
+  type WsProtocolLifecycleHandlers,
+} from "@t3tools/client-runtime";
 import { Duration, Effect, Layer, Schedule } from "effect";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
@@ -9,20 +14,13 @@ import {
   trackRpcRequestSent,
 } from "./requestLatencyState";
 import {
-  getWsReconnectDelayMsForRetry,
   recordWsConnectionAttempt,
   recordWsConnectionClosed,
   recordWsConnectionErrored,
   recordWsConnectionOpened,
-  WS_RECONNECT_MAX_RETRIES,
 } from "./wsConnectionState";
 
-export interface WsProtocolLifecycleHandlers {
-  readonly onAttempt?: (socketUrl: string) => void;
-  readonly onOpen?: () => void;
-  readonly onError?: (message: string) => void;
-  readonly onClose?: (details: { readonly code: number; readonly reason: string }) => void;
-}
+export type { WsProtocolLifecycleHandlers };
 
 export const makeWsRpcProtocolClient = RpcClient.make(WsRpcGroup);
 type RpcClientFactory = typeof makeWsRpcProtocolClient;
@@ -142,8 +140,9 @@ export function createWsRpcProtocolLayer(
   const socketLayer = Socket.layerWebSocket(resolvedUrl).pipe(
     Layer.provide(trackingWebSocketConstructorLayer),
   );
-  const retryPolicy = Schedule.addDelay(Schedule.recurs(WS_RECONNECT_MAX_RETRIES), (retryCount) =>
-    Effect.succeed(Duration.millis(getWsReconnectDelayMsForRetry(retryCount) ?? 0)),
+  const retryPolicy = Schedule.addDelay(
+    Schedule.recurs(DEFAULT_RECONNECT_BACKOFF.maxRetries!),
+    (retryCount) => Effect.succeed(Duration.millis(getReconnectDelayMs(retryCount) ?? 0)),
   );
   const protocolLayer = Layer.effect(
     RpcClient.Protocol,
