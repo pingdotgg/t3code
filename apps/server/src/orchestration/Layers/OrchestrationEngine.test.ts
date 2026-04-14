@@ -302,6 +302,133 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("deletes archived project threads before deleting the project", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-delete-archived-create"),
+        projectId: asProjectId("project-delete-archived"),
+        title: "Archived Delete Project",
+        workspaceRoot: "/tmp/project-delete-archived",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-delete-archived-create"),
+        threadId: ThreadId.make("thread-delete-archived"),
+        projectId: asProjectId("project-delete-archived"),
+        title: "Archive me first",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("cmd-thread-delete-archived-archive"),
+        threadId: ThreadId.make("thread-delete-archived"),
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "project.delete",
+        commandId: CommandId.make("cmd-project-delete-archived"),
+        projectId: asProjectId("project-delete-archived"),
+      }),
+    );
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      "project.created",
+      "thread.created",
+      "thread.archived",
+      "thread.deleted",
+      "project.deleted",
+    ]);
+
+    const readModel = await system.run(engine.getReadModel());
+    expect(
+      readModel.projects.find((project) => project.id === "project-delete-archived")?.deletedAt,
+    ).not.toBeNull();
+    expect(
+      readModel.threads.find((thread) => thread.id === "thread-delete-archived")?.deletedAt,
+    ).not.toBeNull();
+
+    await system.dispose();
+  });
+
+  it("rejects project deletion when active threads still exist", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-delete-active-create"),
+        projectId: asProjectId("project-delete-active"),
+        title: "Active Delete Project",
+        workspaceRoot: "/tmp/project-delete-active",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-delete-active-create"),
+        threadId: ThreadId.make("thread-delete-active"),
+        projectId: asProjectId("project-delete-active"),
+        title: "Still active",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "project.delete",
+          commandId: CommandId.make("cmd-project-delete-active"),
+          projectId: asProjectId("project-delete-active"),
+        }),
+      ),
+    ).rejects.toThrow("still has active threads");
+
+    await system.dispose();
+  });
+
   it("replays append-only events from sequence", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

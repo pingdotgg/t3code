@@ -14,6 +14,7 @@ import {
   findThreadById,
   listThreadsByProjectId,
   requireNonNegativeInteger,
+  requireProjectDeletionArchivedThreads,
   requireThread,
   requireThreadAbsent,
 } from "./commandInvariants.ts";
@@ -116,6 +117,12 @@ const messageSendCommand: OrchestrationCommand = {
   createdAt: now,
 };
 
+const projectDeleteCommand: OrchestrationCommand = {
+  type: "project.delete",
+  commandId: CommandId.make("cmd-project-delete"),
+  projectId: ProjectId.make("project-a"),
+};
+
 describe("commandInvariants", () => {
   it("finds threads by id and project", () => {
     expect(findThreadById(readModel, ThreadId.make("thread-1"))?.projectId).toBe("project-a");
@@ -214,5 +221,84 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("greater than or equal to 0");
+  });
+
+  it("rejects project deletion when active threads still exist", async () => {
+    await expect(
+      Effect.runPromise(
+        requireProjectDeletionArchivedThreads({
+          readModel,
+          command: projectDeleteCommand,
+          projectId: ProjectId.make("project-a"),
+        }),
+      ),
+    ).rejects.toThrow("still has active threads");
+  });
+
+  it("allows project deletion when only archived threads remain", async () => {
+    const archivedOnlyReadModel: OrchestrationReadModel = {
+      ...readModel,
+      threads: readModel.threads
+        .filter((thread) => thread.projectId !== ProjectId.make("project-a"))
+        .concat({
+          ...readModel.threads[0]!,
+          id: ThreadId.make("thread-archived-only"),
+          projectId: ProjectId.make("project-a"),
+          archivedAt: now,
+        }),
+    };
+
+    await expect(
+      Effect.runPromise(
+        requireProjectDeletionArchivedThreads({
+          readModel: archivedOnlyReadModel,
+          command: projectDeleteCommand,
+          projectId: ProjectId.make("project-a"),
+        }),
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: ThreadId.make("thread-archived-only"),
+        projectId: ProjectId.make("project-a"),
+        archivedAt: now,
+      }),
+    ]);
+  });
+
+  it("returns only archived threads for the target project", async () => {
+    const targetArchivedAt = "2026-03-10T00:00:00.000Z";
+    const archivedOnlyReadModel: OrchestrationReadModel = {
+      ...readModel,
+      threads: [
+        {
+          ...readModel.threads[0]!,
+          id: ThreadId.make("thread-archived-target"),
+          projectId: ProjectId.make("project-a"),
+          archivedAt: targetArchivedAt,
+        },
+        {
+          ...readModel.threads[1]!,
+          id: ThreadId.make("thread-archived-other"),
+          projectId: ProjectId.make("project-b"),
+          archivedAt: "2026-03-11T00:00:00.000Z",
+        },
+      ],
+    };
+
+    const archivedThreads = await Effect.runPromise(
+      requireProjectDeletionArchivedThreads({
+        readModel: archivedOnlyReadModel,
+        command: projectDeleteCommand,
+        projectId: ProjectId.make("project-a"),
+      }),
+    );
+
+    expect(archivedThreads).toEqual([
+      expect.objectContaining({
+        id: ThreadId.make("thread-archived-target"),
+        projectId: ProjectId.make("project-a"),
+        archivedAt: targetArchivedAt,
+      }),
+    ]);
   });
 });

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildSidebarProjectSnapshots,
   createThreadJumpHintVisibilityController,
+  getProjectDeletionBlockingThreads,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
@@ -21,14 +23,17 @@ import {
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import { EnvironmentId, OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
+  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+const remoteEnvironmentId = EnvironmentId.make("environment-remote");
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -618,6 +623,114 @@ describe("getVisibleThreadsForProject", () => {
   });
 });
 
+describe("buildSidebarProjectSnapshots", () => {
+  it("groups projects that share the same repository canonical key", () => {
+    const localProject = makeProject({
+      id: ProjectId.make("project-local"),
+      name: "Shared Repo",
+      repositoryIdentity: {
+        canonicalKey: "github.com/acme/repo",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://github.com/acme/repo.git",
+        },
+      },
+    });
+    const remoteProject = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      name: "Shared Repo",
+      repositoryIdentity: {
+        canonicalKey: "github.com/acme/repo",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://github.com/acme/repo.git",
+        },
+      },
+    });
+
+    const grouped = buildSidebarProjectSnapshots({
+      orderedProjects: [localProject, remoteProject],
+      primaryEnvironmentId: localEnvironmentId,
+      savedEnvironmentRegistryById: {
+        [remoteEnvironmentId]: {
+          label: "Remote",
+        },
+      },
+      savedEnvironmentRuntimeById: {},
+    });
+
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]?.memberProjectRefs).toEqual([
+      scopeProjectRef(localEnvironmentId, localProject.id),
+      scopeProjectRef(remoteEnvironmentId, remoteProject.id),
+    ]);
+  });
+
+  it("stops grouping once a project loses its repository identity", () => {
+    const localProject = makeProject({
+      id: ProjectId.make("project-local"),
+      name: "Missing Folder",
+      repositoryIdentity: null,
+    });
+    const remoteProject = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      name: "Remote Repo",
+      repositoryIdentity: {
+        canonicalKey: "github.com/acme/repo",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://github.com/acme/repo.git",
+        },
+      },
+    });
+
+    const grouped = buildSidebarProjectSnapshots({
+      orderedProjects: [localProject, remoteProject],
+      primaryEnvironmentId: localEnvironmentId,
+      savedEnvironmentRegistryById: {},
+      savedEnvironmentRuntimeById: {},
+    });
+
+    expect(grouped).toHaveLength(2);
+    expect(grouped.map((project) => project.memberProjectRefs)).toEqual([
+      [scopeProjectRef(localEnvironmentId, localProject.id)],
+      [scopeProjectRef(remoteEnvironmentId, remoteProject.id)],
+    ]);
+  });
+});
+
+describe("getProjectDeletionBlockingThreads", () => {
+  it("ignores archived threads when evaluating project removal blockers", () => {
+    const threads = [
+      makeSidebarThreadSummary({
+        id: ThreadId.make("thread-archived-only"),
+        archivedAt: "2026-03-09T10:10:00.000Z",
+      }),
+    ];
+
+    expect(getProjectDeletionBlockingThreads(threads)).toEqual([]);
+  });
+
+  it("keeps active threads as project removal blockers", () => {
+    const archivedThread = makeSidebarThreadSummary({
+      id: ThreadId.make("thread-archived"),
+      archivedAt: "2026-03-09T10:10:00.000Z",
+    });
+    const activeThread = makeSidebarThreadSummary({
+      id: ThreadId.make("thread-active"),
+    });
+
+    expect(getProjectDeletionBlockingThreads([archivedThread, activeThread])).toEqual([
+      activeThread,
+    ]);
+  });
+});
+
 function makeProject(overrides: Partial<Project> = {}): Project {
   const { defaultModelSelection, ...rest } = overrides;
   return {
@@ -634,6 +747,30 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     updatedAt: "2026-03-09T10:00:00.000Z",
     scripts: [],
     ...rest,
+  };
+}
+
+function makeSidebarThreadSummary(
+  overrides: Partial<SidebarThreadSummary> = {},
+): SidebarThreadSummary {
+  return {
+    id: ThreadId.make("thread-summary-1"),
+    environmentId: localEnvironmentId,
+    projectId: ProjectId.make("project-1"),
+    title: "Thread",
+    interactionMode: DEFAULT_INTERACTION_MODE,
+    session: null,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    archivedAt: null,
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    latestTurn: null,
+    branch: null,
+    worktreePath: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    ...overrides,
   };
 }
 

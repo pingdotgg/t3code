@@ -9,6 +9,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type ProjectId,
+  type LocalApi,
   type ServerConfig,
   type ServerLifecycleWelcomePayload,
   type ThreadId,
@@ -64,6 +65,9 @@ const THREAD_KEY = scopedThreadKey(THREAD_REF);
 const UUID_ROUTE_RE = /^\/draft\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_DRAFT_KEY = `${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`;
 const PROJECT_KEY = scopedProjectKey(scopeProjectRef(LOCAL_ENVIRONMENT_ID, PROJECT_ID));
+const SIDEBAR_DELETE_PROJECT_ID = "project-delete" as ProjectId;
+const SIDEBAR_DELETE_PROJECT_NAME = "Archived Only Project";
+const SIDEBAR_OTHER_PROJECT_ID = "project-other" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'></svg>";
@@ -558,6 +562,72 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   return {
     ...snapshot,
     threads: [],
+  };
+}
+
+function createProjectDeletionSnapshot(options: {
+  archivedThreadCount: number;
+  activeThreadCount: number;
+}): OrchestrationReadModel {
+  const secondaryProjectThread = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-delete-project-target" as MessageId,
+    targetText: "secondary project thread",
+  }).threads[0]!;
+
+  return {
+    snapshotSequence: 1,
+    updatedAt: NOW_ISO,
+    projects: [
+      {
+        id: SIDEBAR_DELETE_PROJECT_ID,
+        title: SIDEBAR_DELETE_PROJECT_NAME,
+        workspaceRoot: "/repo/project-delete",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+      {
+        id: SIDEBAR_OTHER_PROJECT_ID,
+        title: "Active Project",
+        workspaceRoot: "/repo/project",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: [
+      ...Array.from({ length: options.archivedThreadCount }, (_, index) => ({
+        ...secondaryProjectThread,
+        id: `thread-delete-archived-${index + 1}` as ThreadId,
+        projectId: SIDEBAR_DELETE_PROJECT_ID,
+        title: `Archived thread ${index + 1}`,
+        archivedAt: isoAt(2_000 + index),
+      })),
+      ...Array.from({ length: options.activeThreadCount }, (_, index) => ({
+        ...secondaryProjectThread,
+        id: `thread-delete-active-${index + 1}` as ThreadId,
+        projectId: SIDEBAR_DELETE_PROJECT_ID,
+        title: `Active thread ${index + 1}`,
+        archivedAt: null,
+      })),
+      {
+        ...secondaryProjectThread,
+        projectId: SIDEBAR_OTHER_PROJECT_ID,
+        id: THREAD_ID,
+        title: "Browser test thread",
+        archivedAt: null,
+      },
+    ],
   };
 }
 
@@ -1132,6 +1202,16 @@ async function waitForButtonContainingText(text: string): Promise<HTMLButtonElem
   );
 }
 
+async function waitForProjectButton(projectName: string): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () =>
+      (Array.from(document.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes(projectName),
+      ) ?? null) as HTMLButtonElement | null,
+    `Unable to find project button for "${projectName}".`,
+  );
+}
+
 async function waitForSelectItemContainingText(text: string): Promise<HTMLElement> {
   return waitForElement(
     () =>
@@ -1683,6 +1763,137 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await expect.element(page.getByText("No threads yet")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
+    }
+  });
+
+  it("removes a project when only archived threads remain", async () => {
+    const showContextMenu = vi
+      .fn<LocalApi["contextMenu"]["show"]>()
+      .mockResolvedValue("delete" as never);
+    const confirm = vi.fn<LocalApi["dialogs"]["confirm"]>().mockResolvedValue(true);
+    window.nativeApi = {
+      contextMenu: { show: showContextMenu },
+      dialogs: {
+        confirm,
+        pickFolder: vi.fn().mockResolvedValue(null),
+      },
+    } as unknown as LocalApi;
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createProjectDeletionSnapshot({
+        archivedThreadCount: 1,
+        activeThreadCount: 0,
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          bootstrapProjectId: SIDEBAR_OTHER_PROJECT_ID,
+          bootstrapThreadId: THREAD_ID,
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const projectButton = await waitForProjectButton(SIDEBAR_DELETE_PROJECT_NAME);
+      projectButton.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 12,
+          clientY: 12,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(showContextMenu).toHaveBeenCalled();
+        expect(confirm).toHaveBeenCalledWith(`Remove project "${SIDEBAR_DELETE_PROJECT_NAME}"?`);
+      });
+
+      const dispatchRequest = wsRequests.find(
+        (request) =>
+          request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          request.type === "project.delete",
+      ) as { _tag: string; type?: string; projectId?: string } | undefined;
+      expect(dispatchRequest).toMatchObject({
+        _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+        type: "project.delete",
+        projectId: SIDEBAR_DELETE_PROJECT_ID,
+      });
+      expect(document.body.textContent).not.toContain(
+        "Delete or archive all active threads in this project before removing it.",
+      );
+    } finally {
+      await mounted.cleanup();
+      delete window.nativeApi;
+    }
+  });
+
+  it("blocks project removal when active threads still exist", async () => {
+    const showContextMenu = vi
+      .fn<LocalApi["contextMenu"]["show"]>()
+      .mockResolvedValue("delete" as never);
+    const confirm = vi.fn<LocalApi["dialogs"]["confirm"]>().mockResolvedValue(true);
+    window.nativeApi = {
+      contextMenu: { show: showContextMenu },
+      dialogs: {
+        confirm,
+        pickFolder: vi.fn().mockResolvedValue(null),
+      },
+    } as unknown as LocalApi;
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createProjectDeletionSnapshot({
+        archivedThreadCount: 1,
+        activeThreadCount: 1,
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          bootstrapProjectId: SIDEBAR_OTHER_PROJECT_ID,
+          bootstrapThreadId: THREAD_ID,
+        };
+      },
+    });
+
+    try {
+      const projectButton = await waitForProjectButton(SIDEBAR_DELETE_PROJECT_NAME);
+      projectButton.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 12,
+          clientY: 12,
+        }),
+      );
+
+      await expect
+        .element(
+          page.getByText(
+            "Delete or archive all active threads in this project before removing it.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(confirm).not.toHaveBeenCalled();
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "project.delete",
+        ),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+      delete window.nativeApi;
     }
   });
 

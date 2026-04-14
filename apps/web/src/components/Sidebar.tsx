@@ -35,7 +35,6 @@ import {
   type DesktopUpdateState,
   type EnvironmentId,
   ProjectId,
-  type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadEnvMode,
   ThreadId,
@@ -120,6 +119,8 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  buildSidebarProjectSnapshots,
+  getProjectDeletionBlockingThreads,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
@@ -131,6 +132,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
+  type SidebarProjectSnapshot,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
 } from "./Sidebar.logic";
@@ -139,12 +141,11 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { readEnvironmentApi } from "../environmentApi";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
-import { deriveLogicalProjectKey } from "../logicalProject";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
-import type { Project, SidebarThreadSummary } from "../types";
+import type { SidebarThreadSummary } from "../types";
 const THREAD_PREVIEW_LIMIT = 6;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -209,15 +210,6 @@ function buildThreadJumpLabelMap(input: {
   return mapping.size > 0 ? mapping : EMPTY_THREAD_JUMP_LABELS;
 }
 
-type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
-
-type SidebarProjectSnapshot = Project & {
-  projectKey: string;
-  environmentPresence: EnvironmentPresence;
-  memberProjectRefs: readonly ScopedProjectRef[];
-  /** Labels for remote environments this project lives in. */
-  remoteEnvironmentLabels: readonly string[];
-};
 interface TerminalStatusIndicator {
   label: "Terminal process running";
   colorClass: string;
@@ -979,6 +971,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
   const router = useRouter();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  const projectOrder = useUiStateStore((state) => state.projectOrder);
   const toggleProject = useUiStateStore((state) => state.toggleProject);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((state) => state.rangeSelectTo);
@@ -993,6 +986,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const clearProjectDraftThreadId = useComposerDraftStore(
     (state) => state.clearProjectDraftThreadId,
   );
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((state) => state.byId);
+  const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((state) => state.byId);
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
     threadId: ThreadId;
   }>({
@@ -1318,11 +1314,60 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         }
         if (clicked !== "delete") return;
 
-        if (projectThreads.length > 0) {
+        const projectApi = readEnvironmentApi(project.environmentId);
+        if (!projectApi) {
+          toastManager.add({
+            type: "error",
+            title: `Failed to remove "${project.name}"`,
+            description: "Project API unavailable.",
+          });
+          return;
+        }
+
+        let deletionProjectThreads = projectThreads;
+        try {
+          const snapshot = await projectApi.orchestration.getSnapshot();
+          useStore.getState().syncServerReadModel(snapshot, project.environmentId);
+          const refreshedState = useStore.getState();
+          const orderedProjects = orderItemsByPreferredIds({
+            items: selectProjectsAcrossEnvironments(refreshedState),
+            preferredIds: projectOrder,
+            getId: (entry) => scopedProjectKey(scopeProjectRef(entry.environmentId, entry.id)),
+          });
+          const refreshedSidebarProjects = buildSidebarProjectSnapshots({
+            orderedProjects,
+            primaryEnvironmentId,
+            savedEnvironmentRegistryById: savedEnvironmentRegistry,
+            savedEnvironmentRuntimeById,
+          });
+          const refreshedProject =
+            refreshedSidebarProjects.find((entry) =>
+              entry.memberProjectRefs.some(
+                (memberRef) =>
+                  memberRef.environmentId === project.environmentId &&
+                  memberRef.projectId === project.id,
+              ),
+            ) ?? null;
+          deletionProjectThreads = refreshedProject
+            ? selectSidebarThreadsForProjectRefs(refreshedState, refreshedProject.memberProjectRefs)
+            : selectSidebarThreadsForProjectRef(
+                refreshedState,
+                scopeProjectRef(project.environmentId, project.id),
+              );
+        } catch (error) {
+          console.error("Failed to refresh project state before removal", {
+            projectId: project.id,
+            error,
+          });
+        }
+
+        const blockingThreads = getProjectDeletionBlockingThreads(deletionProjectThreads);
+
+        if (blockingThreads.length > 0) {
           toastManager.add({
             type: "warning",
             title: "Project is not empty",
-            description: "Delete all threads in this project before removing it.",
+            description: "Delete or archive all active threads in this project before removing it.",
           });
           return;
         }
@@ -1338,10 +1383,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             clearComposerDraftForThread(projectDraftThread.draftId);
           }
           clearProjectDraftThreadId(scopeProjectRef(project.environmentId, project.id));
-          const projectApi = readEnvironmentApi(project.environmentId);
-          if (!projectApi) {
-            throw new Error("Project API unavailable.");
-          }
           await projectApi.orchestration.dispatchCommand({
             type: "project.delete",
             commandId: newCommandId(),
@@ -1364,11 +1405,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       clearProjectDraftThreadId,
       copyPathToClipboard,
       getDraftThreadByProjectRef,
+      primaryEnvironmentId,
       project.cwd,
       project.environmentId,
       project.id,
       project.name,
-      projectThreads.length,
+      projectOrder,
+      projectThreads,
+      savedEnvironmentRegistry,
+      savedEnvironmentRuntimeById,
       suppressProjectClickForContextMenuRef,
     ],
   );
@@ -2378,87 +2423,29 @@ export default function Sidebar() {
     });
   }, [projectOrder, projects]);
 
-  // Build a mapping from physical project key → logical project key for
-  // cross-environment grouping.  Projects that share a repositoryIdentity
-  // canonicalKey are treated as one logical project in the sidebar.
-  const physicalToLogicalKey = useMemo(() => {
-    const mapping = new Map<string, string>();
-    for (const project of orderedProjects) {
-      const physicalKey = scopedProjectKey(scopeProjectRef(project.environmentId, project.id));
-      mapping.set(physicalKey, deriveLogicalProjectKey(project));
-    }
-    return mapping;
-  }, [orderedProjects]);
-
   const sidebarProjects = useMemo<SidebarProjectSnapshot[]>(() => {
-    // Group projects by logical key while preserving insertion order from
-    // orderedProjects.
-    const groupedMembers = new Map<string, Project[]>();
-    for (const project of orderedProjects) {
-      const logicalKey = deriveLogicalProjectKey(project);
-      const existing = groupedMembers.get(logicalKey);
-      if (existing) {
-        existing.push(project);
-      } else {
-        groupedMembers.set(logicalKey, [project]);
-      }
-    }
-
-    const result: SidebarProjectSnapshot[] = [];
-    const seen = new Set<string>();
-    for (const project of orderedProjects) {
-      const logicalKey = deriveLogicalProjectKey(project);
-      if (seen.has(logicalKey)) continue;
-      seen.add(logicalKey);
-
-      const members = groupedMembers.get(logicalKey)!;
-      // Prefer the primary environment's project as the representative.
-      const representative: Project | undefined =
-        (primaryEnvironmentId
-          ? members.find((p) => p.environmentId === primaryEnvironmentId)
-          : undefined) ?? members[0];
-      if (!representative) continue;
-      const hasLocal =
-        primaryEnvironmentId !== null &&
-        members.some((p) => p.environmentId === primaryEnvironmentId);
-      const hasRemote =
-        primaryEnvironmentId !== null
-          ? members.some((p) => p.environmentId !== primaryEnvironmentId)
-          : false;
-
-      const refs = members.map((p) => scopeProjectRef(p.environmentId, p.id));
-      const remoteLabels = members
-        .filter((p) => primaryEnvironmentId !== null && p.environmentId !== primaryEnvironmentId)
-        .map((p) => {
-          const rt = savedEnvironmentRuntimeById[p.environmentId];
-          const saved = savedEnvironmentRegistry[p.environmentId];
-          return rt?.descriptor?.label ?? saved?.label ?? p.environmentId;
-        });
-      const snapshot: SidebarProjectSnapshot = {
-        id: representative.id,
-        environmentId: representative.environmentId,
-        name: representative.name,
-        cwd: representative.cwd,
-        repositoryIdentity: representative.repositoryIdentity ?? null,
-        defaultModelSelection: representative.defaultModelSelection,
-        createdAt: representative.createdAt,
-        updatedAt: representative.updatedAt,
-        scripts: representative.scripts,
-        projectKey: logicalKey,
-        environmentPresence:
-          hasLocal && hasRemote ? "mixed" : hasRemote ? "remote-only" : "local-only",
-        memberProjectRefs: refs,
-        remoteEnvironmentLabels: remoteLabels,
-      };
-      result.push(snapshot);
-    }
-    return result;
+    return buildSidebarProjectSnapshots({
+      orderedProjects,
+      primaryEnvironmentId,
+      savedEnvironmentRegistryById: savedEnvironmentRegistry,
+      savedEnvironmentRuntimeById,
+    });
   }, [
     orderedProjects,
     primaryEnvironmentId,
     savedEnvironmentRegistry,
     savedEnvironmentRuntimeById,
   ]);
+
+  const physicalToLogicalKey = useMemo(() => {
+    const mapping = new Map<string, string>();
+    for (const project of sidebarProjects) {
+      for (const memberRef of project.memberProjectRefs) {
+        mapping.set(scopedProjectKey(memberRef), project.projectKey);
+      }
+    }
+    return mapping;
+  }, [sidebarProjects]);
 
   const sidebarProjectByKey = useMemo(
     () => new Map(sidebarProjects.map((project) => [project.projectKey, project] as const)),

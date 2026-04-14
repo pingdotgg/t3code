@@ -71,6 +71,26 @@ export function requireProjectAbsent(input: {
   );
 }
 
+export function requireProjectDeletionArchivedThreads(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly projectId: ProjectId;
+}): Effect.Effect<ReadonlyArray<OrchestrationThread>, OrchestrationCommandInvariantError> {
+  const projectThreads = listThreadsByProjectId(input.readModel, input.projectId).filter(
+    (thread) => thread.deletedAt === null,
+  );
+  const activeThreads = projectThreads.filter((thread) => thread.archivedAt === null);
+  if (activeThreads.length > 0) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Project '${input.projectId}' still has active threads and cannot be deleted.`,
+      ),
+    );
+  }
+  return Effect.succeed(projectThreads);
+}
+
 export function requireThread(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;

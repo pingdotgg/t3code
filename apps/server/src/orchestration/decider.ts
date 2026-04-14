@@ -8,6 +8,7 @@ import { Effect } from "effect";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   requireProject,
+  requireProjectDeletionArchivedThreads,
   requireProjectAbsent,
   requireThread,
   requireThreadArchived,
@@ -119,20 +120,45 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
-      const occurredAt = nowIso();
-      return {
-        ...withEventBase({
-          aggregateKind: "project",
-          aggregateId: command.projectId,
-          occurredAt,
-          commandId: command.commandId,
+      const archivedThreads = yield* requireProjectDeletionArchivedThreads({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      return [
+        ...archivedThreads.map((thread) => {
+          const occurredAt = nowIso();
+          const eventBase = withEventBase({
+            aggregateKind: "thread",
+            aggregateId: thread.id,
+            occurredAt,
+            commandId: command.commandId,
+          });
+          return Object.assign({}, eventBase, {
+            type: "thread.deleted" as const,
+            payload: {
+              threadId: thread.id,
+              deletedAt: occurredAt,
+            },
+          });
         }),
-        type: "project.deleted",
-        payload: {
-          projectId: command.projectId,
-          deletedAt: occurredAt,
-        },
-      };
+        (() => {
+          const occurredAt = nowIso();
+          return {
+            ...withEventBase({
+              aggregateKind: "project",
+              aggregateId: command.projectId,
+              occurredAt,
+              commandId: command.commandId,
+            }),
+            type: "project.deleted" as const,
+            payload: {
+              projectId: command.projectId,
+              deletedAt: occurredAt,
+            },
+          };
+        })(),
+      ];
     }
 
     case "thread.create": {
