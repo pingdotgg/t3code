@@ -31,6 +31,7 @@ import {
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
+import { ServerConfig } from "../../config";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
 
@@ -562,6 +563,61 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         assert.strictEqual(haveProvidersChanged(providers, [...providers]), false);
       });
 
+      it.effect("does not probe provider health during registry startup", () =>
+        Effect.gen(function* () {
+          let spawnCount = 0;
+          const serverSettings = yield* makeMutableServerSettingsService();
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const providerRegistryLayer = ProviderRegistryLive.pipe(
+            Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-",
+              }),
+            ),
+            Layer.provideMerge(
+              mockCommandSpawnerLayer((command, args) => {
+                spawnCount += 1;
+                const joined = args.join(" ");
+                if (joined === "--version") {
+                  if (command === "codex") {
+                    return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+                  }
+                  return { stdout: "claude 1.0.0\n", stderr: "", code: 0 };
+                }
+                if (joined === "login status") {
+                  return { stdout: "Logged in\n", stderr: "", code: 0 };
+                }
+                if (joined === "auth status") {
+                  return { stdout: '{"authenticated":true}\n', stderr: "", code: 0 };
+                }
+                throw new Error(`Unexpected args: ${command} ${joined}`);
+              }),
+            ),
+          );
+          const runtimeServices = yield* Layer.build(
+            Layer.mergeAll(
+              Layer.succeed(ServerSettingsService, serverSettings),
+              providerRegistryLayer,
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry;
+            assert.deepStrictEqual(yield* registry.getProviders, []);
+            assert.strictEqual(spawnCount, 0);
+
+            const refreshed = yield* registry.refresh("codex");
+            assert.strictEqual(spawnCount > 0, true);
+            assert.strictEqual(
+              refreshed.find((provider) => provider.provider === "codex")?.status,
+              "ready",
+            );
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it.effect("reruns codex health when codex provider settings change", () =>
         Effect.gen(function* () {
           const serverSettings = yield* makeMutableServerSettingsService();
@@ -569,6 +625,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-",
+              }),
+            ),
             Layer.provideMerge(
               mockCommandSpawnerLayer((command, args) => {
                 const joined = args.join(" ");
@@ -596,8 +657,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             const registry = yield* ProviderRegistry;
 
             const initial = yield* registry.getProviders;
+            assert.deepStrictEqual(initial, []);
+
+            const refreshed = yield* registry.refresh("codex");
             assert.strictEqual(
-              initial.find((status) => status.provider === "codex")?.status,
+              refreshed.find((status) => status.provider === "codex")?.status,
               "ready",
             );
 

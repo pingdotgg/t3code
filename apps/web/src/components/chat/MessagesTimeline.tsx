@@ -92,7 +92,6 @@ const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 // ---------------------------------------------------------------------------
 
 interface MessagesTimelineProps {
-  hasMessages: boolean;
   isWorking: boolean;
   activeTurnInProgress: boolean;
   activeTurnId?: TurnId | null;
@@ -121,7 +120,6 @@ interface MessagesTimelineProps {
 // ---------------------------------------------------------------------------
 
 export const MessagesTimeline = memo(function MessagesTimeline({
-  hasMessages,
   isWorking,
   activeTurnInProgress,
   activeTurnId,
@@ -172,6 +170,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
   }, [listRef, onIsAtEndChange]);
 
+  const previousRowCountRef = useRef(rows.length);
+  useEffect(() => {
+    const previousRowCount = previousRowCountRef.current;
+    previousRowCountRef.current = rows.length;
+
+    if (previousRowCount > 0 || rows.length === 0) {
+      return;
+    }
+
+    onIsAtEndChange(true);
+    const frameId = window.requestAnimationFrame(() => {
+      void listRef.current?.scrollToEnd?.({ animated: false });
+    });
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [listRef, onIsAtEndChange, rows.length]);
+
   // Memoised context value — only changes on state transitions, NOT on
   // every streaming chunk. Callbacks from ChatView are useCallback-stable.
   const sharedState = useMemo<TimelineRowSharedState>(
@@ -220,7 +236,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [],
   );
 
-  if (!hasMessages && !isWorking) {
+  if (rows.length === 0 && !isWorking) {
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-sm text-muted-foreground/30">

@@ -58,6 +58,10 @@ import {
 import { GitCore, type GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import { GitStatusBroadcasterLive } from "./git/Layers/GitStatusBroadcaster.ts";
+import {
+  GitStatusBroadcaster,
+  type GitStatusBroadcasterShape,
+} from "./git/Services/GitStatusBroadcaster.ts";
 import { Keybindings, type KeybindingsShape } from "./keybindings.ts";
 import { Open, type OpenShape } from "./open.ts";
 import {
@@ -293,6 +297,7 @@ const buildAppUnderTest = (options?: {
     open?: Partial<OpenShape>;
     gitCore?: Partial<GitCoreShape>;
     gitManager?: Partial<GitManagerShape>;
+    gitStatusBroadcaster?: Partial<GitStatusBroadcasterShape>;
     projectSetupScriptRunner?: Partial<ProjectSetupScriptRunnerShape>;
     terminalManager?: Partial<TerminalManagerShape>;
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
@@ -341,7 +346,11 @@ const buildAppUnderTest = (options?: {
     const gitManagerLayer = Layer.mock(GitManager)({
       ...options?.layers?.gitManager,
     });
-    const gitStatusBroadcasterLayer = GitStatusBroadcasterLive.pipe(Layer.provide(gitManagerLayer));
+    const gitStatusBroadcasterLayer = options?.layers?.gitStatusBroadcaster
+      ? Layer.mock(GitStatusBroadcaster)({
+          ...options.layers.gitStatusBroadcaster,
+        })
+      : GitStatusBroadcasterLive.pipe(Layer.provide(gitManagerLayer));
 
     const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
@@ -1781,7 +1790,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc subscribeServerConfig streams snapshot then update", () =>
     Effect.gen(function* () {
-      const providers = [] as const;
+      const providers = [
+        {
+          provider: "codex" as const,
+          enabled: true,
+          installed: true,
+          version: "1.0.0",
+          status: "ready" as const,
+          auth: { status: "authenticated" as const },
+          checkedAt: "2026-04-11T00:00:00.000Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        },
+      ] as const;
       const changeEvent = {
         keybindings: [],
         issues: [],
@@ -1838,7 +1860,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc subscribeServerConfig emits provider status updates", () =>
     Effect.gen(function* () {
-      const providers = [] as const;
+      const nextProviders = [
+        {
+          provider: "codex" as const,
+          enabled: true,
+          installed: true,
+          version: "1.0.0",
+          status: "ready" as const,
+          auth: { status: "authenticated" as const },
+          checkedAt: "2026-04-11T00:00:00.000Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        },
+      ] as const;
 
       yield* buildAppUnderTest({
         layers: {
@@ -1851,7 +1886,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
           providerRegistry: {
             getProviders: Effect.succeed([]),
-            streamChanges: Stream.succeed(providers),
+            streamChanges: Stream.succeed(nextProviders),
           },
         },
       });
@@ -1865,10 +1900,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const [first, second] = Array.from(events);
       assert.equal(first?.type, "snapshot");
+      if (first?.type === "snapshot") {
+        assert.deepEqual(first.config.providers, []);
+      }
       assert.deepEqual(second, {
         version: 1,
         type: "providerStatuses",
-        payload: { providers },
+        payload: { providers: nextProviders },
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -2913,6 +2951,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     () =>
       Effect.gen(function* () {
         const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const refreshStatus = vi.fn((_: string) =>
+          Effect.succeed({
+            isRepo: true,
+            hasOriginRemote: true,
+            isDefaultBranch: false,
+            branch: "t3code/bootstrap-branch",
+            hasWorkingTreeChanges: false,
+            workingTree: {
+              files: [],
+              insertions: 0,
+              deletions: 0,
+            },
+            hasUpstream: true,
+            aheadCount: 0,
+            behindCount: 0,
+            pr: null,
+          }),
+        );
         const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
           Effect.succeed({
             worktree: {
@@ -2936,6 +2992,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           layers: {
             gitCore: {
               createWorktree,
+            },
+            gitStatusBroadcaster: {
+              refreshStatus,
             },
             orchestrationEngine: {
               dispatch: (command) =>
@@ -3014,6 +3073,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           projectCwd: "/tmp/project",
           worktreePath: "/tmp/bootstrap-worktree",
         });
+        assert.deepEqual(refreshStatus.mock.calls[0]?.[0], "/tmp/bootstrap-worktree");
 
         const setupActivities = dispatchedCommands.filter(
           (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>

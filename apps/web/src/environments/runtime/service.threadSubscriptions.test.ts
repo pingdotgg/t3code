@@ -1,5 +1,11 @@
 import { QueryClient } from "@tanstack/react-query";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  TurnId,
+  type OrchestrationShellSnapshot,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockSubscribeThread = vi.fn();
@@ -65,6 +71,74 @@ vi.mock("../../rpc/wsTransport", () => ({
   WsTransport: MockWsTransport,
 }));
 
+function makeThreadShellSnapshot(params: {
+  readonly threadId: ThreadId;
+  readonly sessionStatus?:
+    | "idle"
+    | "starting"
+    | "running"
+    | "ready"
+    | "interrupted"
+    | "stopped"
+    | "error";
+  readonly hasPendingApprovals?: boolean;
+  readonly hasPendingUserInput?: boolean;
+  readonly hasActionableProposedPlan?: boolean;
+}): OrchestrationShellSnapshot {
+  const projectId = ProjectId.make("project-1");
+  const turnId = TurnId.make("turn-1");
+
+  return {
+    snapshotSequence: 1,
+    projects: [],
+    updatedAt: "2026-04-13T00:00:00.000Z",
+    threads: [
+      {
+        id: params.threadId,
+        projectId,
+        title: "Thread",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        latestTurn:
+          params.sessionStatus === "running"
+            ? {
+                turnId,
+                state: "running",
+                requestedAt: "2026-04-13T00:00:00.000Z",
+                startedAt: "2026-04-13T00:00:01.000Z",
+                completedAt: null,
+                assistantMessageId: null,
+              }
+            : null,
+        createdAt: "2026-04-13T00:00:00.000Z",
+        updatedAt: "2026-04-13T00:00:00.000Z",
+        archivedAt: null,
+        session: params.sessionStatus
+          ? {
+              threadId: params.threadId,
+              status: params.sessionStatus,
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: params.sessionStatus === "running" ? turnId : null,
+              lastError: null,
+              updatedAt: "2026-04-13T00:00:00.000Z",
+            }
+          : null,
+        latestUserMessageAt: null,
+        hasPendingApprovals: params.hasPendingApprovals ?? false,
+        hasPendingUserInput: params.hasPendingUserInput ?? false,
+        hasActionableProposedPlan: params.hasActionableProposedPlan ?? false,
+      },
+    ],
+  };
+}
+
 describe("retainThreadDetailSubscription", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -119,11 +193,84 @@ describe("retainThreadDetailSubscription", () => {
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
 
     releaseSecond();
-    await vi.advanceTimersByTimeAsync(2 * 60 * 1000 - 1);
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
     expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(28 * 60 * 1000);
     expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("keeps non-idle thread detail subscriptions attached until the thread becomes idle", async () => {
+    const {
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-active");
+
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    connectionInput.syncShellSnapshot(
+      makeThreadShellSnapshot({
+        threadId,
+        sessionStatus: "ready",
+        hasPendingApprovals: true,
+      }),
+      environmentId,
+    );
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    release();
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+    expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
+
+    connectionInput.applyShellEvent(
+      {
+        kind: "thread-upserted",
+        sequence: 2,
+        thread: makeThreadShellSnapshot({
+          threadId,
+          sessionStatus: "idle",
+        }).threads[0]!,
+      },
+      environmentId,
+    );
+
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+    expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("allows a larger idle cache before capacity eviction starts", async () => {
+    const {
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+
+    for (let index = 0; index < 12; index += 1) {
+      const release = retainThreadDetailSubscription(
+        environmentId,
+        ThreadId.make(`thread-${index + 1}`),
+      );
+      release();
+    }
+
+    expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
 
     stop();
     await resetEnvironmentServiceForTests();

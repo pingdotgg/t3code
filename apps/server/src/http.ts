@@ -226,6 +226,7 @@ export const staticAndDevRouteLayer = HttpRouter.add(
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
+
     if (Option.isNone(url)) {
       return HttpServerResponse.text("Bad Request", { status: 400 });
     }
