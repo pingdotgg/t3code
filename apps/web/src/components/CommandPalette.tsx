@@ -351,7 +351,7 @@ function OpenCommandPaletteDialog() {
     [browseEnvironmentId, currentProjectCwdForBrowse],
   );
 
-  const { data: browseResult } = useQuery({
+  const { data: browseResult, isPending: isBrowsePending } = useQuery({
     queryKey: [
       "filesystemBrowse",
       browseEnvironmentId,
@@ -858,11 +858,10 @@ function OpenCommandPaletteDialog() {
   const canSubmitBrowsePath = isBrowsing && !relativePathNeedsActiveProject;
   const willCreateProjectPath =
     canSubmitBrowsePath &&
+    !isBrowsePending &&
     query.trim().length > 0 &&
     !hasHighlightedBrowseItem &&
-    (hasTrailingPathSeparator(query)
-      ? (browseResult?.parentPath ?? "") !== query.trim()
-      : exactBrowseEntry === null);
+    (hasTrailingPathSeparator(query) ? !browseResult : exactBrowseEntry === null);
   const useMetaForMod = isMacPlatform(navigator.platform);
   const submitModifierLabel = useMetaForMod ? "\u2318" : "Ctrl";
   const submitActionLabel = willCreateProjectPath ? "Create & Add" : "Add";
@@ -1025,7 +1024,10 @@ function OpenCommandPaletteDialog() {
               variant="outline"
               size="xs"
               tabIndex={-1}
-              className="absolute end-2.5 top-1/2 gap-1.5 -translate-y-1/2"
+              className={cn(
+                "absolute end-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
+                hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
+              )}
               aria-label={`${submitActionLabel} (${addShortcutLabel})`}
               disabled={relativePathNeedsActiveProject}
               onMouseDown={(event) => {
@@ -1040,9 +1042,8 @@ function OpenCommandPaletteDialog() {
               title={`${submitActionLabel} (${addShortcutLabel})`}
             >
               <span>{submitActionLabel}</span>
-              <KbdGroup className="pointer-events-none items-center gap-1">
-                {hasHighlightedBrowseItem ? <Kbd>{submitModifierLabel}</Kbd> : null}
-                <Kbd>Enter</Kbd>
+              <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
+                <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
               </KbdGroup>
             </Button>
           ) : null}
