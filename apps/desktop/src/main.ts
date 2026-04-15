@@ -280,6 +280,10 @@ function normalizeDesktopJsonHttpRequest(
     throw new Error("Desktop HTTP requests only support GET and POST.");
   }
 
+  if (body !== undefined && (method ?? "GET") !== "POST") {
+    throw new Error("Desktop HTTP request body is only allowed with POST method.");
+  }
+
   if (headers !== undefined) {
     if (typeof headers !== "object" || headers === null || Array.isArray(headers)) {
       throw new Error("Invalid desktop HTTP request headers.");
