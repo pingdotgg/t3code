@@ -648,14 +648,16 @@ function AssistantChangedFilesSectionInner({
           </Button>
         </div>
       </div>
-      <ChangedFilesTree
-        key={`changed-files-tree:${turnSummary.turnId}`}
-        turnId={turnSummary.turnId}
-        files={checkpointFiles}
-        allDirectoriesExpanded={allDirectoriesExpanded}
-        resolvedTheme={resolvedTheme}
-        onOpenTurnDiff={onOpenTurnDiff}
-      />
+      <div className="max-h-80 overflow-y-auto">
+        <ChangedFilesTree
+          key={`changed-files-tree:${turnSummary.turnId}`}
+          turnId={turnSummary.turnId}
+          files={checkpointFiles}
+          allDirectoriesExpanded={allDirectoriesExpanded}
+          resolvedTheme={resolvedTheme}
+          onOpenTurnDiff={onOpenTurnDiff}
+        />
+      </div>
     </div>
   );
 }
