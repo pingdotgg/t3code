@@ -19,7 +19,7 @@ const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_ASKPASS_DIR_NAME = "t3code-ssh-askpass";
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const SSH_READY_TIMEOUT_MS = 20_000;
-const STABLE_T3_VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
+const PUBLISHABLE_T3_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 
 interface SshTunnelEntry {
   readonly key: string;
@@ -673,16 +673,12 @@ export function resolveRemoteT3CliPackageSpec(input: {
   readonly updateChannel: DesktopUpdateChannel;
   readonly isDevelopment?: boolean;
 }): string {
-  if (input.updateChannel === "nightly") {
-    return "t3@nightly";
-  }
-
   const appVersion = input.appVersion.trim();
-  if (!input.isDevelopment && STABLE_T3_VERSION_PATTERN.test(appVersion)) {
+  if (!input.isDevelopment && PUBLISHABLE_T3_VERSION_PATTERN.test(appVersion)) {
     return `t3@${appVersion}`;
   }
 
-  return "t3@latest";
+  return input.updateChannel === "nightly" ? "t3@nightly" : "t3@latest";
 }
 
 function buildRemoteT3RunnerScript(input?: { readonly packageSpec?: string }): string {

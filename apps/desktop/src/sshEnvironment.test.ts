@@ -190,6 +190,13 @@ describe("sshEnvironment", () => {
         appVersion: "0.0.17-nightly.20260415.44",
         updateChannel: "nightly",
       }),
+    ).toBe("t3@0.0.17-nightly.20260415.44");
+    expect(
+      __test.resolveRemoteT3CliPackageSpec({
+        appVersion: "0.0.0-dev",
+        updateChannel: "nightly",
+        isDevelopment: true,
+      }),
     ).toBe("t3@nightly");
   });
 
