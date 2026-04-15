@@ -195,6 +195,47 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("accepts bootstrap metadata in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-bootstrap",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-bootstrap",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      bootstrap: {
+        createThread: {
+          projectId: "project-1",
+          title: "Bootstrap thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        prepareWorktree: {
+          projectCwd: "/tmp/workspace",
+          baseBranch: "main",
+          branch: "t3code/example",
+        },
+        runSetupScript: true,
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.bootstrap?.createThread?.projectId, "project-1");
+    assert.strictEqual(parsed.bootstrap?.prepareWorktree?.baseBranch, "main");
+    assert.strictEqual(parsed.bootstrap?.runSetupScript, true);
+  }),
+);
+
 it.effect("decodes thread.created runtime mode for historical events", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadCreatedPayload({

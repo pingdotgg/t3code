@@ -9,7 +9,7 @@
  *
  * @module RoutingTextGeneration
  */
-import { Effect, Layer, ServiceMap } from "effect";
+import { Effect, Layer, Context } from "effect";
 
 import {
   TextGeneration,
@@ -23,11 +23,11 @@ import { ClaudeTextGenerationLive } from "./ClaudeTextGeneration.ts";
 // Internal service tags so both concrete layers can coexist.
 // ---------------------------------------------------------------------------
 
-class CodexTextGen extends ServiceMap.Service<CodexTextGen, TextGenerationShape>()(
+class CodexTextGen extends Context.Service<CodexTextGen, TextGenerationShape>()(
   "t3/git/Layers/RoutingTextGeneration/CodexTextGen",
 ) {}
 
-class ClaudeTextGen extends ServiceMap.Service<ClaudeTextGen, TextGenerationShape>()(
+class ClaudeTextGen extends Context.Service<ClaudeTextGen, TextGenerationShape>()(
   "t3/git/Layers/RoutingTextGeneration/ClaudeTextGen",
 ) {}
 

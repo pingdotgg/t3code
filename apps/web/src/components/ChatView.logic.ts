@@ -1,18 +1,25 @@
-import { ProjectId, type ModelSelection, type ThreadId, type TurnId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  ProjectId,
+  type ModelSelection,
+  type ProviderKind,
+  type ScopedThreadRef,
+  type ThreadId,
+  type TurnId,
+} from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
-import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
-import { useStore } from "../store";
+import { selectThreadByRef, useStore } from "../store";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
+import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
-const WORKTREE_BRANCH_PREFIX = "t3code";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -24,6 +31,7 @@ export function buildLocalDraftThread(
 ): Thread {
   return {
     id: threadId,
+    environmentId: draftThread.environmentId,
     codexThreadId: null,
     projectId: draftThread.projectId,
     title: "New thread",
@@ -44,13 +52,32 @@ export function buildLocalDraftThread(
   };
 }
 
+export function shouldWriteThreadErrorToCurrentServerThread(input: {
+  serverThread:
+    | {
+        environmentId: EnvironmentId;
+        id: ThreadId;
+      }
+    | null
+    | undefined;
+  routeThreadRef: ScopedThreadRef;
+  targetThreadId: ThreadId;
+}): boolean {
+  return Boolean(
+    input.serverThread &&
+    input.targetThreadId === input.routeThreadRef.threadId &&
+    input.serverThread.environmentId === input.routeThreadRef.environmentId &&
+    input.serverThread.id === input.targetThreadId,
+  );
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
-  currentThreadIds: ReadonlyArray<ThreadId>;
-  openThreadIds: ReadonlyArray<ThreadId>;
-  activeThreadId: ThreadId | null;
+  currentThreadIds: ReadonlyArray<string>;
+  openThreadIds: ReadonlyArray<string>;
+  activeThreadId: string | null;
   activeThreadTerminalOpen: boolean;
   maxHiddenThreadCount?: number;
-}): ThreadId[] {
+}): string[] {
   const openThreadIdSet = new Set(input.openThreadIds);
   const hiddenThreadIds = input.currentThreadIds.filter(
     (threadId) => threadId !== input.activeThreadId && openThreadIdSet.has(threadId),
@@ -129,10 +156,11 @@ export function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export function buildTemporaryWorktreeBranchName(): string {
-  // Keep the 8-hex suffix shape for backend temporary-branch detection.
-  const token = randomUUID().slice(0, 8).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+export function resolveSendEnvMode(input: {
+  requestedEnvMode: DraftThreadEnvMode;
+  isGitRepo: boolean;
+}): DraftThreadEnvMode {
+  return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
 export function cloneComposerImageForRetry(
@@ -198,11 +226,22 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
+export function deriveLockedProvider(input: {
+  thread: Thread | null | undefined;
+  selectedProvider: ProviderKind | null;
+  threadProvider: ProviderKind | null;
+}): ProviderKind | null {
+  if (!threadHasStarted(input.thread)) {
+    return null;
+  }
+  return input.thread?.session?.provider ?? input.threadProvider ?? input.selectedProvider ?? null;
+}
+
 export async function waitForStartedServerThread(
-  threadId: ThreadId,
+  threadRef: ScopedThreadRef,
   timeoutMs = 1_000,
 ): Promise<boolean> {
-  const getThread = () => useStore.getState().threads.find((thread) => thread.id === threadId);
+  const getThread = () => selectThreadByRef(useStore.getState(), threadRef);
   const thread = getThread();
 
   if (threadHasStarted(thread)) {
@@ -225,7 +264,7 @@ export async function waitForStartedServerThread(
     };
 
     const unsubscribe = useStore.subscribe((state) => {
-      if (!threadHasStarted(state.threads.find((thread) => thread.id === threadId))) {
+      if (!threadHasStarted(selectThreadByRef(state, threadRef))) {
         return;
       }
       finish(true);
@@ -283,23 +322,37 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (!input.localDispatch) {
     return false;
   }
-  if (
-    input.phase === "running" ||
-    input.hasPendingApproval ||
-    input.hasPendingUserInput ||
-    Boolean(input.threadError)
-  ) {
+  if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
     return true;
   }
 
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
-
-  return (
+  const latestTurnChanged =
     input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
     input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
     input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
-    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null) ||
+    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
+
+  if (input.phase === "running") {
+    if (!latestTurnChanged) {
+      return false;
+    }
+    if (latestTurn?.startedAt === null || latestTurn === null) {
+      return false;
+    }
+    if (
+      session?.activeTurnId !== undefined &&
+      session.activeTurnId !== null &&
+      latestTurn?.turnId !== session.activeTurnId
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  return (
+    latestTurnChanged ||
     input.localDispatch.sessionOrchestrationStatus !== (session?.orchestrationStatus ?? null) ||
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );

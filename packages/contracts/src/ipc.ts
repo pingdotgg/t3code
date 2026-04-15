@@ -1,5 +1,6 @@
 import type {
   GitCheckoutInput,
+  GitCheckoutResult,
   GitCreateBranchInput,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -15,6 +16,7 @@ import type {
   GitResolvePullRequestResult,
   GitStatusInput,
   GitStatusResult,
+  GitCreateBranchResult,
 } from "./git";
 import type {
   ProjectSearchEntriesInput,
@@ -44,11 +46,13 @@ import type {
   OrchestrationGetFullThreadDiffResult,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
-  OrchestrationEvent,
-  OrchestrationReadModel,
+  OrchestrationShellStreamItem,
+  OrchestrationSubscribeThreadInput,
+  OrchestrationThreadStreamItem,
 } from "./orchestration";
+import type { EnvironmentId } from "./baseSchemas";
 import { EditorId } from "./editor";
-import { ServerSettings, ServerSettingsPatch } from "./settings";
+import { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -69,6 +73,14 @@ export type DesktopUpdateStatus =
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
+export type DesktopUpdateChannel = "latest" | "nightly";
+export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
+
+export interface DesktopAppBranding {
+  baseName: string;
+  stageLabel: DesktopAppStageLabel;
+  displayName: string;
+}
 
 export interface DesktopRuntimeInfo {
   hostArch: DesktopRuntimeArch;
@@ -79,6 +91,7 @@ export interface DesktopRuntimeInfo {
 export interface DesktopUpdateState {
   enabled: boolean;
   status: DesktopUpdateStatus;
+  channel: DesktopUpdateChannel;
   currentVersion: string;
   hostArch: DesktopRuntimeArch;
   appArch: DesktopRuntimeArch;
@@ -103,8 +116,44 @@ export interface DesktopUpdateCheckResult {
   state: DesktopUpdateState;
 }
 
+export interface DesktopEnvironmentBootstrap {
+  label: string;
+  httpBaseUrl: string | null;
+  wsBaseUrl: string | null;
+  bootstrapToken?: string;
+}
+
+export interface PersistedSavedEnvironmentRecord {
+  environmentId: EnvironmentId;
+  label: string;
+  wsBaseUrl: string;
+  httpBaseUrl: string;
+  createdAt: string;
+  lastConnectedAt: string | null;
+}
+
+export type DesktopServerExposureMode = "local-only" | "network-accessible";
+
+export interface DesktopServerExposureState {
+  mode: DesktopServerExposureMode;
+  endpointUrl: string | null;
+  advertisedHost: string | null;
+}
+
 export interface DesktopBridge {
-  getWsUrl: () => string | null;
+  getAppBranding: () => DesktopAppBranding | null;
+  getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
+  getClientSettings: () => Promise<ClientSettings | null>;
+  setClientSettings: (settings: ClientSettings) => Promise<void>;
+  getSavedEnvironmentRegistry: () => Promise<readonly PersistedSavedEnvironmentRecord[]>;
+  setSavedEnvironmentRegistry: (
+    records: readonly PersistedSavedEnvironmentRecord[],
+  ) => Promise<void>;
+  getSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<string | null>;
+  setSavedEnvironmentSecret: (environmentId: EnvironmentId, secret: string) => Promise<boolean>;
+  removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;
+  getServerExposureState: () => Promise<DesktopServerExposureState>;
+  setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
@@ -115,17 +164,68 @@ export interface DesktopBridge {
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
+  setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
 }
 
-export interface NativeApi {
+/**
+ * APIs bound to the local app shell, not to any particular backend environment.
+ *
+ * These capabilities describe the desktop/browser host that the user is
+ * currently running: dialogs, editor/external-link opening, context menus, and
+ * app-level settings/config access. They must not be used as a proxy for
+ * "whatever environment the user is targeting", because in a multi-environment
+ * world the local shell and a selected backend environment are distinct
+ * concepts.
+ */
+export interface LocalApi {
   dialogs: {
     pickFolder: () => Promise<string | null>;
     confirm: (message: string) => Promise<boolean>;
   };
+  shell: {
+    openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
+    openExternal: (url: string) => Promise<void>;
+  };
+  contextMenu: {
+    show: <T extends string>(
+      items: readonly ContextMenuItem<T>[],
+      position?: { x: number; y: number },
+    ) => Promise<T | null>;
+  };
+  persistence: {
+    getClientSettings: () => Promise<ClientSettings | null>;
+    setClientSettings: (settings: ClientSettings) => Promise<void>;
+    getSavedEnvironmentRegistry: () => Promise<readonly PersistedSavedEnvironmentRecord[]>;
+    setSavedEnvironmentRegistry: (
+      records: readonly PersistedSavedEnvironmentRecord[],
+    ) => Promise<void>;
+    getSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<string | null>;
+    setSavedEnvironmentSecret: (environmentId: EnvironmentId, secret: string) => Promise<boolean>;
+    removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;
+  };
+  server: {
+    getConfig: () => Promise<ServerConfig>;
+    refreshProviders: () => Promise<ServerProviderUpdatedPayload>;
+    upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    getSettings: () => Promise<ServerSettings>;
+    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+  };
+}
+
+/**
+ * APIs bound to a specific backend environment connection.
+ *
+ * These operations must always be routed with explicit environment context.
+ * They represent remote stateful capabilities such as orchestration, terminal,
+ * project, and git operations. In multi-environment mode, each environment gets
+ * its own instance of this surface, and callers should resolve it by
+ * `environmentId` rather than reaching through the local desktop bridge.
+ */
+export interface EnvironmentApi {
   terminal: {
     open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
     write: (input: typeof TerminalWriteInput.Encoded) => Promise<void>;
@@ -139,47 +239,45 @@ export interface NativeApi {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
-  shell: {
-    openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
-    openExternal: (url: string) => Promise<void>;
-  };
   git: {
-    // Existing branch/worktree API
     listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;
     createWorktree: (input: GitCreateWorktreeInput) => Promise<GitCreateWorktreeResult>;
     removeWorktree: (input: GitRemoveWorktreeInput) => Promise<void>;
-    createBranch: (input: GitCreateBranchInput) => Promise<void>;
-    checkout: (input: GitCheckoutInput) => Promise<void>;
+    createBranch: (input: GitCreateBranchInput) => Promise<GitCreateBranchResult>;
+    checkout: (input: GitCheckoutInput) => Promise<GitCheckoutResult>;
     init: (input: GitInitInput) => Promise<void>;
     resolvePullRequest: (input: GitPullRequestRefInput) => Promise<GitResolvePullRequestResult>;
     preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Promise<GitPreparePullRequestThreadResult>;
-    // Stacked action API
     pull: (input: GitPullInput) => Promise<GitPullResult>;
-    status: (input: GitStatusInput) => Promise<GitStatusResult>;
-  };
-  contextMenu: {
-    show: <T extends string>(
-      items: readonly ContextMenuItem<T>[],
-      position?: { x: number; y: number },
-    ) => Promise<T | null>;
-  };
-  server: {
-    getConfig: () => Promise<ServerConfig>;
-    refreshProviders: () => Promise<ServerProviderUpdatedPayload>;
-    upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
-    getSettings: () => Promise<ServerSettings>;
-    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    refreshStatus: (input: GitStatusInput) => Promise<GitStatusResult>;
+    onStatus: (
+      input: GitStatusInput,
+      callback: (status: GitStatusResult) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
   };
   orchestration: {
-    getSnapshot: () => Promise<OrchestrationReadModel>;
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
     getTurnDiff: (input: OrchestrationGetTurnDiffInput) => Promise<OrchestrationGetTurnDiffResult>;
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
-    replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
-    onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
+    subscribeShell: (
+      callback: (event: OrchestrationShellStreamItem) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
+    subscribeThread: (
+      input: OrchestrationSubscribeThreadInput,
+      callback: (event: OrchestrationThreadStreamItem) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
   };
 }

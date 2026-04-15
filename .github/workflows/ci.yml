@@ -10,6 +10,7 @@ jobs:
   quality:
     name: Format, Lint, Typecheck, Test, Browser Test, Build
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -71,11 +72,12 @@ jobs:
       - name: Verify preload bundle output
         run: |
           test -f apps/desktop/dist-electron/preload.js
-          grep -nE "desktopBridge|getWsUrl|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.js
+          grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.js
 
   release_smoke:
     name: Release Smoke
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -89,6 +91,9 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts

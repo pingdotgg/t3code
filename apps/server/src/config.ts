@@ -6,12 +6,15 @@
  *
  * @module ServerConfig
  */
-import { Effect, FileSystem, Layer, LogLevel, Path, Schema, ServiceMap } from "effect";
+import { Effect, FileSystem, Layer, LogLevel, Path, Schema, Context } from "effect";
 
 export const DEFAULT_PORT = 3773;
 
 export const RuntimeMode = Schema.Literals(["web", "desktop"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
+
+export const StartupPresentation = Schema.Literals(["browser", "headless"]);
+export type StartupPresentation = typeof StartupPresentation.Type;
 
 /**
  * ServerDerivedPaths - Derived paths from the base directory.
@@ -21,6 +24,7 @@ export interface ServerDerivedPaths {
   readonly dbPath: string;
   readonly keybindingsConfigPath: string;
   readonly settingsPath: string;
+  readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
   readonly logsDir: string;
@@ -30,6 +34,9 @@ export interface ServerDerivedPaths {
   readonly providerEventLogPath: string;
   readonly terminalLogsDir: string;
   readonly anonymousIdPath: string;
+  readonly environmentIdPath: string;
+  readonly serverRuntimeStatePath: string;
+  readonly secretsDir: string;
 }
 
 /**
@@ -54,7 +61,8 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly staticDir: string | undefined;
   readonly devUrl: URL | undefined;
   readonly noBrowser: boolean;
-  readonly authToken: string | undefined;
+  readonly startupPresentation: StartupPresentation;
+  readonly desktopBootstrapToken: string | undefined;
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
 }
@@ -69,11 +77,13 @@ export const deriveServerPaths = Effect.fn(function* (
   const attachmentsDir = join(stateDir, "attachments");
   const logsDir = join(stateDir, "logs");
   const providerLogsDir = join(logsDir, "provider");
+  const providerStatusCacheDir = join(baseDir, "caches");
   return {
     stateDir,
     dbPath,
     keybindingsConfigPath: join(stateDir, "keybindings.json"),
     settingsPath: join(stateDir, "settings.json"),
+    providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,
     logsDir,
@@ -83,6 +93,9 @@ export const deriveServerPaths = Effect.fn(function* (
     providerEventLogPath: join(providerLogsDir, "events.log"),
     terminalLogsDir: join(logsDir, "terminals"),
     anonymousIdPath: join(stateDir, "anonymous-id"),
+    environmentIdPath: join(stateDir, "environment-id"),
+    serverRuntimeStatePath: join(stateDir, "server-runtime.json"),
+    secretsDir: join(stateDir, "secrets"),
   };
 });
 
@@ -100,7 +113,9 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
       fs.makeDirectory(derivedPaths.worktreesDir, { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.keybindingsConfigPath), { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true }),
+      fs.makeDirectory(derivedPaths.providerStatusCacheDir, { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.anonymousIdPath), { recursive: true }),
+      fs.makeDirectory(path.dirname(derivedPaths.serverRuntimeStatePath), { recursive: true }),
     ],
     { concurrency: "unbounded" },
   );
@@ -109,7 +124,7 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
 /**
  * ServerConfig - Service tag for server runtime configuration.
  */
-export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigShape>()(
+export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShape>()(
   "t3/config/ServerConfig",
 ) {
   static readonly layerTest = (cwd: string, baseDirOrPrefix: string | { prefix: string }) =>
@@ -145,10 +160,11 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           logWebSocketEvents: false,
           port: 0,
           host: undefined,
-          authToken: undefined,
+          desktopBootstrapToken: undefined,
           staticDir: undefined,
           devUrl,
           noBrowser: false,
+          startupPresentation: "browser",
         } satisfies ServerConfigShape;
       }),
     );

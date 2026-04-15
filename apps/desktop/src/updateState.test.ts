@@ -11,6 +11,7 @@ import {
 const baseState: DesktopUpdateState = {
   enabled: true,
   status: "idle",
+  channel: "latest",
   currentVersion: "1.0.0",
   hostArch: "x64",
   appArch: "x64",
@@ -71,8 +72,35 @@ describe("getAutoUpdateDisabledReason", () => {
         platform: "darwin",
         appImage: undefined,
         disabledByEnv: false,
+        hasUpdateFeedConfig: true,
       }),
     ).toContain("packaged production builds");
+  });
+
+  it("reports packaged local builds without an update feed as disabled", () => {
+    expect(
+      getAutoUpdateDisabledReason({
+        isDevelopment: false,
+        isPackaged: true,
+        platform: "darwin",
+        appImage: undefined,
+        disabledByEnv: false,
+        hasUpdateFeedConfig: false,
+      }),
+    ).toContain("no update feed");
+  });
+
+  it("allows packaged builds with an update feed", () => {
+    expect(
+      getAutoUpdateDisabledReason({
+        isDevelopment: false,
+        isPackaged: true,
+        platform: "darwin",
+        appImage: undefined,
+        disabledByEnv: false,
+        hasUpdateFeedConfig: true,
+      }),
+    ).toBeNull();
   });
 
   it("reports env-disabled auto updates", () => {
@@ -83,6 +111,7 @@ describe("getAutoUpdateDisabledReason", () => {
         platform: "darwin",
         appImage: undefined,
         disabledByEnv: true,
+        hasUpdateFeedConfig: true,
       }),
     ).toContain("T3CODE_DISABLE_AUTO_UPDATE");
   });
@@ -95,6 +124,7 @@ describe("getAutoUpdateDisabledReason", () => {
         platform: "linux",
         appImage: undefined,
         disabledByEnv: false,
+        hasUpdateFeedConfig: true,
       }),
     ).toContain("AppImage");
   });

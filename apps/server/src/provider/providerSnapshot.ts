@@ -1,6 +1,9 @@
 import type {
+  ModelCapabilities,
   ServerProvider,
   ServerProviderAuth,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
@@ -31,8 +34,7 @@ export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function isCommandMissingCause(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
+export function isCommandMissingCause(error: Error): boolean {
   const lower = error.message.toLowerCase();
   return lower.includes("enoent") || lower.includes("notfound");
 }
@@ -102,6 +104,7 @@ export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   provider: ServerProvider["provider"],
   customModels: ReadonlyArray<string>,
+  customModelCapabilities: ModelCapabilities,
 ): ReadonlyArray<ServerProviderModel> {
   const resolvedBuiltInModels = [...builtInModels];
   const seen = new Set(resolvedBuiltInModels.map((model) => model.slug));
@@ -117,7 +120,7 @@ export function providerModelsFromSettings(
       slug: normalized,
       name: normalized,
       isCustom: true,
-      capabilities: null,
+      capabilities: customModelCapabilities,
     });
   }
 
@@ -129,6 +132,8 @@ export function buildServerProvider(input: {
   enabled: boolean;
   checkedAt: string;
   models: ReadonlyArray<ServerProviderModel>;
+  slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
+  skills?: ReadonlyArray<ServerProviderSkill>;
   probe: ProviderProbeResult;
 }): ServerProvider {
   return {
@@ -141,6 +146,8 @@ export function buildServerProvider(input: {
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
     models: input.models,
+    slashCommands: [...(input.slashCommands ?? [])],
+    skills: [...(input.skills ?? [])],
   };
 }
 

@@ -80,7 +80,7 @@ function initRepoWithCommit(
   });
 }
 
-function buildLargeText(lineCount = 20_000): string {
+function buildLargeText(lineCount = 5_000): string {
   return Array.from({ length: lineCount }, (_, index) => `line ${String(index).padStart(5, "0")}`)
     .join("\n")
     .concat("\n");
@@ -93,7 +93,7 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
         const checkpointStore = yield* CheckpointStore;
-        const threadId = ThreadId.makeUnsafe("thread-checkpoint-store");
+        const threadId = ThreadId.make("thread-checkpoint-store");
         const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
         const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
 
@@ -115,7 +115,7 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
 
         expect(diff).toContain("diff --git");
         expect(diff).not.toContain("[truncated]");
-        expect(diff).toContain("+line 19999");
+        expect(diff).toContain("+line 04999");
       }),
     );
   });

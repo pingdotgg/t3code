@@ -14,10 +14,12 @@ import {
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
+  GitStatusLocalResult,
+  GitStatusRemoteResult,
   GitStatusInput,
   GitStatusResult,
 } from "@t3tools/contracts";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { Effect } from "effect";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 
@@ -40,6 +42,35 @@ export interface GitManagerShape {
   readonly status: (
     input: GitStatusInput,
   ) => Effect.Effect<GitStatusResult, GitManagerServiceError>;
+
+  /**
+   * Read local repository status without remote hosting enrichment.
+   */
+  readonly localStatus: (
+    input: GitStatusInput,
+  ) => Effect.Effect<GitStatusLocalResult, GitManagerServiceError>;
+
+  /**
+   * Read remote tracking / PR status for a repository.
+   */
+  readonly remoteStatus: (
+    input: GitStatusInput,
+  ) => Effect.Effect<GitStatusRemoteResult | null, GitManagerServiceError>;
+
+  /**
+   * Clear any cached local status snapshot for a repository.
+   */
+  readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
+
+  /**
+   * Clear any cached remote status snapshot for a repository.
+   */
+  readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
+
+  /**
+   * Clear any cached status snapshot for a repository so the next read is fresh.
+   */
+  readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
 
   /**
    * Resolve a pull request by URL/number against the current repository.
@@ -68,6 +99,6 @@ export interface GitManagerShape {
 /**
  * GitManager - Service tag for stacked Git workflow orchestration.
  */
-export class GitManager extends ServiceMap.Service<GitManager, GitManagerShape>()(
+export class GitManager extends Context.Service<GitManager, GitManagerShape>()(
   "t3/git/Services/GitManager",
 ) {}

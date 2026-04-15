@@ -17,7 +17,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { Option, Schema, ServiceMap } from "effect";
+import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
@@ -162,7 +162,7 @@ export interface ProjectionTurnRepositoryShape {
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
-export class ProjectionTurnRepository extends ServiceMap.Service<
+export class ProjectionTurnRepository extends Context.Service<
   ProjectionTurnRepository,
   ProjectionTurnRepositoryShape
 >()("t3/persistence/Services/ProjectionTurns/ProjectionTurnRepository") {}

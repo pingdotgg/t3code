@@ -7,7 +7,7 @@
  * @module OrchestrationProjectionPipeline
  */
 import type { OrchestrationEvent } from "@t3tools/contracts";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { Effect } from "effect";
 
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
@@ -36,7 +36,7 @@ export interface OrchestrationProjectionPipelineShape {
 /**
  * OrchestrationProjectionPipeline - Service tag for orchestration projections.
  */
-export class OrchestrationProjectionPipeline extends ServiceMap.Service<
+export class OrchestrationProjectionPipeline extends Context.Service<
   OrchestrationProjectionPipeline,
   OrchestrationProjectionPipelineShape
 >()("t3/orchestration/Services/ProjectionPipeline/OrchestrationProjectionPipeline") {}

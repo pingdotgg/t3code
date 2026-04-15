@@ -1,21 +1,22 @@
-import { ThreadId, type NativeApi } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type EnvironmentApi } from "@t3tools/contracts";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkpointDiffQueryOptions, providerQueryKeys } from "./providerReactQuery";
-import * as nativeApi from "../nativeApi";
+import * as environmentApi from "../environmentApi";
 
-const threadId = ThreadId.makeUnsafe("thread-id");
+const threadId = ThreadId.make("thread-id");
+const environmentId = EnvironmentId.make("environment-local");
 
 function mockNativeApi(input: {
   getTurnDiff: ReturnType<typeof vi.fn>;
   getFullThreadDiff: ReturnType<typeof vi.fn>;
 }) {
-  vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
+  vi.spyOn(environmentApi, "ensureEnvironmentApi").mockReturnValue({
     orchestration: {
       getTurnDiff: input.getTurnDiff,
       getFullThreadDiff: input.getFullThreadDiff,
     },
-  } as unknown as NativeApi);
+  } as unknown as EnvironmentApi);
 }
 
 afterEach(() => {
@@ -25,6 +26,7 @@ afterEach(() => {
 describe("providerQueryKeys.checkpointDiff", () => {
   it("includes cacheScope so reused turn counts do not collide", () => {
     const baseInput = {
+      environmentId,
       threadId,
       fromTurnCount: 1,
       toTurnCount: 2,
@@ -51,6 +53,7 @@ describe("checkpointDiffQueryOptions", () => {
     mockNativeApi({ getTurnDiff, getFullThreadDiff });
 
     const options = checkpointDiffQueryOptions({
+      environmentId,
       threadId,
       fromTurnCount: 3,
       toTurnCount: 4,
@@ -74,6 +77,7 @@ describe("checkpointDiffQueryOptions", () => {
     mockNativeApi({ getTurnDiff, getFullThreadDiff });
 
     const options = checkpointDiffQueryOptions({
+      environmentId,
       threadId,
       fromTurnCount: 0,
       toTurnCount: 2,
@@ -96,6 +100,7 @@ describe("checkpointDiffQueryOptions", () => {
     mockNativeApi({ getTurnDiff, getFullThreadDiff });
 
     const options = checkpointDiffQueryOptions({
+      environmentId,
       threadId,
       fromTurnCount: 4,
       toTurnCount: 3,
@@ -113,6 +118,7 @@ describe("checkpointDiffQueryOptions", () => {
 
   it("retries checkpoint-not-ready errors longer than generic failures", () => {
     const options = checkpointDiffQueryOptions({
+      environmentId,
       threadId,
       fromTurnCount: 1,
       toTurnCount: 2,
@@ -137,6 +143,7 @@ describe("checkpointDiffQueryOptions", () => {
 
   it("backs off longer for checkpoint-not-ready errors", () => {
     const options = checkpointDiffQueryOptions({
+      environmentId,
       threadId,
       fromTurnCount: 1,
       toTurnCount: 2,

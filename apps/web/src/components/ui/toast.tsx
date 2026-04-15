@@ -1,9 +1,9 @@
 "use client";
 
 import { Toast } from "@base-ui/react/toast";
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, useMemo, type CSSProperties } from "react";
 import { useParams } from "@tanstack/react-router";
-import { ThreadId } from "@t3tools/contracts";
+import { type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -16,13 +16,21 @@ import {
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "~/components/ui/button";
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { buildVisibleToastLayout, shouldHideCollapsedToastContent } from "./toast.logic";
+import { resolveThreadRouteTarget } from "~/threadRoutes";
+import {
+  buildVisibleToastLayout,
+  shouldHideCollapsedToastContent,
+  shouldRenderThreadScopedToast,
+} from "./toast.logic";
 
 export type ThreadToastData = {
+  threadRef?: ScopedThreadRef | null;
   threadId?: ThreadId | null;
   tooltipStyle?: boolean;
   dismissAfterVisibleMs?: number;
+  hideCopyButton?: boolean;
 };
 
 const toastManager = Toast.createToastManager<ThreadToastData>();
@@ -69,21 +77,27 @@ interface ToastProviderProps extends Toast.Provider.Props {
   position?: ToastPosition;
 }
 
-function shouldRenderForActiveThread(
-  data: ThreadToastData | undefined,
-  activeThreadId: ThreadId | null,
-): boolean {
-  const toastThreadId = data?.threadId;
-  if (!toastThreadId) return true;
-  return toastThreadId === activeThreadId;
-}
-
-function useActiveThreadIdFromRoute(): ThreadId | null {
-  return useParams({
+function useActiveThreadRefFromRoute(): ScopedThreadRef | null {
+  const routeTarget = useParams({
     strict: false,
-    select: (params) =>
-      typeof params.threadId === "string" ? ThreadId.makeUnsafe(params.threadId) : null,
+    select: (params) => resolveThreadRouteTarget(params),
   });
+  const activeDraftSession = useComposerDraftStore((store) =>
+    routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
+  );
+
+  return useMemo(() => {
+    if (routeTarget?.kind === "server") {
+      return routeTarget.threadRef;
+    }
+    if (routeTarget?.kind === "draft" && activeDraftSession) {
+      return {
+        environmentId: activeDraftSession.environmentId,
+        threadId: activeDraftSession.threadId,
+      };
+    }
+    return null;
+  }, [activeDraftSession, routeTarget]);
 }
 
 function ThreadToastVisibleAutoDismiss({
@@ -175,10 +189,10 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
 
 function Toasts({ position = "top-right" }: { position: ToastPosition }) {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
-  const activeThreadId = useActiveThreadIdFromRoute();
+  const activeThreadRef = useActiveThreadRefFromRoute();
   const isTop = position.startsWith("top");
   const visibleToasts = toasts.filter((toast) =>
-    shouldRenderForActiveThread(toast.data, activeThreadId),
+    shouldRenderThreadScopedToast(toast.data, activeThreadRef),
   );
   const visibleToastLayout = buildVisibleToastLayout(visibleToasts);
 
@@ -195,7 +209,7 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
     <Toast.Portal data-slot="toast-portal">
       <Toast.Viewport
         className={cn(
-          "fixed z-50 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:52px] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:52px] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
           // Vertical positioning
           "data-[position*=top]:top-[calc(var(--toast-inset)+var(--toast-header-offset))]",
           "data-[position*=bottom]:bottom-(--toast-inset)",
@@ -308,15 +322,15 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <div className="flex items-center justify-between gap-1">
                       <Toast.Title
-                        className="min-w-0 break-words font-medium"
+                        className="min-w-0 wrap-break-word font-medium"
                         data-slot="toast-title"
                       />
-                      {toast.type === "error" && typeof toast.description === "string" && (
-                        <CopyErrorButton text={toast.description} />
-                      )}
+                      {toast.type === "error" &&
+                        typeof toast.description === "string" &&
+                        !toast.data?.hideCopyButton && <CopyErrorButton text={toast.description} />}
                     </div>
                     <Toast.Description
-                      className="min-w-0 select-text break-words text-muted-foreground"
+                      className="min-w-0 select-text wrap-break-word text-muted-foreground"
                       data-slot="toast-description"
                     />
                   </div>
@@ -349,13 +363,13 @@ function AnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
 
 function AnchoredToasts() {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
-  const activeThreadId = useActiveThreadIdFromRoute();
+  const activeThreadRef = useActiveThreadRefFromRoute();
 
   return (
     <Toast.Portal data-slot="toast-portal-anchored">
       <Toast.Viewport className="outline-none" data-slot="toast-viewport-anchored">
         {toasts
-          .filter((toast) => shouldRenderForActiveThread(toast.data, activeThreadId))
+          .filter((toast) => shouldRenderThreadScopedToast(toast.data, activeThreadRef))
           .map((toast) => {
             const Icon = toast.type ? TOAST_ICONS[toast.type as keyof typeof TOAST_ICONS] : null;
             const tooltipStyle = toast.data?.tooltipStyle ?? false;
@@ -367,7 +381,7 @@ function AnchoredToasts() {
 
             return (
               <Toast.Positioner
-                className="z-50 max-w-[min(--spacing(64),var(--available-width))]"
+                className="z-100 max-w-[min(--spacing(64),var(--available-width))]"
                 data-slot="toast-positioner"
                 key={toast.id}
                 sideOffset={positionerProps.sideOffset ?? 4}
@@ -402,15 +416,17 @@ function AnchoredToasts() {
                         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                           <div className="flex items-center gap-1">
                             <Toast.Title
-                              className="min-w-0 break-words font-medium"
+                              className="min-w-0 wrap-break-word font-medium"
                               data-slot="toast-title"
                             />
-                            {toast.type === "error" && typeof toast.description === "string" && (
-                              <CopyErrorButton text={toast.description} />
-                            )}
+                            {toast.type === "error" &&
+                              typeof toast.description === "string" &&
+                              !toast.data?.hideCopyButton && (
+                                <CopyErrorButton text={toast.description} />
+                              )}
                           </div>
                           <Toast.Description
-                            className="min-w-0 select-text break-words text-muted-foreground"
+                            className="min-w-0 select-text wrap-break-word text-muted-foreground"
                             data-slot="toast-description"
                           />
                         </div>

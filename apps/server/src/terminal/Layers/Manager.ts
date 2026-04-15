@@ -8,7 +8,6 @@ import {
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import {
-  Data,
   Effect,
   Encoding,
   Equal,
@@ -17,6 +16,7 @@ import {
   FileSystem,
   Layer,
   Option,
+  Schema,
   Scope,
   Semaphore,
   SynchronizedRef,
@@ -54,22 +54,28 @@ const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
 
-type TerminalSubprocessChecker = (
-  terminalPid: number,
-) => Effect.Effect<boolean, TerminalSubprocessCheckError>;
+class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubprocessCheckError>()(
+  "TerminalSubprocessCheckError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+    terminalPid: Schema.Number,
+    command: Schema.Literals(["powershell", "pgrep", "ps"]),
+  },
+) {}
 
-class TerminalSubprocessCheckError extends Data.TaggedError("TerminalSubprocessCheckError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-  readonly terminalPid: number;
-  readonly command: "powershell" | "pgrep" | "ps";
-}> {}
+class TerminalProcessSignalError extends Schema.TaggedErrorClass<TerminalProcessSignalError>()(
+  "TerminalProcessSignalError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+    signal: Schema.Literals(["SIGTERM", "SIGKILL"]),
+  },
+) {}
 
-class TerminalProcessSignalError extends Data.TaggedError("TerminalProcessSignalError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-  readonly signal: "SIGTERM" | "SIGKILL";
-}> {}
+interface TerminalSubprocessChecker {
+  (terminalPid: number): Effect.Effect<boolean, TerminalSubprocessCheckError>;
+}
 
 interface ShellCandidate {
   shell: string;
@@ -80,6 +86,7 @@ interface TerminalStartInput {
   threadId: string;
   terminalId: string;
   cwd: string;
+  worktreePath?: string | null;
   cols: number;
   rows: number;
   env?: Record<string, string>;
@@ -89,6 +96,7 @@ interface TerminalSessionState {
   threadId: string;
   terminalId: string;
   cwd: string;
+  worktreePath: string | null;
   status: TerminalSessionStatus;
   pid: number | null;
   history: string;
@@ -143,6 +151,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     threadId: session.threadId,
     terminalId: session.terminalId,
     cwd: session.cwd,
+    worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
     history: session.history,
@@ -268,9 +277,8 @@ function isRetryableShellSpawnError(error: PtySpawnError): boolean {
 
     if (current instanceof Error) {
       messages.push(current.message);
-      const cause = (current as { cause?: unknown }).cause;
-      if (cause) {
-        queue.push(cause);
+      if (current.cause) {
+        queue.push(current.cause);
       }
       continue;
     }
@@ -661,8 +669,8 @@ const makeTerminalManager = Effect.fn("makeTerminalManager")(function* () {
 export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWithOptions")(
   function* (options: TerminalManagerOptions) {
     const fileSystem = yield* FileSystem.FileSystem;
-    const services = yield* Effect.services();
-    const runFork = Effect.runForkWith(services);
+    const context = yield* Effect.context<never>();
+    const runFork = Effect.runForkWith(context);
 
     const logsDir = options.logsDir;
     const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
@@ -873,7 +881,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             Effect.logWarning("failed to persist terminal history", {
               threadId,
               terminalId,
-              error: error instanceof Error ? error.message : String(error),
+              error,
             }),
           ),
         );
@@ -956,7 +964,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         Effect.catch((cleanupError) =>
           Effect.logWarning("failed to remove legacy terminal history", {
             threadId,
-            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+            error: cleanupError,
           }),
         ),
       );
@@ -972,7 +980,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           Effect.logWarning("failed to delete terminal history", {
             threadId,
             terminalId,
-            error: error instanceof Error ? error.message : String(error),
+            error,
           }),
         ),
       );
@@ -982,7 +990,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             Effect.logWarning("failed to delete terminal history", {
               threadId,
               terminalId,
-              error: error instanceof Error ? error.message : String(error),
+              error,
             }),
           ),
         );
@@ -1008,7 +1016,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             Effect.catch((error) =>
               Effect.logWarning("failed to delete terminal histories for thread", {
                 threadId,
-                error: error instanceof Error ? error.message : String(error),
+                error,
               }),
             ),
           ),
@@ -1309,6 +1317,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       yield* modifyManagerState((state) => {
         session.status = "starting";
         session.cwd = input.cwd;
+        session.worktreePath = input.worktreePath ?? null;
         session.cols = input.cols;
         session.rows = input.rows;
         session.exitCode = null;
@@ -1459,12 +1468,12 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         const terminalPid = session.pid;
         const hasRunningSubprocess = yield* subprocessChecker(terminalPid).pipe(
           Effect.map(Option.some),
-          Effect.catch((error) =>
+          Effect.catch((reason) =>
             Effect.logWarning("failed to check terminal subprocess activity", {
               threadId: session.threadId,
               terminalId: session.terminalId,
               terminalPid,
-              error: error instanceof Error ? error.message : String(error),
+              reason,
             }).pipe(Effect.as(Option.none<boolean>())),
           ),
         );
@@ -1577,6 +1586,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: input.threadId,
               terminalId,
               cwd: input.cwd,
+              worktreePath: input.worktreePath ?? null,
               status: "starting",
               pid: null,
               history,
@@ -1610,6 +1620,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
                 threadId: input.threadId,
                 terminalId,
                 cwd: input.cwd,
+                ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
                 cols,
                 rows,
                 ...(input.env ? { env: input.env } : {}),
@@ -1629,6 +1640,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           if (liveSession.cwd !== input.cwd || runtimeEnvChanged) {
             yield* stopProcess(liveSession);
             liveSession.cwd = input.cwd;
+            liveSession.worktreePath = input.worktreePath ?? null;
             liveSession.runtimeEnv = nextRuntimeEnv;
             liveSession.history = "";
             liveSession.pendingHistoryControlSequence = "";
@@ -1642,6 +1654,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             );
           } else if (liveSession.status === "exited" || liveSession.status === "error") {
             liveSession.runtimeEnv = nextRuntimeEnv;
+            liveSession.worktreePath = input.worktreePath ?? null;
             liveSession.history = "";
             liveSession.pendingHistoryControlSequence = "";
             liveSession.pendingProcessEvents = [];
@@ -1661,6 +1674,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
                 threadId: input.threadId,
                 terminalId,
                 cwd: input.cwd,
+                worktreePath: liveSession.worktreePath,
                 cols: targetCols,
                 rows: targetRows,
                 ...(input.env ? { env: input.env } : {}),
@@ -1751,6 +1765,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: input.threadId,
               terminalId,
               cwd: input.cwd,
+              worktreePath: input.worktreePath ?? null,
               status: "starting",
               pid: null,
               history: "",
@@ -1780,6 +1795,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             session = existingSession.value;
             yield* stopProcess(session);
             session.cwd = input.cwd;
+            session.worktreePath = input.worktreePath ?? null;
             session.runtimeEnv = normalizedRuntimeEnv(input.env);
           }
 
@@ -1798,6 +1814,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: input.threadId,
               terminalId,
               cwd: input.cwd,
+              ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
               cols,
               rows,
               ...(input.env ? { env: input.env } : {}),

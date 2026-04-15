@@ -15,7 +15,7 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Option, Schema, ServiceMap } from "effect";
+import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
 import type { OrchestrationCommandReceiptRepositoryError } from "../Errors.ts";
@@ -63,7 +63,7 @@ export interface OrchestrationCommandReceiptRepositoryShape {
 /**
  * OrchestrationCommandReceiptRepository - Service tag for command receipt persistence.
  */
-export class OrchestrationCommandReceiptRepository extends ServiceMap.Service<
+export class OrchestrationCommandReceiptRepository extends Context.Service<
   OrchestrationCommandReceiptRepository,
   OrchestrationCommandReceiptRepositoryShape
 >()("t3/persistence/Services/OrchestrationCommandReceipts/OrchestrationCommandReceiptRepository") {}

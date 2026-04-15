@@ -16,6 +16,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       const antigravityLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "antigravity" },
         "darwin",
+        { PATH: "" },
       );
       assert.deepEqual(antigravityLaunch, {
         command: "agy",
@@ -25,6 +26,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       const cursorLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "cursor" },
         "darwin",
+        { PATH: "" },
       );
       assert.deepEqual(cursorLaunch, {
         command: "cursor",
@@ -40,9 +42,20 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         args: ["/tmp/workspace"],
       });
 
+      const kiroLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "kiro" },
+        "darwin",
+        { PATH: "" },
+      );
+      assert.deepEqual(kiroLaunch, {
+        command: "kiro",
+        args: ["ide", "/tmp/workspace"],
+      });
+
       const vscodeLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "vscode" },
         "darwin",
+        { PATH: "" },
       );
       assert.deepEqual(vscodeLaunch, {
         command: "code",
@@ -70,6 +83,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       const zedLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "zed" },
         "darwin",
+        { PATH: "" },
       );
       assert.deepEqual(zedLaunch, {
         command: "zed",
@@ -92,6 +106,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       const lineOnly = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/AGENTS.md:48", editor: "cursor" },
         "darwin",
+        { PATH: "" },
       );
       assert.deepEqual(lineOnly, {
         command: "cursor",
@@ -101,6 +116,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       const lineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "cursor" },
         "darwin",
+        { PATH: "" },
       );
       assert.deepEqual(lineAndColumn, {
         command: "cursor",
@@ -116,9 +132,20 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
       });
 
+      const kiroLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "kiro" },
+        "darwin",
+        { PATH: "" },
+      );
+      assert.deepEqual(kiroLineAndColumn, {
+        command: "kiro",
+        args: ["ide", "--goto", "/tmp/workspace/src/open.ts:71:5"],
+      });
+
       const vscodeLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "vscode" },
         "darwin",
+        { PATH: "" },
       );
       assert.deepEqual(vscodeLineAndColumn, {
         command: "code",
@@ -146,6 +173,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       const zedLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "zed" },
         "darwin",
+        { PATH: "" },
       );
       assert.deepEqual(zedLineAndColumn, {
         command: "zed",
@@ -155,6 +183,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       const zedLineOnly = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/AGENTS.md:48", editor: "zed" },
         "darwin",
+        { PATH: "" },
       );
       assert.deepEqual(zedLineOnly, {
         command: "zed",
@@ -181,11 +210,43 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
     }),
   );
 
+  it.effect("falls back to zeditor when zed is not installed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      yield* fs.writeFileString(path.join(dir, "zeditor"), "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(path.join(dir, "zeditor"), 0o755);
+
+      const result = yield* resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "zed" }, "linux", {
+        PATH: dir,
+      });
+
+      assert.deepEqual(result, {
+        command: "zeditor",
+        args: ["/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("falls back to the primary command when no alias is installed", () =>
+    Effect.gen(function* () {
+      const result = yield* resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "zed" }, "linux", {
+        PATH: "",
+      });
+      assert.deepEqual(result, {
+        command: "zed",
+        args: ["/tmp/workspace"],
+      });
+    }),
+  );
+
   it.effect("maps file-manager editor to OS open commands", () =>
     Effect.gen(function* () {
       const launch1 = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "file-manager" },
         "darwin",
+        { PATH: "" },
       );
       assert.deepEqual(launch1, {
         command: "open",
@@ -195,6 +256,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       const launch2 = yield* resolveEditorLaunch(
         { cwd: "C:\\workspace", editor: "file-manager" },
         "win32",
+        { PATH: "" },
       );
       assert.deepEqual(launch2, {
         command: "explorer",
@@ -204,6 +266,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       const launch3 = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "file-manager" },
         "linux",
+        { PATH: "" },
       );
       assert.deepEqual(launch3, {
         command: "xdg-open",
@@ -311,6 +374,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editors-" });
 
       yield* fs.writeFileString(path.join(dir, "trae.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "kiro.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "code-insiders.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "codium.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "explorer.CMD"), "MZ");
@@ -318,7 +382,32 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
         PATH: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
-      assert.deepEqual(editors, ["trae", "vscode-insiders", "vscodium", "file-manager"]);
+      assert.deepEqual(editors, ["trae", "kiro", "vscode-insiders", "vscodium", "file-manager"]);
     }),
   );
+
+  it.effect("includes zed when only the zeditor command is installed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+
+      yield* fs.writeFileString(path.join(dir, "zeditor"), "#!/bin/sh\nexit 0\n");
+      yield* fs.writeFileString(path.join(dir, "xdg-open"), "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(path.join(dir, "zeditor"), 0o755);
+      yield* fs.chmod(path.join(dir, "xdg-open"), 0o755);
+
+      const editors = resolveAvailableEditors("linux", {
+        PATH: dir,
+      });
+      assert.deepEqual(editors, ["zed", "file-manager"]);
+    }),
+  );
+
+  it("omits file-manager when the platform opener is unavailable", () => {
+    const editors = resolveAvailableEditors("linux", {
+      PATH: "",
+    });
+    assert.deepEqual(editors, []);
+  });
 });

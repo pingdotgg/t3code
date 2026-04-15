@@ -5,14 +5,14 @@ const PROVIDER = "codex" as const;
 const SESSION_ID = "fixture-session";
 const THREAD_ID = "fixture-thread";
 const TURN_ID = "fixture-turn";
-const REQUEST_ID = RuntimeRequestId.makeUnsafe("req-1");
+const REQUEST_ID = RuntimeRequestId.make("req-1");
 
 function baseEvent(
   eventId: string,
   createdAt: string,
 ): Pick<LegacyProviderRuntimeEvent, "eventId" | "provider" | "sessionId" | "createdAt"> {
   return {
-    eventId: EventId.makeUnsafe(eventId),
+    eventId: EventId.make(eventId),
     provider: PROVIDER,
     sessionId: SESSION_ID,
     createdAt,

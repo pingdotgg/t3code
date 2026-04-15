@@ -22,7 +22,7 @@ import {
   TurnId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
-import { Effect, FileSystem, Layer, Queue, Schema, ServiceMap, Stream } from "effect";
+import { Effect, FileSystem, Layer, Queue, Schema, Context, Stream } from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -46,23 +46,16 @@ const PROVIDER = "codex" as const;
 
 export interface CodexAdapterLiveOptions {
   readonly manager?: CodexAppServerManager;
-  readonly makeManager?: (services?: ServiceMap.ServiceMap<never>) => CodexAppServerManager;
+  readonly makeManager?: (services?: Context.Context<never>) => CodexAppServerManager;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
-}
-
-function toMessage(cause: unknown, fallback: string): string {
-  if (cause instanceof Error && cause.message.length > 0) {
-    return cause.message;
-  }
-  return fallback;
 }
 
 function toSessionError(
   threadId: ThreadId,
   cause: unknown,
 ): ProviderAdapterSessionNotFoundError | ProviderAdapterSessionClosedError | undefined {
-  const normalized = toMessage(cause, "").toLowerCase();
+  const normalized = cause instanceof Error ? cause.message.toLowerCase() : "";
   if (normalized.includes("unknown session") || normalized.includes("unknown provider session")) {
     return new ProviderAdapterSessionNotFoundError({
       provider: PROVIDER,
@@ -88,7 +81,7 @@ function toRequestError(threadId: ThreadId, method: string, cause: unknown): Pro
   return new ProviderAdapterRequestError({
     provider: PROVIDER,
     method,
-    detail: toMessage(cause, `${method} failed`),
+    detail: cause instanceof Error ? `${method} failed: ${cause.message}` : `${method} failed`,
     cause,
   });
 }
@@ -162,11 +155,11 @@ function normalizeCodexTokenUsage(value: unknown): ThreadTokenUsageSnapshot | un
 }
 
 function toTurnId(value: string | undefined): TurnId | undefined {
-  return value?.trim() ? TurnId.makeUnsafe(value) : undefined;
+  return value?.trim() ? TurnId.make(value) : undefined;
 }
 
 function toProviderItemId(value: string | undefined): ProviderItemId | undefined {
-  return value?.trim() ? ProviderItemId.makeUnsafe(value) : undefined;
+  return value?.trim() ? ProviderItemId.make(value) : undefined;
 }
 
 function toTurnStatus(value: unknown): "completed" | "failed" | "cancelled" | "interrupted" {
@@ -382,6 +375,7 @@ function toUserInputQuestions(payload: Record<string, unknown> | undefined) {
         header,
         question: prompt,
         options,
+        multiSelect: question.multiSelect === true,
       };
     })
     .filter(
@@ -392,6 +386,7 @@ function toUserInputQuestions(payload: Record<string, unknown> | undefined) {
         header: string;
         question: string;
         options: Array<{ label: string; description: string }>;
+        multiSelect: boolean;
       } => question !== undefined,
     );
 
@@ -452,15 +447,15 @@ function extractProposedPlanMarkdown(text: string | undefined): string | undefin
 }
 
 function asRuntimeItemId(itemId: ProviderItemId): RuntimeItemId {
-  return RuntimeItemId.makeUnsafe(itemId);
+  return RuntimeItemId.make(itemId);
 }
 
 function asRuntimeRequestId(requestId: string): RuntimeRequestId {
-  return RuntimeRequestId.makeUnsafe(requestId);
+  return RuntimeRequestId.make(requestId);
 }
 
 function asRuntimeTaskId(taskId: string): RuntimeTaskId {
-  return RuntimeTaskId.makeUnsafe(taskId);
+  return RuntimeTaskId.make(taskId);
 }
 
 function codexEventMessage(
@@ -1364,7 +1359,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     if (options?.manager) {
       return options.manager;
     }
-    const services = yield* Effect.services<never>();
+    const services = yield* Effect.context<never>();
     return options?.makeManager?.(services) ?? new CodexAppServerManager(services);
   });
 
@@ -1425,7 +1420,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           new ProviderAdapterProcessError({
             provider: PROVIDER,
             threadId: input.threadId,
-            detail: toMessage(cause, "Failed to start Codex adapter session."),
+            detail: `Failed to start Codex adapter session: ${cause instanceof Error ? cause.message : String(cause)}.`,
             cause,
           }),
       });
@@ -1453,7 +1448,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "turn/start",
-            detail: toMessage(cause, "Failed to read attachment file."),
+            detail: `Failed to read attachment file: ${cause.message}.`,
             cause,
           }),
       ),
@@ -1583,7 +1578,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   });
 
   const registerListener = Effect.fn("registerListener")(function* () {
-    const services = yield* Effect.services<never>();
+    const services = yield* Effect.context<never>();
     const listenerEffect = Effect.fn("listener")(function* (event: ProviderEvent) {
       yield* writeNativeEvent(event);
       const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
@@ -1631,7 +1626,9 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     listSessions,
     hasSession,
     stopAll,
-    streamEvents: Stream.fromQueue(runtimeEventQueue),
+    get streamEvents() {
+      return Stream.fromQueue(runtimeEventQueue);
+    },
   } satisfies CodexAdapterShape;
 });
 

@@ -13,6 +13,7 @@ const workspaceFiles = [
   "apps/desktop/package.json",
   "apps/web/package.json",
   "apps/marketing/package.json",
+  "packages/client-runtime/package.json",
   "packages/contracts/package.json",
   "packages/shared/package.json",
   "scripts/package.json",
@@ -94,7 +95,7 @@ try {
     },
   );
 
-  execFileSync("bun", ["install", "--lockfile-only", "--ignore-scripts"], {
+  execFileSync("bun", ["install", "--ignore-scripts"], {
     cwd: tempRoot,
     stdio: "inherit",
   });
@@ -104,6 +105,40 @@ try {
     lockfile,
     `"version": "9.9.9-smoke.0"`,
     "Expected bun.lock to contain the smoke version.",
+  );
+
+  const nightlyReleaseMetadata = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, "scripts/resolve-nightly-release.ts"),
+      "--date",
+      "20260413",
+      "--run-number",
+      "321",
+      "--sha",
+      "abcdef1234567890",
+      "--root",
+      tempRoot,
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  );
+  assertContains(
+    nightlyReleaseMetadata,
+    "version=9.9.9-nightly.20260413.321",
+    "Expected nightly metadata to contain the derived nightly version.",
+  );
+  assertContains(
+    nightlyReleaseMetadata,
+    "tag=nightly-v9.9.9-nightly.20260413.321",
+    "Expected nightly metadata to contain the derived nightly tag.",
+  );
+  assertContains(
+    nightlyReleaseMetadata,
+    "name=T3 Code Nightly 9.9.9-nightly.20260413.321 (abcdef123456)",
+    "Expected nightly metadata to include the short commit SHA in the release name.",
   );
 
   const { arm64Path, x64Path } = writeMacManifestFixtures(tempRoot);

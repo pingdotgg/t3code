@@ -21,18 +21,18 @@ layer("OrchestrationEventStore", (it) => {
 
       const appended = yield* eventStore.append({
         type: "project.created",
-        eventId: EventId.makeUnsafe("evt-store-roundtrip"),
+        eventId: EventId.make("evt-store-roundtrip"),
         aggregateKind: "project",
-        aggregateId: ProjectId.makeUnsafe("project-roundtrip"),
+        aggregateId: ProjectId.make("project-roundtrip"),
         occurredAt: now,
-        commandId: CommandId.makeUnsafe("cmd-store-roundtrip"),
+        commandId: CommandId.make("cmd-store-roundtrip"),
         causationEventId: null,
-        correlationId: CommandId.makeUnsafe("cmd-store-roundtrip"),
+        correlationId: CommandId.make("cmd-store-roundtrip"),
         metadata: {
           adapterKey: "codex",
         },
         payload: {
-          projectId: ProjectId.makeUnsafe("project-roundtrip"),
+          projectId: ProjectId.make("project-roundtrip"),
           title: "Roundtrip Project",
           workspaceRoot: "/tmp/project-roundtrip",
           defaultModelSelection: null,
@@ -87,13 +87,13 @@ layer("OrchestrationEventStore", (it) => {
           metadata_json
         )
         VALUES (
-          ${EventId.makeUnsafe("evt-store-invalid-json")},
+          ${EventId.make("evt-store-invalid-json")},
           ${"project"},
-          ${ProjectId.makeUnsafe("project-invalid-json")},
+          ${ProjectId.make("project-invalid-json")},
           ${0},
           ${"project.created"},
           ${now},
-          ${CommandId.makeUnsafe("cmd-store-invalid-json")},
+          ${CommandId.make("cmd-store-invalid-json")},
           ${null},
           ${null},
           ${"server"},

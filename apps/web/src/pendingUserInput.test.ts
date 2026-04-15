@@ -7,37 +7,99 @@ import {
   findFirstUnansweredPendingUserInputQuestionIndex,
   resolvePendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
+  togglePendingUserInputOptionSelection,
 } from "./pendingUserInput";
 
+const singleSelectQuestion = {
+  id: "scope",
+  header: "Scope",
+  question: "What should the plan target first?",
+  options: [
+    {
+      label: "Orchestration-first",
+      description: "Focus on orchestration first",
+    },
+  ],
+  multiSelect: false,
+} as const;
+
+const multiSelectQuestion = {
+  id: "areas",
+  header: "Areas",
+  question: "Which areas should this change cover?",
+  options: [
+    {
+      label: "Server",
+      description: "Server",
+    },
+    {
+      label: "Web",
+      description: "Web",
+    },
+  ],
+  multiSelect: true,
+} as const;
+
 describe("resolvePendingUserInputAnswer", () => {
-  it("prefers a custom answer over a selected option", () => {
+  it("prefers a custom answer over selected options", () => {
     expect(
-      resolvePendingUserInputAnswer({
-        selectedOptionLabel: "Keep current envelope",
+      resolvePendingUserInputAnswer(singleSelectQuestion, {
+        selectedOptionLabels: ["Orchestration-first"],
         customAnswer: "Keep the existing envelope for one release",
       }),
     ).toBe("Keep the existing envelope for one release");
   });
 
-  it("falls back to the selected option", () => {
+  it("falls back to the selected option for single-select questions", () => {
     expect(
-      resolvePendingUserInputAnswer({
-        selectedOptionLabel: "Scaffold only",
+      resolvePendingUserInputAnswer(singleSelectQuestion, {
+        selectedOptionLabels: ["Orchestration-first"],
       }),
-    ).toBe("Scaffold only");
+    ).toBe("Orchestration-first");
+  });
+
+  it("returns all selected labels for multi-select questions", () => {
+    expect(
+      resolvePendingUserInputAnswer(multiSelectQuestion, {
+        selectedOptionLabels: ["Server", "Web"],
+      }),
+    ).toEqual(["Server", "Web"]);
   });
 
   it("clears the preset selection when a custom answer is entered", () => {
     expect(
       setPendingUserInputCustomAnswer(
         {
-          selectedOptionLabel: "Preserve existing tags",
+          selectedOptionLabels: ["Server", "Web"],
         },
         "doesn't matter",
       ),
     ).toEqual({
-      selectedOptionLabel: undefined,
       customAnswer: "doesn't matter",
+    });
+  });
+});
+
+describe("togglePendingUserInputOptionSelection", () => {
+  it("toggles options for multi-select questions", () => {
+    expect(togglePendingUserInputOptionSelection(multiSelectQuestion, undefined, "Server")).toEqual(
+      {
+        customAnswer: "",
+        selectedOptionLabels: ["Server"],
+      },
+    );
+
+    expect(
+      togglePendingUserInputOptionSelection(
+        multiSelectQuestion,
+        {
+          selectedOptionLabels: ["Server", "Web"],
+        },
+        "Server",
+      ),
+    ).toEqual({
+      customAnswer: "",
+      selectedOptionLabels: ["Web"],
     });
   });
 });
@@ -47,17 +109,7 @@ describe("buildPendingUserInputAnswers", () => {
     expect(
       buildPendingUserInputAnswers(
         [
-          {
-            id: "scope",
-            header: "Scope",
-            question: "What should the plan target first?",
-            options: [
-              {
-                label: "Orchestration-first",
-                description: "Focus on orchestration first",
-              },
-            ],
-          },
+          singleSelectQuestion,
           {
             id: "compat",
             header: "Compat",
@@ -68,11 +120,12 @@ describe("buildPendingUserInputAnswers", () => {
                 description: "Preserve current wire format",
               },
             ],
+            multiSelect: false,
           },
         ],
         {
           scope: {
-            selectedOptionLabel: "Orchestration-first",
+            selectedOptionLabels: ["Orchestration-first"],
           },
           compat: {
             customAnswer: "Keep the current envelope for one release window",
@@ -85,41 +138,26 @@ describe("buildPendingUserInputAnswers", () => {
     });
   });
 
-  it("returns null when any question is unanswered", () => {
+  it("returns arrays for answered multi-select prompts", () => {
     expect(
-      buildPendingUserInputAnswers(
-        [
-          {
-            id: "scope",
-            header: "Scope",
-            question: "What should the plan target first?",
-            options: [
-              {
-                label: "Orchestration-first",
-                description: "Focus on orchestration first",
-              },
-            ],
-          },
-        ],
-        {},
-      ),
-    ).toBeNull();
+      buildPendingUserInputAnswers([multiSelectQuestion], {
+        areas: {
+          selectedOptionLabels: ["Server", "Web"],
+        },
+      }),
+    ).toEqual({
+      areas: ["Server", "Web"],
+    });
+  });
+
+  it("returns null when any question is unanswered", () => {
+    expect(buildPendingUserInputAnswers([singleSelectQuestion], {})).toBeNull();
   });
 });
 
 describe("pending user input question progress", () => {
   const questions = [
-    {
-      id: "scope",
-      header: "Scope",
-      question: "What should the plan target first?",
-      options: [
-        {
-          label: "Orchestration-first",
-          description: "Focus on orchestration first",
-        },
-      ],
-    },
+    singleSelectQuestion,
     {
       id: "compat",
       header: "Compat",
@@ -130,6 +168,7 @@ describe("pending user input question progress", () => {
           description: "Preserve current wire format",
         },
       ],
+      multiSelect: false,
     },
   ] as const;
 
@@ -137,7 +176,7 @@ describe("pending user input question progress", () => {
     expect(
       countAnsweredPendingUserInputQuestions(questions, {
         scope: {
-          selectedOptionLabel: "Orchestration-first",
+          selectedOptionLabels: ["Orchestration-first"],
         },
       }),
     ).toBe(1);
@@ -147,7 +186,7 @@ describe("pending user input question progress", () => {
     expect(
       findFirstUnansweredPendingUserInputQuestionIndex(questions, {
         scope: {
-          selectedOptionLabel: "Orchestration-first",
+          selectedOptionLabels: ["Orchestration-first"],
         },
       }),
     ).toBe(1);
@@ -157,7 +196,7 @@ describe("pending user input question progress", () => {
     expect(
       findFirstUnansweredPendingUserInputQuestionIndex(questions, {
         scope: {
-          selectedOptionLabel: "Orchestration-first",
+          selectedOptionLabels: ["Orchestration-first"],
         },
         compat: {
           customAnswer: "Keep it for one release window",
@@ -172,7 +211,7 @@ describe("pending user input question progress", () => {
         questions,
         {
           scope: {
-            selectedOptionLabel: "Orchestration-first",
+            selectedOptionLabels: ["Orchestration-first"],
           },
         },
         0,
@@ -180,13 +219,32 @@ describe("pending user input question progress", () => {
     ).toMatchObject({
       questionIndex: 0,
       activeQuestion: questions[0],
-      selectedOptionLabel: "Orchestration-first",
+      selectedOptionLabels: ["Orchestration-first"],
       customAnswer: "",
       resolvedAnswer: "Orchestration-first",
       answeredQuestionCount: 1,
       isLastQuestion: false,
       isComplete: false,
       canAdvance: true,
+    });
+  });
+
+  it("treats multi-select questions as answered when they have selected options", () => {
+    expect(
+      derivePendingUserInputProgress(
+        [multiSelectQuestion],
+        {
+          areas: {
+            selectedOptionLabels: ["Server", "Web"],
+          },
+        },
+        0,
+      ),
+    ).toMatchObject({
+      selectedOptionLabels: ["Server", "Web"],
+      resolvedAnswer: ["Server", "Web"],
+      canAdvance: true,
+      isComplete: true,
     });
   });
 });

@@ -5,12 +5,12 @@
  * Codex provider events. It does not perform cross-provider routing, shared
  * event fan-out, or checkpoint orchestration.
  *
- * Uses Effect `ServiceMap.Service` for dependency injection and returns the
+ * Uses Effect `Context.Service` for dependency injection and returns the
  * shared provider-adapter error channel with `provider: "codex"` context.
  *
  * @module CodexAdapter
  */
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 import type { ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
@@ -25,6 +25,6 @@ export interface CodexAdapterShape extends ProviderAdapterShape<ProviderAdapterE
 /**
  * CodexAdapter - Service tag for Codex provider adapter operations.
  */
-export class CodexAdapter extends ServiceMap.Service<CodexAdapter, CodexAdapterShape>()(
+export class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
   "t3/provider/Services/CodexAdapter",
 ) {}

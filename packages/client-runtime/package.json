@@ -1,0 +1,25 @@
+{
+  "name": "@t3tools/client-runtime",
+  "version": "0.0.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "prepare": "effect-language-service patch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@effect/language-service": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

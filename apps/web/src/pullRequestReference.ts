@@ -22,7 +22,7 @@ export function parsePullRequestReference(input: string): string | null {
 
   const numberMatch = PULL_REQUEST_NUMBER_PATTERN.exec(normalizedInput);
   if (numberMatch?.[1]) {
-    return normalizedInput.startsWith("#") ? normalizedInput : numberMatch[1];
+    return numberMatch[1];
   }
 
   return null;

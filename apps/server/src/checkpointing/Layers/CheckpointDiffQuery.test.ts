@@ -26,7 +26,7 @@ function makeThreadCheckpointContext(input: {
     worktreePath: input.worktreePath,
     checkpoints: [
       {
-        turnId: TurnId.makeUnsafe("turn-1"),
+        turnId: TurnId.make("turn-1"),
         checkpointTurnCount: input.checkpointTurnCount,
         checkpointRef: input.checkpointRef,
         status: "ready",
@@ -40,8 +40,8 @@ function makeThreadCheckpointContext(input: {
 
 describe("CheckpointDiffQueryLive", () => {
   it("computes diffs using canonical turn-0 checkpoint refs", async () => {
-    const projectId = ProjectId.makeUnsafe("project-1");
-    const threadId = ThreadId.makeUnsafe("thread-1");
+    const projectId = ProjectId.make("project-1");
+    const threadId = ThreadId.make("thread-1");
     const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
     const hasCheckpointRefCalls: Array<CheckpointRef> = [];
     const diffCheckpointsCalls: Array<{
@@ -82,10 +82,15 @@ describe("CheckpointDiffQueryLive", () => {
         Layer.succeed(ProjectionSnapshotQuery, {
           getSnapshot: () =>
             Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+          getShellSnapshot: () =>
+            Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
+          getThreadShellById: () => Effect.succeed(Option.none()),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
         }),
       ),
     );
@@ -119,7 +124,7 @@ describe("CheckpointDiffQueryLive", () => {
   });
 
   it("fails when the thread is missing from the snapshot", async () => {
-    const threadId = ThreadId.makeUnsafe("thread-missing");
+    const threadId = ThreadId.make("thread-missing");
 
     const checkpointStore: CheckpointStoreShape = {
       isGitRepository: () => Effect.succeed(true),
@@ -136,10 +141,15 @@ describe("CheckpointDiffQueryLive", () => {
         Layer.succeed(ProjectionSnapshotQuery, {
           getSnapshot: () =>
             Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+          getShellSnapshot: () =>
+            Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+          getThreadShellById: () => Effect.succeed(Option.none()),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
         }),
       ),
     );

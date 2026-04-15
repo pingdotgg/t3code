@@ -31,6 +31,7 @@ import {
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
+import { ServerConfig } from "../../config";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
 
@@ -44,6 +45,7 @@ function mockHandle(result: { stdout: string; stderr: string; code: number }) {
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.code)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
     stdout: Stream.make(encoder.encode(result.stdout)),
     stderr: Stream.make(encoder.encode(result.stderr)),
@@ -115,7 +117,9 @@ function makeMutableServerSettingsService(
           yield* PubSub.publish(changes, next);
           return next;
         }),
-      streamChanges: Stream.fromPubSub(changes),
+      get streamChanges() {
+        return Stream.fromPubSub(changes);
+      },
     } satisfies ServerSettingsShape;
   });
 }
@@ -206,6 +210,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
             true,
           );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("includes probed codex skills in the provider snapshot", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(
+            () =>
+              Effect.succeed({
+                type: "chatgpt" as const,
+                planType: "pro" as const,
+                sparkEnabled: true,
+              }),
+            () =>
+              Effect.succeed([
+                {
+                  name: "github:gh-fix-ci",
+                  path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
+                  enabled: true,
+                  displayName: "CI Debug",
+                  shortDescription: "Debug failing GitHub Actions checks",
+                },
+              ]),
+          );
+
+          assert.deepStrictEqual(status.skills, [
+            {
+              name: "github:gh-fix-ci",
+              path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
+              enabled: true,
+              displayName: "CI Debug",
+              shortDescription: "Debug failing GitHub Actions checks",
+            },
+          ]);
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -496,6 +543,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             checkedAt: "2026-03-25T00:00:00.000Z",
             version: "1.0.0",
             models: [],
+            slashCommands: [],
+            skills: [],
           },
           {
             provider: "claudeAgent",
@@ -506,11 +555,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             checkedAt: "2026-03-25T00:00:00.000Z",
             version: "1.0.0",
             models: [],
+            slashCommands: [],
+            skills: [],
           },
         ] as const satisfies ReadonlyArray<ServerProvider>;
 
         assert.strictEqual(haveProvidersChanged(providers, [...providers]), false);
       });
+
+      it.effect("does not probe provider health during registry startup", () =>
+        Effect.gen(function* () {
+          let spawnCount = 0;
+          const serverSettings = yield* makeMutableServerSettingsService();
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const providerRegistryLayer = ProviderRegistryLive.pipe(
+            Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-",
+              }),
+            ),
+            Layer.provideMerge(
+              mockCommandSpawnerLayer((command, args) => {
+                spawnCount += 1;
+                const joined = args.join(" ");
+                if (joined === "--version") {
+                  if (command === "codex") {
+                    return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+                  }
+                  return { stdout: "claude 1.0.0\n", stderr: "", code: 0 };
+                }
+                if (joined === "login status") {
+                  return { stdout: "Logged in\n", stderr: "", code: 0 };
+                }
+                if (joined === "auth status") {
+                  return { stdout: '{"authenticated":true}\n', stderr: "", code: 0 };
+                }
+                throw new Error(`Unexpected args: ${command} ${joined}`);
+              }),
+            ),
+          );
+          const runtimeServices = yield* Layer.build(
+            Layer.mergeAll(
+              Layer.succeed(ServerSettingsService, serverSettings),
+              providerRegistryLayer,
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry;
+            assert.deepStrictEqual(yield* registry.getProviders, []);
+            assert.strictEqual(spawnCount, 0);
+
+            const refreshed = yield* registry.refresh("codex");
+            assert.strictEqual(spawnCount > 0, true);
+            assert.strictEqual(
+              refreshed.find((provider) => provider.provider === "codex")?.status,
+              "ready",
+            );
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
 
       it.effect("reruns codex health when codex provider settings change", () =>
         Effect.gen(function* () {
@@ -519,6 +625,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-",
+              }),
+            ),
             Layer.provideMerge(
               mockCommandSpawnerLayer((command, args) => {
                 const joined = args.join(" ");
@@ -546,8 +657,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             const registry = yield* ProviderRegistry;
 
             const initial = yield* registry.getProviders;
+            assert.deepStrictEqual(initial, []);
+
+            const refreshed = yield* registry.refresh("codex");
             assert.strictEqual(
-              initial.find((status) => status.provider === "codex")?.status,
+              refreshed.find((status) => status.provider === "codex")?.status,
               "ready",
             );
 
@@ -867,6 +981,85 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "maxplan");
           assert.strictEqual(status.auth.label, "Claude Max Subscription");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("includes probed claude slash commands in the provider snapshot", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            () => Effect.succeed("maxplan"),
+            () =>
+              Effect.succeed([
+                {
+                  name: "review",
+                  description: "Review a pull request",
+                  input: { hint: "pr-or-branch" },
+                },
+              ]),
+          );
+
+          assert.deepStrictEqual(status.slashCommands, [
+            {
+              name: "review",
+              description: "Review a pull request",
+              input: { hint: "pr-or-branch" },
+            },
+          ]);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("deduplicates probed claude slash commands by name", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            () => Effect.succeed("maxplan"),
+            () =>
+              Effect.succeed([
+                {
+                  name: "ui",
+                  description: "Explore and refine UI",
+                },
+                {
+                  name: "ui",
+                  input: { hint: "component-or-screen" },
+                },
+              ]),
+          );
+
+          assert.deepStrictEqual(status.slashCommands, [
+            {
+              name: "ui",
+              description: "Explore and refine UI",
+              input: { hint: "component-or-screen" },
+            },
+          ]);
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

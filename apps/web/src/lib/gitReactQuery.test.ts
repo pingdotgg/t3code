@@ -1,26 +1,24 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../nativeApi", () => ({
-  ensureNativeApi: vi.fn(),
+vi.mock("../environmentApi", () => ({
+  ensureEnvironmentApi: vi.fn(),
 }));
 
 vi.mock("../wsRpcClient", () => ({
   getWsRpcClient: vi.fn(),
+  getWsRpcClientForEnvironment: vi.fn(),
 }));
 
 import type { InfiniteData } from "@tanstack/react-query";
-import type { GitListBranchesResult } from "@t3tools/contracts";
+import { EnvironmentId, type GitListBranchesResult } from "@t3tools/contracts";
 
 import {
   gitBranchSearchInfiniteQueryOptions,
   gitMutationKeys,
-  gitQueryKeys,
   gitPreparePullRequestThreadMutationOptions,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
-  invalidateGitStatusQuery,
-  gitStatusQueryOptions,
   invalidateGitQueries,
 } from "./gitReactQuery";
 
@@ -36,21 +34,25 @@ const BRANCH_SEARCH_RESULT: InfiniteData<GitListBranchesResult, number> = {
   pages: [BRANCH_QUERY_RESULT],
   pageParams: [0],
 };
+const ENVIRONMENT_A = EnvironmentId.make("environment-a");
+const ENVIRONMENT_B = EnvironmentId.make("environment-b");
 
 describe("gitMutationKeys", () => {
   it("scopes stacked action keys by cwd", () => {
-    expect(gitMutationKeys.runStackedAction("/repo/a")).not.toEqual(
-      gitMutationKeys.runStackedAction("/repo/b"),
+    expect(gitMutationKeys.runStackedAction(ENVIRONMENT_A, "/repo/a")).not.toEqual(
+      gitMutationKeys.runStackedAction(ENVIRONMENT_A, "/repo/b"),
     );
   });
 
   it("scopes pull keys by cwd", () => {
-    expect(gitMutationKeys.pull("/repo/a")).not.toEqual(gitMutationKeys.pull("/repo/b"));
+    expect(gitMutationKeys.pull(ENVIRONMENT_A, "/repo/a")).not.toEqual(
+      gitMutationKeys.pull(ENVIRONMENT_A, "/repo/b"),
+    );
   });
 
   it("scopes pull request thread preparation keys by cwd", () => {
-    expect(gitMutationKeys.preparePullRequestThread("/repo/a")).not.toEqual(
-      gitMutationKeys.preparePullRequestThread("/repo/b"),
+    expect(gitMutationKeys.preparePullRequestThread(ENVIRONMENT_A, "/repo/a")).not.toEqual(
+      gitMutationKeys.preparePullRequestThread(ENVIRONMENT_A, "/repo/b"),
     );
   });
 });
@@ -60,23 +62,31 @@ describe("git mutation options", () => {
 
   it("attaches cwd-scoped mutation key for runStackedAction", () => {
     const options = gitRunStackedActionMutationOptions({
+      environmentId: ENVIRONMENT_A,
       cwd: "/repo/a",
       queryClient,
     });
-    expect(options.mutationKey).toEqual(gitMutationKeys.runStackedAction("/repo/a"));
+    expect(options.mutationKey).toEqual(gitMutationKeys.runStackedAction(ENVIRONMENT_A, "/repo/a"));
   });
 
   it("attaches cwd-scoped mutation key for pull", () => {
-    const options = gitPullMutationOptions({ cwd: "/repo/a", queryClient });
-    expect(options.mutationKey).toEqual(gitMutationKeys.pull("/repo/a"));
+    const options = gitPullMutationOptions({
+      environmentId: ENVIRONMENT_A,
+      cwd: "/repo/a",
+      queryClient,
+    });
+    expect(options.mutationKey).toEqual(gitMutationKeys.pull(ENVIRONMENT_A, "/repo/a"));
   });
 
   it("attaches cwd-scoped mutation key for preparePullRequestThread", () => {
     const options = gitPreparePullRequestThreadMutationOptions({
+      environmentId: ENVIRONMENT_A,
       cwd: "/repo/a",
       queryClient,
     });
-    expect(options.mutationKey).toEqual(gitMutationKeys.preparePullRequestThread("/repo/a"));
+    expect(options.mutationKey).toEqual(
+      gitMutationKeys.preparePullRequestThread(ENVIRONMENT_A, "/repo/a"),
+    );
   });
 });
 
@@ -84,64 +94,42 @@ describe("invalidateGitQueries", () => {
   it("can invalidate a single cwd without blasting other git query scopes", async () => {
     const queryClient = new QueryClient();
 
-    queryClient.setQueryData(gitQueryKeys.status("/repo/a"), { ok: "a" });
     queryClient.setQueryData(
       gitBranchSearchInfiniteQueryOptions({
+        environmentId: ENVIRONMENT_A,
         cwd: "/repo/a",
         query: "feature",
       }).queryKey,
       BRANCH_SEARCH_RESULT,
     );
-    queryClient.setQueryData(gitQueryKeys.status("/repo/b"), { ok: "b" });
     queryClient.setQueryData(
       gitBranchSearchInfiniteQueryOptions({
+        environmentId: ENVIRONMENT_B,
         cwd: "/repo/b",
         query: "feature",
       }).queryKey,
       BRANCH_SEARCH_RESULT,
     );
 
-    await invalidateGitQueries(queryClient, { cwd: "/repo/a" });
+    await invalidateGitQueries(queryClient, { environmentId: ENVIRONMENT_A, cwd: "/repo/a" });
 
-    expect(
-      queryClient.getQueryState(gitStatusQueryOptions("/repo/a").queryKey)?.isInvalidated,
-    ).toBe(true);
     expect(
       queryClient.getQueryState(
         gitBranchSearchInfiniteQueryOptions({
+          environmentId: ENVIRONMENT_A,
           cwd: "/repo/a",
           query: "feature",
         }).queryKey,
       )?.isInvalidated,
     ).toBe(true);
     expect(
-      queryClient.getQueryState(gitStatusQueryOptions("/repo/b").queryKey)?.isInvalidated,
-    ).toBe(false);
-    expect(
       queryClient.getQueryState(
         gitBranchSearchInfiniteQueryOptions({
+          environmentId: ENVIRONMENT_B,
           cwd: "/repo/b",
           query: "feature",
         }).queryKey,
       )?.isInvalidated,
-    ).toBe(false);
-  });
-});
-
-describe("invalidateGitStatusQuery", () => {
-  it("invalidates only status for the selected cwd", async () => {
-    const queryClient = new QueryClient();
-
-    queryClient.setQueryData(gitQueryKeys.status("/repo/a"), { ok: "a" });
-    queryClient.setQueryData(gitQueryKeys.status("/repo/b"), { ok: "b" });
-
-    await invalidateGitStatusQuery(queryClient, "/repo/a");
-
-    expect(
-      queryClient.getQueryState(gitStatusQueryOptions("/repo/a").queryKey)?.isInvalidated,
-    ).toBe(true);
-    expect(
-      queryClient.getQueryState(gitStatusQueryOptions("/repo/b").queryKey)?.isInvalidated,
     ).toBe(false);
   });
 });

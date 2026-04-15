@@ -9,10 +9,12 @@ import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from 
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
 
-const BASE_SERVER_PORT = 3773;
+const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
+const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
+const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::1", "::"] as const;
 
 export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(homedir(), ".t3"),
@@ -120,7 +122,6 @@ interface CreateDevRunnerEnvInput {
   readonly serverOffset: number;
   readonly webOffset: number;
   readonly t3Home: string | undefined;
-  readonly authToken: string | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -135,7 +136,6 @@ export function createDevRunnerEnv({
   serverOffset,
   webOffset,
   t3Home,
-  authToken,
   noBrowser,
   autoBootstrapProjectFromCwd,
   logWebSocketEvents,
@@ -152,18 +152,20 @@ export function createDevRunnerEnv({
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
       PORT: String(webPort),
-      ELECTRON_RENDERER_PORT: String(webPort),
-      VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://localhost:${webPort}`,
+      VITE_DEV_SERVER_URL:
+        devUrl?.toString() ??
+        `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
       T3CODE_HOME: resolvedBaseDir,
     };
 
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
+      output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
       output.VITE_WS_URL = `ws://localhost:${serverPort}`;
     } else {
-      delete output.T3CODE_PORT;
-      delete output.VITE_WS_URL;
-      delete output.T3CODE_AUTH_TOKEN;
+      output.T3CODE_PORT = String(serverPort);
+      output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
+      output.VITE_WS_URL = `ws://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
       delete output.T3CODE_MODE;
       delete output.T3CODE_NO_BROWSER;
       delete output.T3CODE_HOST;
@@ -171,12 +173,6 @@ export function createDevRunnerEnv({
 
     if (!isDesktopMode && host !== undefined) {
       output.T3CODE_HOST = host;
-    }
-
-    if (!isDesktopMode && authToken !== undefined) {
-      output.T3CODE_AUTH_TOKEN = authToken;
-    } else if (!isDesktopMode) {
-      delete output.T3CODE_AUTH_TOKEN;
     }
 
     if (!isDesktopMode && noBrowser !== undefined) {
@@ -208,6 +204,7 @@ export function createDevRunnerEnv({
     }
 
     if (isDesktopMode) {
+      output.HOST = DESKTOP_DEV_LOOPBACK_HOST;
       delete output.T3CODE_DESKTOP_WS_URL;
     }
 
@@ -225,10 +222,28 @@ function portPairForOffset(offset: number): {
   };
 }
 
+export function checkPortAvailabilityOnHosts<R>(
+  port: number,
+  hosts: ReadonlyArray<string>,
+  canListenOnHost: (port: number, host: string) => Effect.Effect<boolean, never, R>,
+): Effect.Effect<boolean, never, R> {
+  return Effect.gen(function* () {
+    for (const host of hosts) {
+      if (!(yield* canListenOnHost(port, host))) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
 const defaultCheckPortAvailability: PortAvailabilityCheck<NetService> = (port) =>
   Effect.gen(function* () {
     const net = yield* NetService;
-    return yield* net.isPortAvailableOnLoopback(port);
+    return yield* checkPortAvailabilityOnHosts(port, DEV_PORT_PROBE_HOSTS, (candidatePort, host) =>
+      net.canListenOnHost(candidatePort, host),
+    );
   });
 
 interface FindFirstAvailableOffsetInput<R = NetService> {
@@ -350,7 +365,6 @@ export function resolveModePortOffsets<R = NetService>({
 interface DevRunnerCliInput {
   readonly mode: DevMode;
   readonly t3Home: string | undefined;
-  readonly authToken: string | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -360,35 +374,6 @@ interface DevRunnerCliInput {
   readonly dryRun: boolean;
   readonly turboArgs: ReadonlyArray<string>;
 }
-
-const readOptionalBooleanEnv = (name: string): boolean | undefined => {
-  const value = process.env[name];
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === "1" || value.toLowerCase() === "true") {
-    return true;
-  }
-  if (value === "0" || value.toLowerCase() === "false") {
-    return false;
-  }
-  return undefined;
-};
-
-const resolveOptionalBooleanOverride = (
-  explicitValue: boolean | undefined,
-  envValue: boolean | undefined,
-): boolean | undefined => {
-  if (explicitValue === true) {
-    return true;
-  }
-
-  if (explicitValue === false) {
-    return envValue;
-  }
-
-  return envValue;
-};
 
 export function runDevRunnerWithInput(input: DevRunnerCliInput) {
   return Effect.gen(function* () {
@@ -411,12 +396,6 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         }),
     });
 
-    const envOverrides = {
-      noBrowser: readOptionalBooleanEnv("T3CODE_NO_BROWSER"),
-      autoBootstrapProjectFromCwd: readOptionalBooleanEnv("T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD"),
-      logWebSocketEvents: readOptionalBooleanEnv("T3CODE_LOG_WS_EVENTS"),
-    };
-
     const { serverOffset, webOffset } = yield* resolveModePortOffsets({
       mode: input.mode,
       startOffset: offset,
@@ -430,16 +409,9 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       serverOffset,
       webOffset,
       t3Home: input.t3Home,
-      authToken: input.authToken,
-      noBrowser: resolveOptionalBooleanOverride(input.noBrowser, envOverrides.noBrowser),
-      autoBootstrapProjectFromCwd: resolveOptionalBooleanOverride(
-        input.autoBootstrapProjectFromCwd,
-        envOverrides.autoBootstrapProjectFromCwd,
-      ),
-      logWebSocketEvents: resolveOptionalBooleanOverride(
-        input.logWebSocketEvents,
-        envOverrides.logWebSocketEvents,
-      ),
+      noBrowser: input.noBrowser,
+      autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
+      logWebSocketEvents: input.logWebSocketEvents,
       host: input.host,
       port: input.port,
       devUrl: input.devUrl,
@@ -502,11 +474,6 @@ const devRunnerCli = Command.make("dev-runner", {
   t3Home: Flag.string("home-dir").pipe(
     Flag.withDescription("Base directory for all T3 Code data (equivalent to T3CODE_HOME)."),
     Flag.withFallbackConfig(optionalStringConfig("T3CODE_HOME")),
-  ),
-  authToken: Flag.string("auth-token").pipe(
-    Flag.withDescription("Auth token (forwards to T3CODE_AUTH_TOKEN)."),
-    Flag.withAlias("token"),
-    Flag.withFallbackConfig(optionalStringConfig("T3CODE_AUTH_TOKEN")),
   ),
   noBrowser: Flag.boolean("no-browser").pipe(
     Flag.withDescription("Browser auto-open toggle (equivalent to T3CODE_NO_BROWSER)."),

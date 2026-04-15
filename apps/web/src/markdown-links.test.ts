@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveMarkdownFileLinkTarget } from "./markdown-links";
+import { resolveMarkdownFileLinkTarget, rewriteMarkdownFileUriHref } from "./markdown-links";
+
+describe("rewriteMarkdownFileUriHref", () => {
+  it("rewrites file uri hrefs into direct path hrefs", () => {
+    expect(rewriteMarkdownFileUriHref("file:///Users/julius/project/src/main.ts#L42")).toBe(
+      "/Users/julius/project/src/main.ts#L42",
+    );
+  });
+
+  it("preserves encoded octets so file paths are decoded only once later", () => {
+    expect(rewriteMarkdownFileUriHref("file:///Users/julius/project/file%2520name.md")).toBe(
+      "/Users/julius/project/file%2520name.md",
+    );
+  });
+});
 
 describe("resolveMarkdownFileLinkTarget", () => {
   it("resolves absolute posix file paths", () => {

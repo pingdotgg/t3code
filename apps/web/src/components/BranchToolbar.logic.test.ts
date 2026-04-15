@@ -1,13 +1,21 @@
-import type { GitBranch } from "@t3tools/contracts";
+import { EnvironmentId, type GitBranch } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
+  resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
+  resolveEffectiveEnvMode,
+  resolveEnvModeLabel,
   resolveBranchToolbarValue,
+  resolveLockedWorkspaceLabel,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
+
+const localEnvironmentId = EnvironmentId.make("environment-local");
+const remoteEnvironmentId = EnvironmentId.make("environment-remote");
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {
@@ -73,6 +81,90 @@ describe("resolveBranchToolbarValue", () => {
         currentGitBranch: "main",
       }),
     ).toBe("main");
+  });
+});
+
+describe("resolveEnvironmentOptionLabel", () => {
+  it("prefers the primary environment's machine label", () => {
+    expect(
+      resolveEnvironmentOptionLabel({
+        isPrimary: true,
+        environmentId: localEnvironmentId,
+        runtimeLabel: "Julius's Mac mini",
+        savedLabel: "Local environment",
+      }),
+    ).toBe("Julius's Mac mini");
+  });
+
+  it("falls back to 'This device' for generic primary labels", () => {
+    expect(
+      resolveEnvironmentOptionLabel({
+        isPrimary: true,
+        environmentId: localEnvironmentId,
+        runtimeLabel: "Local environment",
+        savedLabel: "Local",
+      }),
+    ).toBe("This device");
+  });
+
+  it("keeps configured labels for non-primary environments", () => {
+    expect(
+      resolveEnvironmentOptionLabel({
+        isPrimary: false,
+        environmentId: remoteEnvironmentId,
+        runtimeLabel: null,
+        savedLabel: "Build box",
+      }),
+    ).toBe("Build box");
+  });
+});
+
+describe("resolveEffectiveEnvMode", () => {
+  it("treats draft threads already attached to a worktree as current-checkout mode", () => {
+    expect(
+      resolveEffectiveEnvMode({
+        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
+        hasServerThread: false,
+        draftThreadEnvMode: "worktree",
+      }),
+    ).toBe("local");
+  });
+
+  it("keeps explicit new-worktree mode for draft threads without a worktree path", () => {
+    expect(
+      resolveEffectiveEnvMode({
+        activeWorktreePath: null,
+        hasServerThread: false,
+        draftThreadEnvMode: "worktree",
+      }),
+    ).toBe("worktree");
+  });
+});
+
+describe("resolveEnvModeLabel", () => {
+  it("uses explicit workspace labels", () => {
+    expect(resolveEnvModeLabel("local")).toBe("Current checkout");
+    expect(resolveEnvModeLabel("worktree")).toBe("New worktree");
+  });
+});
+
+describe("resolveCurrentWorkspaceLabel", () => {
+  it("describes the main repo checkout when no worktree path is active", () => {
+    expect(resolveCurrentWorkspaceLabel(null)).toBe("Current checkout");
+  });
+
+  it("describes the active checkout as a worktree when one is attached", () => {
+    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Current worktree");
+  });
+});
+
+describe("resolveLockedWorkspaceLabel", () => {
+  it("uses a shorter label for the main repo checkout", () => {
+    expect(resolveLockedWorkspaceLabel(null)).toBe("Local checkout");
+  });
+
+  it("uses a shorter label for an attached worktree", () => {
+    expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Worktree");
   });
 });
 
