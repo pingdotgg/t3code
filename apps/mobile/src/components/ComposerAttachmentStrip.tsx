@@ -15,6 +15,8 @@ export interface ComposerAttachmentStripProps {
   readonly imageSize?: number;
   /** Border radius of each image thumbnail.  Defaults to 16. */
   readonly imageBorderRadius?: number;
+  /** Whether the remove button should sit in its own gutter instead of overlapping the image. */
+  readonly removeButtonPlacement?: "overlay" | "gutter";
 }
 
 /**
@@ -25,6 +27,8 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
   const subtleBg = useThemeColor("--color-subtle");
   const size = props.imageSize ?? 72;
   const radius = props.imageBorderRadius ?? 16;
+  const removeButtonPlacement = props.removeButtonPlacement ?? "overlay";
+  const removeButtonGutter = removeButtonPlacement === "gutter" ? 10 : 0;
 
   if (props.attachments.length === 0) {
     return null;
@@ -39,7 +43,14 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
     >
       <View style={{ flexDirection: "row", gap: 10 }}>
         {props.attachments.map((image) => (
-          <View key={image.id} style={{ position: "relative" }}>
+          <View
+            key={image.id}
+            style={{
+              position: "relative",
+              paddingTop: removeButtonGutter,
+              paddingRight: removeButtonGutter,
+            }}
+          >
             <Pressable
               onPress={props.onPressImage ? () => props.onPressImage!(image.previewUri) : undefined}
             >
@@ -57,8 +68,8 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
             <Pressable
               style={{
                 position: "absolute",
-                top: 4,
-                right: 4,
+                top: removeButtonPlacement === "gutter" ? 0 : 4,
+                right: removeButtonPlacement === "gutter" ? 0 : 4,
                 width: 22,
                 height: 22,
                 borderRadius: 11,

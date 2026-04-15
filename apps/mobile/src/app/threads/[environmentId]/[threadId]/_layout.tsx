@@ -46,6 +46,7 @@ export default function ThreadLayout() {
         options={{
           animation: "slide_from_right",
           contentStyle: sheetStyle,
+          headerBackButtonDisplayMode: "minimal",
           headerShown: true,
           headerTitle: "Files changed",
           headerBackTitle: "",

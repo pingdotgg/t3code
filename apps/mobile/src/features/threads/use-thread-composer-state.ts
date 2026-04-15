@@ -93,6 +93,7 @@ export function appendReviewCommentToDraft(input: {
   readonly environmentId: string;
   readonly threadId: string;
   readonly text: string;
+  readonly attachments?: ReadonlyArray<DraftComposerImageAttachment>;
 }): void {
   const threadKey = scopedThreadKey(
     EnvironmentId.make(input.environmentId),
@@ -105,6 +106,26 @@ export function appendReviewCommentToDraft(input: {
     ...current,
     [threadKey]: `${existing}${separator}${input.text}`,
   });
+  if (input.attachments && input.attachments.length > 0) {
+    appendDraftAttachments(threadKey, input.attachments);
+  }
+}
+
+export function useThreadDraftForThread(input: {
+  readonly environmentId?: string;
+  readonly threadId?: string;
+}) {
+  const draftMessageByThreadKey = useAtomValue(draftMessageByThreadKeyAtom);
+  const draftAttachmentsByThreadKey = useAtomValue(draftAttachmentsByThreadKeyAtom);
+  const threadKey =
+    input.environmentId && input.threadId
+      ? scopedThreadKey(EnvironmentId.make(input.environmentId), ThreadId.make(input.threadId))
+      : null;
+
+  return {
+    draftMessage: threadKey ? (draftMessageByThreadKey[threadKey] ?? "") : "",
+    draftAttachments: threadKey ? (draftAttachmentsByThreadKey[threadKey] ?? []) : [],
+  };
 }
 
 function clearDraft(threadKey: string): void {

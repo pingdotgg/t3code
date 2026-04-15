@@ -48,6 +48,18 @@ export interface ReviewRenderableFile {
   readonly rows: ReadonlyArray<ReviewRenderableRow>;
 }
 
+export type ReviewFilePreviewState =
+  | {
+      readonly kind: "render";
+    }
+  | {
+      readonly kind: "suppressed";
+      readonly reason: "non-text" | "large";
+      readonly title: string;
+      readonly message: string;
+      readonly actionLabel: string | null;
+    };
+
 export type ReviewParsedDiff =
   | {
       readonly kind: "empty";
@@ -147,6 +159,50 @@ const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
 const FNV_PRIME_32 = 0x01000193;
 const SECONDARY_HASH_SEED = 0x9e3779b9;
 const SECONDARY_HASH_MULTIPLIER = 0x85ebca6b;
+const LARGE_DIFF_LINE_THRESHOLD = 400;
+const LARGE_DIFF_CHARACTER_THRESHOLD = 24_000;
+const NON_TEXT_FILE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "ico",
+  "icns",
+  "avif",
+  "heic",
+  "tif",
+  "tiff",
+  "mp3",
+  "wav",
+  "flac",
+  "ogg",
+  "m4a",
+  "aac",
+  "mp4",
+  "mov",
+  "avi",
+  "mkv",
+  "webm",
+  "pdf",
+  "zip",
+  "gz",
+  "tgz",
+  "bz2",
+  "7z",
+  "rar",
+  "woff",
+  "woff2",
+  "ttf",
+  "otf",
+  "eot",
+  "wasm",
+  "exe",
+  "dll",
+  "so",
+  "dylib",
+]);
 
 function fnv1a32(input: string, seed: number, multiplier: number): number {
   let hash = seed >>> 0;
@@ -166,6 +222,49 @@ function buildPatchCacheKey(patch: string, scope: string): string {
     SECONDARY_HASH_MULTIPLIER,
   ).toString(36);
   return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+}
+
+function getFileExtension(path: string): string | null {
+  const match = /\.([a-z0-9]+)$/i.exec(path);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+function countReviewRenderableLineRows(file: ReviewRenderableFile): number {
+  return file.rows.reduce((total, row) => total + (row.kind === "line" ? 1 : 0), 0);
+}
+
+function countReviewRenderableCharacters(file: ReviewRenderableFile): number {
+  return file.rows.reduce(
+    (total, row) => total + (row.kind === "line" ? row.content.length : row.header.length),
+    0,
+  );
+}
+
+export function getReviewFilePreviewState(file: ReviewRenderableFile): ReviewFilePreviewState {
+  const extension = getFileExtension(file.path);
+  if (extension && NON_TEXT_FILE_EXTENSIONS.has(extension)) {
+    return {
+      kind: "suppressed",
+      reason: "non-text",
+      title: "Non-text file",
+      message: "Diff preview is not available for this file format.",
+      actionLabel: null,
+    };
+  }
+
+  const lineCount = countReviewRenderableLineRows(file);
+  const characterCount = countReviewRenderableCharacters(file);
+  if (lineCount > LARGE_DIFF_LINE_THRESHOLD || characterCount > LARGE_DIFF_CHARACTER_THRESHOLD) {
+    return {
+      kind: "suppressed",
+      reason: "large",
+      title: "Large diff",
+      message: "Large diffs are not rendered by default.",
+      actionLabel: "Load diff",
+    };
+  }
+
+  return { kind: "render" };
 }
 
 function fallbackHunkHeader(hunk: FileDiffMetadata["hunks"][number]): string {

@@ -152,3 +152,7 @@ export function formatReviewCommentContext(target: ReviewCommentTarget, comment:
     "</review_comment>",
   ].join("\n");
 }
+
+export function countReviewCommentContexts(value: string): number {
+  return Array.from(value.matchAll(/<review_comment>/g)).length;
+}
