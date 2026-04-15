@@ -74,6 +74,13 @@ export type DesktopUpdateStatus =
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
 export type DesktopUpdateChannel = "latest" | "nightly";
+export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
+
+export interface DesktopAppBranding {
+  baseName: string;
+  stageLabel: DesktopAppStageLabel;
+  displayName: string;
+}
 
 export interface DesktopRuntimeInfo {
   hostArch: DesktopRuntimeArch;
@@ -134,6 +141,7 @@ export interface DesktopServerExposureState {
 }
 
 export interface DesktopBridge {
+  getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;

@@ -22,6 +22,7 @@ import type { MenuItemConstructorOptions } from "electron";
 import type {
   ClientSettings,
   DesktopTheme,
+  DesktopAppBranding,
   DesktopServerExposureMode,
   DesktopServerExposureState,
   DesktopUpdateChannel,
@@ -71,6 +72,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { resolveDesktopAppBranding } from "./appBranding";
 
 syncShellEnvironment();
 
@@ -86,6 +88,7 @@ const UPDATE_SET_CHANNEL_CHANNEL = "desktop:update-set-channel";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const UPDATE_CHECK_CHANNEL = "desktop:update-check";
+const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
 const GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL = "desktop:get-local-environment-bootstrap";
 const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
 const SET_CLIENT_SETTINGS_CHANNEL = "desktop:set-client-settings";
@@ -104,7 +107,11 @@ const SAVED_ENVIRONMENT_REGISTRY_PATH = Path.join(STATE_DIR, "saved-environments
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+const desktopAppBranding: DesktopAppBranding = resolveDesktopAppBranding({
+  isDevelopment,
+  appVersion: app.getVersion(),
+});
+const APP_DISPLAY_NAME = desktopAppBranding.displayName;
 const APP_USER_MODEL_ID = isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code";
 const LINUX_DESKTOP_ENTRY_NAME = isDevelopment ? "t3code-dev.desktop" : "t3code.desktop";
 const LINUX_WM_CLASS = isDevelopment ? "t3code-dev" : "t3code";
@@ -1516,6 +1523,11 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.removeAllListeners(GET_APP_BRANDING_CHANNEL);
+  ipcMain.on(GET_APP_BRANDING_CHANNEL, (event) => {
+    event.returnValue = desktopAppBranding;
+  });
+
   ipcMain.removeAllListeners(GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL);
   ipcMain.on(GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL, (event) => {
     event.returnValue = {
