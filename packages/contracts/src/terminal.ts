@@ -20,7 +20,7 @@ const TerminalEnvSchema = Schema.Record(TerminalEnvKeySchema, TerminalEnvValueSc
 );
 
 const TerminalIdWithDefaultSchema = TerminalIdSchema.pipe(
-  Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_ID)),
+  Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_TERMINAL_ID)),
 );
 
 export const TerminalThreadInput = Schema.Struct({

@@ -86,6 +86,7 @@ import {
   BrowserTraceCollector,
   type BrowserTraceCollectorShape,
 } from "./observability/Services/BrowserTraceCollector.ts";
+import { resolveCurrentShell } from "./terminal/terminalProfile.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import {
   ProjectSetupScriptRunner,
@@ -1848,6 +1849,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(first.config.observability.otlpTracesEnabled, true);
         assert.equal(first.config.observability.otlpMetricsUrl, "http://localhost:4318/v1/metrics");
         assert.equal(first.config.observability.otlpMetricsEnabled, true);
+        assert.equal(first.config.terminal.platform, process.platform);
+        assert.equal(
+          first.config.terminal.currentShell,
+          resolveCurrentShell(process.platform, process.env),
+        );
+        assert.isTrue(Array.isArray(first.config.terminal.discoveredShells));
         assert.deepEqual(first.config.settings, DEFAULT_SERVER_SETTINGS);
       }
       assert.deepEqual(second, {
@@ -1855,6 +1862,35 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         type: "keybindingsUpdated",
         payload: { issues: [] },
       });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc serverGetConfig with terminal discovery", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            loadConfigState: Effect.succeed({
+              keybindings: [],
+              issues: [],
+            }),
+            streamChanges: Stream.empty,
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({})),
+      );
+
+      assert.equal(response.terminal.platform, process.platform);
+      assert.equal(
+        response.terminal.currentShell,
+        resolveCurrentShell(process.platform, process.env),
+      );
+      assert.isTrue(Array.isArray(response.terminal.discoveredShells));
+      assert.deepEqual(response.settings, DEFAULT_SERVER_SETTINGS);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

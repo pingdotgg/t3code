@@ -9,7 +9,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   PROVIDER_DISPLAY_NAMES,
   type DesktopUpdateChannel,
@@ -61,6 +61,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -73,6 +74,7 @@ import {
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   useServerAvailableEditors,
+  useServerConfig,
   useServerKeybindingsConfigPath,
   useServerObservability,
   useServerProviders,
@@ -414,6 +416,58 @@ function AboutVersionSection() {
   );
 }
 
+function formatTerminalShellArgs(shellArgs: ReadonlyArray<string>) {
+  return shellArgs.join("\n");
+}
+
+function parseTerminalShellArgs(shellArgsText: string) {
+  return shellArgsText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function formatTerminalEnv(env: Record<string, string>) {
+  return Object.entries(env)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+}
+
+function parseTerminalEnv(envText: string) {
+  const env: Record<string, string> = {};
+  const lines = envText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  for (const line of lines) {
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      return {
+        env: null,
+        error: "Environment variables must use KEY=VALUE format.",
+      } as const;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const value = line.slice(separatorIndex + 1);
+
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      return {
+        env: null,
+        error: "Environment variable names must start with a letter or underscore.",
+      } as const;
+    }
+
+    env[key] = value;
+  }
+
+  return {
+    env,
+    error: null,
+  } as const;
+}
+
 export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
@@ -428,6 +482,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     const defaultSettings = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
     return !Equal.equals(currentSettings, defaultSettings);
   });
+  const isTerminalProfileDirty = !Equal.equals(
+    settings.terminal,
+    DEFAULT_UNIFIED_SETTINGS.terminal,
+  );
 
   const changedSettingLabels = useMemo(
     () => [
@@ -455,10 +513,12 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
+      ...(isTerminalProfileDirty ? ["Terminal profile"] : []),
     ],
     [
       areProviderSettingsDirty,
       isGitWritingModelDirty,
+      isTerminalProfileDirty,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -523,6 +583,13 @@ export function GeneralSettingsPanel() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const [terminalShellArgsDraft, setTerminalShellArgsDraft] = useState(() =>
+    formatTerminalShellArgs(settings.terminal.profile.shellArgs),
+  );
+  const [terminalEnvDraft, setTerminalEnvDraft] = useState(() =>
+    formatTerminalEnv(settings.terminal.profile.env),
+  );
+  const [terminalEnvError, setTerminalEnvError] = useState<string | null>(null);
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const refreshingRef = useRef(false);
   const modelListRefs = useRef<Partial<Record<ProviderKind, HTMLDivElement | null>>>({});
@@ -544,7 +611,9 @@ export function GeneralSettingsPanel() {
   const keybindingsConfigPath = useServerKeybindingsConfigPath();
   const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
+  const serverConfig = useServerConfig();
   const serverProviders = useServerProviders();
+  const currentShell = serverConfig?.terminal.currentShell ?? "";
   const codexHomePath = settings.providers.codex.homePath;
   const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
   const diagnosticsDescription = (() => {
@@ -573,6 +642,47 @@ export function GeneralSettingsPanel() {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
+  const updateTerminalProfile = useCallback(
+    (
+      patch: Partial<{
+        shellPath: string;
+        shellArgs: ReadonlyArray<string>;
+        env: Record<string, string>;
+      }>,
+    ) => {
+      updateSettings({
+        terminal: {
+          profile: {
+            ...settings.terminal.profile,
+            ...patch,
+          },
+        },
+      });
+    },
+    [settings.terminal.profile, updateSettings],
+  );
+
+  useEffect(() => {
+    setTerminalShellArgsDraft((currentDraft) =>
+      Equal.equals(parseTerminalShellArgs(currentDraft), settings.terminal.profile.shellArgs)
+        ? currentDraft
+        : formatTerminalShellArgs(settings.terminal.profile.shellArgs),
+    );
+  }, [settings.terminal.profile.shellArgs]);
+
+  useEffect(() => {
+    setTerminalEnvDraft((currentDraft) => {
+      const parsedDraft = parseTerminalEnv(currentDraft);
+      if (
+        parsedDraft.error === null &&
+        Equal.equals(parsedDraft.env, settings.terminal.profile.env)
+      ) {
+        return currentDraft;
+      }
+      return formatTerminalEnv(settings.terminal.profile.env);
+    });
+    setTerminalEnvError(null);
+  }, [settings.terminal.profile.env]);
 
   const openInPreferredEditor = useCallback(
     (target: "keybindings" | "logsDirectory", path: string | null, failureMessage: string) => {
@@ -1414,6 +1524,128 @@ export function GeneralSettingsPanel() {
             </div>
           );
         })}
+      </SettingsSection>
+
+      <SettingsSection title="Terminal">
+        <SettingsRow
+          title="Shell executable override"
+          description="Optional absolute path for a different shell."
+          resetAction={
+            settings.terminal.profile.shellPath !==
+            DEFAULT_UNIFIED_SETTINGS.terminal.profile.shellPath ? (
+              <SettingResetButton
+                label="terminal shell path"
+                onClick={() =>
+                  updateTerminalProfile({
+                    shellPath: DEFAULT_UNIFIED_SETTINGS.terminal.profile.shellPath,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <div className="mt-3">
+            <label htmlFor="terminal-shell-path" className="block">
+              <span className="sr-only">Terminal shell path</span>
+              <Input
+                id="terminal-shell-path"
+                aria-label="Terminal shell path"
+                value={settings.terminal.profile.shellPath}
+                onChange={(event) => updateTerminalProfile({ shellPath: event.target.value })}
+                placeholder={currentShell}
+                spellCheck={false}
+              />
+            </label>
+          </div>
+        </SettingsRow>
+
+        <SettingsRow
+          title="Shell arguments"
+          description="Optional startup arguments for the terminal shell. When no shell override is set, these apply to the current shell. Enter one argument per line."
+          resetAction={
+            !Equal.equals(
+              settings.terminal.profile.shellArgs,
+              DEFAULT_UNIFIED_SETTINGS.terminal.profile.shellArgs,
+            ) ? (
+              <SettingResetButton
+                label="terminal shell arguments"
+                onClick={() =>
+                  updateTerminalProfile({
+                    shellArgs: DEFAULT_UNIFIED_SETTINGS.terminal.profile.shellArgs,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <div className="mt-3">
+            <label htmlFor="terminal-shell-args" className="block">
+              <span className="sr-only">Terminal shell arguments</span>
+              <Textarea
+                id="terminal-shell-args"
+                aria-label="Terminal shell arguments"
+                value={terminalShellArgsDraft}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setTerminalShellArgsDraft(nextValue);
+                  updateTerminalProfile({ shellArgs: parseTerminalShellArgs(nextValue) });
+                }}
+                placeholder={"-l\n--norc"}
+                spellCheck={false}
+              />
+            </label>
+          </div>
+        </SettingsRow>
+
+        <SettingsRow
+          title="Environment variables"
+          description="Extra environment variables for new and restarted terminals. These apply even when keeping the current shell. Enter one KEY=VALUE pair per line."
+          resetAction={
+            !Equal.equals(
+              settings.terminal.profile.env,
+              DEFAULT_UNIFIED_SETTINGS.terminal.profile.env,
+            ) ? (
+              <SettingResetButton
+                label="terminal environment variables"
+                onClick={() =>
+                  updateTerminalProfile({
+                    env: DEFAULT_UNIFIED_SETTINGS.terminal.profile.env,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <div className="mt-3">
+            <label htmlFor="terminal-env" className="block">
+              <span className="sr-only">Terminal environment variables</span>
+              <Textarea
+                id="terminal-env"
+                aria-label="Terminal environment variables"
+                value={terminalEnvDraft}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setTerminalEnvDraft(nextValue);
+
+                  const parsed = parseTerminalEnv(nextValue);
+                  setTerminalEnvError(parsed.error);
+                  if (!parsed.env) {
+                    return;
+                  }
+
+                  updateTerminalProfile({ env: parsed.env });
+                }}
+                placeholder={
+                  "TERM_PROGRAM=T3Code\nTERM=xterm-256color\nZDOTDIR=/Users/you/.config/t3code-zsh"
+                }
+                spellCheck={false}
+              />
+            </label>
+            {terminalEnvError ? (
+              <p className="mt-2 text-xs text-destructive">{terminalEnvError}</p>
+            ) : null}
+          </div>
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title="Advanced">

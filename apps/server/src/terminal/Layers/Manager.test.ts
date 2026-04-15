@@ -6,6 +6,7 @@ import {
   DEFAULT_TERMINAL_ID,
   type TerminalEvent,
   type TerminalOpenInput,
+  type TerminalProfileSettings,
   type TerminalRestartInput,
 } from "@t3tools/contracts";
 import {
@@ -188,6 +189,7 @@ function multiTerminalHistoryLogPath(
 
 interface CreateManagerOptions {
   shellResolver?: () => string;
+  terminalProfileResolver?: Effect.Effect<TerminalProfileSettings>;
   subprocessChecker?: (terminalPid: number) => Effect.Effect<boolean>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -222,6 +224,9 @@ const createManager = (
         historyLineLimit,
         ptyAdapter,
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
+        ...(options.terminalProfileResolver !== undefined
+          ? { terminalProfileResolver: options.terminalProfileResolver }
+          : {}),
         ...(options.subprocessChecker !== undefined
           ? { subprocessChecker: options.subprocessChecker }
           : {}),
@@ -320,6 +325,41 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       assert.equal(snapshot.status, "running");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
       expect(ptyAdapter.processes).toHaveLength(1);
+    }),
+  );
+
+  it.effect("spawns terminals with the configured shell profile", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+        terminalProfileResolver: Effect.succeed({
+          shellPath: "/bin/zsh",
+          shellArgs: ["-f"],
+          env: {
+            ZDOTDIR: "/tmp/t3code-zdotdir",
+            PATH: "/opt/t3/bin",
+          },
+        }),
+      });
+
+      yield* manager.open(
+        openInput({
+          env: {
+            PATH: "/workspace/bin",
+            CUSTOM_FLAG: "1",
+          },
+        }),
+      );
+
+      const spawned = ptyAdapter.spawnInputs[0];
+      expect(spawned).toBeDefined();
+      if (!spawned) return;
+
+      expect(spawned.shell).toBe("/bin/zsh");
+      expect(spawned.args).toEqual(["-f"]);
+      expect(spawned.env.ZDOTDIR).toBe("/tmp/t3code-zdotdir");
+      expect(spawned.env.PATH).toBe("/workspace/bin");
+      expect(spawned.env.CUSTOM_FLAG).toBe("1");
     }),
   );
 

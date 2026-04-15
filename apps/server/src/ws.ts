@@ -1,4 +1,15 @@
-import { Cause, Duration, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import {
+  Cause,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Queue,
+  Ref,
+  Schema,
+  Stream,
+} from "effect";
 import {
   type AuthAccessStreamEvent,
   AuthSessionId,
@@ -47,6 +58,7 @@ import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
 import { TerminalManager } from "./terminal/Services/Manager";
+import { discoverTerminalShells } from "./terminal/terminalProfile";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
@@ -147,6 +159,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const startup = yield* ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
+      const fileSystem = yield* FileSystem.FileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const serverEnvironment = yield* ServerEnvironment;
@@ -515,6 +528,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         const settings = yield* serverSettings.getSettings;
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
+        const terminal = yield* Effect.promise(() =>
+          discoverTerminalShells({
+            platform: process.platform,
+            env: process.env,
+            probe: (candidatePath) => Effect.runPromise(fileSystem.exists(candidatePath)),
+          }),
+        );
 
         return {
           environment,
@@ -525,6 +545,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           issues: keybindingsConfig.issues,
           providers,
           availableEditors: resolveAvailableEditors(),
+          terminal,
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,

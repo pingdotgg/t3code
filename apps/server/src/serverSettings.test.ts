@@ -41,6 +41,25 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         },
       );
+
+      assert.deepEqual(
+        decodePatch({
+          terminal: {
+            profile: {
+              shellPath: "/bin/zsh",
+              shellArgs: ["-f"],
+            },
+          },
+        }),
+        {
+          terminal: {
+            profile: {
+              shellPath: "/bin/zsh",
+              shellArgs: ["-f"],
+            },
+          },
+        },
+      );
     }),
   );
 
@@ -208,6 +227,47 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.equal(next.providers.codex.binaryPath, "codex");
       assert.equal(next.providers.claudeAgent.binaryPath, "claude");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("writes terminal profile overrides without serializing default values", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const next = yield* serverSettings.updateSettings({
+        terminal: {
+          profile: {
+            shellPath: "/bin/zsh",
+            shellArgs: ["-f"],
+            env: {
+              ZDOTDIR: "/tmp/t3code-zsh",
+            },
+          },
+        },
+      });
+
+      assert.deepEqual(next.terminal.profile, {
+        shellPath: "/bin/zsh",
+        shellArgs: ["-f"],
+        env: {
+          ZDOTDIR: "/tmp/t3code-zsh",
+        },
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.deepEqual(JSON.parse(raw), {
+        terminal: {
+          profile: {
+            shellPath: "/bin/zsh",
+            shellArgs: ["-f"],
+            env: {
+              ZDOTDIR: "/tmp/t3code-zsh",
+            },
+          },
+        },
+      });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

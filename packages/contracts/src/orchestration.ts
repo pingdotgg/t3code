@@ -178,9 +178,11 @@ export const OrchestrationProposedPlan = Schema.Struct({
   id: OrchestrationProposedPlanId,
   turnId: Schema.NullOr(TurnId),
   planMarkdown: TrimmedNonEmptyString,
-  implementedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  implementedAt: Schema.NullOr(IsoDateTime).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   implementationThreadId: Schema.NullOr(ThreadId).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
   ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -207,7 +209,9 @@ export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
-  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  runtimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_RUNTIME_MODE)),
+  ),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
   updatedAt: IsoDateTime,
@@ -282,18 +286,18 @@ export const OrchestrationThread = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-  archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
@@ -328,14 +332,14 @@ export const OrchestrationThreadShell = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-  archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -432,7 +436,7 @@ const ThreadCreateCommand = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -520,9 +524,11 @@ export const ThreadTurnStartCommand = Schema.Struct({
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
-  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  runtimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_RUNTIME_MODE)),
+  ),
   interactionMode: ProviderInteractionMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
@@ -773,9 +779,11 @@ export const ThreadCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
-  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  runtimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_RUNTIME_MODE)),
+  ),
   interactionMode: ProviderInteractionMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -817,7 +825,7 @@ export const ThreadRuntimeModeSetPayload = Schema.Struct({
 export const ThreadInteractionModeSetPayload = Schema.Struct({
   threadId: ThreadId,
   interactionMode: ProviderInteractionMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   updatedAt: IsoDateTime,
 });
@@ -839,9 +847,11 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   messageId: MessageId,
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
-  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  runtimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_RUNTIME_MODE)),
+  ),
   interactionMode: ProviderInteractionMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,

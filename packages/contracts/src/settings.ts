@@ -24,17 +24,17 @@ export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
 export const ClientSettingsSchema = Schema.Struct({
-  confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+  confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
+  diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER)),
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER)),
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
   ),
   timestampFormat: TimestampFormat.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -55,38 +55,59 @@ const makeBinaryPathSetting = (fallback: string) =>
         encode: (value) => Effect.succeed(value),
       }),
     ),
-    Schema.withDecodingDefault(Effect.succeed(fallback)),
+    Schema.withDecodingDefaultKey(Effect.succeed(fallback)),
   );
 
 export const CodexSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
   binaryPath: makeBinaryPathSetting("codex"),
-  homePath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
-  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  homePath: TrimmedString.pipe(Schema.withDecodingDefaultKey(Effect.succeed(""))),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type CodexSettings = typeof CodexSettings.Type;
 
 export const ClaudeSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
   binaryPath: makeBinaryPathSetting("claude"),
-  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
 export const ObservabilitySettings = Schema.Struct({
-  otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
-  otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefaultKey(Effect.succeed(""))),
+  otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefaultKey(Effect.succeed(""))),
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
-export const ServerSettings = Schema.Struct({
-  enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  defaultThreadEnvMode: ThreadEnvMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
+const TerminalProfileEnvKey = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
+).check(Schema.isMaxLength(128));
+const TerminalProfileEnvValue = Schema.String.check(Schema.isMaxLength(8_192));
+
+export const TerminalProfileSettings = Schema.Struct({
+  shellPath: TrimmedString.pipe(Schema.withDecodingDefaultKey(Effect.succeed(""))),
+  shellArgs: Schema.Array(TrimmedString).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  env: Schema.Record(TerminalProfileEnvKey, TerminalProfileEnvValue).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed({})),
   ),
-  addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type TerminalProfileSettings = typeof TerminalProfileSettings.Type;
+
+export const TerminalSettings = Schema.Struct({
+  profile: TerminalProfileSettings.pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+});
+export type TerminalSettings = typeof TerminalSettings.Type;
+
+export const ServerSettings = Schema.Struct({
+  enableAssistantStreaming: Schema.Boolean.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(false)),
+  ),
+  defaultThreadEnvMode: ThreadEnvMode.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("local" as const satisfies ThreadEnvMode)),
+  ),
+  addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefaultKey(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
-    Schema.withDecodingDefault(
+    Schema.withDecodingDefaultKey(
       Effect.succeed({
         provider: "codex" as const,
         model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
@@ -96,10 +117,11 @@ export const ServerSettings = Schema.Struct({
 
   // Provider specific settings
   providers: Schema.Struct({
-    codex: CodexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    codex: CodexSettings.pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+    claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  observability: ObservabilitySettings.pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  terminal: TerminalSettings.pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -166,6 +188,12 @@ const ClaudeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const TerminalProfileSettingsPatch = Schema.Struct({
+  shellPath: Schema.optionalKey(Schema.String),
+  shellArgs: Schema.optionalKey(Schema.Array(Schema.String)),
+  env: Schema.optionalKey(Schema.Record(TerminalProfileEnvKey, TerminalProfileEnvValue)),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
@@ -181,6 +209,11 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
+    }),
+  ),
+  terminal: Schema.optionalKey(
+    Schema.Struct({
+      profile: Schema.optionalKey(TerminalProfileSettingsPatch),
     }),
   ),
 });

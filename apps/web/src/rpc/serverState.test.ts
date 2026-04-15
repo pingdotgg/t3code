@@ -86,6 +86,11 @@ const baseServerConfig: ServerConfig = {
     otlpTracesEnabled: false,
     otlpMetricsEnabled: false,
   },
+  terminal: {
+    platform: "darwin",
+    currentShell: "/bin/zsh",
+    discoveredShells: [],
+  },
   settings: DEFAULT_SERVER_SETTINGS,
 };
 

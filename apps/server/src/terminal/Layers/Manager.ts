@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   DEFAULT_TERMINAL_ID,
   type TerminalEvent,
+  type TerminalProfileSettings,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
 } from "@t3tools/contracts";
@@ -29,11 +30,13 @@ import {
   terminalSessionsTotal,
 } from "../../observability/Metrics";
 import { runProcess } from "../../processRunner";
+import { ServerSettingsService } from "../../serverSettings";
 import {
   TerminalCwdError,
   TerminalHistoryError,
   TerminalManager,
   TerminalNotRunningError,
+  type ShellCandidate,
   TerminalSessionLookupError,
   type TerminalManagerShape,
 } from "../Services/Manager";
@@ -44,6 +47,7 @@ import {
   type PtyExitEvent,
   type PtyProcess,
 } from "../Services/PTY";
+import { resolveCurrentShell, resolveTerminalShellSpawnConfig } from "../terminalProfile";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
@@ -75,11 +79,6 @@ class TerminalProcessSignalError extends Schema.TaggedErrorClass<TerminalProcess
 
 interface TerminalSubprocessChecker {
   (terminalPid: number): Effect.Effect<boolean, TerminalSubprocessCheckError>;
-}
-
-interface ShellCandidate {
-  shell: string;
-  args?: string[];
 }
 
 interface TerminalStartInput {
@@ -187,75 +186,12 @@ function enqueueProcessEvent(
 }
 
 function defaultShellResolver(): string {
-  if (process.platform === "win32") {
-    return process.env.ComSpec ?? "cmd.exe";
-  }
-  return process.env.SHELL ?? "bash";
-}
-
-function normalizeShellCommand(value: string | undefined): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-
-  if (process.platform === "win32") {
-    return trimmed;
-  }
-
-  const firstToken = trimmed.split(/\s+/g)[0]?.trim();
-  if (!firstToken) return null;
-  return firstToken.replace(/^['"]|['"]$/g, "");
-}
-
-function shellCandidateFromCommand(command: string | null): ShellCandidate | null {
-  if (!command || command.length === 0) return null;
-  const shellName = path.basename(command).toLowerCase();
-  if (process.platform !== "win32" && shellName === "zsh") {
-    return { shell: command, args: ["-o", "nopromptsp"] };
-  }
-  return { shell: command };
+  return resolveCurrentShell(process.platform, process.env);
 }
 
 function formatShellCandidate(candidate: ShellCandidate): string {
   if (!candidate.args || candidate.args.length === 0) return candidate.shell;
   return `${candidate.shell} ${candidate.args.join(" ")}`;
-}
-
-function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellCandidate[] {
-  const seen = new Set<string>();
-  const ordered: ShellCandidate[] = [];
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    const key = formatShellCandidate(candidate);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    ordered.push(candidate);
-  }
-  return ordered;
-}
-
-function resolveShellCandidates(shellResolver: () => string): ShellCandidate[] {
-  const requested = shellCandidateFromCommand(normalizeShellCommand(shellResolver()));
-
-  if (process.platform === "win32") {
-    return uniqueShellCandidates([
-      requested,
-      shellCandidateFromCommand(process.env.ComSpec ?? null),
-      shellCandidateFromCommand("powershell.exe"),
-      shellCandidateFromCommand("cmd.exe"),
-    ]);
-  }
-
-  return uniqueShellCandidates([
-    requested,
-    shellCandidateFromCommand(normalizeShellCommand(process.env.SHELL)),
-    shellCandidateFromCommand("/bin/zsh"),
-    shellCandidateFromCommand("/bin/bash"),
-    shellCandidateFromCommand("/bin/sh"),
-    shellCandidateFromCommand("zsh"),
-    shellCandidateFromCommand("bash"),
-    shellCandidateFromCommand("sh"),
-  ]);
 }
 
 function isRetryableShellSpawnError(error: PtySpawnError): boolean {
@@ -621,6 +557,7 @@ function shouldExcludeTerminalEnvKey(key: string): boolean {
 
 function createTerminalSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
+  profileEnv?: Record<string, string> | null,
   runtimeEnv?: Record<string, string> | null,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
@@ -628,6 +565,11 @@ function createTerminalSpawnEnv(
     if (value === undefined) continue;
     if (shouldExcludeTerminalEnvKey(key)) continue;
     spawnEnv[key] = value;
+  }
+  if (profileEnv) {
+    for (const [key, value] of Object.entries(profileEnv)) {
+      spawnEnv[key] = value;
+    }
   }
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
@@ -651,6 +593,7 @@ interface TerminalManagerOptions {
   historyLineLimit?: number;
   ptyAdapter: PtyAdapterShape;
   shellResolver?: () => string;
+  terminalProfileResolver?: Effect.Effect<TerminalProfileSettings>;
   subprocessChecker?: TerminalSubprocessChecker;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -660,9 +603,30 @@ interface TerminalManagerOptions {
 const makeTerminalManager = Effect.fn("makeTerminalManager")(function* () {
   const { terminalLogsDir } = yield* ServerConfig;
   const ptyAdapter = yield* PtyAdapter;
+  const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
+  const terminalProfileResolver = Option.match(serverSettings, {
+    onNone: () =>
+      Effect.succeed({
+        shellPath: "",
+        shellArgs: [],
+        env: {},
+      } satisfies TerminalProfileSettings),
+    onSome: (settingsService) =>
+      settingsService.getSettings.pipe(
+        Effect.map((settings) => settings.terminal.profile),
+        Effect.catch(() =>
+          Effect.succeed({
+            shellPath: "",
+            shellArgs: [],
+            env: {},
+          } satisfies TerminalProfileSettings),
+        ),
+      ),
+  });
   return yield* makeTerminalManagerWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
+    terminalProfileResolver,
   });
 });
 
@@ -675,6 +639,13 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
     const logsDir = options.logsDir;
     const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
     const shellResolver = options.shellResolver ?? defaultShellResolver;
+    const terminalProfileResolver =
+      options.terminalProfileResolver ??
+      Effect.succeed({
+        shellPath: "",
+        shellArgs: [],
+        env: {},
+      } satisfies TerminalProfileSettings);
     const subprocessChecker = options.subprocessChecker ?? defaultSubprocessChecker;
     const subprocessPollIntervalMs =
       options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
@@ -1337,8 +1308,19 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
           Effect.andThen(
             Effect.gen(function* () {
-              const shellCandidates = resolveShellCandidates(shellResolver);
-              const terminalEnv = createTerminalSpawnEnv(process.env, session.runtimeEnv);
+              const terminalProfile = yield* terminalProfileResolver;
+              const resolvedSpawnConfig = resolveTerminalShellSpawnConfig({
+                platform: process.platform,
+                processEnv: process.env,
+                shellResolver,
+                profile: terminalProfile,
+              });
+              const shellCandidates = resolvedSpawnConfig.shellCandidates;
+              const terminalEnv = createTerminalSpawnEnv(
+                process.env,
+                resolvedSpawnConfig.profileEnv,
+                session.runtimeEnv,
+              );
               const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
               ptyProcess = spawnResult.process;
               startedShell = spawnResult.shellLabel;

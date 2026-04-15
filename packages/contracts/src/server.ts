@@ -92,9 +92,9 @@ export const ServerProvider = Schema.Struct({
   message: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
-  skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 
@@ -111,6 +111,29 @@ export const ServerObservability = Schema.Struct({
 });
 export type ServerObservability = typeof ServerObservability.Type;
 
+export const ServerTerminalDiscoveredShellId = Schema.Literals([
+  "cmd",
+  "powershell",
+  "gitBash",
+  "wsl",
+]);
+export type ServerTerminalDiscoveredShellId = typeof ServerTerminalDiscoveredShellId.Type;
+
+export const ServerTerminalDiscoveredShell = Schema.Struct({
+  id: ServerTerminalDiscoveredShellId,
+  label: TrimmedNonEmptyString,
+  available: Schema.Boolean,
+  path: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ServerTerminalDiscoveredShell = typeof ServerTerminalDiscoveredShell.Type;
+
+export const ServerTerminal = Schema.Struct({
+  platform: TrimmedNonEmptyString,
+  currentShell: TrimmedNonEmptyString,
+  discoveredShells: Schema.Array(ServerTerminalDiscoveredShell),
+});
+export type ServerTerminal = typeof ServerTerminal.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -121,6 +144,7 @@ export const ServerConfig = Schema.Struct({
   providers: ServerProviders,
   availableEditors: Schema.Array(EditorId),
   observability: ServerObservability,
+  terminal: ServerTerminal,
   settings: ServerSettings,
 });
 export type ServerConfig = typeof ServerConfig.Type;
