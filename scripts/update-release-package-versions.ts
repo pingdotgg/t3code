@@ -2,6 +2,8 @@ import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseCliArgs } from "@t3tools/shared/cliArgs";
+
 export const releasePackageFiles = [
   "apps/server/package.json",
   "apps/desktop/package.json",
@@ -40,52 +42,37 @@ export function updateReleasePackageVersions(
   return { changed };
 }
 
-function parseArgs(argv: ReadonlyArray<string>): {
+export function parseArgs(argv: ReadonlyArray<string>): {
   version: string;
   rootDir: string | undefined;
   writeGithubOutput: boolean;
 } {
-  let version: string | undefined;
-  let rootDir: string | undefined;
-  let writeGithubOutput = false;
+  const { flags, positionals } = parseCliArgs(argv, { booleanFlags: ["github-output"] });
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === undefined) {
-      continue;
-    }
-
-    if (argument === "--github-output") {
-      writeGithubOutput = true;
-      continue;
-    }
-
-    if (argument === "--root") {
-      rootDir = argv[index + 1];
-      if (!rootDir) {
-        throw new Error("Missing value for --root.");
-      }
-      index += 1;
-      continue;
-    }
-
-    if (argument.startsWith("--")) {
-      throw new Error(`Unknown argument: ${argument}`);
-    }
-
-    if (version !== undefined) {
-      throw new Error("Only one release version can be provided.");
-    }
-    version = argument;
+  const unknownFlags = Object.keys(flags).filter((k) => k !== "github-output" && k !== "root");
+  if (unknownFlags.length > 0) {
+    throw new Error(`Unknown argument: --${unknownFlags[0]}`);
   }
 
-  if (!version) {
+  if ("root" in flags && flags.root === null) {
+    throw new Error("Missing value for --root.");
+  }
+
+  if (positionals.length > 1) {
+    throw new Error("Only one release version can be provided.");
+  }
+
+  if (positionals.length !== 1 || !positionals[0]) {
     throw new Error(
       "Usage: node scripts/update-release-package-versions.ts <version> [--root <path>] [--github-output]",
     );
   }
 
-  return { version, rootDir, writeGithubOutput };
+  return {
+    version: positionals[0],
+    rootDir: flags.root ?? undefined,
+    writeGithubOutput: "github-output" in flags,
+  };
 }
 
 const isMain =

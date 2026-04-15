@@ -92,6 +92,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         enabled: true,
         binaryPath: "/usr/local/bin/claude",
         customModels: ["claude-custom"],
+        launchArgs: "",
       });
       assert.deepEqual(next.textGenerationModelSelection, {
         provider: "codex",
@@ -167,6 +168,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         enabled: true,
         binaryPath: "/opt/homebrew/bin/claude",
         customModels: [],
+        launchArgs: "",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
