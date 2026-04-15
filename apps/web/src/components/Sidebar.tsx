@@ -3,7 +3,6 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   CloudIcon,
-  FolderIcon,
   GitPullRequestIcon,
   PlusIcon,
   SearchIcon,
@@ -32,9 +31,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
-  type EnvironmentId,
   ProjectId,
   type ScopedProjectRef,
   type ScopedThreadRef,
@@ -58,7 +55,7 @@ import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import { isMacPlatform, newCommandId } from "../lib/utils";
 import {
   selectProjectByRef,
   selectProjectsAcrossEnvironments,
@@ -122,7 +119,7 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
-import { isNonEmpty as isNonEmptyString } from "effect/String";
+import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
@@ -2033,20 +2030,7 @@ interface SidebarProjectsContentProps {
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
   updateSettings: ReturnType<typeof useUpdateSettings>["updateSettings"];
-  shouldShowProjectPathEntry: boolean;
-  handleStartAddProject: () => void;
-  isElectron: boolean;
-  isPickingFolder: boolean;
-  isAddingProject: boolean;
-  handlePickFolder: () => Promise<void>;
-  addProjectInputRef: React.RefObject<HTMLInputElement | null>;
-  addProjectError: string | null;
-  newCwd: string;
-  setNewCwd: React.Dispatch<React.SetStateAction<string>>;
-  setAddProjectError: React.Dispatch<React.SetStateAction<string | null>>;
-  handleAddProject: () => void;
-  setAddingProject: React.Dispatch<React.SetStateAction<boolean>>;
-  canAddProject: boolean;
+  openAddProject: () => void;
   isManualProjectSorting: boolean;
   projectDnDSensors: ReturnType<typeof useSensors>;
   projectCollisionDetection: CollisionDetection;
@@ -2085,20 +2069,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     projectSortOrder,
     threadSortOrder,
     updateSettings,
-    shouldShowProjectPathEntry,
-    handleStartAddProject,
-    isElectron,
-    isPickingFolder,
-    isAddingProject,
-    handlePickFolder,
-    addProjectInputRef,
-    addProjectError,
-    newCwd,
-    setNewCwd,
-    setAddProjectError,
-    handleAddProject,
-    setAddingProject,
-    canAddProject,
+    openAddProject,
     isManualProjectSorting,
     projectDnDSensors,
     projectCollisionDetection,
@@ -2137,26 +2108,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     },
     [updateSettings],
   );
-  const handleAddProjectInputChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      setNewCwd(event.target.value);
-      setAddProjectError(null);
-    },
-    [setAddProjectError, setNewCwd],
-  );
-  const handleAddProjectInputKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === "Enter") handleAddProject();
-      if (event.key === "Escape") {
-        setAddingProject(false);
-        setAddProjectError(null);
-      }
-    },
-    [handleAddProject, setAddProjectError, setAddingProject],
-  );
-  const handleBrowseForFolderClick = useCallback(() => {
-    void handlePickFolder();
-  }, [handlePickFolder]);
 
   return (
     <SidebarContent className="gap-0">
@@ -2223,68 +2174,19 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 render={
                   <button
                     type="button"
-                    aria-label={shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
-                    aria-pressed={shouldShowProjectPathEntry}
+                    aria-label="Add project"
+                    data-testid="sidebar-add-project-trigger"
                     className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={handleStartAddProject}
+                    onClick={openAddProject}
                   />
                 }
               >
-                <PlusIcon
-                  className={`size-3.5 transition-transform duration-150 ${
-                    shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
-                  }`}
-                />
+                <PlusIcon className="size-3.5" />
               </TooltipTrigger>
-              <TooltipPopup side="right">
-                {shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
-              </TooltipPopup>
+              <TooltipPopup side="right">Add project</TooltipPopup>
             </Tooltip>
           </div>
         </div>
-        {shouldShowProjectPathEntry && (
-          <div className="mb-2 px-1">
-            {isElectron && (
-              <button
-                type="button"
-                className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={handleBrowseForFolderClick}
-                disabled={isPickingFolder || isAddingProject}
-              >
-                <FolderIcon className="size-3.5" />
-                {isPickingFolder ? "Picking folder..." : "Browse for folder"}
-              </button>
-            )}
-            <div className="flex gap-1.5">
-              <input
-                ref={addProjectInputRef}
-                className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
-                  addProjectError
-                    ? "border-red-500/70 focus:border-red-500"
-                    : "border-border focus:border-ring"
-                }`}
-                placeholder="/path/to/project"
-                value={newCwd}
-                onChange={handleAddProjectInputChange}
-                onKeyDown={handleAddProjectInputKeyDown}
-                autoFocus
-              />
-              <button
-                type="button"
-                className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
-                onClick={handleAddProject}
-                disabled={!canAddProject}
-              >
-                {isAddingProject ? "Adding..." : "Add"}
-              </button>
-            </div>
-            {addProjectError && (
-              <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
-                {addProjectError}
-              </p>
-            )}
-          </div>
-        )}
 
         {isManualProjectSorting ? (
           <DndContext
@@ -2359,7 +2261,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </SidebarMenu>
         )}
 
-        {projectsLength === 0 && !shouldShowProjectPathEntry && (
+        {projectsLength === 0 && (
           <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
             No projects yet
           </div>
@@ -2372,7 +2274,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 export default function Sidebar() {
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const sidebarThreads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
-  const activeEnvironmentId = useStore((store) => store.activeEnvironmentId);
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
@@ -2381,7 +2282,6 @@ export default function Sidebar() {
   const isOnSettings = pathname.startsWith("/settings");
   const sidebarThreadSortOrder = useSettings((s) => s.sidebarThreadSortOrder);
   const sidebarProjectSortOrder = useSettings((s) => s.sidebarProjectSortOrder);
-  const defaultThreadEnvMode = useSettings((s) => s.defaultThreadEnvMode);
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
@@ -2391,12 +2291,7 @@ export default function Sidebar() {
   });
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   const keybindings = useServerKeybindings();
-  const [addingProject, setAddingProject] = useState(false);
-  const [newCwd, setNewCwd] = useState("");
-  const [isPickingFolder, setIsPickingFolder] = useState(false);
-  const [isAddingProject, setIsAddingProject] = useState(false);
-  const [addProjectError, setAddProjectError] = useState<string | null>(null);
-  const addProjectInputRef = useRef<HTMLInputElement | null>(null);
+  const openAddProjectCommandPalette = useCommandPaletteStore((store) => store.openAddProject);
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<string>
   >(() => new Set());
@@ -2408,10 +2303,7 @@ export default function Sidebar() {
   const selectedThreadCount = useThreadSelectionStore((s) => s.selectedThreadKeys.size);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
-  const isLinuxDesktop = isElectron && isLinuxPlatform(navigator.platform);
   const platform = navigator.platform;
-  const shouldBrowseForProjectImmediately = isElectron && !isLinuxDesktop;
-  const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
   const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((s) => s.byId);
@@ -2574,131 +2466,6 @@ export default function Sidebar() {
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.newLocal", newThreadShortcutLabelOptions) ??
     shortcutLabelForCommand(keybindings, "chat.new", newThreadShortcutLabelOptions);
-  const focusMostRecentThreadForProject = useCallback(
-    (projectRef: { environmentId: EnvironmentId; projectId: ProjectId }) => {
-      const physicalKey = scopedProjectKey(
-        scopeProjectRef(projectRef.environmentId, projectRef.projectId),
-      );
-      const logicalKey = physicalToLogicalKey.get(physicalKey) ?? physicalKey;
-      const latestThread = sortThreads(
-        (threadsByProjectKey.get(logicalKey) ?? []).filter((thread) => thread.archivedAt === null),
-        sidebarThreadSortOrder,
-      )[0];
-      if (!latestThread) return;
-
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(latestThread.environmentId, latestThread.id)),
-      });
-    },
-    [sidebarThreadSortOrder, navigate, threadsByProjectKey, physicalToLogicalKey],
-  );
-
-  const addProjectFromInput = useCallback(
-    async (rawCwd: string) => {
-      const cwd = rawCwd.trim();
-      if (!cwd || isAddingProject) return;
-      const api = activeEnvironmentId ? readEnvironmentApi(activeEnvironmentId) : undefined;
-      if (!api) return;
-
-      setIsAddingProject(true);
-      const finishAddingProject = () => {
-        setIsAddingProject(false);
-        setNewCwd("");
-        setAddProjectError(null);
-        setAddingProject(false);
-      };
-
-      const existing = projects.find((project) => project.cwd === cwd);
-      if (existing) {
-        focusMostRecentThreadForProject({
-          environmentId: existing.environmentId,
-          projectId: existing.id,
-        });
-        finishAddingProject();
-        return;
-      }
-
-      const projectId = newProjectId();
-      const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
-      try {
-        await api.orchestration.dispatchCommand({
-          type: "project.create",
-          commandId: newCommandId(),
-          projectId,
-          title,
-          workspaceRoot: cwd,
-          defaultModelSelection: {
-            provider: "codex",
-            model: DEFAULT_MODEL_BY_PROVIDER.codex,
-          },
-          createdAt: new Date().toISOString(),
-        });
-        if (activeEnvironmentId !== null) {
-          await handleNewThread(scopeProjectRef(activeEnvironmentId, projectId), {
-            envMode: defaultThreadEnvMode,
-          }).catch(() => undefined);
-        }
-      } catch (error) {
-        const description =
-          error instanceof Error ? error.message : "An error occurred while adding the project.";
-        setIsAddingProject(false);
-        if (shouldBrowseForProjectImmediately) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to add project",
-            description,
-          });
-        } else {
-          setAddProjectError(description);
-        }
-        return;
-      }
-      finishAddingProject();
-    },
-    [
-      focusMostRecentThreadForProject,
-      activeEnvironmentId,
-      handleNewThread,
-      isAddingProject,
-      projects,
-      shouldBrowseForProjectImmediately,
-      defaultThreadEnvMode,
-    ],
-  );
-
-  const handleAddProject = () => {
-    void addProjectFromInput(newCwd);
-  };
-
-  const canAddProject = newCwd.trim().length > 0 && !isAddingProject;
-
-  const handlePickFolder = async () => {
-    const api = readLocalApi();
-    if (!api || isPickingFolder) return;
-    setIsPickingFolder(true);
-    let pickedPath: string | null = null;
-    try {
-      pickedPath = await api.dialogs.pickFolder();
-    } catch {
-      // Ignore picker failures and leave the current thread selection unchanged.
-    }
-    if (pickedPath) {
-      await addProjectFromInput(pickedPath);
-    } else if (!shouldBrowseForProjectImmediately) {
-      addProjectInputRef.current?.focus();
-    }
-    setIsPickingFolder(false);
-  };
-
-  const handleStartAddProject = () => {
-    setAddProjectError(null);
-    if (shouldBrowseForProjectImmediately) {
-      void handlePickFolder();
-      return;
-    }
-    setAddingProject((prev) => !prev);
-  };
 
   const navigateToThread = useCallback(
     (threadRef: ScopedThreadRef) => {
@@ -3212,20 +2979,7 @@ export default function Sidebar() {
             projectSortOrder={sidebarProjectSortOrder}
             threadSortOrder={sidebarThreadSortOrder}
             updateSettings={updateSettings}
-            shouldShowProjectPathEntry={shouldShowProjectPathEntry}
-            handleStartAddProject={handleStartAddProject}
-            isElectron={isElectron}
-            isPickingFolder={isPickingFolder}
-            isAddingProject={isAddingProject}
-            handlePickFolder={handlePickFolder}
-            addProjectInputRef={addProjectInputRef}
-            addProjectError={addProjectError}
-            newCwd={newCwd}
-            setNewCwd={setNewCwd}
-            setAddProjectError={setAddProjectError}
-            handleAddProject={handleAddProject}
-            setAddingProject={setAddingProject}
-            canAddProject={canAddProject}
+            openAddProject={openAddProjectCommandPalette}
             isManualProjectSorting={isManualProjectSorting}
             projectDnDSensors={projectDnDSensors}
             projectCollisionDetection={projectCollisionDetection}

@@ -1,4 +1,4 @@
-import { type KeybindingCommand } from "@t3tools/contracts";
+import { type KeybindingCommand, type FilesystemBrowseEntry } from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
@@ -45,7 +45,39 @@ export interface CommandPaletteView {
   readonly initialQuery?: string;
 }
 
-export type CommandPaletteMode = "root" | "submenu";
+export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
+
+export function filterBrowseEntries(input: {
+  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
+  browseFilterQuery: string;
+  highlightedItemValue: string | null;
+}): {
+  filteredEntries: FilesystemBrowseEntry[];
+  highlightedEntry: FilesystemBrowseEntry | null;
+  exactEntry: FilesystemBrowseEntry | null;
+} {
+  const lowerFilter = input.browseFilterQuery.toLowerCase();
+  const showHidden = input.browseFilterQuery.startsWith(".");
+
+  const filteredEntries = input.browseEntries.filter(
+    (entry) =>
+      entry.name.toLowerCase().startsWith(lowerFilter) &&
+      (showHidden || !entry.name.startsWith(".")),
+  );
+
+  let highlightedEntry: FilesystemBrowseEntry | null = null;
+  if (input.highlightedItemValue?.startsWith("browse:")) {
+    const highlightedPath = input.highlightedItemValue.slice("browse:".length);
+    highlightedEntry = filteredEntries.find((entry) => entry.fullPath === highlightedPath) ?? null;
+  }
+
+  const exactEntry =
+    input.browseFilterQuery.length > 0
+      ? (filteredEntries.find((entry) => entry.name === input.browseFilterQuery) ?? null)
+      : null;
+
+  return { filteredEntries, highlightedEntry, exactEntry };
+}
 
 export function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -230,10 +262,56 @@ export function filterCommandPaletteGroups(input: {
   });
 }
 
+export function buildBrowseGroups(input: {
+  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
+  browseQuery: string;
+  canBrowseUp: boolean;
+  upIcon: ReactNode;
+  directoryIcon: ReactNode;
+  browseUp: () => void;
+  browseTo: (name: string) => void;
+}): CommandPaletteGroup[] {
+  const items: CommandPaletteActionItem[] = [];
+
+  if (input.canBrowseUp) {
+    items.push({
+      kind: "action",
+      value: "browse:up",
+      searchTerms: [input.browseQuery, ".."],
+      title: "..",
+      icon: input.upIcon,
+      keepOpen: true,
+      run: async () => {
+        input.browseUp();
+      },
+    });
+  }
+
+  for (const entry of input.browseEntries) {
+    items.push({
+      kind: "action",
+      value: `browse:${entry.fullPath}`,
+      searchTerms: [input.browseQuery, entry.fullPath, entry.name],
+      title: entry.name,
+      icon: input.directoryIcon,
+      keepOpen: true,
+      run: async () => {
+        input.browseTo(entry.name);
+      },
+    });
+  }
+
+  return [{ value: "directories", label: "Directories", items }];
+}
+
 export function getCommandPaletteMode(input: {
   currentView: CommandPaletteView | null;
+  isBrowsing: boolean;
 }): CommandPaletteMode {
-  return input.currentView ? "submenu" : "root";
+  if (input.currentView) {
+    return input.isBrowsing ? "submenu-browse" : "submenu";
+  }
+  return input.isBrowsing ? "root-browse" : "root";
 }
 
 export function buildRootGroups(input: {
@@ -258,7 +336,11 @@ export function getCommandPaletteInputPlaceholder(mode: CommandPaletteMode): str
   switch (mode) {
     case "root":
       return "Search commands, projects, and threads...";
+    case "root-browse":
+      return "Enter project path (e.g. ~/projects/my-app)";
     case "submenu":
       return "Search...";
+    case "submenu-browse":
+      return "Enter path (e.g. ~/projects/my-app)";
   }
 }

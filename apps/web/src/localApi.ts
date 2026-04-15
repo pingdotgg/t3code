@@ -29,9 +29,9 @@ let cachedApi: LocalApi | undefined;
 export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
   return {
     dialogs: {
-      pickFolder: async () => {
+      pickFolder: async (options) => {
         if (!window.desktopBridge) return null;
-        return window.desktopBridge.pickFolder();
+        return window.desktopBridge.pickFolder(options);
       },
       confirm: async (message) => {
         if (window.desktopBridge) {

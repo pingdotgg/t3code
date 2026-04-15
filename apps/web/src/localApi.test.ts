@@ -51,6 +51,9 @@ const rpcClientMock = {
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
   },
+  filesystem: {
+    browse: vi.fn(),
+  },
   shell: {
     openInEditor: vi.fn(),
   },
@@ -419,6 +422,25 @@ describe("wsApi", () => {
     });
   });
 
+  it("forwards filesystem browse requests to the RPC client", async () => {
+    rpcClientMock.filesystem.browse.mockResolvedValue({
+      parentPath: "/tmp/project/",
+      entries: [],
+    });
+    const { createEnvironmentApi } = await import("./environmentApi");
+
+    const api = createEnvironmentApi(rpcClientMock as never);
+    await api.filesystem.browse({
+      partialPath: "/tmp/project/",
+      cwd: "/tmp/project",
+    });
+
+    expect(rpcClientMock.filesystem.browse).toHaveBeenCalledWith({
+      partialPath: "/tmp/project/",
+      cwd: "/tmp/project",
+    });
+  });
+
   it("forwards full-thread diff requests to the orchestration RPC", async () => {
     rpcClientMock.orchestration.getFullThreadDiff.mockResolvedValue({ diff: "patch" });
     const { createEnvironmentApi } = await import("./environmentApi");
@@ -479,6 +501,19 @@ describe("wsApi", () => {
 
     await expect(api.contextMenu.show(items)).resolves.toBe("delete");
     expect(showContextMenu).toHaveBeenCalledWith(items, undefined);
+  });
+
+  it("forwards folder picker options to the desktop bridge", async () => {
+    const pickFolder = vi.fn().mockResolvedValue("/tmp/project");
+    getWindowForTest().desktopBridge = makeDesktopBridge({ pickFolder });
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+
+    await expect(api.dialogs.pickFolder({ initialPath: "/tmp/workspace" })).resolves.toBe(
+      "/tmp/project",
+    );
+    expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp/workspace" });
   });
 
   it("falls back to the browser context menu helper when the desktop bridge is missing", async () => {

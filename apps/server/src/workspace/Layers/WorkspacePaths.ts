@@ -4,6 +4,7 @@ import { Effect, FileSystem, Layer, Path } from "effect";
 import {
   WorkspacePaths,
   WorkspacePathOutsideRootError,
+  WorkspaceRootCreateFailedError,
   WorkspaceRootNotDirectoryError,
   WorkspaceRootNotExistsError,
   type WorkspacePathsShape,
@@ -29,11 +30,25 @@ export const makeWorkspacePaths = Effect.gen(function* () {
 
   const normalizeWorkspaceRoot: WorkspacePathsShape["normalizeWorkspaceRoot"] = Effect.fn(
     "WorkspacePaths.normalizeWorkspaceRoot",
-  )(function* (workspaceRoot) {
+  )(function* (workspaceRoot, options) {
     const normalizedWorkspaceRoot = path.resolve(expandHomePath(workspaceRoot.trim(), path));
-    const workspaceStat = yield* fileSystem
+    let workspaceStat = yield* fileSystem
       .stat(normalizedWorkspaceRoot)
       .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!workspaceStat && options?.createIfMissing) {
+      yield* fileSystem.makeDirectory(normalizedWorkspaceRoot, { recursive: true }).pipe(
+        Effect.mapError(
+          () =>
+            new WorkspaceRootCreateFailedError({
+              workspaceRoot,
+              normalizedWorkspaceRoot,
+            }),
+        ),
+      );
+      workspaceStat = yield* fileSystem
+        .stat(normalizedWorkspaceRoot)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+    }
     if (!workspaceStat) {
       return yield* new WorkspaceRootNotExistsError({
         workspaceRoot,

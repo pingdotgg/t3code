@@ -58,6 +58,24 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
       }),
     );
 
+    it.effect("creates missing directories when createIfMissing is enabled", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir();
+        const path = yield* Path.Path;
+        const missingPath = path.join(cwd, "nested", "new-project");
+
+        const resolved = yield* workspacePaths.normalizeWorkspaceRoot(missingPath, {
+          createIfMissing: true,
+        });
+        const stat = yield* fileSystem.stat(resolved);
+
+        expect(resolved).toBe(missingPath);
+        expect(stat.type).toBe("Directory");
+      }),
+    );
+
     it.effect("rejects file paths", () =>
       Effect.gen(function* () {
         const workspacePaths = yield* WorkspacePaths;
