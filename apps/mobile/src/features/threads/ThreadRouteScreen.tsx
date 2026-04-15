@@ -64,7 +64,7 @@ export function ThreadRouteScreen() {
   const gitActions = useSelectedThreadGitActions();
   const commands = useSelectedThreadCommands({
     activePendingUserInput: composer.activePendingUserInput,
-    activePendingUserInputAnswers: composer.activePendingUserInputAnswers,
+    activePendingUserInputDrafts: composer.activePendingUserInputDrafts,
     refreshSelectedThreadGitStatus: gitActions.refreshSelectedThreadGitStatus,
   });
   const refreshSelectedThread = commands.onRefresh;
@@ -346,7 +346,7 @@ export function ThreadRouteScreen() {
           respondingApprovalId={commands.respondingApprovalId}
           activePendingUserInput={composer.activePendingUserInput}
           activePendingUserInputDrafts={composer.activePendingUserInputDrafts}
-          activePendingUserInputAnswers={composer.activePendingUserInputAnswers}
+          userInputProgress={composer.userInputProgress}
           respondingUserInputId={commands.respondingUserInputId}
           draftMessage={composer.draftMessage}
           draftAttachments={composer.draftAttachments}
@@ -371,6 +371,9 @@ export function ThreadRouteScreen() {
           onRespondToApproval={commands.onRespondToApproval}
           onSelectUserInputOption={composer.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={composer.onChangeUserInputCustomAnswer}
+          onAdvanceUserInputQuestion={composer.onAdvanceUserInputQuestion}
+          onGoBackUserInputQuestion={composer.onGoBackUserInputQuestion}
+          onSetUserInputQuestionIndex={composer.onSetUserInputQuestionIndex}
           onSubmitUserInput={commands.onSubmitUserInput}
         />
 

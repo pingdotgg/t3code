@@ -20,6 +20,8 @@ import { AppText as Text } from "../../components/AppText";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import type { MobileLayoutVariant } from "../../lib/mobileLayout";
+import type { PendingUserInputProgress } from "@t3tools/client-runtime";
+import type { UserInputQuestion } from "@t3tools/contracts";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -27,7 +29,7 @@ import type {
   ThreadFeedEntry,
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
-import { PendingUserInputCard } from "./PendingUserInputCard";
+import { PendingUserInputPanel } from "./PendingUserInputPanel";
 import {
   COMPOSER_COLLAPSED_CHROME,
   COMPOSER_EXPANDED_CHROME,
@@ -47,7 +49,7 @@ export interface ThreadDetailScreenProps {
   readonly respondingApprovalId: ApprovalRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
-  readonly activePendingUserInputAnswers: Record<string, string> | null;
+  readonly userInputProgress: PendingUserInputProgress | null;
   readonly respondingUserInputId: ApprovalRequestId | null;
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
@@ -76,12 +78,20 @@ export interface ThreadDetailScreenProps {
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
   ) => Promise<void>;
-  readonly onSelectUserInputOption: (requestId: string, questionId: string, label: string) => void;
+  readonly onSelectUserInputOption: (
+    requestId: string,
+    questionId: string,
+    question: UserInputQuestion,
+    label: string,
+  ) => void;
   readonly onChangeUserInputCustomAnswer: (
     requestId: string,
     questionId: string,
     customAnswer: string,
   ) => void;
+  readonly onAdvanceUserInputQuestion: () => void;
+  readonly onGoBackUserInputQuestion: () => void;
+  readonly onSetUserInputQuestionIndex: (index: number) => void;
   readonly onSubmitUserInput: () => Promise<void>;
   readonly showContent?: boolean;
 }
@@ -292,13 +302,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     />
                   ) : null}
                   {props.activePendingUserInput ? (
-                    <PendingUserInputCard
+                    <PendingUserInputPanel
                       pendingUserInput={props.activePendingUserInput}
                       drafts={props.activePendingUserInputDrafts}
-                      answers={props.activePendingUserInputAnswers}
+                      progress={props.userInputProgress}
                       respondingUserInputId={props.respondingUserInputId}
                       onSelectOption={props.onSelectUserInputOption}
                       onChangeCustomAnswer={props.onChangeUserInputCustomAnswer}
+                      onAdvance={props.onAdvanceUserInputQuestion}
+                      onGoBack={props.onGoBackUserInputQuestion}
+                      onSetQuestionIndex={props.onSetUserInputQuestionIndex}
                       onSubmit={props.onSubmitUserInput}
                     />
                   ) : null}

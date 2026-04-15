@@ -1,5 +1,10 @@
 import { useCallback, useState } from "react";
+import { Alert } from "react-native";
 
+import {
+  buildPendingUserInputAnswers,
+  type PendingUserInputDraftAnswer,
+} from "@t3tools/client-runtime";
 import {
   ApprovalRequestId,
   CommandId,
@@ -7,6 +12,7 @@ import {
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 
 import { uuidv4 } from "../../lib/uuid";
@@ -20,14 +26,15 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 export function useSelectedThreadCommands(input: {
   readonly activePendingUserInput: {
     readonly requestId: ApprovalRequestId;
+    readonly questions: ReadonlyArray<UserInputQuestion>;
   } | null;
-  readonly activePendingUserInputAnswers: Record<string, string> | null;
+  readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
   readonly refreshSelectedThreadGitStatus: (options?: {
     readonly quiet?: boolean;
     readonly cwd?: string | null;
   }) => Promise<unknown>;
 }) {
-  const { activePendingUserInput, activePendingUserInputAnswers, refreshSelectedThreadGitStatus } =
+  const { activePendingUserInput, activePendingUserInputDrafts, refreshSelectedThreadGitStatus } =
     input;
   const { selectedThread } = useThreadSelection();
   const { savedConnectionsById } = useRemoteEnvironmentState();
@@ -218,7 +225,15 @@ export function useSelectedThreadCommands(input: {
   );
 
   const onSubmitUserInput = useCallback(async () => {
-    if (!selectedThread || !activePendingUserInput || !activePendingUserInputAnswers) {
+    if (!selectedThread || !activePendingUserInput) {
+      return;
+    }
+
+    const answers = buildPendingUserInputAnswers(
+      activePendingUserInput.questions,
+      activePendingUserInputDrafts,
+    );
+    if (!answers) {
       return;
     }
 
@@ -234,15 +249,22 @@ export function useSelectedThreadCommands(input: {
         commandId: CommandId.make(uuidv4()),
         threadId: selectedThread.id,
         requestId: activePendingUserInput.requestId,
-        answers: activePendingUserInputAnswers,
+        answers,
         createdAt: new Date().toISOString(),
       });
+    } catch (err: unknown) {
+      // Surface network / RPC errors so the user can retry (matches web parity
+      // where the error is displayed via setThreadError).
+      Alert.alert(
+        "Failed to submit",
+        err instanceof Error ? err.message : "Something went wrong. Please try again.",
+      );
     } finally {
       setRespondingUserInputId((current) =>
         current === activePendingUserInput.requestId ? null : current,
       );
     }
-  }, [activePendingUserInput, activePendingUserInputAnswers, selectedThread]);
+  }, [activePendingUserInput, activePendingUserInputDrafts, selectedThread]);
 
   return {
     respondingApprovalId,

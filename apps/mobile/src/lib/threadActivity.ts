@@ -29,10 +29,12 @@ export interface PendingUserInput {
   readonly questions: ReadonlyArray<UserInputQuestion>;
 }
 
-export interface PendingUserInputDraftAnswer {
-  readonly selectedOptionLabel?: string;
-  readonly customAnswer?: string;
-}
+export type {
+  PendingUserInputDraftAnswer,
+  PendingUserInputProgress,
+} from "@t3tools/client-runtime";
+
+import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime";
 
 export interface QueuedThreadMessage {
   readonly environmentId: EnvironmentId;
@@ -179,24 +181,6 @@ function parseUserInputQuestions(
   return parsed.length > 0 ? parsed : null;
 }
 
-function normalizeDraftAnswer(value: string | undefined): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function resolvePendingUserInputAnswer(
-  draft: PendingUserInputDraftAnswer | undefined,
-): string | null {
-  const customAnswer = normalizeDraftAnswer(draft?.customAnswer);
-  if (customAnswer) {
-    return customAnswer;
-  }
-  return normalizeDraftAnswer(draft?.selectedOptionLabel);
-}
-
 function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
@@ -207,6 +191,10 @@ function deriveWorkLogEntries(
     .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
     .filter((activity) => activity.kind !== "context-window.updated")
+    .filter(
+      (activity) =>
+        activity.kind !== "user-input.requested" && activity.kind !== "user-input.resolved",
+    )
     .filter((activity) => activity.summary !== "Checkpoint captured")
     .filter((activity) => !isPlanBoundaryToolActivity(activity))
     .map(toDerivedWorkLogEntry);
@@ -842,35 +830,6 @@ export function derivePendingUserInputs(
   }
 
   return Arr.sortWith(openByRequestId.values(), (s) => new Date(s.createdAt), Order.Date);
-}
-
-export function setPendingUserInputCustomAnswer(
-  draft: PendingUserInputDraftAnswer | undefined,
-  customAnswer: string,
-): PendingUserInputDraftAnswer {
-  const selectedOptionLabel =
-    customAnswer.trim().length > 0 ? undefined : draft?.selectedOptionLabel;
-  return {
-    customAnswer,
-    ...(selectedOptionLabel ? { selectedOptionLabel } : {}),
-  };
-}
-
-export function buildPendingUserInputAnswers(
-  questions: ReadonlyArray<UserInputQuestion>,
-  draftAnswers: Record<string, PendingUserInputDraftAnswer>,
-): Record<string, string> | null {
-  const answers: Record<string, string> = {};
-
-  for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(draftAnswers[question.id]);
-    if (!answer) {
-      return null;
-    }
-    answers[question.id] = answer;
-  }
-
-  return answers;
 }
 
 export function buildThreadFeed(

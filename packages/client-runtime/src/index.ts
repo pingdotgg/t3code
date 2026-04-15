@@ -17,3 +17,4 @@ export * from "./wsRpcProtocol";
 export * from "./wsTransport";
 export * from "./wsRpcClient";
 export * from "./environmentConnection";
+export * from "./pendingUserInput";

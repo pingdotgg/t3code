@@ -1,13 +1,21 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo } from "react";
 
-import { EnvironmentScopedThreadShell } from "@t3tools/client-runtime";
+import {
+  EnvironmentScopedThreadShell,
+  derivePendingUserInputProgress,
+  setPendingUserInputCustomAnswer,
+  togglePendingUserInputOptionSelection,
+  type PendingUserInputDraftAnswer,
+  type PendingUserInputProgress,
+} from "@t3tools/client-runtime";
 import {
   ApprovalRequestId,
   CommandId,
   EnvironmentId,
   MessageId,
   ThreadId,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 import { Atom } from "effect/unstable/reactivity";
@@ -20,12 +28,9 @@ import {
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { scopedRequestKey, scopedThreadKey } from "../../lib/scopedEntities";
 import {
-  buildPendingUserInputAnswers,
   buildThreadFeed,
   derivePendingApprovals,
   derivePendingUserInputs,
-  setPendingUserInputCustomAnswer,
-  type PendingUserInputDraftAnswer,
   type QueuedThreadMessage,
 } from "../../lib/threadActivity";
 import { uuidv4 } from "../../lib/uuid";
@@ -61,6 +66,13 @@ const queuedMessagesByThreadKeyAtom = Atom.make<Record<string, ReadonlyArray<Que
 const userInputDraftsByRequestKeyAtom = Atom.make<
   Record<string, Record<string, PendingUserInputDraftAnswer>>
 >({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:user-input-drafts"));
+
+const userInputQuestionIndexByRequestKeyAtom = Atom.make<Record<string, number>>({}).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("mobile:user-input-question-index"),
+);
+
+const EMPTY_DRAFTS: Record<string, PendingUserInputDraftAnswer> = {};
 
 function setDraftMessage(threadKey: string, value: string): void {
   const current = appAtomRegistry.get(draftMessageByThreadKeyAtom);
@@ -190,16 +202,28 @@ function removeQueuedMessage(
   appAtomRegistry.set(queuedMessagesByThreadKeyAtom, next);
 }
 
-function setUserInputDraftOption(requestKey: string, questionId: string, label: string): void {
+function setUserInputDraftOption(
+  requestKey: string,
+  questionId: string,
+  question: UserInputQuestion,
+  label: string,
+): void {
   const current = appAtomRegistry.get(userInputDraftsByRequestKeyAtom);
+  const currentDraft = current[requestKey]?.[questionId];
   appAtomRegistry.set(userInputDraftsByRequestKeyAtom, {
     ...current,
     [requestKey]: {
       ...current[requestKey],
-      [questionId]: {
-        selectedOptionLabel: label,
-      },
+      [questionId]: togglePendingUserInputOptionSelection(question, currentDraft, label),
     },
+  });
+}
+
+function setUserInputQuestionIndex(requestKey: string, index: number): void {
+  const current = appAtomRegistry.get(userInputQuestionIndexByRequestKeyAtom);
+  appAtomRegistry.set(userInputQuestionIndexByRequestKeyAtom, {
+    ...current,
+    [requestKey]: index,
   });
 }
 
@@ -288,6 +312,7 @@ export function useThreadComposerState() {
   const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
   const queuedMessagesByThreadKey = useAtomValue(queuedMessagesByThreadKeyAtom);
   const userInputDraftsByRequestKey = useAtomValue(userInputDraftsByRequestKeyAtom);
+  const userInputQuestionIndexByRequestKey = useAtomValue(userInputQuestionIndexByRequestKeyAtom);
 
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
@@ -350,13 +375,27 @@ export function useThreadComposerState() {
     [selectedThread],
   );
   const activePendingUserInput = activePendingUserInputs[0] ?? null;
-  const activePendingUserInputDrafts =
+  const activeUserInputRequestKey =
     activePendingUserInput && selectedRequestKey
-      ? (userInputDraftsByRequestKey[selectedRequestKey(activePendingUserInput.requestId)] ?? {})
-      : {};
-  const activePendingUserInputAnswers = activePendingUserInput
-    ? buildPendingUserInputAnswers(activePendingUserInput.questions, activePendingUserInputDrafts)
-    : null;
+      ? selectedRequestKey(activePendingUserInput.requestId)
+      : null;
+  const activePendingUserInputDrafts = activeUserInputRequestKey
+    ? (userInputDraftsByRequestKey[activeUserInputRequestKey] ?? EMPTY_DRAFTS)
+    : EMPTY_DRAFTS;
+  const userInputQuestionIndex = activeUserInputRequestKey
+    ? (userInputQuestionIndexByRequestKey[activeUserInputRequestKey] ?? 0)
+    : 0;
+  const userInputProgress = useMemo<PendingUserInputProgress | null>(
+    () =>
+      activePendingUserInput
+        ? derivePendingUserInputProgress(
+            activePendingUserInput.questions,
+            activePendingUserInputDrafts,
+            userInputQuestionIndex,
+          )
+        : null,
+    [activePendingUserInput, activePendingUserInputDrafts, userInputQuestionIndex],
+  );
 
   const activeThreadBusy =
     !!selectedThread &&
@@ -446,7 +485,7 @@ export function useThreadComposerState() {
   }, [draftAttachmentsByThreadKey, draftMessageByThreadKey, selectedThreadShell]);
 
   const onSelectUserInputOption = useCallback(
-    (requestId: string, questionId: string, label: string) => {
+    (requestId: string, questionId: string, question: UserInputQuestion, label: string) => {
       if (!selectedThreadShell) {
         return;
       }
@@ -455,7 +494,7 @@ export function useThreadComposerState() {
         selectedThreadShell.environmentId,
         requestId as ApprovalRequestId,
       );
-      setUserInputDraftOption(requestKey, questionId, label);
+      setUserInputDraftOption(requestKey, questionId, question, label);
     },
     [selectedThreadShell],
   );
@@ -473,6 +512,35 @@ export function useThreadComposerState() {
       setUserInputDraftCustomAnswer(requestKey, questionId, customAnswer);
     },
     [selectedThreadShell],
+  );
+
+  const onAdvanceUserInputQuestion = useCallback(() => {
+    if (!activePendingUserInput || !activeUserInputRequestKey) {
+      return;
+    }
+
+    const nextIndex = Math.min(userInputQuestionIndex + 1, activePendingUserInput.questions.length);
+    setUserInputQuestionIndex(activeUserInputRequestKey, nextIndex);
+  }, [activePendingUserInput, activeUserInputRequestKey, userInputQuestionIndex]);
+
+  const onGoBackUserInputQuestion = useCallback(() => {
+    if (!activeUserInputRequestKey) {
+      return;
+    }
+
+    const prevIndex = Math.max(userInputQuestionIndex - 1, 0);
+    setUserInputQuestionIndex(activeUserInputRequestKey, prevIndex);
+  }, [activeUserInputRequestKey, userInputQuestionIndex]);
+
+  const onSetUserInputQuestionIndex = useCallback(
+    (index: number) => {
+      if (!activeUserInputRequestKey) {
+        return;
+      }
+
+      setUserInputQuestionIndex(activeUserInputRequestKey, index);
+    },
+    [activeUserInputRequestKey],
   );
 
   const onChangeDraftMessage = useCallback(
@@ -565,7 +633,7 @@ export function useThreadComposerState() {
     activePendingApproval,
     activePendingUserInput,
     activePendingUserInputDrafts,
-    activePendingUserInputAnswers,
+    userInputProgress,
     draftMessage,
     draftAttachments,
     activeThreadBusy,
@@ -577,5 +645,8 @@ export function useThreadComposerState() {
     onSendMessage,
     onSelectUserInputOption,
     onChangeUserInputCustomAnswer,
+    onAdvanceUserInputQuestion,
+    onGoBackUserInputQuestion,
+    onSetUserInputQuestionIndex,
   };
 }
