@@ -570,10 +570,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
                     yield* dispatchNormalizedCommand(stopCommand);
                   }).pipe(
-                    Effect.catch((error: unknown) =>
+                    Effect.catchCause((cause) =>
                       Effect.logWarning("failed to stop provider session during archive", {
                         threadId: normalizedCommand.threadId,
-                        error,
+                        cause,
                       }),
                     ),
                   );
