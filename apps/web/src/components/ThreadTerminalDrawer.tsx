@@ -28,7 +28,11 @@ import {
   resolveWrappedTerminalLinkRange,
   wrappedTerminalLinkRangeIntersectsBufferLine,
 } from "../terminal-links";
-import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
+import {
+  isTerminalClearShortcut,
+  terminalDeleteShortcutData,
+  terminalNavigationShortcutData,
+} from "../keybindings";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -404,6 +408,14 @@ export function TerminalViewport({
         event.preventDefault();
         event.stopPropagation();
         void sendTerminalInput(navigationData, "Failed to move cursor");
+        return false;
+      }
+
+      const deleteData = terminalDeleteShortcutData(event);
+      if (deleteData !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        void sendTerminalInput(deleteData, "Failed to delete terminal input");
         return false;
       }
 
