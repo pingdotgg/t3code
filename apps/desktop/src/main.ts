@@ -65,7 +65,7 @@ import {
   resolveDesktopCoreAdvertisedEndpoints,
   resolveDesktopServerExposure,
 } from "./serverExposure.ts";
-import { DesktopSshEnvironmentManager } from "./sshEnvironment.ts";
+import { DesktopSshEnvironmentManager, resolveRemoteT3CliPackageSpec } from "./sshEnvironment.ts";
 import { syncShellEnvironment } from "./syncShellEnvironment.ts";
 import { waitForBackendStartupReady } from "./backendStartupReadiness.ts";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState.ts";
@@ -860,6 +860,12 @@ async function requestSshPasswordFromRenderer(input: {
 
 const desktopSshEnvironmentManager = new DesktopSshEnvironmentManager({
   passwordProvider: requestSshPasswordFromRenderer,
+  resolveCliPackageSpec: () =>
+    resolveRemoteT3CliPackageSpec({
+      appVersion: app.getVersion(),
+      updateChannel: desktopSettings.updateChannel,
+      isDevelopment,
+    }),
 });
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {

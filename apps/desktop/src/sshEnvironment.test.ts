@@ -173,9 +173,24 @@ describe("sshEnvironment", () => {
     const script = __test.buildRemoteT3RunnerScript();
 
     expect(script).toContain('exec t3 "$@"');
-    expect(script).toContain('exec npx --yes t3 "$@"');
-    expect(script).toContain('exec npm exec --yes t3 -- "$@"');
-    expect(script).toContain("could not find npx or npm on PATH");
+    expect(script).toContain('exec npx --yes t3@latest "$@"');
+    expect(script).toContain('exec npm exec --yes t3@latest -- "$@"');
+    expect(script).toContain("could not install t3@latest");
+  });
+
+  it("resolves the remote t3 package spec from the desktop release channel", () => {
+    expect(
+      __test.resolveRemoteT3CliPackageSpec({
+        appVersion: "0.0.17",
+        updateChannel: "latest",
+      }),
+    ).toBe("t3@0.0.17");
+    expect(
+      __test.resolveRemoteT3CliPackageSpec({
+        appVersion: "0.0.17-nightly.20260415.44",
+        updateChannel: "nightly",
+      }),
+    ).toBe("t3@nightly");
   });
 
   it("uses the remote t3 runner for launch and pairing scripts", () => {
@@ -190,8 +205,14 @@ describe("sshEnvironment", () => {
       '[ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null',
     );
     expect(__test.buildRemoteLaunchScript()).toContain('"$RUNNER_FILE" serve --host 127.0.0.1');
+    expect(__test.buildRemoteLaunchScript({ packageSpec: "t3@nightly" })).toContain(
+      'exec npx --yes t3@nightly "$@"',
+    );
     expect(__test.buildRemotePairingScript(target)).toContain(
       '"$RUNNER_FILE" auth pairing create --base-dir "$SERVER_HOME" --json',
+    );
+    expect(__test.buildRemotePairingScript(target, { packageSpec: "t3@nightly" })).toContain(
+      'exec npm exec --yes t3@nightly -- "$@"',
     );
   });
 
