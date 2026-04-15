@@ -1593,7 +1593,8 @@ function applyEnvironmentOrchestrationEvent(
           latestTurn:
             latestCheckpoint === null
               ? null
-              : {
+              : buildLatestTurn({
+                  previous: null,
                   turnId: latestCheckpoint.turnId,
                   state: checkpointStatusToLatestTurnState(
                     (latestCheckpoint.status ?? "ready") as "ready" | "missing" | "error",
@@ -1602,7 +1603,7 @@ function applyEnvironmentOrchestrationEvent(
                   startedAt: latestCheckpoint.completedAt,
                   completedAt: latestCheckpoint.completedAt,
                   assistantMessageId: latestCheckpoint.assistantMessageId ?? null,
-                },
+                }),
           updatedAt: event.occurredAt,
         };
       });
