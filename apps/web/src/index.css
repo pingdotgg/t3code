@@ -324,6 +324,47 @@ label:has(> select#reasoning-effort) select {
   font-size: 0.75rem;
 }
 
+.chat-markdown-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--muted) 88%, var(--background));
+  padding: 0.08rem 0.34rem;
+  color: var(--foreground);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  line-height: 1.15;
+  vertical-align: text-bottom;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.chat-markdown-file-link:hover {
+  opacity: 1;
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--border) 65%, var(--foreground));
+  background: color-mix(in srgb, var(--muted) 72%, var(--background));
+}
+
+.chat-markdown-file-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ring) 70%, transparent);
+}
+
+.chat-markdown-file-link-icon {
+  opacity: 0.72;
+}
+
+.chat-markdown-file-link-label {
+  color: color-mix(in srgb, var(--foreground) 88%, transparent);
+  line-height: 1.1;
+}
+
 .chat-markdown pre {
   max-width: 100%;
   overflow-x: auto;
@@ -338,6 +379,24 @@ label:has(> select#reasoning-effort) select {
   background: transparent;
   padding: 0;
   font-size: 0.75rem;
+}
+
+.markdown-file-link-tooltip-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
+}
+
+.markdown-file-link-tooltip-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.markdown-file-link-tooltip-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.markdown-file-link-tooltip-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 78%, transparent);
 }
 
 .chat-markdown .chat-markdown-codeblock {
