@@ -678,7 +678,11 @@ REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 if [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
   :
 else
-  REMOTE_PORT="$(pick_port)"
+  REMOTE_PORT="$(pick_port)" || true
+  if [ -z "$REMOTE_PORT" ]; then
+    printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
+    exit 1
+  fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
@@ -767,12 +771,24 @@ async function launchOrReuseRemoteServer(
   });
   const line = getLastNonEmptyOutputLine(result.stdout);
   if (!line) {
-    throw new Error("SSH launch did not return a remote port.");
+    throw new Error(
+      `SSH launch did not return a remote port. stdout=${JSON.stringify(result.stdout)}`,
+    );
   }
 
-  const parsed = JSON.parse(line) as { remotePort?: unknown };
+  let parsed: { remotePort?: unknown };
+  try {
+    parsed = JSON.parse(line) as { remotePort?: unknown };
+  } catch (cause) {
+    throw new Error(
+      `SSH launch returned unparseable output. line=${JSON.stringify(line)} stdout=${JSON.stringify(result.stdout)}`,
+      { cause },
+    );
+  }
   if (typeof parsed.remotePort !== "number" || !Number.isInteger(parsed.remotePort)) {
-    throw new Error("SSH launch returned an invalid remote port.");
+    throw new Error(
+      `SSH launch returned an invalid remote port. parsed=${JSON.stringify(parsed)} stdout=${JSON.stringify(result.stdout)}`,
+    );
   }
   return parsed.remotePort;
 }
@@ -789,14 +805,26 @@ async function issueRemotePairingToken(
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
   });
-  const line = getLastNonEmptyOutputLine(result.stdout);
-  if (!line) {
-    throw new Error("SSH pairing did not return a credential.");
+  const stdout = result.stdout.trim();
+  if (!stdout) {
+    throw new Error(
+      `SSH pairing did not return a credential. stdout=${JSON.stringify(result.stdout)}`,
+    );
   }
 
-  const parsed = JSON.parse(line) as { credential?: unknown };
+  let parsed: { credential?: unknown };
+  try {
+    parsed = JSON.parse(stdout) as { credential?: unknown };
+  } catch (cause) {
+    throw new Error(
+      `SSH pairing returned unparseable output. stdout=${JSON.stringify(result.stdout)}`,
+      { cause },
+    );
+  }
   if (typeof parsed.credential !== "string" || parsed.credential.trim().length === 0) {
-    throw new Error("SSH pairing command returned an invalid credential.");
+    throw new Error(
+      `SSH pairing command returned an invalid credential. parsed=${JSON.stringify(parsed)} stdout=${JSON.stringify(result.stdout)}`,
+    );
   }
   return parsed.credential;
 }
