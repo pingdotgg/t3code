@@ -207,6 +207,13 @@ describe("sshEnvironment", () => {
         isDevelopment: true,
       }),
     ).toBe("t3@nightly");
+    expect(
+      __test.resolveRemoteT3CliPackageSpec({
+        appVersion: "0.0.0-dev",
+        updateChannel: "latest",
+        isDevelopment: true,
+      }),
+    ).toBe("t3@nightly");
   });
 
   it("uses the remote t3 runner for launch and pairing scripts", () => {
