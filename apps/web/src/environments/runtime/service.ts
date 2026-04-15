@@ -554,18 +554,36 @@ function buildSavedEnvironmentRegistryById(
   >;
 }
 
-function snapshotSavedEnvironmentRegistry(): ReadonlyArray<SavedEnvironmentRecord> {
-  return listSavedEnvironmentRecords();
+type SavedEnvironmentRegistrySnapshot = ReadonlyMap<EnvironmentId, SavedEnvironmentRecord | null>;
+
+function snapshotSavedEnvironmentRegistry(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): SavedEnvironmentRegistrySnapshot {
+  return new Map(
+    environmentIds.map((environmentId) => [
+      environmentId,
+      getSavedEnvironmentRecord(environmentId) ?? null,
+    ]),
+  );
 }
 
 async function persistSavedEnvironmentRegistryRollback(
-  records: ReadonlyArray<SavedEnvironmentRecord>,
+  snapshot: SavedEnvironmentRegistrySnapshot,
 ): Promise<void> {
+  const byId = buildSavedEnvironmentRegistryById(listSavedEnvironmentRecords());
+  for (const [environmentId, record] of snapshot) {
+    if (record) {
+      byId[environmentId] = record;
+      continue;
+    }
+    delete byId[environmentId];
+  }
+  const records = Object.values(byId);
   await ensureLocalApi().persistence.setSavedEnvironmentRegistry(
     records.map((entry) => toPersistedSavedEnvironmentRecord(entry)),
   );
   useSavedEnvironmentRegistryStore.setState({
-    byId: buildSavedEnvironmentRegistryById(records),
+    byId,
   });
 }
 
@@ -651,7 +669,7 @@ async function issueDesktopSshBearerSession(record: SavedEnvironmentRecord): Pro
   readonly bearerToken: string;
   readonly role: AuthSessionRole | null;
 }> {
-  const registrySnapshot = snapshotSavedEnvironmentRegistry();
+  const registrySnapshot = snapshotSavedEnvironmentRegistry([record.environmentId]);
   const prepared = await prepareSavedEnvironmentRecordForConnection(record, {
     issuePairingToken: true,
   });
@@ -1201,8 +1219,6 @@ async function ensureSavedEnvironmentConnection(
       ...createEnvironmentConnectionHandlers(),
     });
 
-    registerConnection(connection);
-
     try {
       try {
         await refreshSavedEnvironmentMetadata(
@@ -1219,12 +1235,18 @@ async function ensureSavedEnvironmentConnection(
         if (!isAuthError) {
           throw error;
         }
+        if (!activeRecord.desktopSsh) {
+          await removeSavedEnvironmentBearerToken(activeRecord.environmentId);
+          throw new Error("Saved environment credential expired. Pair it again.", {
+            cause: error,
+          });
+        }
 
         const issued = await issueDesktopSshBearerSession(activeRecord);
         activeRecord = issued.record;
         bearerToken = issued.bearerToken;
         roleHint = issued.role;
-        await removeConnection(activeRecord.environmentId).catch(() => false);
+        await connection.dispose().catch(() => undefined);
         pendingSavedEnvironmentConnections.delete(activeRecord.environmentId);
         return await ensureSavedEnvironmentConnection(activeRecord, {
           bearerToken,
@@ -1232,10 +1254,14 @@ async function ensureSavedEnvironmentConnection(
           serverConfig: options?.serverConfig ?? null,
         });
       }
+      registerConnection(connection);
       return connection;
     } catch (error) {
       setRuntimeError(activeRecord.environmentId, error);
-      await removeConnection(activeRecord.environmentId).catch(() => false);
+      const removed = await removeConnection(activeRecord.environmentId).catch(() => false);
+      if (!removed) {
+        await connection.dispose().catch(() => undefined);
+      }
       throw error;
     }
   })();
@@ -1373,7 +1399,7 @@ export async function addSavedEnvironment(input: {
         httpBaseUrl: resolvedTarget.httpBaseUrl,
       });
   const environmentId = descriptor.environmentId;
-  const registrySnapshot = snapshotSavedEnvironmentRegistry();
+  const registrySnapshot = snapshotSavedEnvironmentRegistry([environmentId]);
   const existingRecord =
     getSavedEnvironmentRecord(environmentId) ??
     findSavedEnvironmentRecordByDesktopSshTarget(input.desktopSsh);

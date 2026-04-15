@@ -80,6 +80,21 @@ function splitDirectiveArgs(value: string): ReadonlyArray<string> {
     .filter((entry) => entry.length > 0);
 }
 
+function expandHomePath(input: string, homeDir: string = OS.homedir()): string {
+  return input.replace(/^~(?=$|\/|\\)/u, homeDir);
+}
+
+function resolveSshConfigIncludePattern(
+  includePattern: string,
+  directory: string,
+  homeDir: string = OS.homedir(),
+): string {
+  const expandedPattern = expandHomePath(includePattern, homeDir);
+  return Path.isAbsolute(expandedPattern)
+    ? expandedPattern
+    : Path.resolve(directory, expandedPattern);
+}
+
 function hasSshPattern(value: string): boolean {
   return value.includes("*") || value.includes("?") || value.startsWith("!");
 }
@@ -138,9 +153,7 @@ function collectSshConfigAliasesFromFile(
     const normalizedDirective = directive.toLowerCase();
     if (normalizedDirective === "include") {
       for (const includePattern of rawArgs) {
-        const resolvedPattern = Path.isAbsolute(includePattern)
-          ? includePattern
-          : Path.resolve(directory, includePattern);
+        const resolvedPattern = resolveSshConfigIncludePattern(includePattern, directory);
         for (const includedPath of expandGlob(resolvedPattern)) {
           for (const alias of collectSshConfigAliasesFromFile(includedPath, visited)) {
             aliases.add(alias);
@@ -165,6 +178,21 @@ function collectSshConfigAliasesFromFile(
   return [...aliases].toSorted((left, right) => left.localeCompare(right));
 }
 
+function normalizeKnownHostsHostname(rawHost: string): string {
+  const bracketMatch = /^\[([^\]]+)\]:(\d+)$/u.exec(rawHost);
+  if (bracketMatch?.[1]) {
+    return bracketMatch[1];
+  }
+
+  if (!rawHost.includes(":")) {
+    return rawHost;
+  }
+
+  const firstColonIndex = rawHost.indexOf(":");
+  const lastColonIndex = rawHost.lastIndexOf(":");
+  return firstColonIndex === lastColonIndex ? rawHost.slice(0, lastColonIndex) : rawHost;
+}
+
 function parseKnownHostsHostnames(raw: string): ReadonlyArray<string> {
   const hostnames = new Set<string>();
 
@@ -183,10 +211,7 @@ function parseKnownHostsHostnames(raw: string): ReadonlyArray<string> {
     }
 
     for (const rawHost of hostField.split(",")) {
-      const bracketMatch = /^\[([^\]]+)\]:(\d+)$/u.exec(rawHost);
-      const host = (
-        bracketMatch?.[1] ?? (rawHost.includes(":") ? rawHost : rawHost.replace(/:.*$/u, ""))
-      ).trim();
+      const host = normalizeKnownHostsHostname(rawHost).trim();
       if (host.length === 0 || hasSshPattern(host)) {
         continue;
       }
@@ -482,8 +507,13 @@ function normalizeSshErrorMessage(stderr: string, fallbackMessage: string): stri
 
 function isSshAuthFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /permission denied|authentication failed|keyboard-interactive/u.test(
-    message.toLowerCase(),
+  const normalized = message.toLowerCase();
+  return (
+    /permission denied \((?:publickey|password|keyboard-interactive|hostbased|gssapi-with-mic)[^)]+\)/u.test(
+      normalized,
+    ) ||
+    /authentication failed/u.test(normalized) ||
+    /too many authentication failures/u.test(normalized)
   );
 }
 
@@ -776,6 +806,7 @@ async function stopTunnel(entry: SshTunnelEntry): Promise<void> {
   await new Promise<void>((resolve) => {
     let settled = false;
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+    let hardStopTimer: ReturnType<typeof setTimeout> | null = null;
 
     const settle = () => {
       if (settled) {
@@ -786,6 +817,9 @@ async function stopTunnel(entry: SshTunnelEntry): Promise<void> {
       if (forceKillTimer) {
         clearTimeout(forceKillTimer);
       }
+      if (hardStopTimer) {
+        clearTimeout(hardStopTimer);
+      }
       resolve();
     };
 
@@ -794,11 +828,22 @@ async function stopTunnel(entry: SshTunnelEntry): Promise<void> {
     };
 
     child.once("exit", onExit);
-    child.kill("SIGTERM");
+    if (child.exitCode !== null || child.signalCode !== null) {
+      settle();
+      return;
+    }
+    if (!child.kill("SIGTERM")) {
+      settle();
+      return;
+    }
     forceKillTimer = setTimeout(() => {
       if (child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }
+      hardStopTimer = setTimeout(() => {
+        settle();
+      }, 1_000);
+      hardStopTimer.unref();
     }, TUNNEL_SHUTDOWN_TIMEOUT_MS);
     forceKillTimer.unref();
   });
@@ -840,9 +885,16 @@ export async function discoverDesktopSshHosts(input?: {
 
 export class DesktopSshEnvironmentManager {
   private readonly tunnels = new Map<string, SshTunnelEntry>();
+  private readonly pendingTunnelEntries = new Map<string, Promise<SshTunnelEntry>>();
   private readonly authSecrets = new Map<string, string>();
 
   constructor(private readonly options: DesktopSshEnvironmentManagerOptions = {}) {}
+
+  private deleteTunnelIfCurrent(entry: SshTunnelEntry): void {
+    if (this.tunnels.get(entry.key) === entry) {
+      this.tunnels.delete(entry.key);
+    }
+  }
 
   private async promptForPassword(
     target: DesktopSshEnvironmentTarget,
@@ -921,19 +973,50 @@ export class DesktopSshEnvironmentManager {
     const resolvedTarget = await resolveDesktopSshTarget(target.alias || target.hostname);
     const key = targetConnectionKey(resolvedTarget);
     const packageSpec = this.options.resolveCliPackageSpec?.();
+    const entry = await this.ensureTunnelEntry(key, resolvedTarget, packageSpec);
+
+    const pairingToken = options?.issuePairingToken
+      ? await this.runWithSshAuth(key, entry.target, (authOptions) =>
+          issueRemotePairingToken(
+            entry.target,
+            authOptions,
+            packageSpec === undefined ? undefined : { packageSpec },
+          ),
+        )
+      : null;
+
+    return {
+      target: entry.target,
+      httpBaseUrl: entry.httpBaseUrl,
+      wsBaseUrl: entry.wsBaseUrl,
+      pairingToken,
+    };
+  }
+
+  private async ensureTunnelEntry(
+    key: string,
+    resolvedTarget: DesktopSshEnvironmentTarget,
+    packageSpec?: string,
+  ): Promise<SshTunnelEntry> {
     let entry = this.tunnels.get(key) ?? null;
 
     if (entry !== null) {
       try {
         await waitForHttpReady(entry.httpBaseUrl, { timeoutMs: 2_000 });
+        return entry;
       } catch {
         await stopTunnel(entry).catch(() => undefined);
-        this.tunnels.delete(key);
+        this.deleteTunnelIfCurrent(entry);
         entry = null;
       }
     }
 
-    if (entry === null) {
+    const pending = this.pendingTunnelEntries.get(key);
+    if (pending) {
+      return await pending;
+    }
+
+    const nextEntry = (async () => {
       const remotePort = await this.runWithSshAuth(key, resolvedTarget, (authOptions) =>
         launchOrReuseRemoteServer(
           resolvedTarget,
@@ -944,7 +1027,7 @@ export class DesktopSshEnvironmentManager {
       const localPort = await findAvailableLocalPort();
       const httpBaseUrl = `http://127.0.0.1:${localPort}/`;
       const wsBaseUrl = `ws://127.0.0.1:${localPort}/`;
-      entry = await this.runWithSshAuth(key, resolvedTarget, async (authOptions) => {
+      return await this.runWithSshAuth(key, resolvedTarget, async (authOptions) => {
         const process = ChildProcess.spawn(
           "ssh",
           [
@@ -972,7 +1055,7 @@ export class DesktopSshEnvironmentManager {
             stdio: "pipe",
           },
         );
-        const nextEntry: SshTunnelEntry = {
+        const tunnelEntry: SshTunnelEntry = {
           key,
           target: resolvedTarget,
           remotePort,
@@ -988,11 +1071,11 @@ export class DesktopSshEnvironmentManager {
             stderr += chunk;
           });
           process.once("error", (error) => {
-            this.tunnels.delete(key);
+            this.deleteTunnelIfCurrent(tunnelEntry);
             reject(error);
           });
           process.once("exit", (code) => {
-            this.tunnels.delete(key);
+            this.deleteTunnelIfCurrent(tunnelEntry);
             reject(
               new Error(
                 normalizeSshErrorMessage(
@@ -1006,39 +1089,29 @@ export class DesktopSshEnvironmentManager {
             .then(() => resolve())
             .catch((error) => reject(error));
         });
-        this.tunnels.set(key, nextEntry);
+        this.tunnels.set(key, tunnelEntry);
         try {
           await tunnelReady;
-          return nextEntry;
+          return tunnelEntry;
         } catch (error) {
-          await stopTunnel(nextEntry).catch(() => undefined);
-          this.tunnels.delete(key);
+          await stopTunnel(tunnelEntry).catch(() => undefined);
+          this.deleteTunnelIfCurrent(tunnelEntry);
           throw error;
         }
       });
-    }
-
-    const pairingToken = options?.issuePairingToken
-      ? await this.runWithSshAuth(key, entry.target, (authOptions) =>
-          issueRemotePairingToken(
-            entry.target,
-            authOptions,
-            packageSpec === undefined ? undefined : { packageSpec },
-          ),
-        )
-      : null;
-
-    return {
-      target: entry.target,
-      httpBaseUrl: entry.httpBaseUrl,
-      wsBaseUrl: entry.wsBaseUrl,
-      pairingToken,
-    };
+    })();
+    this.pendingTunnelEntries.set(key, nextEntry);
+    return await nextEntry.finally(() => {
+      if (this.pendingTunnelEntries.get(key) === nextEntry) {
+        this.pendingTunnelEntries.delete(key);
+      }
+    });
   }
 
   async dispose(): Promise<void> {
     const entries = [...this.tunnels.values()];
     this.tunnels.clear();
+    this.pendingTunnelEntries.clear();
     await Promise.all(entries.map((entry) => stopTunnel(entry).catch(() => undefined)));
   }
 }
@@ -1054,6 +1127,10 @@ export const __test = {
   getLastNonEmptyOutputLine,
   isSshAuthFailure,
   collectSshConfigAliasesFromFile,
+  expandHomePath,
+  normalizeKnownHostsHostname,
   parseKnownHostsHostnames,
   parseSshResolveOutput,
+  resolveSshConfigIncludePattern,
+  stopTunnel,
 };

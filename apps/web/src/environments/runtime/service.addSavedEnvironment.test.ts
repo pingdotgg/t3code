@@ -6,6 +6,9 @@ let mockSavedRecords: Array<Record<string, unknown>> = [];
 const mockResolveRemotePairingTarget = vi.fn();
 const mockFetchRemoteEnvironmentDescriptor = vi.fn();
 const mockBootstrapRemoteBearerSession = vi.fn();
+const mockFetchRemoteSessionState = vi.fn();
+const mockIsRemoteEnvironmentAuthHttpError = vi.fn((_: unknown) => false);
+const mockResolveRemoteWebSocketConnectionUrl = vi.fn();
 const mockBootstrapSshBearerSession = vi.fn();
 const mockFetchSshSessionState = vi.fn();
 const mockPersistSavedEnvironmentRecord = vi.fn();
@@ -54,9 +57,9 @@ vi.mock("../remote/target", () => ({
 vi.mock("../remote/api", () => ({
   bootstrapRemoteBearerSession: mockBootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor: mockFetchRemoteEnvironmentDescriptor,
-  fetchRemoteSessionState: vi.fn(),
-  isRemoteEnvironmentAuthHttpError: vi.fn(() => false),
-  resolveRemoteWebSocketConnectionUrl: vi.fn(),
+  fetchRemoteSessionState: mockFetchRemoteSessionState,
+  isRemoteEnvironmentAuthHttpError: mockIsRemoteEnvironmentAuthHttpError,
+  resolveRemoteWebSocketConnectionUrl: mockResolveRemoteWebSocketConnectionUrl,
 }));
 
 vi.mock("~/localApi", () => ({
@@ -151,6 +154,14 @@ describe("addSavedEnvironment", () => {
       sessionToken: "bearer-token",
       role: "owner",
     });
+    mockFetchRemoteSessionState.mockResolvedValue({
+      authenticated: true,
+      role: "owner",
+    });
+    mockIsRemoteEnvironmentAuthHttpError.mockReturnValue(false);
+    mockResolveRemoteWebSocketConnectionUrl.mockResolvedValue(
+      "wss://remote.example.com/?wsToken=remote-token",
+    );
     mockFetchSshEnvironmentDescriptor.mockResolvedValue({
       environmentId: EnvironmentId.make("environment-1"),
       label: "Remote environment",
@@ -216,6 +227,37 @@ describe("addSavedEnvironment", () => {
     );
     expect(mockSetSavedEnvironmentRegistry).toHaveBeenCalledWith([]);
     expect(mockUpsert).not.toHaveBeenCalled();
+
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("restores unrelated saved environments when credential persistence rollback runs", async () => {
+    mockSavedRecords = [
+      {
+        environmentId: EnvironmentId.make("environment-existing"),
+        label: "Existing environment",
+        httpBaseUrl: "https://existing.example.com/",
+        wsBaseUrl: "wss://existing.example.com/",
+        createdAt: "2026-04-14T00:00:00.000Z",
+        lastConnectedAt: null,
+      },
+    ];
+
+    const { addSavedEnvironment, resetEnvironmentServiceForTests } = await import("./service");
+
+    await expect(
+      addSavedEnvironment({
+        label: "Remote environment",
+        host: "remote.example.com",
+        pairingCode: "123456",
+      }),
+    ).rejects.toThrow("Unable to persist saved environment credentials.");
+
+    expect(mockSetSavedEnvironmentRegistry).toHaveBeenCalledWith([
+      expect.objectContaining({
+        environmentId: EnvironmentId.make("environment-existing"),
+      }),
+    ]);
 
     await resetEnvironmentServiceForTests();
   });
@@ -309,6 +351,95 @@ describe("addSavedEnvironment", () => {
     expect(mockEnsureSshEnvironment).toHaveBeenCalled();
     expect(mockBootstrapSshBearerSession).toHaveBeenCalledTimes(2);
     expect(mockFetchSshSessionState).toHaveBeenCalledTimes(2);
+
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("does not attempt desktop ssh bearer recovery for non-ssh saved environments", async () => {
+    mockWriteSavedEnvironmentBearerToken.mockResolvedValue(true);
+    const authError = {
+      status: 401,
+      message: "Unauthorized",
+    };
+    mockFetchRemoteSessionState.mockRejectedValueOnce(authError);
+    mockIsRemoteEnvironmentAuthHttpError.mockImplementation(
+      (error: unknown) => error === authError,
+    );
+
+    const { addSavedEnvironment, resetEnvironmentServiceForTests } = await import("./service");
+
+    await expect(
+      addSavedEnvironment({
+        label: "Remote environment",
+        host: "remote.example.com",
+        pairingCode: "123456",
+      }),
+    ).rejects.toThrow("Saved environment credential expired. Pair it again.");
+
+    expect(mockEnsureSshEnvironment).not.toHaveBeenCalled();
+    expect(mockBootstrapSshBearerSession).not.toHaveBeenCalled();
+    expect(mockRemoveSavedEnvironmentBearerToken).toHaveBeenCalledWith(
+      EnvironmentId.make("environment-1"),
+    );
+
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("only registers the retried ssh connection after bearer re-issuance succeeds", async () => {
+    mockWriteSavedEnvironmentBearerToken.mockResolvedValue(true);
+    mockBootstrapSshBearerSession
+      .mockResolvedValueOnce({
+        sessionToken: "ssh-bearer-token",
+        role: "owner",
+      })
+      .mockResolvedValueOnce({
+        sessionToken: "ssh-bearer-token-2",
+        role: "owner",
+      });
+    mockFetchSshSessionState
+      .mockRejectedValueOnce(new Error("[ssh_http:401] Unauthorized"))
+      .mockResolvedValueOnce({
+        authenticated: true,
+        role: "owner",
+      });
+
+    const createdConnections: Array<{
+      readonly environmentId: EnvironmentId;
+      readonly dispose: ReturnType<typeof vi.fn>;
+    }> = [];
+    mockCreateEnvironmentConnection.mockImplementation(
+      (input: { knownEnvironment: { environmentId: EnvironmentId }; client: unknown }) => {
+        const connection = {
+          kind: "saved" as const,
+          environmentId: input.knownEnvironment.environmentId,
+          knownEnvironment: input.knownEnvironment,
+          client: input.client,
+          ensureBootstrapped: async () => undefined,
+          reconnect: async () => undefined,
+          dispose: vi.fn(async () => undefined),
+        };
+        createdConnections.push(connection);
+        return connection;
+      },
+    );
+
+    const {
+      connectDesktopSshEnvironment,
+      listEnvironmentConnections,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    await connectDesktopSshEnvironment({
+      alias: "devbox",
+      hostname: "devbox",
+      username: null,
+      port: null,
+    });
+
+    expect(createdConnections).toHaveLength(2);
+    expect(createdConnections[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(listEnvironmentConnections()).toHaveLength(1);
+    expect(listEnvironmentConnections()[0]).toBe(createdConnections[1]);
 
     await resetEnvironmentServiceForTests();
   });

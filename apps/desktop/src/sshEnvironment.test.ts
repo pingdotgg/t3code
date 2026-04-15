@@ -1,8 +1,9 @@
 import * as FS from "node:fs";
+import { EventEmitter } from "node:events";
 import * as OS from "node:os";
 import * as Path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __test, discoverDesktopSshHosts } from "./sshEnvironment";
 
@@ -93,6 +94,7 @@ describe("sshEnvironment", () => {
           "|1|hashed|entry ssh-ed25519 CCCC",
           "@cert-authority *.example.com ssh-ed25519 DDDD",
           "[ssh.example.com]:2200 ssh-ed25519 EEEE",
+          "port.example.com:22 ssh-ed25519 HHHH",
           "::1 ssh-ed25519 FFFF",
           "2001:db8::1 ssh-ed25519 GGGG",
           "",
@@ -104,8 +106,15 @@ describe("sshEnvironment", () => {
       "github.com",
       "gitlab-alias",
       "gitlab.com",
+      "port.example.com",
       "ssh.example.com",
     ]);
+  });
+
+  it("expands tilde-prefixed ssh config include patterns", () => {
+    expect(
+      __test.resolveSshConfigIncludePattern("~/.ssh/config.d/*.conf", "/tmp/project", "/tmp/home"),
+    ).toBe("/tmp/home/.ssh/config.d/*.conf");
   });
 
   it("parses resolved ssh config output into a target", () => {
@@ -240,5 +249,55 @@ describe("sshEnvironment", () => {
       ),
     ).toBe(true);
     expect(__test.isSshAuthFailure(new Error("Connection timed out"))).toBe(false);
+    expect(__test.isSshAuthFailure(new Error("mkdir: Permission denied"))).toBe(false);
+  });
+
+  it("settles tunnel shutdown if the child exits before the exit listener attaches", async () => {
+    vi.useFakeTimers();
+
+    class RaceChildProcess extends EventEmitter {
+      exitCode: number | null = null;
+      signalCode: NodeJS.Signals | null = null;
+
+      override once(eventName: string | symbol, listener: (...args: any[]) => void): this {
+        if (eventName === "exit") {
+          this.exitCode = 0;
+          return this;
+        }
+        return super.once(eventName, listener);
+      }
+
+      kill(): boolean {
+        return true;
+      }
+    }
+
+    try {
+      const child = new RaceChildProcess();
+      const stopPromise = __test
+        .stopTunnel({
+          key: "devbox",
+          target: {
+            alias: "devbox",
+            hostname: "devbox.example.com",
+            username: "julius",
+            port: 22,
+          },
+          remotePort: 3773,
+          localPort: 3774,
+          httpBaseUrl: "http://127.0.0.1:3774/",
+          wsBaseUrl: "ws://127.0.0.1:3774/",
+          process: child as never,
+        })
+        .then(() => "resolved");
+
+      await vi.runAllTimersAsync();
+
+      await expect(Promise.race([stopPromise, Promise.resolve("pending")])).resolves.toBe(
+        "resolved",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
