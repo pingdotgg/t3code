@@ -6,10 +6,15 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
+  ArrowRightIcon,
   ArrowUpIcon,
+  Columns2Icon,
   MessageSquareIcon,
+  Rows2Icon,
   SettingsIcon,
   SquarePenIcon,
+  TerminalSquareIcon,
+  XIcon,
 } from "lucide-react";
 import {
   useDeferredValue,
@@ -23,6 +28,10 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import {
+  WORKSPACE_COMMAND_METADATA,
+  useWorkspaceCommandExecutor,
+} from "../hooks/useWorkspaceCommandExecutor";
 import { useSettings } from "../hooks/useSettings";
 import {
   startNewThreadInProjectFromContext,
@@ -36,8 +45,9 @@ import {
   selectSidebarThreadsAcrossEnvironments,
   useStore,
 } from "../store";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
+import { useWorkspaceStore, useWorkspaceThreadTerminalOpen } from "../workspace/store";
+import { serverThreadSurfaceInput } from "../workspace/types";
 import {
   ADDON_ICON_CLASS,
   buildProjectActionItems,
@@ -80,11 +90,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     select: (params) => resolveThreadRouteTarget(params),
   });
   const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
-  const terminalOpen = useTerminalStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef).terminalOpen
-      : false,
-  );
+  const terminalOpen = useWorkspaceThreadTerminalOpen(routeThreadRef);
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -108,8 +114,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
 
   return (
     <ComposerHandleContext.Provider value={composerHandleRef}>
+      {children}
       <CommandDialog open={open} onOpenChange={setOpen}>
-        {children}
         <CommandPaletteDialog />
       </CommandDialog>
     </ComposerHandleContext.Provider>
@@ -136,6 +142,8 @@ function CommandPaletteDialog() {
 function OpenCommandPaletteDialog() {
   const navigate = useNavigate();
   const setOpen = useCommandPaletteStore((store) => store.setOpen);
+  const workspaceTarget = useCommandPaletteStore((store) => store.workspaceTarget);
+  const clearWorkspaceTarget = useCommandPaletteStore((store) => store.clearWorkspaceTarget);
   const composerHandleRef = useComposerHandleContext();
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -149,6 +157,13 @@ function OpenCommandPaletteDialog() {
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
   const paletteMode = getCommandPaletteMode({ currentView });
+  const { canOpenTerminalSurface, canSplitFocusedPane, executeWorkspaceCommand } =
+    useWorkspaceCommandExecutor();
+  const openThreadSurface = useWorkspaceStore((state) => state.openThreadSurface);
+  const workspaceWindowCount = useWorkspaceStore(
+    (state) => Object.keys(state.document.windowsById).length,
+  );
+  const canUseSpatialWorkspaceCommands = workspaceWindowCount > 1;
 
   const projectTitleById = useMemo(
     () => new Map<ProjectId, string>(projects.map((project) => [project.id, project.name])),
@@ -258,6 +273,40 @@ function OpenCommandPaletteDialog() {
     [activeThreadId, navigate, projectTitleById, settings.sidebarThreadSortOrder, threads],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
+  const workspaceTargetThreadItems = useMemo(() => {
+    if (!workspaceTarget) {
+      return [];
+    }
+
+    return buildThreadActionItems({
+      threads,
+      ...(activeThreadId ? { activeThreadId } : {}),
+      projectTitleById,
+      sortOrder: settings.sidebarThreadSortOrder,
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      runThread: async (thread) => {
+        openThreadSurface(
+          serverThreadSurfaceInput(scopeThreadRef(thread.environmentId, thread.id)),
+          workspaceTarget.disposition,
+        );
+      },
+    });
+  }, [
+    activeThreadId,
+    openThreadSurface,
+    projectTitleById,
+    settings.sidebarThreadSortOrder,
+    threads,
+    workspaceTarget,
+  ]);
+
+  useEffect(() => {
+    if (!workspaceTarget) {
+      return;
+    }
+    setViewStack([]);
+    setQuery("");
+  }, [workspaceTarget]);
 
   function pushView(item: CommandPaletteSubmenuItem): void {
     setViewStack((previousViews) => [
@@ -273,6 +322,15 @@ function OpenCommandPaletteDialog() {
 
   function popView(): void {
     setViewStack((previousViews) => previousViews.slice(0, -1));
+    setQuery("");
+  }
+
+  function leaveSubmenu(): void {
+    if (currentView) {
+      popView();
+      return;
+    }
+    clearWorkspaceTarget();
     setQuery("");
   }
 
@@ -325,6 +383,301 @@ function OpenCommandPaletteDialog() {
     });
   }
 
+  if (canOpenTerminalSurface) {
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-terminal-split-right",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.terminal.splitRight"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.terminal.splitRight"].title,
+      icon: <TerminalSquareIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.terminal.splitRight",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.terminal.splitRight");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-terminal-split-down",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.terminal.splitDown"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.terminal.splitDown"].title,
+      icon: <TerminalSquareIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.terminal.splitDown",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.terminal.splitDown");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-terminal-tab",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.terminal.newTab"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.terminal.newTab"].title,
+      icon: <TerminalSquareIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.terminal.newTab",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.terminal.newTab");
+      },
+    });
+  }
+
+  if (canSplitFocusedPane) {
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-split-right",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.splitRight"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.splitRight"].title,
+      icon: <Columns2Icon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.splitRight",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.splitRight");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-split-down",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.splitDown"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.splitDown"].title,
+      icon: <Rows2Icon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.splitDown",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.splitDown");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-close",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.close"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.close"].title,
+      icon: <XIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.close",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.close");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-toggle-zoom",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.toggleZoom"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.toggleZoom"].title,
+      icon: <Columns2Icon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.toggleZoom",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.toggleZoom");
+      },
+    });
+  }
+
+  if (canUseSpatialWorkspaceCommands) {
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-focus-previous",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.focus.previous"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.focus.previous"].title,
+      icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.focus.previous",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.focus.previous");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-focus-next",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.focus.next"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.focus.next"].title,
+      icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.focus.next",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.focus.next");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-focus-left",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.focus.left"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.focus.left"].title,
+      icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.focus.left",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.focus.left");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-focus-right",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.focus.right"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.focus.right"].title,
+      icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.focus.right",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.focus.right");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-focus-up",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.focus.up"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.focus.up"].title,
+      icon: <ArrowUpIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.focus.up",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.focus.up");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-focus-down",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.focus.down"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.focus.down"].title,
+      icon: <ArrowDownIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.focus.down",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.focus.down");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-resize-left",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.resizeLeft"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.resizeLeft"].title,
+      icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.resizeLeft",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.resizeLeft");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-resize-right",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.resizeRight"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.resizeRight"].title,
+      icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.resizeRight",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.resizeRight");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-resize-up",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.resizeUp"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.resizeUp"].title,
+      icon: <ArrowUpIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.resizeUp",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.resizeUp");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-resize-down",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.resizeDown"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.resizeDown"].title,
+      icon: <ArrowDownIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.resizeDown",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.resizeDown");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-equalize",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.equalize"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.equalize"].title,
+      icon: <Rows2Icon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.equalize",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.equalize");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-move-left",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.moveLeft"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.moveLeft"].title,
+      icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.moveLeft",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.moveLeft");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-move-right",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.moveRight"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.moveRight"].title,
+      icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.moveRight",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.moveRight");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-move-up",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.moveUp"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.moveUp"].title,
+      icon: <ArrowUpIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.moveUp",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.moveUp");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-pane-move-down",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.pane.moveDown"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.pane.moveDown"].title,
+      icon: <ArrowDownIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.pane.moveDown",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.pane.moveDown");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-tab-move-left",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.tab.moveLeft"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.tab.moveLeft"].title,
+      icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.tab.moveLeft",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.tab.moveLeft");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-tab-move-right",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.tab.moveRight"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.tab.moveRight"].title,
+      icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.tab.moveRight",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.tab.moveRight");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-tab-move-up",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.tab.moveUp"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.tab.moveUp"].title,
+      icon: <ArrowUpIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.tab.moveUp",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.tab.moveUp");
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:workspace-tab-move-down",
+      searchTerms: WORKSPACE_COMMAND_METADATA["workspace.tab.moveDown"].searchTerms,
+      title: WORKSPACE_COMMAND_METADATA["workspace.tab.moveDown"].title,
+      icon: <ArrowDownIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "workspace.tab.moveDown",
+      run: async () => {
+        await executeWorkspaceCommand("workspace.tab.moveDown");
+      },
+    });
+  }
+
   actionItems.push({
     kind: "action",
     value: "action:settings",
@@ -337,23 +690,65 @@ function OpenCommandPaletteDialog() {
   });
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
-  const activeGroups = currentView ? currentView.groups : rootGroups;
+  const workspaceTargetGroups = useMemo(() => {
+    if (!workspaceTarget) {
+      return [];
+    }
+
+    const items: CommandPaletteActionItem[] = [];
+    if (canOpenTerminalSurface) {
+      const targetCommand =
+        workspaceTarget.disposition === "split-right"
+          ? "workspace.terminal.splitRight"
+          : "workspace.terminal.splitDown";
+      items.push({
+        kind: "action",
+        value: `action:workspace-target:${targetCommand}`,
+        searchTerms: WORKSPACE_COMMAND_METADATA[targetCommand].searchTerms,
+        title: WORKSPACE_COMMAND_METADATA[targetCommand].title,
+        icon: <TerminalSquareIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: targetCommand,
+        run: async () => {
+          await executeWorkspaceCommand(targetCommand);
+        },
+      });
+    }
+
+    return [
+      ...(items.length > 0 ? [{ value: "actions", label: "Actions", items }] : []),
+      ...(workspaceTargetThreadItems.length > 0
+        ? [{ value: "threads", label: "Threads", items: workspaceTargetThreadItems }]
+        : []),
+    ];
+  }, [
+    canOpenTerminalSurface,
+    executeWorkspaceCommand,
+    workspaceTarget,
+    workspaceTargetThreadItems,
+  ]);
+  const activeGroups = currentView
+    ? currentView.groups
+    : workspaceTarget
+      ? workspaceTargetGroups
+      : rootGroups;
 
   const displayedGroups = filterCommandPaletteGroups({
     activeGroups,
     query: deferredQuery,
-    isInSubmenu: currentView !== null,
+    isInSubmenu: currentView !== null || workspaceTarget !== null,
     projectSearchItems: projectSearchItems,
     threadSearchItems: allThreadItems,
   });
 
-  const inputPlaceholder = getCommandPaletteInputPlaceholder(paletteMode);
-  const isSubmenu = paletteMode === "submenu";
+  const isSubmenu = paletteMode === "submenu" || workspaceTarget !== null;
+  const inputPlaceholder = workspaceTarget
+    ? "Open in split..."
+    : getCommandPaletteInputPlaceholder(paletteMode);
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
     if (event.key === "Backspace" && query === "" && isSubmenu) {
       event.preventDefault();
-      popView();
+      leaveSubmenu();
     }
   }
 
@@ -387,7 +782,7 @@ function OpenCommandPaletteDialog() {
       }}
     >
       <Command
-        key={viewStack.length}
+        key={`${viewStack.length}-${workspaceTarget?.disposition ?? "root"}`}
         aria-label="Command palette"
         autoHighlight="always"
         mode="none"
@@ -408,7 +803,7 @@ function OpenCommandPaletteDialog() {
                     type="button"
                     className="flex cursor-pointer items-center"
                     aria-label="Back"
-                    onClick={popView}
+                    onClick={leaveSubmenu}
                   >
                     <ArrowLeftIcon />
                   </button>

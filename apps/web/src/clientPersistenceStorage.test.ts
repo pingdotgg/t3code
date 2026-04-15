@@ -77,4 +77,54 @@ describe("clientPersistenceStorage", () => {
       ],
     });
   });
+
+  it("reads and writes workspace documents as JSON blobs", async () => {
+    const testWindow = getTestWindow();
+    const {
+      WORKSPACE_DOCUMENT_STORAGE_KEY,
+      readBrowserWorkspaceDocument,
+      writeBrowserWorkspaceDocument,
+    } = await import("./clientPersistenceStorage");
+    const workspaceDocument = {
+      version: 1 as const,
+      layoutEngine: "split" as const,
+      rootNodeId: "node-1",
+      nodesById: {
+        "node-1": {
+          id: "node-1",
+          kind: "window" as const,
+          windowId: "window-1",
+        },
+      },
+      windowsById: {
+        "window-1": {
+          id: "window-1",
+          tabIds: ["surface-1"],
+          activeTabId: "surface-1",
+        },
+      },
+      surfacesById: {
+        "surface-1": {
+          id: "surface-1",
+          kind: "thread" as const,
+          input: {
+            scope: "server" as const,
+            threadRef: {
+              environmentId: testEnvironmentId,
+              threadId: "thread-1",
+            },
+          },
+        },
+      },
+      focusedWindowId: "window-1",
+      mobileActiveWindowId: "window-1",
+    };
+
+    writeBrowserWorkspaceDocument(workspaceDocument);
+
+    expect(readBrowserWorkspaceDocument<typeof workspaceDocument>()).toEqual(workspaceDocument);
+    expect(JSON.parse(testWindow.localStorage.getItem(WORKSPACE_DOCUMENT_STORAGE_KEY)!)).toEqual(
+      workspaceDocument,
+    );
+  });
 });

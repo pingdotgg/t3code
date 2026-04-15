@@ -11,6 +11,7 @@ import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorag
 
 export const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 export const SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY = "t3code:saved-environment-registry:v1";
+export const WORKSPACE_DOCUMENT_STORAGE_KEY = "t3code:workspace-document:v1";
 
 const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
@@ -32,6 +33,34 @@ type BrowserSavedEnvironmentRegistryDocument =
 
 function hasWindow(): boolean {
   return typeof window !== "undefined";
+}
+
+function readBrowserJsonDocument<T>(storageKey: string): T | null {
+  if (!hasWindow()) {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return null;
+    }
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function writeBrowserJsonDocument<T>(storageKey: string, document: T): void {
+  if (!hasWindow()) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(document));
+  } catch {
+    // Ignore quota/storage errors to avoid breaking the app.
+  }
 }
 
 function toPersistedSavedEnvironmentRecord(
@@ -191,4 +220,12 @@ export function removeBrowserSavedEnvironmentSecret(environmentId: EnvironmentId
       return toPersistedSavedEnvironmentRecord(record);
     }),
   });
+}
+
+export function readBrowserWorkspaceDocument<T>(): T | null {
+  return readBrowserJsonDocument<T>(WORKSPACE_DOCUMENT_STORAGE_KEY);
+}
+
+export function writeBrowserWorkspaceDocument<T>(document: T): void {
+  writeBrowserJsonDocument(WORKSPACE_DOCUMENT_STORAGE_KEY, document);
 }

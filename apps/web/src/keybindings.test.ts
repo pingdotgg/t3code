@@ -98,6 +98,42 @@ const DEFAULT_BINDINGS = compile([
   },
   {
     shortcut: modShortcut("d"),
+    command: "workspace.pane.splitRight",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("d", { shiftKey: true }),
+    command: "workspace.pane.splitDown",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("w"),
+    command: "workspace.pane.close",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  { shortcut: modShortcut("["), command: "workspace.focus.previous" },
+  { shortcut: modShortcut("]"), command: "workspace.focus.next" },
+  { shortcut: modShortcut("arrowup", { altKey: true }), command: "workspace.focus.up" },
+  { shortcut: modShortcut("arrowdown", { altKey: true }), command: "workspace.focus.down" },
+  { shortcut: modShortcut("arrowleft", { altKey: true }), command: "workspace.focus.left" },
+  { shortcut: modShortcut("arrowright", { altKey: true }), command: "workspace.focus.right" },
+  { shortcut: modShortcut("enter", { shiftKey: true }), command: "workspace.pane.toggleZoom" },
+  { shortcut: modShortcut("arrowup", { ctrlKey: true }), command: "workspace.pane.resizeUp" },
+  {
+    shortcut: modShortcut("arrowdown", { ctrlKey: true }),
+    command: "workspace.pane.resizeDown",
+  },
+  {
+    shortcut: modShortcut("arrowleft", { ctrlKey: true }),
+    command: "workspace.pane.resizeLeft",
+  },
+  {
+    shortcut: modShortcut("arrowright", { ctrlKey: true }),
+    command: "workspace.pane.resizeRight",
+  },
+  { shortcut: modShortcut("=", { ctrlKey: true }), command: "workspace.pane.equalize" },
+  {
+    shortcut: modShortcut("d", { altKey: true }),
     command: "diff.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
@@ -253,7 +289,30 @@ describe("shortcutLabelForCommand", () => {
 
   it("returns effective labels for non-terminal commands", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⇧⌘O");
-    assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "workspace.pane.splitRight", "MacIntel"),
+      "⌘D",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "workspace.focus.previous", "Linux"),
+      "Ctrl+[",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "workspace.pane.resizeLeft", "MacIntel"),
+      "⌃⌘Left",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "workspace.pane.equalize", "MacIntel"),
+      "⌃⌘=",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "workspace.pane.close", "MacIntel"),
+      "⌘W",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"),
+      "Ctrl+Alt+D",
+    );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "commandPalette.toggle", "MacIntel"),
       "⌘K",
@@ -410,13 +469,13 @@ describe("chat/editor shortcuts", () => {
 
   it("matches diff.toggle shortcut outside terminal focus", () => {
     assert.isTrue(
-      isDiffToggleShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {
+      isDiffToggleShortcut(event({ key: "d", metaKey: true, altKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: false },
       }),
     );
     assert.isFalse(
-      isDiffToggleShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {
+      isDiffToggleShortcut(event({ key: "d", metaKey: true, altKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),

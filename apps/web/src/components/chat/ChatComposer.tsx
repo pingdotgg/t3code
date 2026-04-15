@@ -344,6 +344,7 @@ export interface ChatComposerHandle {
 // --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
+  activationFocusRequestId?: number;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   routeKind: "server" | "draft";
@@ -453,6 +454,7 @@ export interface ChatComposerProps {
 export const ChatComposer = memo(
   forwardRef<ChatComposerHandle, ChatComposerProps>(function ChatComposer(props, ref) {
     const {
+      activationFocusRequestId,
       composerDraftTarget,
       environmentId,
       routeKind,
@@ -660,6 +662,7 @@ export const ChatComposer = memo(
     // Refs
     // ------------------------------------------------------------------
     const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+    const pendingActivationFocusRepairRef = useRef(false);
     const composerFormRef = useRef<HTMLFormElement>(null);
     const composerFormHeightRef = useRef(0);
     const composerSelectLockRef = useRef(false);
@@ -667,6 +670,13 @@ export const ChatComposer = memo(
     const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
     const activeComposerMenuItemRef = useRef<ComposerCommandItem | null>(null);
     const dragDepthRef = useRef(0);
+
+    useEffect(() => {
+      if (activationFocusRequestId === undefined) {
+        return;
+      }
+      pendingActivationFocusRepairRef.current = true;
+    }, [activationFocusRequestId]);
 
     // ------------------------------------------------------------------
     // Derived: composer send state
@@ -1234,8 +1244,11 @@ export const ChatComposer = memo(
           );
           return;
         }
+        const previousPrompt = promptRef.current;
         promptRef.current = nextPrompt;
-        setPrompt(nextPrompt);
+        if (previousPrompt !== nextPrompt) {
+          setPrompt(nextPrompt);
+        }
         if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
           setComposerDraftTerminalContexts(
             composerDraftTarget,
@@ -1246,6 +1259,20 @@ export const ChatComposer = memo(
         setComposerTrigger(
           cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
         );
+        if (pendingActivationFocusRepairRef.current) {
+          const repairCursor = nextCursor;
+          window.requestAnimationFrame(() => {
+            const composerEditor = composerEditorRef.current;
+            if (!composerEditor) {
+              pendingActivationFocusRepairRef.current = false;
+              return;
+            }
+            if (!composerEditor.isFocused()) {
+              composerEditor.focusAt(repairCursor);
+            }
+            pendingActivationFocusRepairRef.current = false;
+          });
+        }
       },
       [
         activePendingProgress?.activeQuestion,

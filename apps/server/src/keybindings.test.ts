@@ -188,6 +188,21 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         DEFAULT_KEYBINDINGS.map((binding) => [binding.command, binding.key] as const),
       );
 
+      assert.equal(defaultsByCommand.get("workspace.pane.splitRight"), "mod+d");
+      assert.equal(defaultsByCommand.get("workspace.pane.splitDown"), "mod+shift+d");
+      assert.equal(defaultsByCommand.get("workspace.pane.close"), "mod+w");
+      assert.equal(defaultsByCommand.get("workspace.focus.previous"), "mod+[");
+      assert.equal(defaultsByCommand.get("workspace.focus.next"), "mod+]");
+      assert.equal(defaultsByCommand.get("workspace.focus.left"), "mod+alt+arrowleft");
+      assert.equal(defaultsByCommand.get("workspace.focus.right"), "mod+alt+arrowright");
+      assert.equal(defaultsByCommand.get("workspace.focus.up"), "mod+alt+arrowup");
+      assert.equal(defaultsByCommand.get("workspace.focus.down"), "mod+alt+arrowdown");
+      assert.equal(defaultsByCommand.get("workspace.pane.toggleZoom"), "mod+shift+enter");
+      assert.equal(defaultsByCommand.get("workspace.pane.resizeLeft"), "mod+ctrl+arrowleft");
+      assert.equal(defaultsByCommand.get("workspace.pane.resizeRight"), "mod+ctrl+arrowright");
+      assert.equal(defaultsByCommand.get("workspace.pane.resizeUp"), "mod+ctrl+arrowup");
+      assert.equal(defaultsByCommand.get("workspace.pane.resizeDown"), "mod+ctrl+arrowdown");
+      assert.equal(defaultsByCommand.get("workspace.pane.equalize"), "mod+ctrl+=");
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");

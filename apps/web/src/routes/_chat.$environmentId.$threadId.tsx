@@ -1,7 +1,6 @@
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
 import { Suspense, lazy, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
-import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import {
@@ -21,7 +20,8 @@ import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../st
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
-import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import { Sidebar, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import { useWorkspaceStore } from "../workspace/store";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
@@ -164,6 +164,7 @@ const DiffPanelInlineSidebar = (props: {
 
 function ChatThreadRouteView() {
   const navigate = useNavigate();
+  const openThreadSurface = useWorkspaceStore((state) => state.openThreadSurface);
   const threadRef = Route.useParams({
     select: (params) => resolveThreadRouteRef(params),
   });
@@ -249,6 +250,20 @@ function ChatThreadRouteView() {
   }, [bootstrapComplete, environmentHasAnyThreads, navigate, routeThreadExists, threadRef]);
 
   useEffect(() => {
+    if (!threadRef || !bootstrapComplete || !routeThreadExists) {
+      return;
+    }
+
+    openThreadSurface(
+      {
+        scope: "server",
+        threadRef,
+      },
+      "focus-or-tab",
+    );
+  }, [bootstrapComplete, openThreadSurface, routeThreadExists, threadRef]);
+
+  useEffect(() => {
     if (!threadRef || !serverThreadStarted || !draftThread?.promotedTo) {
       return;
     }
@@ -263,40 +278,19 @@ function ChatThreadRouteView() {
 
   if (!shouldUseDiffSheet) {
     return (
-      <>
-        <SidebarInset className="h-dvh  min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-          <ChatView
-            environmentId={threadRef.environmentId}
-            threadId={threadRef.threadId}
-            onDiffPanelOpen={markDiffOpened}
-            reserveTitleBarControlInset={!diffOpen}
-            routeKind="server"
-          />
-        </SidebarInset>
-        <DiffPanelInlineSidebar
-          diffOpen={diffOpen}
-          onCloseDiff={closeDiff}
-          onOpenDiff={openDiff}
-          renderDiffContent={shouldRenderDiffContent}
-        />
-      </>
+      <DiffPanelInlineSidebar
+        diffOpen={diffOpen}
+        onCloseDiff={closeDiff}
+        onOpenDiff={openDiff}
+        renderDiffContent={shouldRenderDiffContent}
+      />
     );
   }
 
   return (
-    <>
-      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-        <ChatView
-          environmentId={threadRef.environmentId}
-          threadId={threadRef.threadId}
-          onDiffPanelOpen={markDiffOpened}
-          routeKind="server"
-        />
-      </SidebarInset>
-      <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
-        {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
-      </DiffPanelSheet>
-    </>
+    <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
+      {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
+    </DiffPanelSheet>
   );
 }
 
