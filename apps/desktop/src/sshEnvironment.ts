@@ -9,6 +9,7 @@ import type {
   DesktopDiscoveredSshHost,
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
+  DesktopUpdateChannel,
 } from "@t3tools/contracts";
 
 import { waitForHttpReady } from "./backendReadiness";
@@ -18,6 +19,7 @@ const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_ASKPASS_DIR_NAME = "t3code-ssh-askpass";
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const SSH_READY_TIMEOUT_MS = 20_000;
+const STABLE_T3_VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 
 interface SshTunnelEntry {
   readonly key: string;
@@ -60,6 +62,7 @@ interface DesktopSshPasswordRequest {
 
 interface DesktopSshEnvironmentManagerOptions {
   readonly passwordProvider?: (request: DesktopSshPasswordRequest) => Promise<string | null>;
+  readonly resolveCliPackageSpec?: () => string;
 }
 
 const NO_HOSTS = [] as const;
@@ -591,8 +594,8 @@ async function resolveDesktopSshTarget(alias: string): Promise<DesktopSshEnviron
   }
 }
 
-function buildRemoteLaunchScript(): string {
-  const runnerScript = buildRemoteT3RunnerScript();
+function buildRemoteLaunchScript(input?: { readonly packageSpec?: string }): string {
+  const runnerScript = buildRemoteT3RunnerScript(input);
   return `
 set -eu
 STATE_KEY="$1"
@@ -665,7 +668,25 @@ function getLastNonEmptyOutputLine(stdout: string): string | null {
   );
 }
 
-function buildRemoteT3RunnerScript(): string {
+export function resolveRemoteT3CliPackageSpec(input: {
+  readonly appVersion: string;
+  readonly updateChannel: DesktopUpdateChannel;
+  readonly isDevelopment?: boolean;
+}): string {
+  if (input.updateChannel === "nightly") {
+    return "t3@nightly";
+  }
+
+  const appVersion = input.appVersion.trim();
+  if (!input.isDevelopment && STABLE_T3_VERSION_PATTERN.test(appVersion)) {
+    return `t3@${appVersion}`;
+  }
+
+  return "t3@latest";
+}
+
+function buildRemoteT3RunnerScript(input?: { readonly packageSpec?: string }): string {
+  const packageSpec = input?.packageSpec?.trim() || "t3@latest";
   return [
     "#!/bin/sh",
     "set -eu",
@@ -673,18 +694,21 @@ function buildRemoteT3RunnerScript(): string {
     '  exec t3 "$@"',
     "fi",
     "if command -v npx >/dev/null 2>&1; then",
-    '  exec npx --yes t3 "$@"',
+    `  exec npx --yes ${packageSpec} "$@"`,
     "fi",
     "if command -v npm >/dev/null 2>&1; then",
-    '  exec npm exec --yes t3 -- "$@"',
+    `  exec npm exec --yes ${packageSpec} -- "$@"`,
     "fi",
-    "printf 'Remote host is missing the t3 CLI and could not find npx or npm on PATH.\\n' >&2",
+    `printf 'Remote host is missing the t3 CLI and could not install ${packageSpec} because npx and npm are unavailable on PATH.\\n' >&2`,
     "exit 1",
   ].join("\n");
 }
 
-function buildRemotePairingScript(target: DesktopSshEnvironmentTarget): string {
-  const runnerScript = buildRemoteT3RunnerScript();
+function buildRemotePairingScript(
+  target: DesktopSshEnvironmentTarget,
+  input?: { readonly packageSpec?: string },
+): string {
+  const runnerScript = buildRemoteT3RunnerScript(input);
   return `
 set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/${remoteStateKey(target)}"
@@ -702,10 +726,11 @@ chmod 700 "$RUNNER_FILE"
 async function launchOrReuseRemoteServer(
   target: DesktopSshEnvironmentTarget,
   input?: SshAuthOptions,
+  runner?: { readonly packageSpec?: string },
 ): Promise<number> {
   const result = await runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s", "--", remoteStateKey(target)],
-    stdin: buildRemoteLaunchScript(),
+    stdin: buildRemoteLaunchScript(runner),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -725,10 +750,11 @@ async function launchOrReuseRemoteServer(
 async function issueRemotePairingToken(
   target: DesktopSshEnvironmentTarget,
   input?: SshAuthOptions,
+  runner?: { readonly packageSpec?: string },
 ): Promise<string> {
   const result = await runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
-    stdin: buildRemotePairingScript(target),
+    stdin: buildRemotePairingScript(target, runner),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -898,6 +924,7 @@ export class DesktopSshEnvironmentManager {
   ): Promise<DesktopSshEnvironmentBootstrap> {
     const resolvedTarget = await resolveDesktopSshTarget(target.alias || target.hostname);
     const key = targetConnectionKey(resolvedTarget);
+    const packageSpec = this.options.resolveCliPackageSpec?.();
     let entry = this.tunnels.get(key) ?? null;
 
     if (entry !== null) {
@@ -912,7 +939,11 @@ export class DesktopSshEnvironmentManager {
 
     if (entry === null) {
       const remotePort = await this.runWithSshAuth(key, resolvedTarget, (authOptions) =>
-        launchOrReuseRemoteServer(resolvedTarget, authOptions),
+        launchOrReuseRemoteServer(
+          resolvedTarget,
+          authOptions,
+          packageSpec === undefined ? undefined : { packageSpec },
+        ),
       );
       const localPort = await findAvailableLocalPort();
       const httpBaseUrl = `http://127.0.0.1:${localPort}/`;
@@ -993,7 +1024,11 @@ export class DesktopSshEnvironmentManager {
 
     const pairingToken = options?.issuePairingToken
       ? await this.runWithSshAuth(key, entry.target, (authOptions) =>
-          issueRemotePairingToken(entry.target, authOptions),
+          issueRemotePairingToken(
+            entry.target,
+            authOptions,
+            packageSpec === undefined ? undefined : { packageSpec },
+          ),
         )
       : null;
 
@@ -1017,6 +1052,7 @@ export const __test = {
   buildRemoteLaunchScript,
   buildRemotePairingScript,
   buildRemoteT3RunnerScript,
+  resolveRemoteT3CliPackageSpec,
   buildSshAskpassHelperDescriptor,
   buildSshChildEnvironment,
   getLastNonEmptyOutputLine,
