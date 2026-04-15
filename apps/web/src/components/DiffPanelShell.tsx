@@ -27,10 +27,8 @@ export function DiffPanelShell(props: {
   return (
     <div
       className={cn(
-        "flex h-full min-w-0 flex-col bg-background",
-        props.mode === "inline"
-          ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
-          : "w-full",
+        "flex h-full min-h-0 min-w-0 flex-1 flex-col self-stretch bg-background",
+        "w-full",
       )}
     >
       {shouldUseDragRegion ? (
@@ -40,7 +38,7 @@ export function DiffPanelShell(props: {
           <div className={getDiffPanelHeaderRowClassName(props.mode)}>{props.header}</div>
         </div>
       )}
-      {props.children}
+      <div className="flex min-h-0 flex-1 flex-col">{props.children}</div>
     </div>
   );
 }

@@ -36,6 +36,7 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { ScrollFadeEffect } from "./ScrollFadeEffect";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
@@ -457,16 +458,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         >
           <ChevronRightIcon className="size-3.5" />
         </button>
-        <div
+        <ScrollFadeEffect
           ref={turnStripRef}
-          className="turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5"
-          style={
-            canScrollTurnStripLeft || canScrollTurnStripRight
-              ? {
-                  maskImage: `linear-gradient(to right, ${canScrollTurnStripLeft ? "transparent 24px, black 72px" : "black"}, ${canScrollTurnStripRight ? "black calc(100% - 72px), transparent calc(100% - 24px)" : "black"})`,
-                }
-              : undefined
-          }
+          orientation="horizontal"
+          data-scroll-fade-left={canScrollTurnStripLeft ? "true" : undefined}
+          className={cn(
+            "turn-chip-strip flex gap-1 px-8 py-0.5",
+            "[--mask-width:1.75rem] [--mask-offset-left:2rem] [--mask-offset-right:2rem]",
+            !canScrollTurnStripLeft && "[--left-mask-width:0px]",
+            !canScrollTurnStripRight && "[--right-mask-width:0px]",
+          )}
           onWheel={onTurnStripWheel}
         >
           <button
@@ -517,7 +518,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               </div>
             </button>
           ))}
-        </div>
+        </ScrollFadeEffect>
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
         <ToggleGroup
@@ -558,15 +559,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex h-full min-h-0 flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
       ) : !isGitRepo ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex h-full min-h-0 flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
       ) : orderedTurnDiffSummaries.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex h-full min-h-0 flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
         </div>
       ) : (

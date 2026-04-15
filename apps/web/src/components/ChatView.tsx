@@ -29,7 +29,18 @@ import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import * as Schema from "effect/Schema";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
@@ -162,7 +173,7 @@ import {
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
-import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import {
   useServerAvailableEditors,
@@ -309,6 +320,26 @@ function formatOutgoingPrompt(params: {
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+const CHAT_DIFF_INLINE_WIDTH_STORAGE_KEY = "chat_diff_inline_width";
+const CHAT_DIFF_INLINE_DEFAULT_WIDTH_RATIO = 0.48;
+const CHAT_DIFF_INLINE_MIN_WIDTH = 26 * 16;
+const CHAT_DIFF_MAIN_CONTENT_MIN_WIDTH = 24 * 16;
+
+function clampInlineDiffWidth(width: number, availableWidth: number) {
+  const maximumAllowedWidth = Math.max(0, availableWidth - CHAT_DIFF_MAIN_CONTENT_MIN_WIDTH);
+  if (maximumAllowedWidth <= 0) {
+    return 0;
+  }
+  const minimumAllowedWidth = Math.min(CHAT_DIFF_INLINE_MIN_WIDTH, maximumAllowedWidth);
+  return Math.max(minimumAllowedWidth, Math.min(width, maximumAllowedWidth));
+}
+
+function resolveDefaultInlineDiffWidth(availableWidth: number) {
+  return clampInlineDiffWidth(
+    availableWidth * CHAT_DIFF_INLINE_DEFAULT_WIDTH_RATIO,
+    availableWidth,
+  );
+}
 
 type ChatViewProps =
   | {
@@ -316,6 +347,8 @@ type ChatViewProps =
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
+      messagesAside?: ReactNode;
+      messagesAsideOpen?: boolean;
       routeKind: "server";
       draftId?: never;
     }
@@ -324,6 +357,8 @@ type ChatViewProps =
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
+      messagesAside?: ReactNode;
+      messagesAsideOpen?: boolean;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -583,7 +618,10 @@ export default function ChatView(props: ChatViewProps) {
     routeKind,
     onDiffPanelOpen,
     reserveTitleBarControlInset = true,
+    messagesAside,
+    messagesAsideOpen = false,
   } = props;
+  const hasMessagesAside = messagesAside !== null && messagesAside !== undefined;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -699,10 +737,197 @@ export default function ChatView(props: ChatViewProps) {
   );
   const legendListRef = useRef<LegendListRef | null>(null);
   const isAtEndRef = useRef(true);
+  const initialMessagesAsideWidthPx = useMemo(() => {
+    try {
+      return getLocalStorageItem(CHAT_DIFF_INLINE_WIDTH_STORAGE_KEY, Schema.Finite);
+    } catch {
+      return null;
+    }
+  }, []);
+  const splitContentRef = useRef<HTMLDivElement | null>(null);
+  const messagesAsideContainerRef = useRef<HTMLDivElement | null>(null);
+  const messagesAsideWidthRef = useRef<number | null>(initialMessagesAsideWidthPx);
+  const [messagesAsideWidthPx, setMessagesAsideWidthPx] = useState<number | null>(
+    initialMessagesAsideWidthPx,
+  );
+  const messagesAsideResizeStateRef = useRef<{
+    pointerId: number;
+    handle: HTMLButtonElement;
+    rafId: number | null;
+    startWidth: number;
+    startX: number;
+    width: number;
+  } | null>(null);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+
+  const stopMessagesAsideResize = useCallback((pointerId?: number) => {
+    const resizeState = messagesAsideResizeStateRef.current;
+    if (!resizeState) {
+      return;
+    }
+    if (resizeState.rafId !== null) {
+      window.cancelAnimationFrame(resizeState.rafId);
+    }
+    if (typeof pointerId === "number") {
+      try {
+        if (resizeState.handle.hasPointerCapture(pointerId)) {
+          resizeState.handle.releasePointerCapture(pointerId);
+        }
+      } catch {
+        // Synthetic pointer events in tests may not establish native capture state.
+      }
+    }
+    if (resizeState.width > 0) {
+      messagesAsideWidthRef.current = resizeState.width;
+      setMessagesAsideWidthPx(resizeState.width);
+      setLocalStorageItem(CHAT_DIFF_INLINE_WIDTH_STORAGE_KEY, resizeState.width, Schema.Finite);
+    }
+    messagesAsideContainerRef.current?.style.removeProperty("transition-duration");
+    messagesAsideResizeStateRef.current = null;
+    document.body.style.removeProperty("cursor");
+    document.body.style.removeProperty("user-select");
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopMessagesAsideResize();
+    };
+  }, [stopMessagesAsideResize]);
+
+  useLayoutEffect(() => {
+    if (!hasMessagesAside) {
+      return;
+    }
+    const splitElement = splitContentRef.current;
+    const asideElement = messagesAsideContainerRef.current;
+    if (!splitElement) {
+      return;
+    }
+
+    const syncWidth = () => {
+      const availableWidth = splitElement.clientWidth;
+      const candidate = clampInlineDiffWidth(
+        messagesAsideWidthRef.current ?? resolveDefaultInlineDiffWidth(availableWidth),
+        availableWidth,
+      );
+      messagesAsideWidthRef.current = candidate > 0 ? candidate : null;
+      if (asideElement) {
+        asideElement.style.width = messagesAsideOpen && candidate > 0 ? `${candidate}px` : "0px";
+      }
+      if (messagesAsideResizeStateRef.current) {
+        return;
+      }
+      setMessagesAsideWidthPx((previous) => (previous === candidate ? previous : candidate));
+    };
+
+    syncWidth();
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(syncWidth);
+    observer.observe(splitElement);
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasMessagesAside, messagesAsideOpen]);
+
+  const handleMessagesAsideResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0 || !messagesAsideOpen) {
+        return;
+      }
+      const splitElement = splitContentRef.current;
+      const asideElement = messagesAsideContainerRef.current;
+      if (!splitElement) {
+        return;
+      }
+      const startWidth = clampInlineDiffWidth(
+        messagesAsideWidthPx ?? resolveDefaultInlineDiffWidth(splitElement.clientWidth),
+        splitElement.clientWidth,
+      );
+      if (startWidth <= 0) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (asideElement) {
+        asideElement.style.setProperty("transition-duration", "0ms");
+      }
+      messagesAsideResizeStateRef.current = {
+        pointerId: event.pointerId,
+        handle: event.currentTarget,
+        rafId: null,
+        startWidth,
+        startX: event.clientX,
+        width: startWidth,
+      };
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Synthetic pointer events in tests may not establish native capture state.
+      }
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [messagesAsideOpen, messagesAsideWidthPx],
+  );
+
+  const handleMessagesAsideResizePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const resizeState = messagesAsideResizeStateRef.current;
+      const splitElement = splitContentRef.current;
+      const asideElement = messagesAsideContainerRef.current;
+      if (
+        !resizeState ||
+        resizeState.pointerId !== event.pointerId ||
+        !splitElement ||
+        !asideElement
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      const nextWidth = clampInlineDiffWidth(
+        resizeState.startWidth + (resizeState.startX - event.clientX),
+        splitElement.clientWidth,
+      );
+      if (resizeState.rafId !== null) {
+        window.cancelAnimationFrame(resizeState.rafId);
+      }
+      resizeState.rafId = window.requestAnimationFrame(() => {
+        const activeResizeState = messagesAsideResizeStateRef.current;
+        if (!activeResizeState) {
+          return;
+        }
+        activeResizeState.rafId = null;
+        activeResizeState.width = nextWidth;
+        messagesAsideWidthRef.current = nextWidth;
+        asideElement.style.width = `${nextWidth}px`;
+      });
+    },
+    [],
+  );
+
+  const handleMessagesAsideResizePointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const resizeState = messagesAsideResizeStateRef.current;
+      if (!resizeState || resizeState.pointerId !== event.pointerId) {
+        return;
+      }
+      event.preventDefault();
+      stopMessagesAsideResize(event.pointerId);
+    },
+    [stopMessagesAsideResize],
+  );
+  const resolvedMessagesAsideWidthStyle =
+    messagesAsideOpen && messagesAsideWidthPx !== null && messagesAsideWidthPx > 0
+      ? { width: `${messagesAsideWidthPx}px` }
+      : { width: "0px" };
 
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef),
@@ -3185,6 +3410,7 @@ export default function ChatView(props: ChatViewProps) {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
       {/* Top bar */}
       <header
+        data-chat-header="true"
         className={cn(
           "border-b border-border px-3 sm:px-5",
           isElectron
@@ -3234,146 +3460,181 @@ export default function ChatView(props: ChatViewProps) {
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* Messages Wrapper */}
-          <div className="relative flex min-h-0 flex-1 flex-col">
-            {/* Messages — LegendList handles virtualization and scrolling internally */}
-            <MessagesTimeline
-              key={activeThread.id}
-              isWorking={isWorking}
-              activeTurnInProgress={isWorking || !latestTurnSettled}
-              activeTurnId={activeLatestTurn?.turnId ?? null}
-              activeTurnStartedAt={activeWorkStartedAt}
-              listRef={legendListRef}
-              timelineEntries={timelineEntries}
-              completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-              completionSummary={completionSummary}
-              turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-              activeThreadEnvironmentId={activeThread.environmentId}
-              routeThreadKey={routeThreadKey}
-              onOpenTurnDiff={onOpenTurnDiff}
-              revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-              onRevertUserMessage={onRevertUserMessage}
-              isRevertingCheckpoint={isRevertingCheckpoint}
-              onImageExpand={onExpandTimelineImage}
-              markdownCwd={gitCwd ?? undefined}
-              resolvedTheme={resolvedTheme}
-              timestampFormat={timestampFormat}
-              workspaceRoot={activeWorkspaceRoot}
-              onIsAtEndChange={onIsAtEndChange}
-            />
+        <div ref={splitContentRef} className="flex min-h-0 min-w-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {/* Messages Wrapper */}
+            <div className="relative flex min-h-0 flex-1 flex-col">
+              {/* Messages — LegendList handles virtualization and scrolling internally */}
+              <MessagesTimeline
+                key={activeThread.id}
+                isWorking={isWorking}
+                activeTurnInProgress={isWorking || !latestTurnSettled}
+                activeTurnId={activeLatestTurn?.turnId ?? null}
+                activeTurnStartedAt={activeWorkStartedAt}
+                listRef={legendListRef}
+                timelineEntries={timelineEntries}
+                completionDividerBeforeEntryId={completionDividerBeforeEntryId}
+                completionSummary={completionSummary}
+                turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+                activeThreadEnvironmentId={activeThread.environmentId}
+                routeThreadKey={routeThreadKey}
+                onOpenTurnDiff={onOpenTurnDiff}
+                revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+                onRevertUserMessage={onRevertUserMessage}
+                isRevertingCheckpoint={isRevertingCheckpoint}
+                onImageExpand={onExpandTimelineImage}
+                markdownCwd={gitCwd ?? undefined}
+                resolvedTheme={resolvedTheme}
+                timestampFormat={timestampFormat}
+                workspaceRoot={activeWorkspaceRoot}
+                onIsAtEndChange={onIsAtEndChange}
+              />
 
-            {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
-            {showScrollToBottom && (
-              <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
-                <button
-                  type="button"
-                  onClick={() => scrollToEnd(true)}
-                  className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
-                >
-                  <ChevronDownIcon className="size-3.5" />
-                  Scroll to bottom
-                </button>
-              </div>
+              {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
+              {showScrollToBottom && (
+                <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => scrollToEnd(true)}
+                    className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
+                  >
+                    <ChevronDownIcon className="size-3.5" />
+                    Scroll to bottom
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Input bar */}
+            <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+              <ChatComposer
+                ref={composerRef}
+                composerDraftTarget={composerDraftTarget}
+                environmentId={environmentId}
+                routeKind={routeKind}
+                routeThreadRef={routeThreadRef}
+                draftId={draftId}
+                activeThreadId={activeThreadId}
+                activeThreadEnvironmentId={activeThread?.environmentId}
+                activeThread={activeThread}
+                isServerThread={isServerThread}
+                isLocalDraftThread={isLocalDraftThread}
+                phase={phase}
+                isConnecting={isConnecting}
+                isSendBusy={isSendBusy}
+                isPreparingWorktree={isPreparingWorktree}
+                activePendingApproval={activePendingApproval}
+                pendingApprovals={pendingApprovals}
+                pendingUserInputs={pendingUserInputs}
+                activePendingProgress={activePendingProgress}
+                activePendingResolvedAnswers={activePendingResolvedAnswers}
+                activePendingIsResponding={activePendingIsResponding}
+                activePendingDraftAnswers={activePendingDraftAnswers}
+                activePendingQuestionIndex={activePendingQuestionIndex}
+                respondingRequestIds={respondingRequestIds}
+                showPlanFollowUpPrompt={showPlanFollowUpPrompt}
+                activeProposedPlan={activeProposedPlan}
+                activePlan={activePlan as { turnId?: TurnId } | null}
+                sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
+                planSidebarLabel={planSidebarLabel}
+                planSidebarOpen={planSidebarOpen}
+                runtimeMode={runtimeMode}
+                interactionMode={interactionMode}
+                lockedProvider={lockedProvider}
+                providerStatuses={providerStatuses as ServerProvider[]}
+                activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
+                activeThreadModelSelection={activeThread?.modelSelection}
+                activeThreadActivities={activeThread?.activities}
+                resolvedTheme={resolvedTheme}
+                settings={settings}
+                gitCwd={gitCwd}
+                promptRef={promptRef}
+                composerImagesRef={composerImagesRef}
+                composerTerminalContextsRef={composerTerminalContextsRef}
+                shouldAutoScrollRef={isAtEndRef}
+                scheduleStickToBottom={scrollToEnd}
+                onSend={onSend}
+                onInterrupt={onInterrupt}
+                onImplementPlanInNewThread={onImplementPlanInNewThread}
+                onRespondToApproval={onRespondToApproval}
+                onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
+                onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
+                onPreviousActivePendingUserInputQuestion={onPreviousActivePendingUserInputQuestion}
+                onChangeActivePendingUserInputCustomAnswer={
+                  onChangeActivePendingUserInputCustomAnswer
+                }
+                onProviderModelSelect={onProviderModelSelect}
+                toggleInteractionMode={toggleInteractionMode}
+                handleRuntimeModeChange={handleRuntimeModeChange}
+                handleInteractionModeChange={handleInteractionModeChange}
+                togglePlanSidebar={togglePlanSidebar}
+                focusComposer={focusComposer}
+                scheduleComposerFocus={scheduleComposerFocus}
+                setThreadError={setThreadError}
+                onExpandImage={onExpandTimelineImage}
+              />
+            </div>
+
+            {isGitRepo && (
+              <BranchToolbar
+                environmentId={activeThread.environmentId}
+                threadId={activeThread.id}
+                {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                onEnvModeChange={onEnvModeChange}
+                {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
+                {...(canOverrideServerThreadEnvMode
+                  ? {
+                      activeThreadBranchOverride: activeThreadBranch,
+                      onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+                    }
+                  : {})}
+                envLocked={envLocked}
+                onComposerFocusRequest={scheduleComposerFocus}
+                {...(canCheckoutPullRequestIntoThread
+                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                  : {})}
+                {...(hasMultipleEnvironments
+                  ? {
+                      availableEnvironments: logicalProjectEnvironments,
+                      onEnvironmentChange,
+                    }
+                  : {})}
+              />
             )}
           </div>
 
-          {/* Input bar */}
-          <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
-            <ChatComposer
-              ref={composerRef}
-              composerDraftTarget={composerDraftTarget}
-              environmentId={environmentId}
-              routeKind={routeKind}
-              routeThreadRef={routeThreadRef}
-              draftId={draftId}
-              activeThreadId={activeThreadId}
-              activeThreadEnvironmentId={activeThread?.environmentId}
-              activeThread={activeThread}
-              isServerThread={isServerThread}
-              isLocalDraftThread={isLocalDraftThread}
-              phase={phase}
-              isConnecting={isConnecting}
-              isSendBusy={isSendBusy}
-              isPreparingWorktree={isPreparingWorktree}
-              activePendingApproval={activePendingApproval}
-              pendingApprovals={pendingApprovals}
-              pendingUserInputs={pendingUserInputs}
-              activePendingProgress={activePendingProgress}
-              activePendingResolvedAnswers={activePendingResolvedAnswers}
-              activePendingIsResponding={activePendingIsResponding}
-              activePendingDraftAnswers={activePendingDraftAnswers}
-              activePendingQuestionIndex={activePendingQuestionIndex}
-              respondingRequestIds={respondingRequestIds}
-              showPlanFollowUpPrompt={showPlanFollowUpPrompt}
-              activeProposedPlan={activeProposedPlan}
-              activePlan={activePlan as { turnId?: TurnId } | null}
-              sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
-              planSidebarLabel={planSidebarLabel}
-              planSidebarOpen={planSidebarOpen}
-              runtimeMode={runtimeMode}
-              interactionMode={interactionMode}
-              lockedProvider={lockedProvider}
-              providerStatuses={providerStatuses as ServerProvider[]}
-              activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
-              activeThreadModelSelection={activeThread?.modelSelection}
-              activeThreadActivities={activeThread?.activities}
-              resolvedTheme={resolvedTheme}
-              settings={settings}
-              gitCwd={gitCwd}
-              promptRef={promptRef}
-              composerImagesRef={composerImagesRef}
-              composerTerminalContextsRef={composerTerminalContextsRef}
-              shouldAutoScrollRef={isAtEndRef}
-              scheduleStickToBottom={scrollToEnd}
-              onSend={onSend}
-              onInterrupt={onInterrupt}
-              onImplementPlanInNewThread={onImplementPlanInNewThread}
-              onRespondToApproval={onRespondToApproval}
-              onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
-              onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
-              onPreviousActivePendingUserInputQuestion={onPreviousActivePendingUserInputQuestion}
-              onChangeActivePendingUserInputCustomAnswer={
-                onChangeActivePendingUserInputCustomAnswer
-              }
-              onProviderModelSelect={onProviderModelSelect}
-              toggleInteractionMode={toggleInteractionMode}
-              handleRuntimeModeChange={handleRuntimeModeChange}
-              handleInteractionModeChange={handleInteractionModeChange}
-              togglePlanSidebar={togglePlanSidebar}
-              focusComposer={focusComposer}
-              scheduleComposerFocus={scheduleComposerFocus}
-              setThreadError={setThreadError}
-              onExpandImage={onExpandTimelineImage}
-            />
-          </div>
+          {hasMessagesAside ? (
+            <div className="relative flex h-full min-h-0 shrink-0 items-stretch">
+              <button
+                type="button"
+                aria-label="Resize diff panel"
+                data-chat-messages-aside-resize-handle="true"
+                className={cn(
+                  "group/diff-resize absolute inset-y-0 left-0 z-20 hidden w-4 -translate-x-1/2 touch-none border-0 bg-transparent transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] sm:flex",
+                  "cursor-col-resize after:bg-border/60 hover:after:bg-border focus-visible:after:bg-border focus-visible:outline-none",
+                  messagesAsideOpen ? "opacity-100" : "pointer-events-none opacity-0",
+                )}
+                onPointerDown={handleMessagesAsideResizePointerDown}
+                onPointerMove={handleMessagesAsideResizePointerMove}
+                onPointerUp={handleMessagesAsideResizePointerUp}
+                onPointerCancel={handleMessagesAsideResizePointerUp}
+              />
+              <div
+                ref={messagesAsideContainerRef}
+                data-chat-messages-aside={messagesAsideOpen ? "open" : "closed"}
+                aria-hidden={!messagesAsideOpen}
+                className={cn(
+                  "flex h-full min-h-0 shrink-0 overflow-hidden transition-[width] duration-200 ease-linear",
+                  messagesAsideOpen ? undefined : "w-0",
+                  !messagesAsideOpen && "pointer-events-none",
+                )}
+                style={resolvedMessagesAsideWidthStyle}
+              >
+                <div className="flex h-full min-h-0 w-full min-w-0 flex-col">{messagesAside}</div>
+              </div>
+            </div>
+          ) : null}
 
-          {isGitRepo && (
-            <BranchToolbar
-              environmentId={activeThread.environmentId}
-              threadId={activeThread.id}
-              {...(routeKind === "draft" && draftId ? { draftId } : {})}
-              onEnvModeChange={onEnvModeChange}
-              {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
-              {...(canOverrideServerThreadEnvMode
-                ? {
-                    activeThreadBranchOverride: activeThreadBranch,
-                    onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
-                  }
-                : {})}
-              envLocked={envLocked}
-              onComposerFocusRequest={scheduleComposerFocus}
-              {...(canCheckoutPullRequestIntoThread
-                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                : {})}
-              {...(hasMultipleEnvironments
-                ? {
-                    availableEnvironments: logicalProjectEnvironments,
-                    onEnvironmentChange,
-                  }
-                : {})}
-            />
-          )}
           {pullRequestDialogState ? (
             <PullRequestThreadDialog
               key={pullRequestDialogState.key}
