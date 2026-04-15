@@ -1,0 +1,47 @@
+{
+  "fill": {
+    "solid": "display-p3:0.00000,0.00000,0.00000,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "blend-mode": "normal",
+          "fill": "automatic",
+          "glass": true,
+          "hidden": false,
+          "image-name": "gpt-image-1.5-kn76n9hynne5q3qxy3g91chp2d84t871.png",
+          "name": "gpt-image-1.5-kn76n9hynne5q3qxy3g91chp2d84t871",
+          "position": {
+            "scale": 1.05,
+            "translation-in-points": [0, 0]
+          }
+        },
+        {
+          "image-name": "T3.svg",
+          "name": "T3",
+          "position": {
+            "scale": 10,
+            "translation-in-points": [0, 0]
+          }
+        },
+        {
+          "hidden": false,
+          "image-name": "Texturelabs_Paper_381XL.jpg",
+          "name": "Texturelabs_Paper_381XL"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": ["iOS", "macOS"]
+  }
+}

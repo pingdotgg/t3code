@@ -8,6 +8,7 @@ import {
   DEFAULT_DESKTOP_SETTINGS,
   readDesktopSettings,
   setDesktopServerExposurePreference,
+  setDesktopUpdateChannelPreference,
   writeDesktopSettings,
 } from "./desktopSettings";
 
@@ -35,10 +36,12 @@ describe("desktopSettings", () => {
 
     writeDesktopSettings(settingsPath, {
       serverExposureMode: "network-accessible",
+      updateChannel: "latest",
     });
 
     expect(readDesktopSettings(settingsPath)).toEqual({
       serverExposureMode: "network-accessible",
+      updateChannel: "latest",
     });
   });
 
@@ -47,11 +50,28 @@ describe("desktopSettings", () => {
       setDesktopServerExposurePreference(
         {
           serverExposureMode: "local-only",
+          updateChannel: "latest",
         },
         "network-accessible",
       ),
     ).toEqual({
       serverExposureMode: "network-accessible",
+      updateChannel: "latest",
+    });
+  });
+
+  it("persists the requested nightly update channel", () => {
+    expect(
+      setDesktopUpdateChannelPreference(
+        {
+          serverExposureMode: "local-only",
+          updateChannel: "latest",
+        },
+        "nightly",
+      ),
+    ).toEqual({
+      serverExposureMode: "local-only",
+      updateChannel: "nightly",
     });
   });
 

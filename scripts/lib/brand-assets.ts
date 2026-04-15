@@ -6,6 +6,12 @@ export const BRAND_ASSET_PATHS = {
   productionWebFavicon16Png: "assets/prod/t3-black-web-favicon-16x16.png",
   productionWebFavicon32Png: "assets/prod/t3-black-web-favicon-32x32.png",
   productionWebAppleTouchIconPng: "assets/prod/t3-black-web-apple-touch-180.png",
+
+  nightlyMacIconPng: "assets/nightly/blueprint-macos-1024.png",
+  nightlyLinuxIconPng: "assets/nightly/blueprint-universal-1024.png",
+  nightlyWindowsIconIco: "assets/nightly/blueprint-windows.ico",
+
+  developmentDesktopIconPng: "assets/dev/blueprint-macos-1024.png",
   developmentWindowsIconIco: "assets/dev/blueprint-windows.ico",
   developmentWebFaviconIco: "assets/dev/blueprint-web-favicon.ico",
   developmentWebFavicon16Png: "assets/dev/blueprint-web-favicon-16x16.png",

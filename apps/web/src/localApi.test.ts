@@ -157,6 +157,7 @@ function createLocalStorageStub(): Storage {
 
 function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
   return {
+    getAppBranding: () => null,
     getLocalEnvironmentBootstrap: () => null,
     getClientSettings: async () => null,
     setClientSettings: async () => undefined,
@@ -183,6 +184,9 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     onMenuAction: () => () => undefined,
     getUpdateState: async () => {
       throw new Error("getUpdateState not implemented in test");
+    },
+    setUpdateChannel: async () => {
+      throw new Error("setUpdateChannel not implemented in test");
     },
     checkForUpdate: async () => {
       throw new Error("checkForUpdate not implemented in test");

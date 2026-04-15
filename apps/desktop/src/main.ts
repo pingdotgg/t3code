@@ -22,8 +22,10 @@ import type { MenuItemConstructorOptions } from "electron";
 import type {
   ClientSettings,
   DesktopTheme,
+  DesktopAppBranding,
   DesktopServerExposureMode,
   DesktopServerExposureState,
+  DesktopUpdateChannel,
   PersistedSavedEnvironmentRecord,
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
@@ -39,6 +41,7 @@ import {
   DEFAULT_DESKTOP_SETTINGS,
   readDesktopSettings,
   setDesktopServerExposurePreference,
+  setDesktopUpdateChannelPreference,
   writeDesktopSettings,
 } from "./desktopSettings";
 import {
@@ -69,6 +72,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { resolveDesktopAppBranding } from "./appBranding";
 
 syncShellEnvironment();
 
@@ -80,9 +84,11 @@ const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
+const UPDATE_SET_CHANNEL_CHANNEL = "desktop:update-set-channel";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const UPDATE_CHECK_CHANNEL = "desktop:update-check";
+const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
 const GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL = "desktop:get-local-environment-bootstrap";
 const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
 const SET_CLIENT_SETTINGS_CHANNEL = "desktop:set-client-settings";
@@ -101,7 +107,11 @@ const SAVED_ENVIRONMENT_REGISTRY_PATH = Path.join(STATE_DIR, "saved-environments
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+const desktopAppBranding: DesktopAppBranding = resolveDesktopAppBranding({
+  isDevelopment,
+  appVersion: app.getVersion(),
+});
+const APP_DISPLAY_NAME = desktopAppBranding.displayName;
 const APP_USER_MODEL_ID = isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code";
 const LINUX_DESKTOP_ENTRY_NAME = isDevelopment ? "t3code-dev.desktop" : "t3code.desktop";
 const LINUX_WM_CLASS = isDevelopment ? "t3code-dev" : "t3code";
@@ -116,8 +126,6 @@ const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 const SERVER_SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
-const DESKTOP_UPDATE_CHANNEL = "latest";
-const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
 const DESKTOP_REQUIRED_PORT_PROBE_HOSTS = ["0.0.0.0", "::"] as const;
 const TITLEBAR_HEIGHT = 40;
@@ -167,7 +175,11 @@ const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
   runningUnderArm64Translation: app.runningUnderARM64Translation === true,
 });
 const initialUpdateState = (): DesktopUpdateState =>
-  createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);
+  createInitialDesktopUpdateState(
+    app.getVersion(),
+    desktopRuntimeInfo,
+    desktopSettings.updateChannel,
+  );
 
 function logTimestamp(): string {
   return new Date().toISOString();
@@ -975,6 +987,18 @@ function resolveResourcePath(fileName: string): string | null {
 }
 
 function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
+  if (isDevelopment && process.platform === "darwin" && ext === "png") {
+    const developmentDockIconPath = Path.join(
+      ROOT_DIR,
+      "assets",
+      "dev",
+      "blueprint-macos-1024.png",
+    );
+    if (FS.existsSync(developmentDockIconPath)) {
+      return developmentDockIconPath;
+    }
+  }
+
   return resolveResourcePath(`icon.${ext}`);
 }
 
@@ -1072,6 +1096,26 @@ function emitUpdateState(): void {
 function setUpdateState(patch: Partial<DesktopUpdateState>): void {
   updateState = { ...updateState, ...patch };
   emitUpdateState();
+}
+
+function createBaseUpdateState(
+  channel: DesktopUpdateChannel,
+  enabled: boolean,
+): DesktopUpdateState {
+  return {
+    ...createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo, channel),
+    enabled,
+    status: enabled ? "idle" : "disabled",
+  };
+}
+
+function applyAutoUpdaterChannel(channel: DesktopUpdateChannel): void {
+  autoUpdater.channel = channel;
+  autoUpdater.allowPrerelease = channel === "nightly";
+  autoUpdater.allowDowngrade = channel === "nightly";
+  console.info(
+    `[desktop-updater] Using update channel '${channel}' (allowPrerelease=${channel === "nightly"}).`,
+  );
 }
 
 function shouldEnableAutoUpdates(): boolean {
@@ -1193,11 +1237,7 @@ function configureAutoUpdater(): void {
   }
 
   const enabled = shouldEnableAutoUpdates();
-  setUpdateState({
-    ...createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo),
-    enabled,
-    status: enabled ? "idle" : "disabled",
-  });
+  setUpdateState(createBaseUpdateState(desktopSettings.updateChannel, enabled));
   if (!enabled) {
     return;
   }
@@ -1205,10 +1245,7 @@ function configureAutoUpdater(): void {
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
-  // Keep alpha branding, but force all installs onto the stable update track.
-  autoUpdater.channel = DESKTOP_UPDATE_CHANNEL;
-  autoUpdater.allowPrerelease = DESKTOP_UPDATE_ALLOW_PRERELEASE;
-  autoUpdater.allowDowngrade = false;
+  applyAutoUpdaterChannel(desktopSettings.updateChannel);
   autoUpdater.disableDifferentialDownload = isArm64HostRunningIntelBuild(desktopRuntimeInfo);
   let lastLoggedDownloadMilestone = -1;
 
@@ -1486,6 +1523,11 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.removeAllListeners(GET_APP_BRANDING_CHANNEL);
+  ipcMain.on(GET_APP_BRANDING_CHANNEL, (event) => {
+    event.returnValue = desktopAppBranding;
+  });
+
   ipcMain.removeAllListeners(GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL);
   ipcMain.on(GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL, (event) => {
     event.returnValue = {
@@ -1712,6 +1754,42 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);
   ipcMain.handle(UPDATE_GET_STATE_CHANNEL, async () => updateState);
+
+  ipcMain.removeHandler(UPDATE_SET_CHANNEL_CHANNEL);
+  ipcMain.handle(UPDATE_SET_CHANNEL_CHANNEL, async (_event, rawChannel: unknown) => {
+    if (rawChannel !== "latest" && rawChannel !== "nightly") {
+      throw new Error("Invalid desktop update channel input.");
+    }
+    if (updateCheckInFlight || updateDownloadInFlight || updateInstallInFlight) {
+      throw new Error("Cannot change update tracks while an update action is in progress.");
+    }
+
+    const nextChannel = rawChannel as DesktopUpdateChannel;
+    if (nextChannel === desktopSettings.updateChannel) {
+      return updateState;
+    }
+
+    desktopSettings = setDesktopUpdateChannelPreference(desktopSettings, nextChannel);
+    writeDesktopSettings(DESKTOP_SETTINGS_PATH, desktopSettings);
+
+    const enabled = shouldEnableAutoUpdates();
+    setUpdateState(createBaseUpdateState(nextChannel, enabled));
+
+    if (!enabled || !updaterConfigured) {
+      return updateState;
+    }
+
+    applyAutoUpdaterChannel(nextChannel);
+    const allowDowngrade = autoUpdater.allowDowngrade;
+    // An explicit channel switch should allow the immediate nightly->stable rollback path.
+    autoUpdater.allowDowngrade = true;
+    try {
+      await checkForUpdates("channel-change");
+    } finally {
+      autoUpdater.allowDowngrade = allowDowngrade;
+    }
+    return updateState;
+  });
 
   ipcMain.removeHandler(UPDATE_DOWNLOAD_CHANNEL);
   ipcMain.handle(UPDATE_DOWNLOAD_CHANNEL, async () => {
