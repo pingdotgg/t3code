@@ -1,7 +1,7 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
-  type ClaudeCodeEffort,
+  type ClaudeAgentEffort,
   type ClaudeModelOptions,
   type CodexModelOptions,
   type ModelCapabilities,
@@ -225,7 +225,7 @@ export function resolveApiModelId(modelSelection: ModelSelection): string {
 
 export function applyClaudePromptEffortPrefix(
   text: string,
-  effort: ClaudeCodeEffort | null | undefined,
+  effort: ClaudeAgentEffort | null | undefined,
 ): string {
   const trimmed = text.trim();
   if (!trimmed) {

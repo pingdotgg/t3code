@@ -23,7 +23,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.77",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.111",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",

@@ -351,6 +351,53 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("defaults Claude Opus 4.7 sessions to xhigh effort", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-7",
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.effort, "xhigh");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("forwards xhigh effort for Claude Opus 4.7", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-7",
+          options: {
+            effort: "xhigh",
+          },
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.effort, "xhigh");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("falls back to default effort when unsupported max is requested for Sonnet 4.6", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
