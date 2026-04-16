@@ -32,7 +32,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../ui/dialog";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import { ScrollArea } from "../ui/scroll-area";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -1175,7 +1175,6 @@ export function ConnectionsSettings() {
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
-  const [isManualSshFormOpen, setIsManualSshFormOpen] = useState(false);
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const [reconnectingSavedEnvironmentId, setReconnectingSavedEnvironmentId] =
@@ -1322,7 +1321,7 @@ export function ConnectionsSettings() {
         setSavedBackendSshHost("");
         setSavedBackendSshUsername("");
         setSavedBackendSshPort("");
-        setIsManualSshFormOpen(false);
+
         setAddBackendDialogOpen(false);
         toastManager.add({
           type: "success",
@@ -1331,7 +1330,7 @@ export function ConnectionsSettings() {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to connect SSH host.";
-        setIsManualSshFormOpen(true);
+
         setSavedBackendError(message);
         toastManager.add({
           type: "error",
@@ -1363,7 +1362,6 @@ export function ConnectionsSettings() {
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");
       setSavedBackendSshPort("");
-      setIsManualSshFormOpen(false);
       setAddBackendDialogOpen(false);
       toastManager.add({
         type: "success",
@@ -1875,7 +1873,6 @@ export function ConnectionsSettings() {
               setAddBackendDialogOpen(open);
               if (!open) {
                 setSavedBackendError(null);
-                setIsManualSshFormOpen(false);
               }
             }}
           >
@@ -1887,7 +1884,7 @@ export function ConnectionsSettings() {
                 </Button>
               }
             />
-            <DialogPopup className="sm:max-w-3xl">
+            <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
               <DialogHeader>
                 <DialogTitle>Add Environment</DialogTitle>
                 <DialogDescription>Pair another environment to this client.</DialogDescription>
@@ -2046,124 +2043,109 @@ export function ConnectionsSettings() {
                       {discoveredSshHostsError ? (
                         <p className="text-xs text-destructive">{discoveredSshHostsError}</p>
                       ) : null}
-                      <div>
-                        {discoveredSshHosts.map((target) => (
-                          <DesktopSshHostRow
-                            key={`${target.alias}:${target.hostname}:${target.port ?? ""}`}
-                            target={target}
-                            savedRecord={savedDesktopSshEnvironmentsByAlias[target.alias] ?? null}
-                            connectingHostAlias={connectingSshHostAlias}
-                            onConnect={(nextTarget) => void handleConnectSshHost(nextTarget)}
-                          />
-                        ))}
-                        {hasLoadedDiscoveredSshHosts &&
-                        !isLoadingDiscoveredSshHosts &&
-                        discoveredSshHosts.length === 0 ? (
-                          <div className={ITEM_ROW_CLASSNAME}>
-                            <p className="text-xs text-muted-foreground">
-                              No SSH hosts were discovered from <code>~/.ssh/config</code> or{" "}
-                              <code>known_hosts</code>.
-                            </p>
-                          </div>
-                        ) : null}
-                      </div>
+                      <ScrollArea scrollFade className="max-h-64">
+                        <div>
+                          {discoveredSshHosts.map((target) => (
+                            <DesktopSshHostRow
+                              key={`${target.alias}:${target.hostname}:${target.port ?? ""}`}
+                              target={target}
+                              savedRecord={savedDesktopSshEnvironmentsByAlias[target.alias] ?? null}
+                              connectingHostAlias={connectingSshHostAlias}
+                              onConnect={(nextTarget) => void handleConnectSshHost(nextTarget)}
+                            />
+                          ))}
+                          {hasLoadedDiscoveredSshHosts &&
+                          !isLoadingDiscoveredSshHosts &&
+                          discoveredSshHosts.length === 0 ? (
+                            <div className={ITEM_ROW_CLASSNAME}>
+                              <p className="text-xs text-muted-foreground">
+                                No SSH hosts were discovered from <code>~/.ssh/config</code> or{" "}
+                                <code>known_hosts</code>.
+                              </p>
+                            </div>
+                          ) : null}
+                        </div>
+                      </ScrollArea>
                       {savedBackendError ? (
                         <p className="text-xs text-destructive">{savedBackendError}</p>
                       ) : null}
-                      <Collapsible open={isManualSshFormOpen} onOpenChange={setIsManualSshFormOpen}>
-                        <CollapsibleTrigger
-                          className={cn(
-                            "flex w-full items-center justify-between gap-3 rounded-md border border-border/60 px-4 py-3 text-left transition-colors hover:bg-muted/35",
-                            isManualSshFormOpen && "bg-muted/20",
-                          )}
-                        >
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-foreground">
-                              Enter a host manually
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              Use an alias or enter host, username, and port directly.
-                            </p>
-                          </div>
-                          <ChevronDownIcon
-                            className={cn(
-                              "size-4 shrink-0 text-muted-foreground transition-transform duration-200",
-                              isManualSshFormOpen && "rotate-180",
-                            )}
-                          />
-                        </CollapsibleTrigger>
-                        <CollapsibleContent className="pt-4">
-                          <div className="space-y-3">
-                            <label className="block">
-                              <span className="mb-1.5 block text-xs font-medium text-foreground">
-                                Label
-                              </span>
-                              <Input
-                                value={savedBackendLabel}
-                                onChange={(event) => setSavedBackendLabel(event.target.value)}
-                                placeholder="My backend (optional)"
-                                disabled={isAddingSavedBackend}
-                                spellCheck={false}
-                              />
-                            </label>
-                            <label className="block">
-                              <span className="mb-1.5 block text-xs font-medium text-foreground">
-                                SSH host or alias
-                              </span>
-                              <Input
-                                value={savedBackendSshHost}
-                                onChange={(event) => setSavedBackendSshHost(event.target.value)}
-                                placeholder="devbox or devbox.example.com"
-                                disabled={isAddingSavedBackend}
-                                spellCheck={false}
-                              />
-                            </label>
-                            <div className="grid gap-3 sm:grid-cols-2">
-                              <label className="block">
-                                <span className="mb-1.5 block text-xs font-medium text-foreground">
-                                  Username
-                                </span>
-                                <Input
-                                  value={savedBackendSshUsername}
-                                  onChange={(event) =>
-                                    setSavedBackendSshUsername(event.target.value)
-                                  }
-                                  placeholder="julius"
-                                  disabled={isAddingSavedBackend}
-                                  spellCheck={false}
-                                />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1.5 block text-xs font-medium text-foreground">
-                                  Port
-                                </span>
-                                <Input
-                                  value={savedBackendSshPort}
-                                  onChange={(event) => setSavedBackendSshPort(event.target.value)}
-                                  placeholder="22"
-                                  inputMode="numeric"
-                                  disabled={isAddingSavedBackend}
-                                  spellCheck={false}
-                                />
-                              </label>
-                            </div>
-                            <span className="block text-[11px] text-muted-foreground">
-                              Uses your existing SSH keys, agent, and config. Password and
-                              keyboard-interactive prompts open through your system SSH dialog when
-                              needed.
+                      <div className="border-t border-border/60 pt-4">
+                        <h3 className="mb-1 text-sm font-medium text-foreground">
+                          Enter a host manually
+                        </h3>
+                        <p className="mb-3 text-xs text-muted-foreground">
+                          Use an alias or enter host, username, and port directly.
+                        </p>
+                        <div className="space-y-3">
+                          <label className="block">
+                            <span className="mb-1.5 block text-xs font-medium text-foreground">
+                              Label
                             </span>
-                            <Button
-                              variant="outline"
-                              className="w-full"
+                            <Input
+                              value={savedBackendLabel}
+                              onChange={(event) => setSavedBackendLabel(event.target.value)}
+                              placeholder="My backend (optional)"
                               disabled={isAddingSavedBackend}
-                              onClick={() => void handleAddSavedBackend()}
-                            >
-                              <PlusIcon className="size-3.5" />
-                              {isAddingSavedBackend ? "Connecting…" : "Connect SSH host"}
-                            </Button>
+                              spellCheck={false}
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1.5 block text-xs font-medium text-foreground">
+                              SSH host or alias
+                            </span>
+                            <Input
+                              value={savedBackendSshHost}
+                              onChange={(event) => setSavedBackendSshHost(event.target.value)}
+                              placeholder="devbox or devbox.example.com"
+                              disabled={isAddingSavedBackend}
+                              spellCheck={false}
+                            />
+                          </label>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <label className="block">
+                              <span className="mb-1.5 block text-xs font-medium text-foreground">
+                                Username
+                              </span>
+                              <Input
+                                value={savedBackendSshUsername}
+                                onChange={(event) =>
+                                  setSavedBackendSshUsername(event.target.value)
+                                }
+                                placeholder="julius"
+                                disabled={isAddingSavedBackend}
+                                spellCheck={false}
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="mb-1.5 block text-xs font-medium text-foreground">
+                                Port
+                              </span>
+                              <Input
+                                value={savedBackendSshPort}
+                                onChange={(event) => setSavedBackendSshPort(event.target.value)}
+                                placeholder="22"
+                                inputMode="numeric"
+                                disabled={isAddingSavedBackend}
+                                spellCheck={false}
+                              />
+                            </label>
                           </div>
-                        </CollapsibleContent>
-                      </Collapsible>
+                          <span className="block text-[11px] text-muted-foreground">
+                            Uses your existing SSH keys, agent, and config. Password and
+                            keyboard-interactive prompts open through your system SSH dialog when
+                            needed.
+                          </span>
+                          <Button
+                            variant="outline"
+                            className="w-full"
+                            disabled={isAddingSavedBackend}
+                            onClick={() => void handleAddSavedBackend()}
+                          >
+                            <PlusIcon className="size-3.5" />
+                            {isAddingSavedBackend ? "Connecting…" : "Connect SSH host"}
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                   )}
                   {savedBackendMode !== "ssh" && savedBackendError ? (
