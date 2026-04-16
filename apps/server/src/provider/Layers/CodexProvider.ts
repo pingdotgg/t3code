@@ -65,6 +65,7 @@ const DEFAULT_CODEX_MODEL_CAPABILITIES: ModelCapabilities = {
 
 const PROVIDER = "codex" as const;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
+const MODEL_PROVIDERS_SECTION_PREFIX = "model_providers.";
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "gpt-5.4",
@@ -279,21 +280,81 @@ export const readCodexConfigModelProvider = Effect.fn("readCodexConfigModelProvi
     return undefined;
   }
 
-  let inTopLevel = true;
+  const parsed = parseCodexConfigProviderSelection(content);
+  return parsed.modelProvider;
+});
+
+function parseCodexConfigProviderSelection(content: string): {
+  readonly modelProvider: string | undefined;
+  readonly envKeyByProvider: ReadonlyMap<string, string>;
+} {
+  let currentSection: string | undefined;
+  let modelProvider: string | undefined;
+  const envKeyByProvider = new Map<string, string>();
+
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
-    if (trimmed.startsWith("[")) {
-      inTopLevel = false;
+    const sectionMatch = trimmed.match(/^\[([^\]]+)\]/);
+    if (sectionMatch) {
+      currentSection = sectionMatch[1]?.trim();
       continue;
     }
-    if (!inTopLevel) continue;
 
-    const match = trimmed.match(/^model_provider\s*=\s*["']([^"']+)["']/);
-    if (match) return match[1];
+    const modelProviderMatch = trimmed.match(/^model_provider\s*=\s*["']([^"']+)["']/);
+    if (currentSection === undefined && modelProviderMatch) {
+      const nextModelProvider = modelProviderMatch[1];
+      if (!nextModelProvider) continue;
+      modelProvider = nextModelProvider;
+      continue;
+    }
+
+    const envKeyMatch = trimmed.match(/^env_key\s*=\s*["']([^"']+)["']/);
+    if (!envKeyMatch || currentSection === undefined) continue;
+    if (!currentSection.startsWith(MODEL_PROVIDERS_SECTION_PREFIX)) continue;
+
+    const provider = currentSection
+      .slice(MODEL_PROVIDERS_SECTION_PREFIX.length)
+      .replace(/^"(.+)"$/, "$1")
+      .trim();
+    const envKey = envKeyMatch[1];
+    if (!envKey) continue;
+    if (!provider) continue;
+    envKeyByProvider.set(provider, envKey);
   }
-  return undefined;
-});
+
+  return {
+    modelProvider,
+    envKeyByProvider,
+  };
+}
+
+export const readCodexConfigModelProviderEnvKey = Effect.fn("readCodexConfigModelProviderEnvKey")(
+  function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const settingsService = yield* ServerSettingsService;
+    const codexHome = yield* settingsService.getSettings.pipe(
+      Effect.map(
+        (settings) =>
+          settings.providers.codex.homePath ||
+          process.env.CODEX_HOME ||
+          path.join(OS.homedir(), ".codex"),
+      ),
+    );
+    const configPath = path.join(codexHome, "config.toml");
+
+    const content = yield* fileSystem
+      .readFileString(configPath)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (content === undefined) {
+      return undefined;
+    }
+
+    const parsed = parseCodexConfigProviderSelection(content);
+    return parsed.modelProvider ? parsed.envKeyByProvider.get(parsed.modelProvider) : undefined;
+  },
+);
 
 export const hasCustomModelProvider = readCodexConfigModelProvider().pipe(
   Effect.map((provider) => provider !== undefined && !OPENAI_AUTH_PROVIDERS.has(provider)),
@@ -466,6 +527,26 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       : undefined) ?? [];
 
   if (yield* hasCustomModelProvider) {
+    const envKey = yield* readCodexConfigModelProviderEnvKey().pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (envKey && !process.env[envKey]) {
+      return buildServerProvider({
+        provider: PROVIDER,
+        enabled: codexSettings.enabled,
+        checkedAt,
+        models,
+        skills,
+        probe: {
+          installed: true,
+          version: parsedVersion,
+          status: "error",
+          auth: { status: "unknown" },
+          message: `Missing environment variable: \`${envKey}\`. Add it to the environment before launching T3 Code.`,
+        },
+      });
+    }
+
     return buildServerProvider({
       provider: PROVIDER,
       enabled: codexSettings.enabled,

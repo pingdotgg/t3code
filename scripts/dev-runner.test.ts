@@ -5,6 +5,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
 import {
+  MODE_ARGS,
   checkPortAvailabilityOnHosts,
   createDevRunnerEnv,
   findFirstAvailableOffset,
@@ -214,6 +215,17 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_PORT, "13773");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:13773");
         assert.equal(env.VITE_WS_URL, "ws://localhost:13773");
+      }),
+    );
+  });
+
+  describe("MODE_ARGS", () => {
+    it.effect("runs runtime-oriented dev tasks with loose turbo env mode", () =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(MODE_ARGS.dev.includes("--env-mode=loose"), true);
+        assert.deepStrictEqual(MODE_ARGS["dev:server"].includes("--env-mode=loose"), true);
+        assert.deepStrictEqual(MODE_ARGS["dev:web"].includes("--env-mode=loose"), true);
+        assert.deepStrictEqual(MODE_ARGS["dev:desktop"].includes("--env-mode=loose"), true);
       }),
     );
   });
