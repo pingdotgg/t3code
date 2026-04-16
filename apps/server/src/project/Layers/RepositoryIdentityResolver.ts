@@ -68,7 +68,7 @@ function buildRepositoryIdentity(input: {
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
-const DEFAULT_NEGATIVE_CACHE_TTL = Duration.seconds(10);
+const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
 interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;

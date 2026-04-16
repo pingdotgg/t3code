@@ -140,7 +140,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   );
 
   it.effect(
-    "refreshes cached null identities after the negative TTL when a remote is configured later",
+    "keeps null identities cached across repeated resolves until the negative TTL expires",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -156,8 +156,10 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
         yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
 
-        const cachedIdentity = yield* resolver.resolve(cwd);
-        expect(cachedIdentity).toBeNull();
+        for (const _attempt of [1, 2, 3]) {
+          const cachedIdentity = yield* resolver.resolve(cwd);
+          expect(cachedIdentity).toBeNull();
+        }
 
         yield* TestClock.adjust(Duration.millis(120));
 
