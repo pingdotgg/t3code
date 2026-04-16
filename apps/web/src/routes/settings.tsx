@@ -29,10 +29,10 @@ function SettingsContentLayout() {
   }, []);
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate dark:bg-neutral-950">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground dark:bg-neutral-950">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-app-surface text-foreground isolate">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-app-surface text-foreground">
         {!isElectron && (
-          <header className="relative z-10 bg-background px-3 py-2 dark:bg-neutral-950 after:pointer-events-none after:absolute after:inset-x-0 after:top-[calc(100%-1px)] after:z-0 after:h-6 after:bg-linear-to-b after:from-background after:from-35% after:to-transparent after:content-[''] dark:after:from-neutral-950 dark:after:to-transparent [&>*]:relative [&>*]:z-10 sm:px-5">
+          <header className="relative z-10 bg-app-surface px-3 py-2 after:pointer-events-none after:absolute after:inset-x-0 after:top-[calc(100%-1px)] after:z-0 after:h-6 after:bg-linear-to-b after:from-app-surface after:from-35% after:to-transparent after:content-[''] [&>*]:relative [&>*]:z-10 sm:px-5">
             <div className="flex items-center gap-2">
               <SidebarTrigger className="size-7 shrink-0 md:hidden" />
               <span className="text-sm font-medium text-foreground">Settings</span>
@@ -52,7 +52,7 @@ function SettingsContentLayout() {
         )}
 
         {isElectron && (
-          <div className="drag-region relative z-10 flex h-[52px] shrink-0 items-center bg-background px-5 dark:bg-neutral-950 after:pointer-events-none after:absolute after:inset-x-0 after:top-[calc(100%-1px)] after:z-0 after:h-6 after:bg-linear-to-b after:from-background after:from-35% after:to-transparent after:content-[''] dark:after:from-neutral-950 dark:after:to-transparent [&>*]:relative [&>*]:z-10 wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
+          <div className="drag-region relative z-10 flex h-[52px] shrink-0 items-center bg-app-surface px-5 after:pointer-events-none after:absolute after:inset-x-0 after:top-[calc(100%-1px)] after:z-0 after:h-6 after:bg-linear-to-b after:from-app-surface after:from-35% after:to-transparent after:content-[''] [&>*]:relative [&>*]:z-10 wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
             </span>

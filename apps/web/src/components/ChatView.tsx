@@ -3182,11 +3182,11 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background dark:bg-neutral-950">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-app-surface">
       {/* Top bar */}
       <header
         className={cn(
-          "relative z-10 bg-background px-3 sm:px-5 dark:bg-neutral-950 after:pointer-events-none after:absolute after:inset-x-0 after:top-[calc(100%-1px)] after:z-0 after:h-6 after:bg-linear-to-b after:from-background after:from-35% after:to-transparent after:content-[''] dark:after:from-neutral-950 dark:after:to-transparent [&>*]:relative [&>*]:z-10",
+          "relative z-10 bg-app-surface px-3 sm:px-5 after:pointer-events-none after:absolute after:inset-x-0 after:top-[calc(100%-1px)] after:z-0 after:h-6 after:bg-linear-to-b after:from-app-surface after:from-35% after:to-transparent after:content-[''] [&>*]:relative [&>*]:z-10",
           isElectron
             ? cn(
                 "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]",

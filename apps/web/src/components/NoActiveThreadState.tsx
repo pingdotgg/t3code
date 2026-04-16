@@ -5,11 +5,11 @@ import { cn } from "~/lib/utils";
 
 export function NoActiveThreadState() {
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-app-surface text-foreground">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-app-surface">
         <header
           className={cn(
-            "border-b border-border px-3 sm:px-5",
+            "relative z-10 bg-app-surface px-3 sm:px-5 after:pointer-events-none after:absolute after:inset-x-0 after:top-[calc(100%-1px)] after:z-0 after:h-6 after:bg-linear-to-b after:from-app-surface after:from-35% after:to-transparent after:content-[''] [&>*]:relative [&>*]:z-10",
             isElectron
               ? "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]"
               : "py-2 sm:py-3",

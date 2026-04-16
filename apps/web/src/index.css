@@ -31,6 +31,8 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  --color-app-surface: var(--app-surface);
+  --color-sidebar-surface: var(--sidebar-surface);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -71,7 +73,9 @@
   color-scheme: light;
   --radius: 0.625rem;
   --background: var(--color-white);
+  --app-surface: var(--background);
   --app-chrome-background: var(--background);
+  --sidebar-surface: var(--color-neutral-50);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
   --card-foreground: var(--color-neutral-800);
@@ -100,7 +104,9 @@
   @variant dark {
     color-scheme: dark;
     --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
+    --app-surface: var(--color-neutral-950);
     --app-chrome-background: var(--background);
+    --sidebar-surface: var(--card);
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
