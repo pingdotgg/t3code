@@ -353,7 +353,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                 </div>
                 <div className="pointer-events-none absolute right-0 bottom-0 flex items-center gap-2 whitespace-nowrap opacity-0 transition-opacity duration-200 group-focus-within:opacity-100 group-hover:opacity-100">
                   <div className="pointer-events-none flex items-center gap-2 whitespace-nowrap">
-                    <p className="text-right text-xs text-muted-foreground/50">
+                    <p className="text-right text-[10px] text-muted-foreground/45 dark:text-muted-foreground/60">
                       {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
                     </p>
                     <div className="pointer-events-auto flex items-center gap-1.5">
