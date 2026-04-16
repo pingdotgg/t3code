@@ -5,6 +5,8 @@
 @custom-variant wco (&:is(.wco, .wco *));
 
 @theme inline {
+  --font-sans: var(--app-font-ui);
+  --font-mono: var(--app-font-code);
   --animate-skeleton: skeleton 2s -1s infinite linear;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
@@ -70,6 +72,8 @@
 :root {
   color-scheme: light;
   --radius: 0.625rem;
+  --app-font-ui: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --app-font-code: "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   --background: var(--color-white);
   --app-chrome-background: var(--background);
   --foreground: var(--color-neutral-800);
@@ -129,16 +133,17 @@
 }
 
 body {
-  font-family:
-    "DM Sans",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    system-ui,
-    sans-serif;
+  font-family: var(--app-font-ui);
   margin: 0;
   padding: 0;
   min-height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
 }
 
 html,
@@ -165,8 +170,10 @@ body::after {
 }
 
 pre,
-code {
-  font-family: "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+code,
+kbd,
+samp {
+  font-family: var(--app-font-code);
 }
 
 /* Window drag region (frameless titlebar) */

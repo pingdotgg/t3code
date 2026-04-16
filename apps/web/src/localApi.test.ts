@@ -11,6 +11,7 @@ import {
   type TerminalEvent,
   ThreadId,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
@@ -529,6 +530,7 @@ describe("wsApi", () => {
 
   it("reads and writes persistence through the desktop bridge when available", async () => {
     const getClientSettings = vi.fn().mockResolvedValue({
+      ...DEFAULT_CLIENT_SETTINGS,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,
@@ -557,6 +559,7 @@ describe("wsApi", () => {
 
     await api.persistence.getClientSettings();
     await api.persistence.setClientSettings({
+      ...DEFAULT_CLIENT_SETTINGS,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,
@@ -575,6 +578,7 @@ describe("wsApi", () => {
 
     expect(getClientSettings).toHaveBeenCalledWith();
     expect(setClientSettings).toHaveBeenCalledWith({
+      ...DEFAULT_CLIENT_SETTINGS,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,
@@ -594,6 +598,7 @@ describe("wsApi", () => {
     const api = createLocalApi(rpcClientMock as never);
 
     await api.persistence.setClientSettings({
+      ...DEFAULT_CLIENT_SETTINGS,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,
@@ -617,6 +622,7 @@ describe("wsApi", () => {
     );
 
     await expect(api.persistence.getClientSettings()).resolves.toEqual({
+      ...DEFAULT_CLIENT_SETTINGS,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,

@@ -4,7 +4,9 @@ import {
   type AuthAccessStreamEvent,
   type AuthAccessSnapshot,
   AuthSessionId,
+  DEFAULT_CODE_FONT_FAMILY,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_UI_FONT_FAMILY,
   EnvironmentId,
   type DesktopBridge,
   type DesktopUpdateChannel,
@@ -451,6 +453,36 @@ describe("GeneralSettingsPanel observability", () => {
         ),
       )
       .toBeInTheDocument();
+  });
+
+  it("lets users edit and reset UI and code font stacks", async () => {
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    const uiFontInput = page.getByLabelText("UI font family");
+    const codeFontInput = page.getByLabelText("Code font family");
+
+    await expect.element(uiFontInput).toHaveValue(DEFAULT_UI_FONT_FAMILY);
+    await expect.element(codeFontInput).toHaveValue(DEFAULT_CODE_FONT_FAMILY);
+
+    await uiFontInput.fill('"IBM Plex Sans", sans-serif');
+    await codeFontInput.fill('"JetBrains Mono", monospace');
+
+    await expect.element(uiFontInput).toHaveValue('"IBM Plex Sans", sans-serif');
+    await expect.element(codeFontInput).toHaveValue('"JetBrains Mono", monospace');
+    await expect.element(page.getByLabelText("Reset UI font to default")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Reset code font to default")).toBeInTheDocument();
+
+    await page.getByLabelText("Reset UI font to default").click();
+    await page.getByLabelText("Reset code font to default").click();
+
+    await expect.element(uiFontInput).toHaveValue(DEFAULT_UI_FONT_FAMILY);
+    await expect.element(codeFontInput).toHaveValue(DEFAULT_CODE_FONT_FAMILY);
   });
 
   it("creates and shows a pairing link when network access is enabled", async () => {

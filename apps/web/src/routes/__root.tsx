@@ -21,6 +21,8 @@ import {
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { useAppFonts } from "../hooks/useAppFonts";
+import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
 import {
   getServerConfigUpdatedNotification,
@@ -32,7 +34,6 @@ import {
 } from "../rpc/serverState";
 import { useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
-import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import {
   ensureEnvironmentConnectionBootstrapped,
   getPrimaryEnvironmentConnection,
@@ -65,6 +66,8 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
+  useAppFonts();
+
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
 

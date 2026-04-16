@@ -1,6 +1,7 @@
 import "../index.css";
 
 import { scopeThreadRef } from "@t3tools/client-runtime";
+import { DEFAULT_CODE_FONT_FAMILY } from "@t3tools/contracts/settings";
 import { ThreadId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -43,7 +44,7 @@ vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     cols = 80;
     rows = 24;
-    options: { theme?: unknown } = {};
+    options: { fontFamily?: string; theme?: unknown } = {};
     buffer = {
       active: {
         viewportY: 0,
@@ -52,7 +53,8 @@ vi.mock("@xterm/xterm", () => ({
       },
     };
 
-    constructor(options: unknown) {
+    constructor(options: { fontFamily?: string; theme?: unknown }) {
+      this.options = { ...options };
       terminalConstructorSpy(options);
     }
 
@@ -215,6 +217,7 @@ describe("TerminalViewport", () => {
     terminalDisposeSpy.mockClear();
     fitAddonFitSpy.mockClear();
     fitAddonLoadSpy.mockClear();
+    document.documentElement.style.removeProperty("--app-font-code");
   });
 
   it("does not create a terminal when APIs are unavailable", async () => {
@@ -309,6 +312,54 @@ describe("TerminalViewport", () => {
             background: "rgb(24, 28, 36)",
             foreground: "rgb(228, 232, 240)",
           }),
+        }),
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses the configured code font stack for new terminals", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+    document.documentElement.style.setProperty("--app-font-code", '"JetBrains Mono", monospace');
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(terminalConstructorSpy).toHaveBeenCalledTimes(1);
+      });
+
+      expect(terminalConstructorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fontFamily: '"JetBrains Mono", monospace',
+        }),
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("falls back to the default code font when the CSS variable is blank", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+    document.documentElement.style.setProperty("--app-font-code", "   ");
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(terminalConstructorSpy).toHaveBeenCalledTimes(1);
+      });
+
+      expect(terminalConstructorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fontFamily: DEFAULT_CODE_FONT_FAMILY,
         }),
       );
     } finally {

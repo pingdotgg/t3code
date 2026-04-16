@@ -39,6 +39,7 @@ import {
   MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
 } from "../types";
+import { getResolvedCodeFontFamily } from "../hooks/useAppFonts";
 import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
 import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalStateStore";
@@ -307,7 +308,7 @@ export function TerminalViewport({
       lineHeight: 1.2,
       fontSize: 12,
       scrollback: 5_000,
-      fontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+      fontFamily: getResolvedCodeFontFamily(),
       theme: terminalThemeFromApp(mount),
     });
     terminal.loadAddon(fitAddon);
@@ -533,8 +534,32 @@ export function TerminalViewport({
 
     const themeObserver = new MutationObserver(() => {
       const activeTerminal = terminalRef.current;
-      if (!activeTerminal) return;
+      const activeFitAddon = fitAddonRef.current;
+      if (!activeTerminal || !activeFitAddon) return;
+
+      const nextFontFamily = getResolvedCodeFontFamily();
+      const hasFontFamilyChanged = activeTerminal.options.fontFamily !== nextFontFamily;
+
       activeTerminal.options.theme = terminalThemeFromApp(containerRef.current);
+
+      if (hasFontFamilyChanged) {
+        const wasAtBottom =
+          activeTerminal.buffer.active.viewportY >= activeTerminal.buffer.active.baseY;
+        activeTerminal.options.fontFamily = nextFontFamily;
+        activeFitAddon.fit();
+        if (wasAtBottom) {
+          activeTerminal.scrollToBottom();
+        }
+        void api.terminal
+          .resize({
+            threadId,
+            terminalId,
+            cols: activeTerminal.cols,
+            rows: activeTerminal.rows,
+          })
+          .catch(() => undefined);
+      }
+
       activeTerminal.refresh(0, activeTerminal.rows - 1);
     });
     themeObserver.observe(document.documentElement, {

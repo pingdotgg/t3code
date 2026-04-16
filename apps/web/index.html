@@ -12,7 +12,39 @@
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#161616";
+        const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
+        const DEFAULT_UI_FONT_FAMILY =
+          '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+        const DEFAULT_CODE_FONT_FAMILY =
+          '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace';
         const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+        const resolveFontFamily = (value, fallback) => {
+          const trimmedValue = typeof value === "string" ? value.trim() : "";
+          if (!trimmedValue) {
+            return fallback;
+          }
+
+          const probe = document.createElement("span");
+          probe.style.fontFamily = "";
+          probe.style.fontFamily = trimmedValue;
+          return probe.style.fontFamily ? trimmedValue : fallback;
+        };
+
+        const storedClientSettings = window.localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY);
+        if (storedClientSettings) {
+          try {
+            const clientSettings = JSON.parse(storedClientSettings);
+            document.documentElement.style.setProperty(
+              "--app-font-ui",
+              resolveFontFamily(clientSettings?.uiFontFamily, DEFAULT_UI_FONT_FAMILY),
+            );
+            document.documentElement.style.setProperty(
+              "--app-font-code",
+              resolveFontFamily(clientSettings?.codeFontFamily, DEFAULT_CODE_FONT_FAMILY),
+            );
+          } catch {}
+        }
+
         try {
           const storedTheme = window.localStorage.getItem("t3code:theme");
           const theme =
@@ -44,13 +76,15 @@
       body {
         background: #ffffff;
         color: #262626;
-        font-family:
+        font-family: var(
+          --app-font-ui,
           "DM Sans",
           -apple-system,
           BlinkMacSystemFont,
           "Segoe UI",
           system-ui,
-          sans-serif;
+          sans-serif
+        );
       }
 
       html.dark body {

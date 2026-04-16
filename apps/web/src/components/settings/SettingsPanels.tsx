@@ -432,6 +432,8 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(settings.uiFontFamily !== DEFAULT_UNIFIED_SETTINGS.uiFontFamily ? ["UI font"] : []),
+      ...(settings.codeFontFamily !== DEFAULT_UNIFIED_SETTINGS.codeFontFamily ? ["Code font"] : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -461,11 +463,13 @@ export function useSettingsRestore(onRestored?: () => void) {
       isGitWritingModelDirty,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.codeFontFamily,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.timestampFormat,
+      settings.uiFontFamily,
       theme,
     ],
   );
@@ -787,6 +791,60 @@ export function GeneralSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="UI font"
+          description="CSS font-family stack for navigation, controls, and body text. Leave blank to use the default stack."
+          resetAction={
+            settings.uiFontFamily !== DEFAULT_UNIFIED_SETTINGS.uiFontFamily ? (
+              <SettingResetButton
+                label="UI font"
+                onClick={() =>
+                  updateSettings({
+                    uiFontFamily: DEFAULT_UNIFIED_SETTINGS.uiFontFamily,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Input
+              className="w-full sm:w-[30rem]"
+              value={settings.uiFontFamily}
+              onChange={(event) => updateSettings({ uiFontFamily: event.target.value })}
+              placeholder={DEFAULT_UNIFIED_SETTINGS.uiFontFamily}
+              spellCheck={false}
+              aria-label="UI font family"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Code font"
+          description="CSS font-family stack for code blocks, monospace labels, diffs, and the terminal. Leave blank to use the default stack."
+          resetAction={
+            settings.codeFontFamily !== DEFAULT_UNIFIED_SETTINGS.codeFontFamily ? (
+              <SettingResetButton
+                label="code font"
+                onClick={() =>
+                  updateSettings({
+                    codeFontFamily: DEFAULT_UNIFIED_SETTINGS.codeFontFamily,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Input
+              className="w-full sm:w-[30rem]"
+              value={settings.codeFontFamily}
+              onChange={(event) => updateSettings({ codeFontFamily: event.target.value })}
+              placeholder={DEFAULT_UNIFIED_SETTINGS.codeFontFamily}
+              spellCheck={false}
+              aria-label="Code font family"
+            />
           }
         />
 

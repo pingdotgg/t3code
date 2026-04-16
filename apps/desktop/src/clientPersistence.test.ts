@@ -3,6 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import {
+  DEFAULT_CODE_FONT_FAMILY,
+  DEFAULT_UI_FONT_FAMILY,
   EnvironmentId,
   type ClientSettings,
   type PersistedSavedEnvironmentRecord,
@@ -52,6 +54,8 @@ const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   diffWordWrap: true,
+  uiFontFamily: DEFAULT_UI_FONT_FAMILY,
+  codeFontFamily: DEFAULT_CODE_FONT_FAMILY,
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
   timestampFormat: "24-hour",
@@ -71,6 +75,27 @@ describe("clientPersistence", () => {
     const settingsPath = makeTempPath("client-settings.json");
 
     writeClientSettings(settingsPath, clientSettings);
+
+    expect(readClientSettings(settingsPath)).toEqual(clientSettings);
+  });
+
+  it("backfills newly added client settings from legacy files", () => {
+    const settingsPath = makeTempPath("client-settings.json");
+
+    fs.writeFileSync(
+      settingsPath,
+      `${JSON.stringify({
+        settings: {
+          confirmThreadArchive: true,
+          confirmThreadDelete: false,
+          diffWordWrap: true,
+          sidebarProjectSortOrder: "manual",
+          sidebarThreadSortOrder: "created_at",
+          timestampFormat: "24-hour",
+        },
+      })}\n`,
+      "utf8",
+    );
 
     expect(readClientSettings(settingsPath)).toEqual(clientSettings);
   });
