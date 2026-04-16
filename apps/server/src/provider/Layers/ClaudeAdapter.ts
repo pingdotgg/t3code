@@ -42,6 +42,7 @@ import {
   TurnId,
   type UserInputQuestion,
   ClaudeCodeEffort,
+  RuntimeMode,
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
@@ -2756,7 +2757,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? modelSelection.options.thinking
           : undefined;
       const effectiveEffort = getEffectiveClaudeCodeEffort(effort);
-      const runtimeModeToPermission: Record<string, PermissionMode> = {
+      const runtimeModeToPermission: Record<RuntimeMode, PermissionMode> = {
+        "approval-required": "default",
         "auto-accept-edits": "acceptEdits",
         "full-access": "bypassPermissions",
       };
@@ -2772,7 +2774,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         pathToClaudeCodeExecutable: claudeBinaryPath,
         settingSources: [...CLAUDE_SETTING_SOURCES],
         ...(effectiveEffort ? { effort: effectiveEffort } : {}),
-        ...(permissionMode ? { permissionMode } : {}),
+        permissionMode,
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
           : {}),
