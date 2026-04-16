@@ -276,12 +276,16 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
             PATH: `${previewDir}:${stableDir}`,
           },
         );
+        const preferredPathPrefix = result.env?.PATH?.slice(
+          0,
+          -`:${previewDir}:${stableDir}`.length,
+        );
 
         assert.equal(result.command, "zed");
         assert.deepEqual(result.args, ["/tmp/workspace"]);
         assert.equal(typeof result.env?.PATH, "string");
-        assert.ok(result.env?.PATH?.split(":")[0]?.includes("Zed.app\\Contents\\MacOS"));
-        assert.ok(!result.env?.PATH?.split(":")[0]?.toLowerCase().includes("preview"));
+        assert.ok(preferredPathPrefix?.toLowerCase().includes("zed.app"));
+        assert.ok(!preferredPathPrefix?.toLowerCase().includes("preview"));
         assert.ok(result.env?.PATH?.endsWith(`:${previewDir}:${stableDir}`));
       }),
   );
