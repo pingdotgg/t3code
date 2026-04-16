@@ -28,6 +28,7 @@ import {
   hasCustomModelProvider,
   parseAuthStatusFromOutput,
   readCodexConfigModelProvider,
+  readCodexConfigModelProviderEnvKey,
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
@@ -156,6 +157,28 @@ function withTempCodexHome(configContent?: string) {
 
     return { tmpDir } as const;
   });
+}
+
+function withScopedEnvVar(name: string, value: string | undefined) {
+  return Effect.acquireRelease(
+    Effect.sync(() => {
+      const previous = process.env[name];
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+      return previous;
+    }),
+    (previous) =>
+      Effect.sync(() => {
+        if (previous === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = previous;
+        }
+      }),
+  );
 }
 
 it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
@@ -730,6 +753,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                 'env_key = "PORTKEY_API_KEY"',
               ].join("\n"),
             );
+            yield* withScopedEnvVar("PORTKEY_API_KEY", "test-portkey-key");
             const status = yield* checkCodexProviderStatus();
             assert.strictEqual(status.provider, "codex");
             assert.strictEqual(status.status, "ready");
@@ -763,10 +787,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               'env_key = "PORTKEY_API_KEY"',
             ].join("\n"),
           );
+          yield* withScopedEnvVar("PORTKEY_API_KEY", "test-portkey-key");
           const status = yield* checkCodexProviderStatus();
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, false);
         }).pipe(Effect.provide(failingSpawnerLayer("spawn codex ENOENT"))),
+      );
+
+      it.effect("reports a missing custom provider env_key before session startup", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome(
+            [
+              'model_provider = "codex-lb"',
+              "",
+              "[model_providers.codex-lb]",
+              'base_url = "https://example.test/backend-api/codex"',
+              'env_key = "T3_TEST_CODEX_LB_API_KEY"',
+            ].join("\n"),
+          );
+          yield* withScopedEnvVar("T3_TEST_CODEX_LB_API_KEY", undefined);
+          const status = yield* checkCodexProviderStatus();
+          assert.strictEqual(status.provider, "codex");
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(
+            status.message,
+            "Missing environment variable: `T3_TEST_CODEX_LB_API_KEY`. Add it to the environment before launching T3 Code.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Auth probe should have been skipped but got args: ${joined}`);
+            }),
+          ),
+        ),
       );
     });
 
@@ -889,6 +946,74 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         Effect.gen(function* () {
           yield* withTempCodexHome("model_provider = 'mistral'\n");
           assert.strictEqual(yield* readCodexConfigModelProvider(), "mistral");
+        }),
+      );
+    });
+
+    describe("readCodexConfigModelProviderEnvKey", () => {
+      it.effect("returns undefined when config file does not exist", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          assert.strictEqual(yield* readCodexConfigModelProviderEnvKey(), undefined);
+        }),
+      );
+
+      it.effect("returns undefined when the active provider section has no env_key", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome(
+            [
+              'model_provider = "codex-lb"',
+              "",
+              "[model_providers.codex-lb]",
+              'base_url = "https://example.test/backend-api/codex"',
+            ].join("\n"),
+          );
+          assert.strictEqual(yield* readCodexConfigModelProviderEnvKey(), undefined);
+        }),
+      );
+
+      it.effect("returns the env_key for the active provider", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome(
+            [
+              'model_provider = "codex-lb"',
+              "",
+              "[model_providers.codex-lb]",
+              'env_key = "CODEX_LB_API_KEY"',
+            ].join("\n"),
+          );
+          assert.strictEqual(yield* readCodexConfigModelProviderEnvKey(), "CODEX_LB_API_KEY");
+        }),
+      );
+
+      it.effect("handles single-quoted provider section keys", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome(
+            [
+              "model_provider = 'codex-lb'",
+              "",
+              "[model_providers.'codex-lb']",
+              "env_key = 'CODEX_LB_API_KEY'",
+            ].join("\n"),
+          );
+          assert.strictEqual(yield* readCodexConfigModelProviderEnvKey(), "CODEX_LB_API_KEY");
+        }),
+      );
+
+      it.effect("ignores env_key values for inactive providers", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome(
+            [
+              'model_provider = "codex-lb"',
+              "",
+              "[model_providers.openai]",
+              'env_key = "OPENAI_API_KEY"',
+              "",
+              "[model_providers.codex-lb]",
+              'env_key = "CODEX_LB_API_KEY"',
+            ].join("\n"),
+          );
+          assert.strictEqual(yield* readCodexConfigModelProviderEnvKey(), "CODEX_LB_API_KEY");
         }),
       );
     });
