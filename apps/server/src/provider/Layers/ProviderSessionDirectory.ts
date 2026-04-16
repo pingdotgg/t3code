@@ -1,11 +1,13 @@
 import { type ProviderKind, type ThreadId } from "@t3tools/contracts";
 import { Effect, Layer, Option } from "effect";
 
+import type { ProviderSessionRuntime } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionDirectoryPersistenceError, ProviderValidationError } from "../Errors.ts";
 import {
   ProviderSessionDirectory,
   type ProviderRuntimeBinding,
+  type ProviderRuntimeBindingWithMetadata,
   type ProviderSessionDirectoryShape,
 } from "../Services/ProviderSessionDirectory.ts";
 
@@ -50,6 +52,27 @@ function mergeRuntimePayload(
   return next;
 }
 
+function toRuntimeBinding(
+  runtime: ProviderSessionRuntime,
+  operation: string,
+): Effect.Effect<ProviderRuntimeBindingWithMetadata, ProviderSessionDirectoryPersistenceError> {
+  return decodeProviderKind(runtime.providerName, operation).pipe(
+    Effect.map(
+      (provider) =>
+        ({
+          threadId: runtime.threadId,
+          provider,
+          adapterKey: runtime.adapterKey,
+          runtimeMode: runtime.runtimeMode,
+          status: runtime.status,
+          resumeCursor: runtime.resumeCursor,
+          runtimePayload: runtime.runtimePayload,
+          lastSeenAt: runtime.lastSeenAt,
+        }) satisfies ProviderRuntimeBindingWithMetadata,
+    ),
+  );
+}
+
 const makeProviderSessionDirectory = Effect.gen(function* () {
   const repository = yield* ProviderSessionRuntimeRepository;
 
@@ -60,18 +83,8 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         Option.match(runtime, {
           onNone: () => Effect.succeed(Option.none<ProviderRuntimeBinding>()),
           onSome: (value) =>
-            decodeProviderKind(value.providerName, "ProviderSessionDirectory.getBinding").pipe(
-              Effect.map((provider) =>
-                Option.some({
-                  threadId: value.threadId,
-                  provider,
-                  adapterKey: value.adapterKey,
-                  runtimeMode: value.runtimeMode,
-                  status: value.status,
-                  resumeCursor: value.resumeCursor,
-                  runtimePayload: value.runtimePayload,
-                }),
-              ),
+            toRuntimeBinding(value, "ProviderSessionDirectory.getBinding").pipe(
+              Effect.map((binding) => Option.some(binding)),
             ),
         }),
       ),
@@ -145,12 +158,25 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.threadId)),
     );
 
+  const listBindings: ProviderSessionDirectoryShape["listBindings"] = () =>
+    repository.list().pipe(
+      Effect.mapError(toPersistenceError("ProviderSessionDirectory.listBindings:list")),
+      Effect.flatMap((rows) =>
+        Effect.forEach(
+          rows,
+          (row) => toRuntimeBinding(row, "ProviderSessionDirectory.listBindings"),
+          { concurrency: "unbounded" },
+        ),
+      ),
+    );
+
   return {
     upsert,
     getProvider,
     getBinding,
     remove,
     listThreadIds,
+    listBindings,
   } satisfies ProviderSessionDirectoryShape;
 });
 

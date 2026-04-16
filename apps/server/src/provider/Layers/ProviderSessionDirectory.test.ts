@@ -133,6 +133,78 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       }
     }));
 
+  it("lists persisted bindings with metadata in oldest-first order", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+
+      const olderThreadId = ThreadId.make("thread-runtime-older");
+      const newerThreadId = ThreadId.make("thread-runtime-newer");
+
+      yield* runtimeRepository.upsert({
+        threadId: newerThreadId,
+        providerName: "codex",
+        adapterKey: "codex",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2026-04-14T12:05:00.000Z",
+        resumeCursor: {
+          opaque: "resume-newer",
+        },
+        runtimePayload: {
+          cwd: "/tmp/newer",
+        },
+      });
+
+      yield* runtimeRepository.upsert({
+        threadId: olderThreadId,
+        providerName: "claudeAgent",
+        adapterKey: "claudeAgent",
+        runtimeMode: "approval-required",
+        status: "starting",
+        lastSeenAt: "2026-04-14T12:00:00.000Z",
+        resumeCursor: {
+          opaque: "resume-older",
+        },
+        runtimePayload: {
+          cwd: "/tmp/older",
+        },
+      });
+
+      const bindings = yield* directory.listBindings();
+
+      assert.deepEqual(bindings, [
+        {
+          threadId: olderThreadId,
+          provider: "claudeAgent",
+          adapterKey: "claudeAgent",
+          runtimeMode: "approval-required",
+          status: "starting",
+          lastSeenAt: "2026-04-14T12:00:00.000Z",
+          resumeCursor: {
+            opaque: "resume-older",
+          },
+          runtimePayload: {
+            cwd: "/tmp/older",
+          },
+        },
+        {
+          threadId: newerThreadId,
+          provider: "codex",
+          adapterKey: "codex",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: "2026-04-14T12:05:00.000Z",
+          resumeCursor: {
+            opaque: "resume-newer",
+          },
+          runtimePayload: {
+            cwd: "/tmp/newer",
+          },
+        },
+      ]);
+    }));
+
   it("resets adapterKey to the new provider when provider changes without an explicit adapter key", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
