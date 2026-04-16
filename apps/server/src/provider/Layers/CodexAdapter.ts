@@ -1366,7 +1366,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const manager = yield* Effect.acquireRelease(acquireManager(), (manager) =>
     Effect.sync(() => {
       try {
-        manager.stopAll();
+        manager.stopAll({ emitLifecycleEvent: false });
       } catch {
         // Finalizers should never fail and block shutdown.
       }
@@ -1565,7 +1565,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
   const stopAll: CodexAdapterShape["stopAll"] = () =>
     Effect.sync(() => {
-      manager.stopAll();
+      manager.stopAll({ emitLifecycleEvent: false });
     });
 
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();

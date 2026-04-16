@@ -470,6 +470,60 @@ describe("startSession", () => {
       manager.stopAll();
     }
   });
+
+  it("supports silent shutdown without emitting session/closed lifecycle events", () => {
+    const manager = new CodexAppServerManager();
+    const emitLifecycleEvent = vi.spyOn(
+      manager as unknown as {
+        emitLifecycleEvent: (...args: unknown[]) => void;
+      },
+      "emitLifecycleEvent",
+    );
+    const updateSession = vi.spyOn(
+      manager as unknown as {
+        updateSession: (...args: unknown[]) => void;
+      },
+      "updateSession",
+    );
+    const sessions = (
+      manager as unknown as {
+        sessions: Map<string, unknown>;
+      }
+    ).sessions;
+
+    sessions.set("thread-1", {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread-1"),
+        runtimeMode: "full-access",
+        createdAt: "2026-03-19T00:00:00.000Z",
+        updatedAt: "2026-03-19T00:00:00.000Z",
+      },
+      account: {
+        type: "unknown",
+        planType: null,
+        sparkEnabled: true,
+      },
+      child: {
+        killed: true,
+      },
+      output: {
+        close: vi.fn(),
+      },
+      pending: new Map(),
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      nextRequestId: 1,
+      stopping: false,
+    });
+
+    manager.stopAll({ emitLifecycleEvent: false });
+
+    expect(updateSession).toHaveBeenCalled();
+    expect(emitLifecycleEvent).not.toHaveBeenCalled();
+    expect(sessions.size).toBe(0);
+  });
 });
 
 describe("sendTurn", () => {

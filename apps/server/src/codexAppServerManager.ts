@@ -127,6 +127,10 @@ export interface CodexAppServerStartSessionInput {
   readonly runtimeMode: RuntimeMode;
 }
 
+interface CodexAppServerStopOptions {
+  readonly emitLifecycleEvent?: boolean;
+}
+
 export interface CodexThreadTurnSnapshot {
   id: TurnId;
   items: unknown[];
@@ -895,7 +899,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
   }
 
-  stopSession(threadId: ThreadId): void {
+  stopSession(threadId: ThreadId, options?: CodexAppServerStopOptions): void {
     const context = this.sessions.get(threadId);
     if (!context) {
       return;
@@ -921,7 +925,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       status: "closed",
       activeTurnId: undefined,
     });
-    this.emitLifecycleEvent(context, "session/closed", "Session stopped");
+    if (options?.emitLifecycleEvent ?? true) {
+      this.emitLifecycleEvent(context, "session/closed", "Session stopped");
+    }
     this.sessions.delete(threadId);
   }
 
@@ -935,9 +941,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     return this.sessions.has(threadId);
   }
 
-  stopAll(): void {
+  stopAll(options?: CodexAppServerStopOptions): void {
     for (const threadId of this.sessions.keys()) {
-      this.stopSession(threadId);
+      this.stopSession(threadId, options);
     }
   }
 

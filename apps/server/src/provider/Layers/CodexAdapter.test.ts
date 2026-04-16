@@ -86,7 +86,9 @@ class FakeCodexManager extends CodexAppServerManager {
     ): Promise<void> => undefined,
   );
 
-  public stopAllImpl = vi.fn(() => undefined);
+  public stopAllImpl = vi.fn(
+    (_options?: Parameters<CodexAppServerManager["stopAll"]>[0]) => undefined,
+  );
 
   override startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
     return this.startSessionImpl(input);
@@ -134,8 +136,8 @@ class FakeCodexManager extends CodexAppServerManager {
     return false;
   }
 
-  override stopAll(): void {
-    this.stopAllImpl();
+  override stopAll(options?: Parameters<CodexAppServerManager["stopAll"]>[0]): void {
+    this.stopAllImpl(options);
   }
 }
 
@@ -428,6 +430,18 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       assert.equal(firstEvent.value.threadId, "thread-1");
       assert.equal(firstEvent.value.payload.reason, "Session stopped");
+    }),
+  );
+
+  it.effect("suppresses lifecycle events when adapter stopAll tears down sessions", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.stopAll();
+
+      assert.deepEqual(lifecycleManager.stopAllImpl.mock.calls.at(-1), [
+        { emitLifecycleEvent: false },
+      ]);
     }),
   );
 
@@ -976,6 +990,26 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 });
+
+it.effect("suppresses lifecycle events when the adapter scope finalizes", () =>
+  Effect.gen(function* () {
+    const manager = new FakeCodexManager();
+    const layer = makeCodexAdapterLive({ manager }).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* CodexAdapter;
+      }).pipe(Effect.provide(layer)),
+    );
+
+    assert.deepEqual(manager.stopAllImpl.mock.calls, [[{ emitLifecycleEvent: false }]]);
+  }),
+);
 
 afterAll(() => {
   if (lifecycleManager.stopAllImpl.mock.calls.length === 0) {
