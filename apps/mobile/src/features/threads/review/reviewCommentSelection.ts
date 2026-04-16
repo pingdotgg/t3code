@@ -1,5 +1,4 @@
-import { useSyncExternalStore } from "react";
-
+import { createExternalStore } from "../../../lib/createExternalStore";
 import type { ReviewRenderableLineRow } from "./reviewModel";
 
 export interface ReviewCommentTarget {
@@ -10,41 +9,13 @@ export interface ReviewCommentTarget {
   readonly endIndex: number;
 }
 
-let currentTarget: ReviewCommentTarget | null = null;
-const listeners = new Set<() => void>();
+const store = createExternalStore<ReviewCommentTarget | null>(null);
 
-function emitChange() {
-  listeners.forEach((listener) => listener());
-}
-
-export function subscribeReviewCommentTarget(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-export function getReviewCommentTarget(): ReviewCommentTarget | null {
-  return currentTarget;
-}
-
-export function setReviewCommentTarget(target: ReviewCommentTarget | null) {
-  currentTarget = target;
-  emitChange();
-}
-
-export function clearReviewCommentTarget() {
-  currentTarget = null;
-  emitChange();
-}
-
-export function useReviewCommentTarget(): ReviewCommentTarget | null {
-  return useSyncExternalStore(
-    subscribeReviewCommentTarget,
-    getReviewCommentTarget,
-    getReviewCommentTarget,
-  );
-}
+export const subscribeReviewCommentTarget = store.subscribe;
+export const getReviewCommentTarget = store.getSnapshot;
+export const setReviewCommentTarget = store.set;
+export const clearReviewCommentTarget = () => store.set(null);
+export const useReviewCommentTarget = store.useValue;
 
 export function getSelectedReviewCommentLines(
   target: ReviewCommentTarget,

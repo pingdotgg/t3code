@@ -75,6 +75,17 @@ export default function ThreadLayout() {
           headerShadowVisible: false,
         }}
       />
+      <Stack.Screen
+        name="message-copy"
+        options={{
+          contentStyle: { backgroundColor: "transparent" },
+          gestureEnabled: true,
+          headerShown: false,
+          presentation: "formSheet" as const,
+          sheetAllowedDetents: [0.5, 1.0],
+          sheetGrabberVisible: true,
+        }}
+      />
     </Stack>
   );
 }

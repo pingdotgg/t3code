@@ -2,6 +2,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { KeyboardAvoidingLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -22,6 +23,7 @@ import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { setMessageCopyText } from "./messageCopySelection";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
@@ -325,6 +327,7 @@ function renderFeedEntry(
     readonly expandedWorkGroups: Record<string, boolean>;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
     readonly onToggleWorkGroup: (groupId: string) => void;
+    readonly onLongPressMessage: (text: string) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -343,41 +346,43 @@ function renderFeedEntry(
     if (isUser) {
       return (
         <View className="mb-3.5 items-end gap-1.5">
-          <View className="max-w-[85%] gap-2 rounded-[22px] rounded-br-[10px] border border-blue-300/50 bg-blue-50/80 px-4 py-4 dark:border-blue-400/20 dark:bg-blue-500/12">
-            {message.text.trim().length > 0 ? (
-              <Markdown
-                options={{ gfm: true }}
-                renderers={styles.renderers}
-                styles={styles.styles}
-                theme={styles.theme}
-              >
-                {message.text}
-              </Markdown>
-            ) : null}
-            {attachments.map((attachment) => {
-              const uri = messageImageUrl(props.httpBaseUrl, attachment.id);
-              if (!uri) {
-                return null;
-              }
-              const headers = props.bearerToken
-                ? { Authorization: `Bearer ${props.bearerToken}` }
-                : undefined;
-
-              return (
-                <TouchableOpacity
-                  key={attachment.id}
-                  activeOpacity={0.7}
-                  onPress={() => props.onPressImage(uri, headers)}
+          <Pressable onLongPress={() => props.onLongPressMessage(message.text)}>
+            <View className="max-w-[85%] gap-2 rounded-[22px] rounded-br-[10px] border border-blue-300/50 bg-blue-50/80 px-4 py-4 dark:border-blue-400/20 dark:bg-blue-500/12">
+              {message.text.trim().length > 0 ? (
+                <Markdown
+                  options={{ gfm: true }}
+                  renderers={styles.renderers}
+                  styles={styles.styles}
+                  theme={styles.theme}
                 >
-                  <Image
-                    source={{ uri, ...(headers ? { headers } : {}) }}
-                    className="aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
-                    resizeMode="cover"
-                  />
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                  {message.text}
+                </Markdown>
+              ) : null}
+              {attachments.map((attachment) => {
+                const uri = messageImageUrl(props.httpBaseUrl, attachment.id);
+                if (!uri) {
+                  return null;
+                }
+                const headers = props.bearerToken
+                  ? { Authorization: `Bearer ${props.bearerToken}` }
+                  : undefined;
+
+                return (
+                  <TouchableOpacity
+                    key={attachment.id}
+                    activeOpacity={0.7}
+                    onPress={() => props.onPressImage(uri, headers)}
+                  >
+                    <Image
+                      source={{ uri, ...(headers ? { headers } : {}) }}
+                      className="aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
+                      resizeMode="cover"
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </Pressable>
           <Text className="px-1 text-right font-t3-medium text-xs text-neutral-500 dark:text-neutral-500">
             {timestampLabel}
           </Text>
@@ -392,44 +397,46 @@ function renderFeedEntry(
     }
 
     return (
-      <View className="mb-3.5 gap-1.5 px-1">
-        {message.text.trim().length > 0 ? (
-          <Markdown
-            options={{ gfm: true }}
-            renderers={styles.renderers}
-            styles={styles.styles}
-            theme={styles.theme}
-          >
-            {message.text}
-          </Markdown>
-        ) : null}
-        {attachments.map((attachment) => {
-          const uri = messageImageUrl(props.httpBaseUrl, attachment.id);
-          if (!uri) {
-            return null;
-          }
-          const headers = props.bearerToken
-            ? { Authorization: `Bearer ${props.bearerToken}` }
-            : undefined;
-
-          return (
-            <TouchableOpacity
-              key={attachment.id}
-              activeOpacity={0.7}
-              onPress={() => props.onPressImage(uri, headers)}
+      <Pressable onLongPress={() => props.onLongPressMessage(message.text)}>
+        <View className="mb-3.5 gap-1.5 px-1">
+          {message.text.trim().length > 0 ? (
+            <Markdown
+              options={{ gfm: true }}
+              renderers={styles.renderers}
+              styles={styles.styles}
+              theme={styles.theme}
             >
-              <Image
-                source={{ uri, ...(headers ? { headers } : {}) }}
-                className="aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
-                resizeMode="cover"
-              />
-            </TouchableOpacity>
-          );
-        })}
-        <Text className="font-t3-medium text-xs text-neutral-500 dark:text-neutral-500">
-          {timestampLabel}
-        </Text>
-      </View>
+              {message.text}
+            </Markdown>
+          ) : null}
+          {attachments.map((attachment) => {
+            const uri = messageImageUrl(props.httpBaseUrl, attachment.id);
+            if (!uri) {
+              return null;
+            }
+            const headers = props.bearerToken
+              ? { Authorization: `Bearer ${props.bearerToken}` }
+              : undefined;
+
+            return (
+              <TouchableOpacity
+                key={attachment.id}
+                activeOpacity={0.7}
+                onPress={() => props.onPressImage(uri, headers)}
+              >
+                <Image
+                  source={{ uri, ...(headers ? { headers } : {}) }}
+                  className="aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
+                  resizeMode="cover"
+                />
+              </TouchableOpacity>
+            );
+          })}
+          <Text className="font-t3-medium text-xs text-neutral-500 dark:text-neutral-500">
+            {timestampLabel}
+          </Text>
+        </View>
+      </Pressable>
     );
   }
 
@@ -524,6 +531,9 @@ const IOS_NAV_BAR_HEIGHT = 44;
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const listRef = useRef<LegendListRef>(null);
+  const router = useRouter();
+  const { environmentId } = useLocalSearchParams<{ environmentId?: string | string[] }>();
+  const resolvedEnvironmentId = Array.isArray(environmentId) ? environmentId[0] : environmentId;
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
@@ -563,6 +573,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
   }, []);
 
+  const onLongPressMessage = useCallback(
+    (text: string) => {
+      if (!resolvedEnvironmentId) return;
+      void Haptics.selectionAsync();
+      setMessageCopyText(text);
+      router.push({
+        pathname: "/threads/[environmentId]/[threadId]/message-copy",
+        params: { environmentId: resolvedEnvironmentId, threadId: props.threadId },
+      });
+    },
+    [resolvedEnvironmentId, props.threadId, router],
+  );
+
   const onCopyWorkRow = useCallback((rowId: string, value: string) => {
     void Clipboard.setStringAsync(value);
     void Haptics.selectionAsync();
@@ -594,6 +617,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         copiedRowId,
         httpBaseUrl: props.httpBaseUrl,
         expandedWorkGroups,
+        onLongPressMessage,
         onCopyWorkRow,
         onToggleWorkGroup,
         onPressImage,
@@ -605,6 +629,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       expandedWorkGroups,
       iconSubtleColor,
       markdownStyles,
+      onLongPressMessage,
       onCopyWorkRow,
       onPressImage,
       onToggleWorkGroup,
