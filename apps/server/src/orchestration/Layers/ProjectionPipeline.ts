@@ -1284,6 +1284,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             }
             return;
           }
+          // Only approval-requested activities should create pending-approval
+          // rows.  Other activity kinds that happen to carry a requestId
+          // (e.g. user-input.requested / user-input.resolved) must not
+          // pollute this projection — they have their own accounting via
+          // derivePendingUserInputCountFromActivities.
+          if (event.payload.activity.kind !== "approval.requested") {
+            return;
+          }
           if (Option.isSome(existingRow) && existingRow.value.status === "resolved") {
             return;
           }
