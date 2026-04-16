@@ -84,6 +84,7 @@ type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
   "command_output" | "file_change_output"
 >;
+type ClaudeSdkEffort = NonNullable<ClaudeQueryOptions["effort"]>;
 
 type PromptQueueItem =
   | {
@@ -217,11 +218,17 @@ function normalizeClaudeStreamMessages(cause: Cause.Cause<Error>): ReadonlyArray
 
 function getEffectiveClaudeAgentEffort(
   effort: ClaudeAgentEffort | null | undefined,
-): Exclude<ClaudeAgentEffort, "ultrathink"> | null {
+): ClaudeSdkEffort | null {
   if (!effort) {
     return null;
   }
-  return effort === "ultrathink" ? null : effort;
+  if (effort === "ultrathink") {
+    return null;
+  }
+  if (effort === "xhigh") {
+    return "max";
+  }
+  return effort;
 }
 
 function isClaudeInterruptedMessage(message: string): boolean {

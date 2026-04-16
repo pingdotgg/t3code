@@ -351,7 +351,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("defaults Claude Opus 4.7 sessions to xhigh effort", () => {
+  it.effect("maps the Claude Opus 4.7 default effort to the SDK-supported max value", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -366,14 +366,14 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.effort, "xhigh");
+      assert.equal(createInput?.options.effort, "max");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
   });
 
-  it.effect("forwards xhigh effort for Claude Opus 4.7", () => {
+  it.effect("maps xhigh effort for Claude Opus 4.7 to the SDK-supported max value", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -391,7 +391,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.effort, "xhigh");
+      assert.equal(createInput?.options.effort, "max");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

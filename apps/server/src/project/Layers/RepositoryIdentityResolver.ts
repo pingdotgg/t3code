@@ -42,6 +42,7 @@ function pickPrimaryRemote(
 function buildRepositoryIdentity(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
+  readonly rootPath: string;
 }): RepositoryIdentity {
   const canonicalKey = normalizeGitRemoteUrl(input.remoteUrl);
   const hostingProvider = detectGitHostingProviderFromRemoteUrl(input.remoteUrl);
@@ -57,6 +58,7 @@ function buildRepositoryIdentity(input: {
       remoteName: input.remoteName,
       remoteUrl: input.remoteUrl,
     },
+    rootPath: input.rootPath,
     ...(repositoryPath ? { displayName: repositoryPath } : {}),
     ...(hostingProvider ? { provider: hostingProvider.kind } : {}),
     ...(owner ? { owner } : {}),
@@ -108,7 +110,7 @@ async function resolveRepositoryIdentityFromCacheKey(
     }
 
     const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.stdout));
-    return remote ? buildRepositoryIdentity(remote) : null;
+    return remote ? buildRepositoryIdentity({ ...remote, rootPath: cacheKey }) : null;
   } catch {
     return null;
   }

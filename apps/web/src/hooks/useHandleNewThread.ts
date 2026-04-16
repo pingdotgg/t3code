@@ -10,14 +10,19 @@ import {
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
-import { deriveLogicalProjectKey } from "../logicalProject";
+import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
+import { useSettings } from "./useSettings";
 
 function useNewThreadState() {
   const projects = useStore(useShallow((store) => selectProjectsAcrossEnvironments(store)));
+  const projectGroupingSettings = useSettings((settings) => ({
+    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
+    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+  }));
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
@@ -48,7 +53,7 @@ function useNewThreadState() {
           candidate.environmentId === projectRef.environmentId,
       );
       const logicalProjectKey = project
-        ? deriveLogicalProjectKey(project)
+        ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
         : scopedProjectKey(projectRef);
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
@@ -129,7 +134,7 @@ function useNewThreadState() {
         });
       })();
     },
-    [getCurrentRouteTarget, router, projects],
+    [getCurrentRouteTarget, projectGroupingSettings, router, projects],
   );
 }
 
