@@ -509,9 +509,9 @@ function MarkdownCodeBlock({
       textarea.style.opacity = "0";
       document.body.appendChild(textarea);
       textarea.select();
-      document.execCommand("copy");
+      const ok = document.execCommand("copy");
       document.body.removeChild(textarea);
-      onSuccess();
+      if (ok) onSuccess();
     } catch {
       // Ignore clipboard failures in unsupported browser contexts.
     }
