@@ -605,6 +605,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: codexSettings.enabled,
       checkedAt,
       models,
+      displayName,
       probe: {
         installed: true,
         version: parsedVersion,
