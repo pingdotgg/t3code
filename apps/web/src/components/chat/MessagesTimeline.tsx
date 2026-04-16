@@ -417,7 +417,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                   resolvedTheme={ctx.resolvedTheme}
                   onOpenTurnDiff={ctx.onOpenTurnDiff}
                 />
-                <div className="mt-1.5 flex items-center gap-2">
+                <div className="pointer-events-none mt-1.5 flex items-center gap-2 opacity-0 transition-opacity duration-200 group-focus-within/assistant:pointer-events-auto group-focus-within/assistant:opacity-100 group-hover/assistant:pointer-events-auto group-hover/assistant:opacity-100">
                   <p className="text-[10px] text-muted-foreground/45 dark:text-muted-foreground/60">
                     {row.message.streaming ? (
                       <LiveMessageMeta
@@ -434,7 +434,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                     )}
                   </p>
                   {assistantCopyState.visible ? (
-                    <div className="flex items-center opacity-0 transition-opacity duration-200  group-hover/assistant:opacity-100">
+                    <div className="flex items-center">
                       <MessageCopyButton text={assistantCopyState.text ?? ""} />
                     </div>
                   ) : null}
