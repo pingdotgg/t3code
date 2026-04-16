@@ -2190,16 +2190,14 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       fallbackErrorMessage: "git branch create failed",
     });
     if (input.checkout) {
-      yield* Effect.scoped(
-        checkoutBranch({ cwd: input.cwd, branch: input.branch }).pipe(
-          Effect.catchTag("GitCheckoutDirtyWorktreeError", (e) =>
-            Effect.fail(
-              createGitCommandError(
-                "GitCore.createBranch.checkout",
-                input.cwd,
-                ["checkout", input.branch],
-                e.message,
-              ),
+      yield* checkoutBranch({ cwd: input.cwd, branch: input.branch }).pipe(
+        Effect.catchTag("GitCheckoutDirtyWorktreeError", (e) =>
+          Effect.fail(
+            createGitCommandError(
+              "GitCore.createBranch.checkout",
+              input.cwd,
+              ["checkout", input.branch],
+              e.message,
             ),
           ),
         ),

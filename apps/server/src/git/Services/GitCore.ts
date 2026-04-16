@@ -7,7 +7,7 @@
  * @module GitCore
  */
 import { Context } from "effect";
-import type { Effect, Scope } from "effect";
+import type { Effect } from "effect";
 import type {
   GitCheckoutInput,
   GitCheckoutResult,
@@ -294,15 +294,9 @@ export interface GitCoreShape {
    */
   readonly checkoutBranch: (
     input: GitCheckoutInput,
-  ) => Effect.Effect<
-    GitCheckoutResult,
-    GitCommandError | GitCheckoutDirtyWorktreeError,
-    Scope.Scope
-  >;
+  ) => Effect.Effect<GitCheckoutResult, GitCommandError | GitCheckoutDirtyWorktreeError>;
 
-  readonly stashAndCheckout: (
-    input: GitCheckoutInput,
-  ) => Effect.Effect<void, GitCommandError, Scope.Scope>;
+  readonly stashAndCheckout: (input: GitCheckoutInput) => Effect.Effect<void, GitCommandError>;
 
   readonly stashDrop: (cwd: string) => Effect.Effect<void, GitCommandError>;
 
