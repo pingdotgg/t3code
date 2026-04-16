@@ -552,11 +552,17 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               const normalizedCommand = yield* normalizeDispatchCommand(command);
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
               if (normalizedCommand.type === "thread.archive") {
-                const thread = Option.getOrNull(
-                  yield* projectionSnapshotQuery.getThreadShellById(normalizedCommand.threadId),
-                );
+                const existingSessionStatus = yield* projectionSnapshotQuery
+                  .getThreadShellById(normalizedCommand.threadId)
+                  .pipe(
+                    Effect.map(Option.flatMapNullishOr((thread) => thread.session?.status)),
+                    Effect.catch(() => Effect.succeedNone),
+                  );
 
-                if (thread?.session && thread.session.status !== "stopped") {
+                if (
+                  Option.isSome(existingSessionStatus) &&
+                  existingSessionStatus.value !== "stopped"
+                ) {
                   yield* Effect.gen(function* () {
                     const stopCommand = yield* normalizeDispatchCommand({
                       type: "thread.session.stop",
