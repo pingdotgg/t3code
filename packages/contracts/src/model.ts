@@ -2,28 +2,28 @@ import { Schema } from "effect";
 import { TrimmedNonEmptyString } from "./baseSchemas";
 import type { ProviderKind } from "./orchestration";
 
-export const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
-export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORT_OPTIONS)[number];
-export const CLAUDE_CODE_EFFORT_OPTIONS = [
+export const CodexReasoningEffort = Schema.Literals(["xhigh", "high", "medium", "low"]);
+export type CodexReasoningEffort = typeof CodexReasoningEffort.Type;
+export const ClaudeAgentEffort = Schema.Literals([
   "low",
   "medium",
   "high",
   "xhigh",
   "max",
   "ultrathink",
-] as const;
-export type ClaudeCodeEffort = (typeof CLAUDE_CODE_EFFORT_OPTIONS)[number];
-export type ProviderReasoningEffort = CodexReasoningEffort | ClaudeCodeEffort;
+]);
+export type ClaudeAgentEffort = typeof ClaudeAgentEffort.Type;
+export type ProviderReasoningEffort = CodexReasoningEffort | ClaudeAgentEffort;
 
 export const CodexModelOptions = Schema.Struct({
-  reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)),
+  reasoningEffort: Schema.optional(CodexReasoningEffort),
   fastMode: Schema.optional(Schema.Boolean),
 });
 export type CodexModelOptions = typeof CodexModelOptions.Type;
 
 export const ClaudeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
-  effort: Schema.optional(Schema.Literals(CLAUDE_CODE_EFFORT_OPTIONS)),
+  effort: Schema.optional(ClaudeAgentEffort),
   fastMode: Schema.optional(Schema.Boolean),
   contextWindow: Schema.optional(Schema.String),
 });
