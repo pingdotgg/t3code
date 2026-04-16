@@ -18,6 +18,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    pinnedThreadKeys: {},
     ...overrides,
   };
 }

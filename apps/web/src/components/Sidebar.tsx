@@ -3,13 +3,16 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   CloudIcon,
+  FilterIcon,
   GitPullRequestIcon,
+  PinIcon,
   PlusIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
+  XIcon,
 } from "lucide-react";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -393,6 +396,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const isPinned = useUiStateStore((state) => state.pinnedThreadKeys[threadKey] === true);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const hasSelection = useThreadSelectionStore((state) => state.selectedThreadKeys.size > 0);
   const runningTerminalIds = useTerminalStateStore(
@@ -634,6 +638,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               />
               <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
             </Tooltip>
+          )}
+          {isPinned && (
+            <PinIcon className="size-3 shrink-0 text-muted-foreground/50 rotate-[-30deg]" />
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
           {renamingThreadKey === threadKey ? (
@@ -963,6 +970,7 @@ interface SidebarProjectItemProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   isManualProjectSorting: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
+  threadFilterQuery: string;
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
@@ -983,6 +991,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     suppressProjectClickForContextMenuRef,
     isManualProjectSorting,
     dragHandleProps,
+    threadFilterQuery,
   } = props;
   const threadSortOrder = useSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
@@ -998,6 +1007,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
   const router = useRouter();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  const pinnedThreadKeys = useUiStateStore((state) => state.pinnedThreadKeys);
+  const pinThreadAction = useUiStateStore((state) => state.pinThread);
+  const unpinThreadAction = useUiStateStore((state) => state.unpinThread);
   const toggleProject = useUiStateStore((state) => state.toggleProject);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((state) => state.rangeSelectTo);
@@ -1163,10 +1175,25 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
-      threadSortOrder,
+    let filteredThreads = projectThreads.filter((thread) => thread.archivedAt === null);
+    // Apply search filter if provided
+    if (threadFilterQuery && threadFilterQuery.length > 0) {
+      const query = threadFilterQuery.toLowerCase();
+      filteredThreads = filteredThreads.filter(
+        (thread) =>
+          thread.id.toLowerCase().includes(query) ||
+          thread.title.toLowerCase().includes(query),
+      );
+    }
+    const sorted = sortThreads(filteredThreads, threadSortOrder);
+    // Sort pinned threads to the top while preserving relative order
+    const pinned = sorted.filter(
+      (thread) => pinnedThreadKeys[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
     );
+    const unpinned = sorted.filter(
+      (thread) => !pinnedThreadKeys[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
+    );
+    const visibleProjectThreads = [...pinned, ...unpinned];
     const projectStatus = resolveProjectStatusIndicator(
       visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
     );
@@ -1177,7 +1204,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectStatus,
       visibleProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [projectThreads, threadLastVisitedAts, threadSortOrder, pinnedThreadKeys, threadFilterQuery]);
 
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
@@ -1216,9 +1243,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const hasOverflowingThreads = visibleProjectThreads.length > THREAD_PREVIEW_LIMIT;
+    const hasActiveFilter = threadFilterQuery.length > 0;
+    // When filtering, show all matches — no preview limit or overflow
+    const hasOverflowingThreads = !hasActiveFilter && visibleProjectThreads.length > THREAD_PREVIEW_LIMIT;
     const previewThreads =
-      isThreadListExpanded || !hasOverflowingThreads
+      hasActiveFilter || isThreadListExpanded || !hasOverflowingThreads
         ? visibleProjectThreads
         : visibleProjectThreads.slice(0, THREAD_PREVIEW_LIMIT);
     const visibleThreadKeys = new Set(
@@ -1226,29 +1255,34 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
     );
-    const renderedThreads = pinnedCollapsedThread
-      ? [pinnedCollapsedThread]
-      : visibleProjectThreads.filter((thread) =>
-          visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    const renderedThreads = hasActiveFilter
+      ? visibleProjectThreads
+      : pinnedCollapsedThread
+        ? [pinnedCollapsedThread]
+        : visibleProjectThreads.filter((thread) =>
+            visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+          );
+    const hiddenThreads = hasActiveFilter
+      ? []
+      : visibleProjectThreads.filter(
+          (thread) =>
+            !visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
         );
-    const hiddenThreads = visibleProjectThreads.filter(
-      (thread) =>
-        !visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-    );
     return {
       hasOverflowingThreads,
       hiddenThreadStatus: resolveProjectStatusIndicator(
         hiddenThreads.map((thread) => resolveProjectThreadStatus(thread)),
       ),
       renderedThreads,
-      showEmptyThreadState: projectExpanded && visibleProjectThreads.length === 0,
-      shouldShowThreadPanel: projectExpanded || pinnedCollapsedThread !== null,
+      showEmptyThreadState: (projectExpanded || hasActiveFilter) && visibleProjectThreads.length === 0,
+      shouldShowThreadPanel: projectExpanded || pinnedCollapsedThread !== null || (hasActiveFilter && visibleProjectThreads.length > 0),
     };
   }, [
     isThreadListExpanded,
     pinnedCollapsedThread,
     projectExpanded,
     projectThreads,
+    threadFilterQuery,
     threadLastVisitedAts,
     visibleProjectThreads,
   ]);
@@ -1631,9 +1665,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const thread = sidebarThreadByKeyRef.current.get(threadKey) ?? null;
       if (!thread) return;
       const threadWorkspacePath = thread.worktreePath ?? project.cwd ?? null;
+      const isPinned = pinnedThreadKeys[threadKey] === true;
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
+          { id: isPinned ? "unpin" : "pin", label: isPinned ? "Unpin thread" : "Pin thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -1649,6 +1685,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
 
+      if (clicked === "pin") {
+        pinThreadAction(threadKey);
+        return;
+      }
+      if (clicked === "unpin") {
+        unpinThreadAction(threadKey);
+        return;
+      }
       if (clicked === "mark-unread") {
         markThreadUnread(threadKey, thread.latestTurn?.completedAt);
         return;
@@ -1689,6 +1733,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       copyThreadIdToClipboard,
       deleteThread,
       markThreadUnread,
+      pinThreadAction,
+      unpinThreadAction,
+      pinnedThreadKeys,
       project.cwd,
     ],
   );
@@ -2055,6 +2102,10 @@ interface SidebarProjectsContentProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
+  threadFilterQuery: string;
+  setThreadFilterQuery: (query: string) => void;
+  showThreadFilter: boolean;
+  setShowThreadFilter: (show: boolean) => void;
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -2094,6 +2145,10 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     suppressProjectClickForContextMenuRef,
     attachProjectListAutoAnimateRef,
     projectsLength,
+    threadFilterQuery,
+    setThreadFilterQuery,
+    showThreadFilter,
+    setShowThreadFilter,
   } = props;
 
   const handleProjectSortOrderChange = useCallback(
@@ -2174,6 +2229,33 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 render={
                   <button
                     type="button"
+                    aria-label="Filter threads"
+                    data-testid="sidebar-filter-threads-trigger"
+                    className={`inline-flex size-5 cursor-pointer items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground ${
+                      showThreadFilter
+                        ? "text-primary"
+                        : "text-muted-foreground/60"
+                    }`}
+                    onClick={() => {
+                      if (showThreadFilter) {
+                        setThreadFilterQuery("");
+                        setShowThreadFilter(false);
+                      } else {
+                        setShowThreadFilter(true);
+                      }
+                    }}
+                  />
+                }
+              >
+                <FilterIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="right">Filter threads by ID</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
                     aria-label="Add project"
                     data-testid="sidebar-add-project-trigger"
                     className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
@@ -2187,6 +2269,38 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             </Tooltip>
           </div>
         </div>
+
+        {showThreadFilter && (
+          <div className="mb-1.5 flex items-center gap-1.5 px-2">
+            <div className="relative flex flex-1 items-center">
+              <SearchIcon className="pointer-events-none absolute left-2 size-3 text-muted-foreground/50" />
+              <input
+                autoFocus
+                type="text"
+                placeholder="Filter by thread ID or title..."
+                className="h-7 w-full rounded-md border border-border/60 bg-background/80 pl-7 pr-7 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+                value={threadFilterQuery}
+                onChange={(e) => setThreadFilterQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setThreadFilterQuery("");
+                    setShowThreadFilter(false);
+                  }
+                }}
+              />
+              {threadFilterQuery.length > 0 && (
+                <button
+                  type="button"
+                  aria-label="Clear filter"
+                  className="absolute right-1.5 inline-flex size-4 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/50 hover:text-foreground"
+                  onClick={() => setThreadFilterQuery("")}
+                >
+                  <XIcon className="size-3" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {isManualProjectSorting ? (
           <DndContext
@@ -2226,6 +2340,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         }
                         isManualProjectSorting={isManualProjectSorting}
                         dragHandleProps={dragHandleProps}
+                        threadFilterQuery={threadFilterQuery}
                       />
                     )}
                   </SortableProjectItem>
@@ -2256,6 +2371,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
                 isManualProjectSorting={isManualProjectSorting}
                 dragHandleProps={null}
+                threadFilterQuery={threadFilterQuery}
               />
             ))}
           </SidebarMenu>
@@ -2295,6 +2411,14 @@ export default function Sidebar() {
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<string>
   >(() => new Set());
+  const [threadFilterQuery, setThreadFilterQuery] = useState("");
+  const [showThreadFilter, setShowThreadFilter] = useState(false);
+  const handleSetThreadFilterQuery = useCallback((query: string) => {
+    setThreadFilterQuery(query);
+    if (query.length > 0) {
+      setShowThreadFilter(true);
+    }
+  }, []);
   const { showThreadJumpHints, updateThreadJumpHintsVisibility } = useThreadJumpHintVisibility();
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
@@ -3004,6 +3128,10 @@ export default function Sidebar() {
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
             projectsLength={projects.length}
+            threadFilterQuery={threadFilterQuery}
+            setThreadFilterQuery={handleSetThreadFilterQuery}
+            showThreadFilter={showThreadFilter}
+            setShowThreadFilter={setShowThreadFilter}
           />
 
           <SidebarSeparator />

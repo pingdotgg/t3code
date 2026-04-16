@@ -143,7 +143,7 @@ export function buildThreadActionItems(input: {
     return {
       kind: "action",
       value: `thread:${thread.id}`,
-      searchTerms: [thread.title, projectTitle ?? "", thread.branch ?? ""],
+      searchTerms: [thread.title, thread.id, projectTitle ?? "", thread.branch ?? ""],
       title: thread.title,
       description: descriptionParts.join(" · "),
       timestamp: formatRelativeTimeLabel(
