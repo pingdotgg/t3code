@@ -1133,6 +1133,172 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("maps documented server tool stream blocks to canonical tool items", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "search docs",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-server-tool-start",
+        uuid: "stream-server-tool-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "server_tool_use",
+            id: "server-tool-1",
+            name: "WebSearch",
+            input: {
+              query: "latest t3 code release",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-server-tool-start",
+        uuid: "stream-server-tool-stop",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_stop",
+          index: 0,
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-server-tool-start",
+        uuid: "result-server-tool-start",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const toolStarted = runtimeEvents.find((event) => event.type === "item.started");
+      assert.equal(toolStarted?.type, "item.started");
+      if (toolStarted?.type !== "item.started") {
+        return;
+      }
+
+      assert.equal(toolStarted.payload.itemType, "web_search");
+      assert.equal(toolStarted.payload.title, "Web search");
+      assert.equal(toolStarted.payload.detail, 'WebSearch: {"query":"latest t3 code release"}');
+      assert.deepEqual(toolStarted.payload.data, {
+        toolName: "WebSearch",
+        input: {
+          query: "latest t3 code release",
+        },
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("maps documented MCP tool stream blocks to canonical tool items", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "read docs",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-mcp-tool-start",
+        uuid: "stream-mcp-tool-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "mcp_tool_use",
+            id: "mcp-tool-1",
+            name: "Read",
+            input: {
+              path: "docs/guide.md",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-mcp-tool-start",
+        uuid: "stream-mcp-tool-stop",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_stop",
+          index: 0,
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-mcp-tool-start",
+        uuid: "result-mcp-tool-start",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const toolStarted = runtimeEvents.find((event) => event.type === "item.started");
+      assert.equal(toolStarted?.type, "item.started");
+      if (toolStarted?.type !== "item.started") {
+        return;
+      }
+
+      assert.equal(toolStarted.payload.itemType, "dynamic_tool_call");
+      assert.equal(toolStarted.payload.title, "Tool call");
+      assert.equal(toolStarted.payload.detail, 'Read: {"path":"docs/guide.md"}');
+      assert.deepEqual(toolStarted.payload.data, {
+        toolName: "Read",
+        input: {
+          path: "docs/guide.md",
+        },
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("treats user-aborted Claude results as interrupted without a runtime error", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

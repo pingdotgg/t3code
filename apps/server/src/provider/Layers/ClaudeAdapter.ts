@@ -18,7 +18,6 @@ import {
   type SettingSource,
   type SDKUserMessage,
   ModelUsage,
-  NonNullableUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
@@ -290,7 +289,7 @@ function maxClaudeContextWindowFromModelUsage(
 }
 
 function normalizeClaudeTokenUsage(
-  value: NonNullableUsage | undefined,
+  value: Record<string, unknown> | undefined,
   contextWindow?: number,
 ): ThreadTokenUsageSnapshot | undefined {
   if (!value || typeof value !== "object") {
@@ -722,6 +721,38 @@ function extractContentBlockText(block: unknown): string {
 
   const candidate = block as { type?: unknown; text?: unknown };
   return candidate.type === "text" && typeof candidate.text === "string" ? candidate.text : "";
+}
+
+type DocumentedClaudeToolUseStartBlock = {
+  readonly type: "tool_use" | "server_tool_use" | "mcp_tool_use";
+  readonly id: string;
+  readonly name: string;
+  readonly input?: unknown;
+};
+
+function isDocumentedClaudeToolUseStartBlock(
+  block: unknown,
+): block is DocumentedClaudeToolUseStartBlock {
+  if (!block || typeof block !== "object") {
+    return false;
+  }
+
+  const candidate = block as {
+    type?: unknown;
+    id?: unknown;
+    name?: unknown;
+    input?: unknown;
+  };
+
+  // Anthropic documents streamed server_tool_use and mcp_tool_use blocks, but
+  // the current SDK declarations still type content_block_start more narrowly.
+  return (
+    (candidate.type === "tool_use" ||
+      candidate.type === "server_tool_use" ||
+      candidate.type === "mcp_tool_use") &&
+    typeof candidate.id === "string" &&
+    typeof candidate.name === "string"
+  );
 }
 
 function extractTextContent(value: unknown): string {
@@ -1691,11 +1722,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       }
-      if (
-        block.type !== "tool_use" &&
-        block.type !== "server_tool_use" &&
-        block.type !== "mcp_tool_use"
-      ) {
+      if (!isDocumentedClaudeToolUseStartBlock(block)) {
         return;
       }
 
