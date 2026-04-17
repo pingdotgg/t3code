@@ -554,7 +554,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
           </p>
           {hasOverflow && (
             <CollapsibleTrigger
-              className="cursor-pointer text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
+              className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
               data-scroll-anchor-ignore
             >
               {isExpanded ? "Show less" : `Show ${overflowEntries.length} more`}
