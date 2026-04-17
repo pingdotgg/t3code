@@ -1,5 +1,6 @@
 import {
   CommandId,
+  DEFAULT_PROVIDER_KIND,
   EventId,
   IsoDateTime,
   NonNegativeInt,
@@ -10,6 +11,7 @@ import {
   OrchestrationEventType,
   ProjectId,
   ThreadId,
+  isSupportedProvider,
 } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
@@ -26,6 +28,29 @@ import {
 } from "../Services/OrchestrationEventStore.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
+
+/**
+ * Coerce unsupported provider names in `modelSelection` /
+ * `defaultModelSelection` payloads to the default provider so the strict
+ * `OrchestrationEvent` schema can always decode persisted events.  This
+ * keeps the read path tolerant of legacy or future provider data without
+ * widening the canonical types.
+ */
+function coerceUnsupportedProviders<T>(row: T): T {
+  const r = row as Record<string, unknown>;
+  const payload = r.payload;
+  if (typeof payload !== "object" || payload === null) return row;
+  const p = payload as Record<string, unknown>;
+  let patched: Record<string, unknown> | null = null;
+  for (const key of ["modelSelection", "defaultModelSelection"] as const) {
+    const ms = p[key] as Record<string, unknown> | null | undefined;
+    if (ms && typeof ms.provider === "string" && !isSupportedProvider(ms.provider)) {
+      patched ??= { ...p };
+      patched[key] = { provider: DEFAULT_PROVIDER_KIND, model: ms.model };
+    }
+  }
+  return patched ? ({ ...r, payload: patched } as T) : row;
+}
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMetadata);
 
@@ -230,7 +255,7 @@ const makeEventStore = Effect.gen(function* () {
           ),
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) =>
-              decodeEvent(row).pipe(
+              decodeEvent(coerceUnsupportedProviders(row)).pipe(
                 Effect.mapError(
                   toPersistenceDecodeError("OrchestrationEventStore.readFromSequence:rowToEvent"),
                 ),

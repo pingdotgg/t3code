@@ -20,19 +20,25 @@ function toPersistenceError(operation: string) {
     });
 }
 
+/**
+ * Accept any non-empty provider string.
+ * Legacy or future providers are passed through so the read path never fails;
+ * unsupported providers are simply cast — the caller is responsible for
+ * checking `isSupportedProvider` before dispatching adapter operations.
+ */
 function decodeProviderKind(
   providerName: string,
-  operation: string,
+  _operation: string,
 ): Effect.Effect<ProviderKind, ProviderSessionDirectoryPersistenceError> {
-  if (providerName === "codex" || providerName === "claudeAgent") {
-    return Effect.succeed(providerName);
+  if (providerName.trim().length === 0) {
+    return Effect.fail(
+      new ProviderSessionDirectoryPersistenceError({
+        operation: _operation,
+        detail: `Provider name must be a non-empty string.`,
+      }),
+    );
   }
-  return Effect.fail(
-    new ProviderSessionDirectoryPersistenceError({
-      operation,
-      detail: `Unknown persisted provider '${providerName}'.`,
-    }),
-  );
+  return Effect.succeed(providerName as ProviderKind);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

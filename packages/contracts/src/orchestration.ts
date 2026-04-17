@@ -27,6 +27,10 @@ export const ORCHESTRATION_WS_METHODS = {
 
 export const ProviderKind = Schema.Literals(["codex", "claudeAgent"]);
 export type ProviderKind = typeof ProviderKind.Type;
+
+export function isSupportedProvider(provider: string): provider is ProviderKind {
+  return provider === "codex" || provider === "claudeAgent";
+}
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
   "on-failure",
