@@ -17,6 +17,7 @@ export interface CommandPaletteItem {
   readonly description?: string;
   readonly timestamp?: string;
   readonly icon: ReactNode;
+  readonly disabled?: boolean;
   /** Optional content rendered inline before the title text. */
   readonly titleLeadingContent?: ReactNode;
   /** Optional content rendered inline after the title text (before the timestamp). */

@@ -26,6 +26,8 @@ import { ProviderUsageStateLive } from "./provider/Layers/ProviderUsageState.ts"
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime.ts";
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery.ts";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore.ts";
+import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
+import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
@@ -73,6 +75,8 @@ import {
 } from "./auth/http.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -166,7 +170,10 @@ const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
 );
 
 const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.layer.pipe(
-  Layer.provide(Layer.mergeAll(GitHubCli.layer, GitLabCli.layer)),
+  Layer.provide(
+    Layer.mergeAll(AzureDevOpsCli.layer, BitbucketApi.layer, GitHubCli.layer, GitLabCli.layer),
+  ),
+  Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
 
@@ -240,6 +247,7 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
+  Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
@@ -275,6 +283,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
+  Layer.provideMerge(ProcessDiagnostics.layer),
+  Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsServiceLayerLive),
   Layer.provideMerge(OpenLive),
   Layer.provideMerge(ServerLifecycleEventsLive),

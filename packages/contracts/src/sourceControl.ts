@@ -121,31 +121,25 @@ export const SourceControlProviderAuth = Schema.Struct({
 });
 export type SourceControlProviderAuth = typeof SourceControlProviderAuth.Type;
 
-const SourceControlDiscoveryItemFields = {
+const SourceControlDiscoverySharedFields = {
   label: TrimmedNonEmptyString,
   executable: Schema.optional(TrimmedNonEmptyString),
-  implemented: Schema.Boolean,
   status: SourceControlDiscoveryStatus,
   version: Schema.Option(TrimmedNonEmptyString),
   installHint: TrimmedNonEmptyString,
   detail: Schema.Option(TrimmedNonEmptyString),
 } as const;
 
-export const SourceControlDiscoveryItem = Schema.Struct({
-  kind: Schema.String,
-  ...SourceControlDiscoveryItemFields,
-});
-export type SourceControlDiscoveryItem = typeof SourceControlDiscoveryItem.Type;
-
 export const VcsDiscoveryItem = Schema.Struct({
   kind: VcsDriverKind,
-  ...SourceControlDiscoveryItemFields,
+  implemented: Schema.Boolean,
+  ...SourceControlDiscoverySharedFields,
 });
 export type VcsDiscoveryItem = typeof VcsDiscoveryItem.Type;
 
 export const SourceControlProviderDiscoveryItem = Schema.Struct({
   kind: SourceControlProviderKind,
-  ...SourceControlDiscoveryItemFields,
+  ...SourceControlDiscoverySharedFields,
   auth: SourceControlProviderAuth,
 });
 export type SourceControlProviderDiscoveryItem = typeof SourceControlProviderDiscoveryItem.Type;

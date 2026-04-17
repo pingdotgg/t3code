@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Deferred, Effect, Exit, FileSystem, Layer, Option, Path, Scope, Stream } from "effect";
 import type {
@@ -7,13 +7,9 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
-import { describe } from "vitest";
 
-import {
-  VcsStatusBroadcaster,
-  layer as VcsStatusBroadcasterLayer,
-} from "./VcsStatusBroadcaster.ts";
-import { GitWorkflowService, type GitWorkflowServiceShape } from "../git/GitWorkflowService.ts";
+import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
 const baseLocalStatus: VcsStatusLocalResult = {
   isRepo: true,
@@ -49,9 +45,9 @@ function makeTestLayer(state: {
   localInvalidationCalls: number;
   remoteInvalidationCalls: number;
 }) {
-  return VcsStatusBroadcasterLayer.pipe(
+  return VcsStatusBroadcaster.layer.pipe(
     Layer.provide(
-      Layer.mock(GitWorkflowService)({
+      Layer.mock(GitWorkflowService.GitWorkflowService)({
         localStatus: () =>
           Effect.sync(() => {
             state.localStatusCalls += 1;
@@ -87,7 +83,7 @@ describe("VcsStatusBroadcaster", () => {
     };
 
     return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
 
       const first = yield* broadcaster.getStatus({ cwd: "/repo" });
       const second = yield* broadcaster.getStatus({ cwd: "/repo" });
@@ -112,7 +108,7 @@ describe("VcsStatusBroadcaster", () => {
     };
 
     return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const initial = yield* broadcaster.getStatus({ cwd: "/repo" });
 
       state.currentLocalStatus = {
@@ -153,7 +149,7 @@ describe("VcsStatusBroadcaster", () => {
     };
 
     return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const initial = yield* broadcaster.getStatus({ cwd: "/repo" });
 
       state.currentLocalStatus = {
@@ -188,9 +184,9 @@ describe("VcsStatusBroadcaster", () => {
       localInvalidationCalls: 0,
       remoteInvalidationCalls: 0,
     };
-    const testLayer = VcsStatusBroadcasterLayer.pipe(
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
       Layer.provide(
-        Layer.mock(GitWorkflowService)({
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
           localStatus: (input) =>
             Effect.sync(() => {
               seenCwds.push(input.cwd);
@@ -211,7 +207,7 @@ describe("VcsStatusBroadcaster", () => {
             Effect.sync(() => {
               state.remoteInvalidationCalls += 1;
             }),
-        } satisfies Partial<GitWorkflowServiceShape>),
+        } satisfies Partial<GitWorkflowService.GitWorkflowServiceShape>),
       ),
     );
 
@@ -228,7 +224,7 @@ describe("VcsStatusBroadcaster", () => {
       yield* fileSystem.symlink(realDir, linkDir);
       const realPath = yield* fileSystem.realPath(realDir);
 
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       yield* broadcaster.getStatus({ cwd: linkDir });
       yield* broadcaster.getStatus({ cwd: realDir });
 
@@ -249,7 +245,7 @@ describe("VcsStatusBroadcaster", () => {
     };
 
     return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
       const remoteUpdatedDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
       yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) => {
@@ -289,9 +285,9 @@ describe("VcsStatusBroadcaster", () => {
     };
     let remoteInterruptedDeferred: Deferred.Deferred<void, never> | null = null;
     let remoteStartedDeferred: Deferred.Deferred<void, never> | null = null;
-    const testLayer = VcsStatusBroadcasterLayer.pipe(
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
       Layer.provide(
-        Layer.mock(GitWorkflowService)({
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;
@@ -321,7 +317,7 @@ describe("VcsStatusBroadcaster", () => {
             Effect.sync(() => {
               state.remoteInvalidationCalls += 1;
             }),
-        } satisfies Partial<GitWorkflowServiceShape>),
+        } satisfies Partial<GitWorkflowService.GitWorkflowServiceShape>),
       ),
     );
 
@@ -331,7 +327,7 @@ describe("VcsStatusBroadcaster", () => {
       remoteInterruptedDeferred = remoteInterrupted;
       remoteStartedDeferred = remoteStarted;
 
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const firstSnapshot = yield* Deferred.make<VcsStatusStreamEvent>();
       const secondSnapshot = yield* Deferred.make<VcsStatusStreamEvent>();
       const firstScope = yield* Scope.make();

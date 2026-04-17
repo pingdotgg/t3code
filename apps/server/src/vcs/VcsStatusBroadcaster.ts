@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 
 import {
+  Context,
   Duration,
   Effect,
   Exit,
@@ -20,10 +21,9 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
-import { Context } from "effect";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 
-import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
 const VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 
@@ -80,7 +80,7 @@ function normalizeCwd(cwd: string): string {
 export const layer = Layer.effect(
   VcsStatusBroadcaster,
   Effect.gen(function* () {
-    const workflow = yield* GitWorkflowService;
+    const workflow = yield* GitWorkflowService.GitWorkflowService;
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<VcsStatusChange>(),
       (pubsub) => PubSub.shutdown(pubsub),

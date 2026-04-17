@@ -1,7 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, it, describe } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, PlatformError, Scope } from "effect";
-import { describe } from "vitest";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";

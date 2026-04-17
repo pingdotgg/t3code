@@ -18,9 +18,9 @@ import {
   type VcsStatusInput,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
-import { VcsDriver, type VcsDriverShape } from "./VcsDriver.ts";
-import { VcsProcess, type VcsProcessShape } from "./VcsProcess.ts";
+import * as GitVcsDriverCore from "./GitVcsDriverCore.ts";
+import * as VcsDriver from "./VcsDriver.ts";
+import * as VcsProcess from "./VcsProcess.ts";
 
 export interface ExecuteGitInput {
   readonly operation: string;
@@ -304,7 +304,7 @@ function parseGitRemoteVerboseOutput(
 }
 
 const gitCommand = (
-  process: VcsProcessShape,
+  process: VcsProcess.VcsProcessShape,
   operation: string,
   cwd: string,
   args: ReadonlyArray<string>,
@@ -335,7 +335,7 @@ const gitCommand = (
   });
 
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
-  const process = yield* VcsProcess;
+  const process = yield* VcsProcess.VcsProcess;
   const capabilities = {
     kind: "git" as const,
     supportsWorktrees: true,
@@ -345,7 +345,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     ignoreClassifier: "native" as const,
   };
 
-  const isInsideWorkTree: VcsDriverShape["isInsideWorkTree"] = (cwd) =>
+  const isInsideWorkTree: VcsDriver.VcsDriverShape["isInsideWorkTree"] = (cwd) =>
     gitCommand(
       process,
       "GitVcsDriver.isInsideWorkTree",
@@ -358,7 +358,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       },
     ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"));
 
-  const execute: VcsDriverShape["execute"] = (input) =>
+  const execute: VcsDriver.VcsDriverShape["execute"] = (input) =>
     gitCommand(process, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
       ...(input.env !== undefined ? { env: input.env } : {}),
@@ -370,33 +370,33 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         : {}),
     });
 
-  const detectRepository: VcsDriverShape["detectRepository"] = Effect.fn("detectRepository")(
-    function* (cwd) {
-      if (!(yield* isInsideWorkTree(cwd))) {
-        return null;
-      }
+  const detectRepository: VcsDriver.VcsDriverShape["detectRepository"] = Effect.fn(
+    "detectRepository",
+  )(function* (cwd) {
+    if (!(yield* isInsideWorkTree(cwd))) {
+      return null;
+    }
 
-      const root = yield* gitCommand(process, "GitVcsDriver.detectRepository.root", cwd, [
-        "rev-parse",
-        "--show-toplevel",
-      ]);
-      const gitCommonDir = yield* gitCommand(
-        process,
-        "GitVcsDriver.detectRepository.commonDir",
-        cwd,
-        ["rev-parse", "--git-common-dir"],
-      ).pipe(Effect.catch(() => Effect.succeed(null)));
+    const root = yield* gitCommand(process, "GitVcsDriver.detectRepository.root", cwd, [
+      "rev-parse",
+      "--show-toplevel",
+    ]);
+    const gitCommonDir = yield* gitCommand(
+      process,
+      "GitVcsDriver.detectRepository.commonDir",
+      cwd,
+      ["rev-parse", "--git-common-dir"],
+    ).pipe(Effect.catch(() => Effect.succeed(null)));
 
-      return {
-        kind: "git" as const,
-        rootPath: root.stdout.trim(),
-        metadataPath: gitCommonDir?.stdout.trim() || null,
-        freshness: yield* nowFreshness(),
-      };
-    },
-  );
+    return {
+      kind: "git" as const,
+      rootPath: root.stdout.trim(),
+      metadataPath: gitCommonDir?.stdout.trim() || null,
+      freshness: yield* nowFreshness(),
+    };
+  });
 
-  const listWorkspaceFiles: VcsDriverShape["listWorkspaceFiles"] = (cwd) =>
+  const listWorkspaceFiles: VcsDriver.VcsDriverShape["listWorkspaceFiles"] = (cwd) =>
     gitCommand(
       process,
       "GitVcsDriver.listWorkspaceFiles",
@@ -438,98 +438,100 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       ),
     );
 
-  const listRemotes: VcsDriverShape["listRemotes"] = Effect.fn("listRemotes")(function* (cwd) {
-    const result = yield* gitCommand(process, "GitVcsDriver.listRemotes", cwd, ["remote", "-v"], {
-      allowNonZeroExit: true,
-      timeoutMs: 5_000,
-      maxOutputBytes: 64 * 1024,
-    });
-
-    if (result.exitCode !== 0) {
-      return yield* new VcsProcessExitError({
-        operation: "GitVcsDriver.listRemotes",
-        command: "git remote -v",
-        cwd,
-        exitCode: result.exitCode,
-        detail: result.stderr.trim() || "git remote -v failed",
+  const listRemotes: VcsDriver.VcsDriverShape["listRemotes"] = Effect.fn("listRemotes")(
+    function* (cwd) {
+      const result = yield* gitCommand(process, "GitVcsDriver.listRemotes", cwd, ["remote", "-v"], {
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 64 * 1024,
       });
-    }
 
-    const parsed = parseGitRemoteVerboseOutput(result.stdout);
-    const remotes = Array.from(parsed.entries()).flatMap(([name, remote]) => {
-      if (!remote.url) {
-        return [];
-      }
-      return [
-        {
-          name,
-          url: remote.url,
-          pushUrl: remote.pushUrl ? Option.some(remote.pushUrl) : Option.none(),
-          isPrimary: name === "origin",
-        },
-      ];
-    });
-
-    return {
-      remotes,
-      freshness: yield* nowFreshness(),
-    };
-  });
-
-  const filterIgnoredPaths: VcsDriverShape["filterIgnoredPaths"] = Effect.fn("filterIgnoredPaths")(
-    function* (cwd, relativePaths) {
-      if (relativePaths.length === 0) {
-        return relativePaths;
-      }
-
-      const ignoredPaths = new Set<string>();
-      const chunks = chunkPathsForGitCheckIgnore(relativePaths);
-
-      for (const chunk of chunks) {
-        const result = yield* gitCommand(
-          process,
-          "GitVcsDriver.filterIgnoredPaths",
+      if (result.exitCode !== 0) {
+        return yield* new VcsProcessExitError({
+          operation: "GitVcsDriver.listRemotes",
+          command: "git remote -v",
           cwd,
-          [...WORKSPACE_GIT_HARDENED_CONFIG_ARGS, "check-ignore", "--no-index", "-z", "--stdin"],
+          exitCode: result.exitCode,
+          detail: result.stderr.trim() || "git remote -v failed",
+        });
+      }
+
+      const parsed = parseGitRemoteVerboseOutput(result.stdout);
+      const remotes = Array.from(parsed.entries()).flatMap(([name, remote]) => {
+        if (!remote.url) {
+          return [];
+        }
+        return [
           {
-            stdin: `${chunk.join("\0")}\0`,
-            allowNonZeroExit: true,
-            timeoutMs: 20_000,
-            maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
-            truncateOutputAtMaxBytes: true,
+            name,
+            url: remote.url,
+            pushUrl: remote.pushUrl ? Option.some(remote.pushUrl) : Option.none(),
+            isPrimary: name === "origin",
           },
-        );
+        ];
+      });
 
-        if (result.exitCode !== 0 && result.exitCode !== 1) {
-          return yield* new VcsProcessExitError({
-            operation: "GitVcsDriver.filterIgnoredPaths",
-            command: "git check-ignore",
-            cwd,
-            exitCode: result.exitCode,
-            detail: result.stderr.trim() || "git check-ignore failed",
-          });
-        }
-
-        for (const ignoredPath of splitNullSeparatedPaths(result.stdout, result.stdoutTruncated)) {
-          ignoredPaths.add(ignoredPath);
-        }
-      }
-
-      if (ignoredPaths.size === 0) {
-        return relativePaths;
-      }
-
-      return relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
+      return {
+        remotes,
+        freshness: yield* nowFreshness(),
+      };
     },
   );
 
-  const initRepository: VcsDriverShape["initRepository"] = (input) =>
+  const filterIgnoredPaths: VcsDriver.VcsDriverShape["filterIgnoredPaths"] = Effect.fn(
+    "filterIgnoredPaths",
+  )(function* (cwd, relativePaths) {
+    if (relativePaths.length === 0) {
+      return relativePaths;
+    }
+
+    const ignoredPaths = new Set<string>();
+    const chunks = chunkPathsForGitCheckIgnore(relativePaths);
+
+    for (const chunk of chunks) {
+      const result = yield* gitCommand(
+        process,
+        "GitVcsDriver.filterIgnoredPaths",
+        cwd,
+        [...WORKSPACE_GIT_HARDENED_CONFIG_ARGS, "check-ignore", "--no-index", "-z", "--stdin"],
+        {
+          stdin: `${chunk.join("\0")}\0`,
+          allowNonZeroExit: true,
+          timeoutMs: 20_000,
+          maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+          truncateOutputAtMaxBytes: true,
+        },
+      );
+
+      if (result.exitCode !== 0 && result.exitCode !== 1) {
+        return yield* new VcsProcessExitError({
+          operation: "GitVcsDriver.filterIgnoredPaths",
+          command: "git check-ignore",
+          cwd,
+          exitCode: result.exitCode,
+          detail: result.stderr.trim() || "git check-ignore failed",
+        });
+      }
+
+      for (const ignoredPath of splitNullSeparatedPaths(result.stdout, result.stdoutTruncated)) {
+        ignoredPaths.add(ignoredPath);
+      }
+    }
+
+    if (ignoredPaths.size === 0) {
+      return relativePaths;
+    }
+
+    return relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
+  });
+
+  const initRepository: VcsDriver.VcsDriverShape["initRepository"] = (input) =>
     gitCommand(process, "GitVcsDriver.initRepository", input.cwd, ["init"], {
       timeoutMs: 10_000,
       maxOutputBytes: 64 * 1024,
     }).pipe(Effect.asVoid);
 
-  return {
+  return VcsDriver.VcsDriver.of({
     capabilities,
     execute,
     detectRepository,
@@ -538,18 +540,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     listRemotes,
     filterIgnoredPaths,
     initRepository,
-  } satisfies VcsDriverShape;
+  });
 });
 
 export const makeVcsDriver = Effect.fn("makeGitVcsDriver")(function* () {
   const driver = yield* makeVcsDriverShape();
-  return VcsDriver.of(driver);
+  return VcsDriver.VcsDriver.of(driver);
 });
 
 export const make = Effect.fn("makeGitVcsDriverService")(function* () {
-  const git = yield* makeGitVcsDriverCore();
+  const git = yield* GitVcsDriverCore.makeGitVcsDriverCore();
   return GitVcsDriver.of(git);
 });
 
-export const vcsLayer = Layer.effect(VcsDriver, makeVcsDriver());
+export const vcsLayer = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver());
 export const layer = Layer.effect(GitVcsDriver, make());

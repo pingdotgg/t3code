@@ -26,7 +26,11 @@ import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
-import { resolveMarkdownFileLinkMeta, rewriteMarkdownFileUriHref } from "../markdown-links";
+import {
+  normalizeMarkdownLinkDestination,
+  resolveMarkdownFileLinkMeta,
+  rewriteMarkdownFileUriHref,
+} from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
 
@@ -211,6 +215,32 @@ function SuspenseShikiCodeBlock({
     );
   }
 
+  return (
+    <UncachedShikiCodeBlock
+      code={code}
+      language={language}
+      themeName={themeName}
+      cacheKey={cacheKey}
+      isStreaming={isStreaming}
+    />
+  );
+}
+
+interface UncachedShikiCodeBlockProps {
+  code: string;
+  language: string;
+  themeName: DiffThemeName;
+  cacheKey: string;
+  isStreaming: boolean;
+}
+
+function UncachedShikiCodeBlock({
+  code,
+  language,
+  themeName,
+  cacheKey,
+  isStreaming,
+}: UncachedShikiCodeBlockProps) {
   const highlighter = use(getHighlighterPromise(language));
   const highlightedHtml = useMemo(() => {
     try {
@@ -328,7 +358,8 @@ function extractMarkdownLinkHrefs(text: string): string[] {
 }
 
 function normalizeMarkdownLinkHrefKey(href: string): string {
-  return rewriteMarkdownFileUriHref(href.trim()) ?? href.trim();
+  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
 }
 
 const MarkdownFileLink = memo(function MarkdownFileLink({
@@ -523,7 +554,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
 
         return (
           <MarkdownFileLink
-            href={href ?? fileLinkMeta.targetPath}
+            href={fileLinkMeta.targetPath}
             targetPath={fileLinkMeta.targetPath}
             displayPath={fileLinkMeta.displayPath}
             filePath={fileLinkMeta.filePath}

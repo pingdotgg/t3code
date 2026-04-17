@@ -485,6 +485,19 @@ label:has(> select#reasoning-effort) select {
   text-align: left;
 }
 
+@keyframes provider-update-pill-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.provider-update-pill-progress {
+  animation: provider-update-pill-countdown var(--provider-update-pill-dismiss-ms) linear forwards;
+}
+
 /* Diffs theme bridge (match diff surfaces to app palette) */
 .diff-panel-viewport {
   background: color-mix(in srgb, var(--background) 94%, var(--card));

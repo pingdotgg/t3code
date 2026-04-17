@@ -1,7 +1,8 @@
+import { ProjectId } from "@t3tools/contracts";
 import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/projectScripts";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 
-import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import {
   type ProjectSetupScriptRunnerShape,
@@ -9,18 +10,21 @@ import {
 } from "../Services/ProjectSetupScriptRunner.ts";
 
 const makeProjectSetupScriptRunner = Effect.gen(function* () {
-  const orchestrationEngine = yield* OrchestrationEngineService;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const terminalManager = yield* TerminalManager;
 
   const runForThread: ProjectSetupScriptRunnerShape["runForThread"] = (input) =>
     Effect.gen(function* () {
-      const readModel = yield* orchestrationEngine.getReadModel();
       const project =
         (input.projectId
-          ? readModel.projects.find((entry) => entry.id === input.projectId)
+          ? yield* projectionSnapshotQuery
+              .getProjectShellById(ProjectId.make(input.projectId))
+              .pipe(Effect.map(Option.getOrUndefined))
           : null) ??
         (input.projectCwd
-          ? readModel.projects.find((entry) => entry.workspaceRoot === input.projectCwd)
+          ? yield* projectionSnapshotQuery
+              .getActiveProjectByWorkspaceRoot(input.projectCwd)
+              .pipe(Effect.map(Option.getOrUndefined))
           : null) ??
         null;
 

@@ -354,7 +354,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("replaces existing custom keybinding for the same command", () =>
+  it.effect("appends additional custom keybindings for the same command", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
@@ -364,6 +364,55 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         const keybindings = yield* Keybindings;
         return yield* keybindings.upsertKeybindingRule({
           key: "mod+shift+r",
+          command: "script.run-tests.run",
+        });
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(persistedView, [
+        { key: "mod+r", command: "script.run-tests.run" },
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+      ]);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("replaces only the targeted custom keybinding", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+r", command: "script.run-tests.run" },
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+      ]);
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.upsertKeybindingRule({
+          key: "mod+alt+r",
+          command: "script.run-tests.run",
+          replace: { key: "mod+r", command: "script.run-tests.run" },
+        });
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(persistedView, [
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+        { key: "mod+alt+r", command: "script.run-tests.run" },
+      ]);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("removes only the targeted custom keybinding", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+r", command: "script.run-tests.run" },
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+      ]);
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.removeKeybindingRule({
+          key: "mod+r",
           command: "script.run-tests.run",
         });
       });

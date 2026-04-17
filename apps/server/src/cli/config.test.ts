@@ -5,8 +5,8 @@ import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect"
 
 import { NetService } from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { deriveServerPaths } from "./config.ts";
-import { resolveServerConfig } from "./cli.ts";
+import { deriveServerPaths } from "../config.ts";
+import { resolveServerConfig } from "./config.ts";
 
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
   const defaultObservabilityConfig = {

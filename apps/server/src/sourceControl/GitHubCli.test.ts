@@ -1,13 +1,12 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessExitError, type VcsError } from "@t3tools/contracts";
-import { afterEach, describe, expect, vi } from "vitest";
 
-import { VcsProcess, type VcsProcessInput, type VcsProcessOutput } from "../vcs/VcsProcess.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 
-const processOutput = (stdout: string): VcsProcessOutput => ({
+const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout,
   stderr: "",
@@ -15,11 +14,11 @@ const processOutput = (stdout: string): VcsProcessOutput => ({
   stderrTruncated: false,
 });
 
-const mockRun = vi.fn<(input: VcsProcessInput) => Effect.Effect<VcsProcessOutput, VcsError>>();
+const mockRun = vi.fn<VcsProcess.VcsProcessShape["run"]>();
 
 const layer = GitHubCli.layer.pipe(
   Layer.provide(
-    Layer.mock(VcsProcess)({
+    Layer.mock(VcsProcess.VcsProcess)({
       run: mockRun,
     }),
   ),

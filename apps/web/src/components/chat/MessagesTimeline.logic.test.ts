@@ -382,6 +382,60 @@ describe("computeStableMessagesTimelineRows", () => {
     expect(repeated.result).toBe(initial.result);
   });
 
+  it("reuses work rows when equivalent timeline derivations create new grouped arrays", () => {
+    const firstWorkEntry = {
+      id: "work-1",
+      createdAt: "2026-01-01T00:00:00Z",
+      label: "thinking",
+      detail: "Inspecting repository state",
+      tone: "thinking" as const,
+    };
+    const secondWorkEntry = {
+      id: "work-2",
+      createdAt: "2026-01-01T00:00:01Z",
+      label: "read",
+      detail: "Reading package.json",
+      tone: "tool" as const,
+    };
+
+    const createRows = () =>
+      deriveMessagesTimelineRows({
+        timelineEntries: [
+          {
+            id: "entry-work-1",
+            kind: "work",
+            createdAt: firstWorkEntry.createdAt,
+            entry: firstWorkEntry,
+          },
+          {
+            id: "entry-work-2",
+            kind: "work",
+            createdAt: secondWorkEntry.createdAt,
+            entry: secondWorkEntry,
+          },
+        ],
+        completionDividerBeforeEntryId: null,
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+
+    const firstRows = createRows();
+    const initial = computeStableMessagesTimelineRows(firstRows, {
+      byId: new Map(),
+      result: [],
+    });
+    const secondRows = createRows();
+
+    expect(secondRows[0]).not.toBe(firstRows[0]);
+
+    const repeated = computeStableMessagesTimelineRows(secondRows, initial);
+
+    expect(repeated).toBe(initial);
+    expect(repeated.result[0]).toBe(initial.result[0]);
+  });
+
   it("returns a new result when row order changes without content changes", () => {
     const firstUserMessage = {
       id: "user-1" as never,

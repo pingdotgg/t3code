@@ -1,12 +1,11 @@
 {
   "name": "@t3tools/web",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "prepare": "effect-language-service patch",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
@@ -23,7 +22,7 @@
     "@formkit/auto-animate": "^0.9.0",
     "@legendapp/list": "3.0.0-beta.44",
     "@lexical/react": "^0.41.0",
-    "@pierre/diffs": "^1.1.0-beta.16",
+    "@pierre/diffs": "catalog:",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",

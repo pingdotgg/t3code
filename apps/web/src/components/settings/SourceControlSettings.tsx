@@ -69,17 +69,21 @@ function isProviderDiscoveryItem(
   return "auth" in item;
 }
 
+function isVcsNotReady(item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem): boolean {
+  return !isProviderDiscoveryItem(item) && !item.implemented;
+}
+
 function authPresentation(auth: SourceControlProviderAuth): {
   readonly label: string;
   readonly badge: "warning" | null;
 } {
   if (auth.status === "authenticated") {
-    return { label: "Signed in", badge: null };
+    return { label: "Authenticated", badge: null };
   }
   if (auth.status === "unauthenticated") {
-    return { label: "Sign in", badge: "warning" };
+    return { label: "Not authenticated", badge: "warning" };
   }
-  return { label: "Sign in", badge: null };
+  return { label: "Status unknown", badge: null };
 }
 
 function RedactedAccount(props: { readonly account: string | null }) {
@@ -94,7 +98,7 @@ function RedactedAccount(props: { readonly account: string | null }) {
 }
 
 function itemStatusDot(item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem): string {
-  if (!item.implemented) return "bg-muted-foreground/35";
+  if (isVcsNotReady(item)) return "bg-muted-foreground/35";
   if (item.status !== "available") return "bg-warning";
   if (isProviderDiscoveryItem(item) && item.auth.status !== "authenticated") return "bg-warning";
   return "bg-success";
@@ -137,12 +141,12 @@ function itemSummary({
   readonly auth: SourceControlProviderAuth | null;
   readonly authAccount: string | null;
 }) {
-  if (!item.implemented) {
+  if (isVcsNotReady(item)) {
     return <span>Support for {item.label} is coming soon.</span>;
   }
 
   if (item.status !== "available") {
-    return <span>Not found - {item.installHint}</span>;
+    return <span>Not available on this server — {item.installHint}</span>;
   }
 
   if (auth) {
@@ -165,11 +169,17 @@ function itemSummary({
     }
 
     if (auth.status === "unauthenticated") {
-      return <span>Sign in with the {item.executable} CLI to enable pull request actions.</span>;
+      return (
+        <span>
+          {item.label} is not authenticated on this server. Sign in or configure credentials using
+          the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
+          tool on the server host to enable pull request features.
+        </span>
+      );
     }
     return (
       <span>
-        Install and sign in with the {item.executable} CLI to enable pull request actions.
+        Could not verify {item.label}. {item.installHint}
       </span>
     );
   }
@@ -183,7 +193,8 @@ function DiscoveryItemRow({
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
 }) {
   const version = optionLabel(item.version);
-  const enabled = item.implemented && item.status === "available";
+  const enabled =
+    item.status === "available" && (isProviderDiscoveryItem(item) || item.implemented);
   const auth = isProviderDiscoveryItem(item) ? item.auth : null;
   const authStatus = auth ? authPresentation(auth) : null;
   const authAccount = auth ? optionLabel(auth.account) : null;
@@ -192,7 +203,7 @@ function DiscoveryItemRow({
     <div
       className={cn(
         "border-t border-border/60 first:border-t-0",
-        !item.implemented && "opacity-80",
+        isVcsNotReady(item) && "opacity-80",
       )}
     >
       <div className="px-4 py-3.5 sm:px-5">
@@ -204,7 +215,7 @@ function DiscoveryItemRow({
                 {item.label}
               </h3>
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
-              {!item.implemented ? (
+              {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
                   Coming Soon
                 </Badge>
@@ -220,7 +231,7 @@ function DiscoveryItemRow({
             </p>
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {item.implemented ? (
+            {!isVcsNotReady(item) ? (
               <Switch checked={enabled} disabled aria-label={`${item.label} availability`} />
             ) : null}
           </div>
@@ -279,17 +290,19 @@ function EmptySourceControlDiscovery({
   const hasError = error !== null;
 
   return (
-    <SettingsSection title="Detected tools">
+    <SettingsSection title="Server environment">
       <Empty className="min-h-88">
         <EmptyMedia variant="icon">
           <GitPullRequestIcon />
         </EmptyMedia>
         <EmptyHeader>
           <EmptyTitle>
-            {hasError ? "Could not scan source control" : "No source control tools found"}
+            {hasError ? "Could not scan the server environment" : "Nothing detected yet"}
           </EmptyTitle>
           <EmptyDescription>
-            {hasError ? error : "Install a supported Git or pull request CLI, then scan again."}
+            {hasError
+              ? error
+              : "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan."}
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
@@ -329,13 +342,13 @@ export function SourceControlSettingsPanel() {
             className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
             onClick={handleScan}
             disabled={discovery.isPending}
-            aria-label="Scan source control tools"
+            aria-label="Rescan server environment"
           >
             <RefreshCwIcon className={cn("size-3", discovery.isPending && "animate-spin")} />
           </Button>
         }
       />
-      <TooltipPopup side="top">Scan source control tools</TooltipPopup>
+      <TooltipPopup side="top">Rescan Git and hosting integrations</TooltipPopup>
     </Tooltip>
   );
 

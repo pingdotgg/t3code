@@ -1,9 +1,11 @@
 import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
+  PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
@@ -23,7 +25,6 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
-import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
 import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
@@ -56,9 +57,19 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import {
+  canOneClickUpdateProviderCandidate,
+  collectProviderUpdateCandidates,
+  hasOneClickUpdateProviderCandidate,
+  isProviderUpdateActive,
+  type ProviderUpdateCandidate,
+} from "../ProviderUpdateLaunchNotification.logic";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
-import { buildProviderInstanceUpdatePatch } from "./SettingsPanels.logic";
+import {
+  buildProviderInstanceUpdatePatch,
+  formatDiagnosticsDescription,
+} from "./SettingsPanels.logic";
 import {
   SettingResetButton,
   SettingsPageContainer,
@@ -67,12 +78,7 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
-import {
-  useServerAvailableEditors,
-  useServerKeybindingsConfigPath,
-  useServerObservability,
-  useServerProviders,
-} from "../../rpc/serverState";
+import { useServerObservability, useServerProviders } from "../../rpc/serverState";
 
 const THEME_OPTIONS = [
   {
@@ -345,37 +351,12 @@ function AboutVersionSection() {
 export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
-  const { resetSettings } = useUpdateSettings();
+  const { updateSettings } = useUpdateSettings();
 
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
-  // A provider surface is "dirty" if either the legacy per-kind
-  // `settings.providers[kind]` struct differs from defaults (for users
-  // on pre-migration data) or the new `settings.providerInstances` map
-  // has any entries (every edit to a default slot promotes it into an
-  // explicit entry, so any key in that map represents user intent to
-  // diverge from factory defaults). Checking both keeps the Restore
-  // Defaults chip accurate throughout the legacy→instance migration.
-  const areProviderSettingsDirty =
-    PROVIDER_SETTINGS.some((providerSettings) => {
-      type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-      const currentProviders = settings.providers as Record<
-        string,
-        LegacyProviderSettings | undefined
-      >;
-      const defaultProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-        string,
-        LegacyProviderSettings | undefined
-      >;
-      const currentSettings = currentProviders[providerSettings.provider];
-      const defaultSettings = defaultProviders[providerSettings.provider];
-      return !Equal.equals(currentSettings, defaultSettings);
-    }) ||
-    Object.keys(settings.providerInstances ?? {}).length > 0 ||
-    Object.keys(settings.providerModelPreferences ?? {}).length > 0 ||
-    (settings.favorites ?? []).length > 0;
 
   const changedSettingLabels = useMemo(
     () => [
@@ -408,10 +389,8 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Delete confirmation"]
         : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
-      ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
     [
-      areProviderSettingsDirty,
       isGitWritingModelDirty,
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
@@ -437,9 +416,20 @@ export function useSettingsRestore(onRestored?: () => void) {
     if (!confirmed) return;
 
     setTheme("system");
-    resetSettings();
+    updateSettings({
+      timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
+      diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
+      enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
+      addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+      confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+      textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+    });
     onRestored?.();
-  }, [changedSettingLabels, onRestored, resetSettings, setTheme]);
+  }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
 
   return {
     changedSettingLabels,
@@ -451,63 +441,15 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const [openingPathByTarget, setOpeningPathByTarget] = useState({
-    keybindings: false,
-    logsDirectory: false,
-  });
-  const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
-    Partial<Record<"keybindings" | "logsDirectory", string | null>>
-  >({});
-  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
-  const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
-  // Collapsible state per provider-instance card, keyed by the instance id.
-  // `Record<string, boolean>` so we don't need to preseed an entry for every
-  // configured instance — an absent key reads as collapsed. Default-slot
-  // rows share this state: their id is the driver slug
-  // (`defaultInstanceIdForDriver(driver)`), which is also `ProviderDriverKind` at
-  // runtime, so a pre-existing open key for e.g. "codex" persists across
-  // the legacy/unified render swap.
-  const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
-  const refreshingRef = useRef(false);
-  const refreshProviders = useCallback(() => {
-    if (refreshingRef.current) return;
-    refreshingRef.current = true;
-    setIsRefreshingProviders(true);
-    void ensureLocalApi()
-      .server.refreshProviders()
-      .catch((error: unknown) => {
-        console.warn("Failed to refresh providers", error);
-      })
-      .finally(() => {
-        refreshingRef.current = false;
-        setIsRefreshingProviders(false);
-      });
-  }, []);
-
-  const keybindingsConfigPath = useServerKeybindingsConfigPath();
-  const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
   const serverProviders = useServerProviders();
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some(
-        (provider) =>
-          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
-      ),
-  );
-  const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
-  const diagnosticsDescription = (() => {
-    const exports: string[] = [];
-    if (observability?.otlpTracesEnabled && observability.otlpTracesUrl) {
-      exports.push(`traces to ${observability.otlpTracesUrl}`);
-    }
-    if (observability?.otlpMetricsEnabled && observability.otlpMetricsUrl) {
-      exports.push(`metrics to ${observability.otlpMetricsUrl}`);
-    }
-    const mode = observability?.localTracingEnabled ? "Local trace file" : "Terminal logs only";
-    return exports.length > 0 ? `${mode}. OTLP exporting ${exports.join(" and ")}.` : `${mode}.`;
-  })();
+  const diagnosticsDescription = formatDiagnosticsDescription({
+    localTracingEnabled: observability?.localTracingEnabled ?? false,
+    otlpTracesEnabled: observability?.otlpTracesEnabled ?? false,
+    otlpTracesUrl: observability?.otlpTracesUrl,
+    otlpMetricsEnabled: observability?.otlpMetricsEnabled ?? false,
+    otlpMetricsUrl: observability?.otlpMetricsUrl,
+  });
 
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
@@ -531,265 +473,6 @@ export function GeneralSettingsPanel() {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
-
-  const openInPreferredEditor = useCallback(
-    (target: "keybindings" | "logsDirectory", path: string | null, failureMessage: string) => {
-      if (!path) return;
-      setOpenPathErrorByTarget((existing) => ({ ...existing, [target]: null }));
-      setOpeningPathByTarget((existing) => ({ ...existing, [target]: true }));
-
-      const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-      if (!editor) {
-        setOpenPathErrorByTarget((existing) => ({
-          ...existing,
-          [target]: "No available editors found.",
-        }));
-        setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        return;
-      }
-
-      void ensureLocalApi()
-        .shell.openInEditor(path, editor)
-        .catch((error) => {
-          setOpenPathErrorByTarget((existing) => ({
-            ...existing,
-            [target]: error instanceof Error ? error.message : failureMessage,
-          }));
-        })
-        .finally(() => {
-          setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        });
-    },
-    [availableEditors],
-  );
-
-  const openKeybindingsFile = useCallback(() => {
-    openInPreferredEditor("keybindings", keybindingsConfigPath, "Unable to open keybindings file.");
-  }, [keybindingsConfigPath, openInPreferredEditor]);
-
-  const openLogsDirectory = useCallback(() => {
-    openInPreferredEditor("logsDirectory", logsDirectoryPath, "Unable to open logs folder.");
-  }, [logsDirectoryPath, openInPreferredEditor]);
-
-  const openKeybindingsError = openPathErrorByTarget.keybindings ?? null;
-  const openDiagnosticsError = openPathErrorByTarget.logsDirectory ?? null;
-  const isOpeningKeybindings = openingPathByTarget.keybindings;
-  const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
-
-  const lastCheckedAt =
-    serverProviders.length > 0
-      ? serverProviders.reduce(
-          (latest, provider) => (provider.checkedAt > latest ? provider.checkedAt : latest),
-          serverProviders[0]!.checkedAt,
-        )
-      : null;
-
-  /**
-   * Build the list of rows to render, one per configured instance. Each
-   * row carries enough context to drive `ProviderInstanceCard` without
-   * threading storage concerns: whether it's a built-in default slot (in
-   * which case `isDefault` is true, deletion is gated off, and the
-   * effective envelope may have been synthesized from legacy just for
-   * this render), the driver kind narrow for the in-card model-slug
-   * normalization, and whether a reset-to-factory action is warranted.
-   *
-   * Ordering mirrors the prior split: visible built-in default slots
-   * first (one per visible kind), then user-authored custom instances
-   * grouped by driver after their default sibling, then orphan instances
-   * whose driver isn't in the visible-defaults set.
-   */
-  interface InstanceRow {
-    readonly instanceId: ProviderInstanceId;
-    readonly instance: ProviderInstanceConfig;
-    readonly driver: ProviderDriverKind;
-    /** True for the slot whose id is `defaultInstanceIdForDriver(driver)`. */
-    readonly isDefault: boolean;
-    /**
-     * True when this default slot differs from the factory defaults —
-     * either through an explicit `providerInstances[defaultId]` entry,
-     * or through a non-default legacy `settings.providers[kind]` struct
-     * that we're still bridging. Used to show the reset-to-factory
-     * affordance. Undefined for custom rows (they have a delete button
-     * instead; "factory defaults" isn't meaningful).
-     */
-    readonly isDirty?: boolean;
-  }
-
-  const instancesByDriver = new Map<
-    ProviderDriverKind,
-    Array<[ProviderInstanceId, ProviderInstanceConfig]>
-  >();
-  for (const [rawId, instance] of Object.entries(settings.providerInstances ?? {})) {
-    const driver = instance.driver;
-    const list = instancesByDriver.get(driver) ?? [];
-    list.push([rawId as ProviderInstanceId, instance]);
-    instancesByDriver.set(driver, list);
-  }
-
-  const defaultSlotIdsBySource = new Set<string>(
-    visibleProviderSettings.map((providerSettings) =>
-      String(defaultInstanceIdForDriver(providerSettings.provider)),
-    ),
-  );
-
-  const rows: InstanceRow[] = [];
-  const visibleDriverKinds = new Set<ProviderDriverKind>(
-    visibleProviderSettings.map((providerSettings) => providerSettings.provider),
-  );
-
-  for (const providerSettings of visibleProviderSettings) {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings
-    >;
-    const driver = providerSettings.provider;
-    const defaultInstanceId = defaultInstanceIdForDriver(driver);
-    // Prefer an explicit `providerInstances[defaultId]` entry when one
-    // exists (every edit via this UI promotes the default slot into
-    // that map); fall back to synthesizing one from the legacy
-    // `settings.providers[kind]` struct so first-time viewers still see
-    // their persisted config.
-    const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    const legacyConfig = legacyProviders[providerSettings.provider]!;
-    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider]!;
-    const effectiveInstance: ProviderInstanceConfig =
-      explicitInstance ??
-      ({
-        driver,
-        enabled: legacyConfig.enabled,
-        config: legacyConfig,
-      } satisfies ProviderInstanceConfig);
-    const isDirty =
-      explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig);
-    rows.push({
-      instanceId: defaultInstanceId,
-      instance: effectiveInstance,
-      driver,
-      isDefault: true,
-      isDirty,
-    });
-    // Non-default customs for this driver kind follow their default.
-    for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
-      if (id === defaultInstanceId) continue;
-      rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
-    }
-  }
-  // Orphan instances: drivers the visible-defaults list doesn't cover
-  // (e.g. Cursor when the server hasn't reported it but the user has
-  // authored a Cursor instance anyway, or fork drivers not shipped by
-  // this build). Preserve insertion order within each driver.
-  for (const [driver, list] of instancesByDriver) {
-    if (visibleDriverKinds.has(driver)) continue;
-    for (const [id, instance] of list) {
-      const isDefaultSlot = defaultSlotIdsBySource.has(String(id));
-      rows.push({
-        instanceId: id,
-        instance,
-        driver: instance.driver,
-        isDefault: isDefaultSlot,
-      });
-    }
-  }
-
-  const updateProviderInstance = (
-    row: InstanceRow,
-    next: ProviderInstanceConfig,
-    options?: {
-      readonly textGenerationModelSelection?: Parameters<
-        typeof buildProviderInstanceUpdatePatch
-      >[0]["textGenerationModelSelection"];
-    },
-  ) => {
-    updateSettings(
-      buildProviderInstanceUpdatePatch({
-        settings,
-        instanceId: row.instanceId,
-        instance: next,
-        driver: row.driver,
-        isDefault: row.isDefault,
-        textGenerationModelSelection: options?.textGenerationModelSelection,
-      }),
-    );
-  };
-
-  const deleteProviderInstance = (id: ProviderInstanceId) => {
-    updateSettings({
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
-      providerModelPreferences: withoutProviderInstanceKey(settings.providerModelPreferences, id),
-      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], id),
-    });
-  };
-
-  const updateProviderModelPreferences = (
-    instanceId: ProviderInstanceId,
-    next: {
-      readonly hiddenModels: ReadonlyArray<string>;
-      readonly modelOrder: ReadonlyArray<string>;
-    },
-  ) => {
-    const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
-    const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
-    const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
-    updateSettings({
-      providerModelPreferences:
-        hiddenModels.length === 0 && modelOrder.length === 0
-          ? rest
-          : {
-              ...rest,
-              [instanceId]: {
-                hiddenModels,
-                modelOrder,
-              },
-            },
-    });
-  };
-
-  const updateProviderFavoriteModels = (
-    instanceId: ProviderInstanceId,
-    nextFavoriteModels: ReadonlyArray<string>,
-  ) => {
-    const favoriteModels = [
-      ...new Set(nextFavoriteModels.map((slug) => slug.trim()).filter((slug) => slug.length > 0)),
-    ];
-    updateSettings({
-      favorites: [
-        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
-        ...favoriteModels.map((model) => ({ provider: instanceId, model })),
-      ],
-    });
-  };
-
-  /**
-   * Reset a built-in default slot back to factory defaults. Clears both
-   * the legacy `settings.providers[kind]` struct and any explicit
-   * `providerInstances[defaultId]` entry that has promoted legacy into
-   * the new map, so hydration re-synthesizes a clean envelope on next
-   * load. Safe to call on drivers that have never been edited.
-   */
-  const resetDefaultInstance = (driverKind: ProviderDriverKind) => {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings | undefined
-    >;
-    const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
-    const defaultLegacyProvider = defaultLegacyProviders[driverKind];
-    if (defaultLegacyProvider === undefined) return;
-    updateSettings({
-      providers: {
-        ...settings.providers,
-        [driverKind]: defaultLegacyProvider,
-      } as typeof settings.providers,
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
-      providerModelPreferences: withoutProviderInstanceKey(
-        settings.providerModelPreferences,
-        defaultInstanceId,
-      ),
-      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], defaultInstanceId),
-    });
-  };
 
   return (
     <SettingsPageContainer>
@@ -1168,6 +851,293 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
+      <SettingsSection title="About">
+        {isElectron ? (
+          <AboutVersionSection />
+        ) : (
+          <SettingsRow
+            title={<AboutVersionTitle />}
+            description="Current version of the application."
+          />
+        )}
+        <SettingsRow
+          title="Diagnostics"
+          description={diagnosticsDescription}
+          control={
+            <Button render={<Link to="/settings/diagnostics" />} size="xs" variant="outline">
+              View diagnostics
+            </Button>
+          }
+        />
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
+export function ProviderSettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+  const serverProviders = useServerProviders();
+  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+  const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
+  const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
+    ReadonlySet<ProviderDriverKind>
+  >(() => new Set());
+  const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
+  const refreshingRef = useRef(false);
+
+  const providerUpdateCandidates = useMemo(
+    () => collectProviderUpdateCandidates(serverProviders),
+    [serverProviders],
+  );
+  const providerUpdateCandidateByInstanceId = useMemo(
+    () => new Map(providerUpdateCandidates.map((candidate) => [candidate.instanceId, candidate])),
+    [providerUpdateCandidates],
+  );
+  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
+    (providerSettings) =>
+      providerSettings.provider !== "cursor" ||
+      serverProviders.some(
+        (provider) =>
+          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
+      ),
+  );
+  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+  const textGenInstanceId = textGenerationModelSelection.instanceId;
+  const lastCheckedAt =
+    serverProviders.length > 0
+      ? serverProviders.reduce(
+          (latest, provider) => (provider.checkedAt > latest ? provider.checkedAt : latest),
+          serverProviders[0]!.checkedAt,
+        )
+      : null;
+
+  const refreshProviders = useCallback(() => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setIsRefreshingProviders(true);
+    void ensureLocalApi()
+      .server.refreshProviders()
+      .catch((error: unknown) => {
+        console.warn("Failed to refresh providers", error);
+      })
+      .finally(() => {
+        refreshingRef.current = false;
+        setIsRefreshingProviders(false);
+      });
+  }, []);
+
+  const runProviderUpdate = useCallback(async (candidate: ProviderUpdateCandidate) => {
+    let started = false;
+    setUpdatingProviderDrivers((previous) => {
+      if (previous.has(candidate.driver)) {
+        return previous;
+      }
+      started = true;
+      const next = new Set(previous);
+      next.add(candidate.driver);
+      return next;
+    });
+    if (!started) {
+      return;
+    }
+
+    try {
+      await ensureLocalApi().server.updateProvider({
+        provider: candidate.driver,
+        instanceId: candidate.instanceId,
+      });
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not update ${PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver}`,
+          description:
+            error instanceof Error
+              ? error.message
+              : "The provider update command could not be started.",
+        }),
+      );
+    } finally {
+      setUpdatingProviderDrivers((previous) => {
+        if (!previous.has(candidate.driver)) {
+          return previous;
+        }
+        const next = new Set(previous);
+        next.delete(candidate.driver);
+        return next;
+      });
+    }
+  }, []);
+
+  interface InstanceRow {
+    readonly instanceId: ProviderInstanceId;
+    readonly instance: ProviderInstanceConfig;
+    readonly driver: ProviderDriverKind;
+    readonly isDefault: boolean;
+    readonly isDirty?: boolean;
+  }
+
+  const instancesByDriver = new Map<
+    ProviderDriverKind,
+    Array<[ProviderInstanceId, ProviderInstanceConfig]>
+  >();
+  for (const [rawId, instance] of Object.entries(settings.providerInstances ?? {})) {
+    const driver = instance.driver;
+    const list = instancesByDriver.get(driver) ?? [];
+    list.push([rawId as ProviderInstanceId, instance]);
+    instancesByDriver.set(driver, list);
+  }
+
+  const defaultSlotIdsBySource = new Set<string>(
+    visibleProviderSettings.map((providerSettings) =>
+      String(defaultInstanceIdForDriver(providerSettings.provider)),
+    ),
+  );
+
+  const rows: InstanceRow[] = [];
+  const visibleDriverKinds = new Set<ProviderDriverKind>(
+    visibleProviderSettings.map((providerSettings) => providerSettings.provider),
+  );
+
+  for (const providerSettings of visibleProviderSettings) {
+    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
+    const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
+    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
+      string,
+      LegacyProviderSettings
+    >;
+    const driver = providerSettings.provider;
+    const defaultInstanceId = defaultInstanceIdForDriver(driver);
+    const explicitInstance = settings.providerInstances?.[defaultInstanceId];
+    const legacyConfig = legacyProviders[providerSettings.provider]!;
+    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider]!;
+    const effectiveInstance: ProviderInstanceConfig =
+      explicitInstance ??
+      ({
+        driver,
+        enabled: legacyConfig.enabled,
+        config: legacyConfig,
+      } satisfies ProviderInstanceConfig);
+    const isDirty =
+      explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig);
+    rows.push({
+      instanceId: defaultInstanceId,
+      instance: effectiveInstance,
+      driver,
+      isDefault: true,
+      isDirty,
+    });
+    for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
+      if (id === defaultInstanceId) continue;
+      rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
+    }
+  }
+  for (const [driver, list] of instancesByDriver) {
+    if (visibleDriverKinds.has(driver)) continue;
+    for (const [id, instance] of list) {
+      rows.push({
+        instanceId: id,
+        instance,
+        driver: instance.driver,
+        isDefault: defaultSlotIdsBySource.has(String(id)),
+      });
+    }
+  }
+
+  const updateProviderInstance = (
+    row: InstanceRow,
+    next: ProviderInstanceConfig,
+    options?: {
+      readonly textGenerationModelSelection?: Parameters<
+        typeof buildProviderInstanceUpdatePatch
+      >[0]["textGenerationModelSelection"];
+    },
+  ) => {
+    updateSettings(
+      buildProviderInstanceUpdatePatch({
+        settings,
+        instanceId: row.instanceId,
+        instance: next,
+        driver: row.driver,
+        isDefault: row.isDefault,
+        textGenerationModelSelection: options?.textGenerationModelSelection,
+      }),
+    );
+  };
+
+  const deleteProviderInstance = (id: ProviderInstanceId) => {
+    updateSettings({
+      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
+      providerModelPreferences: withoutProviderInstanceKey(settings.providerModelPreferences, id),
+      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], id),
+    });
+  };
+
+  const updateProviderModelPreferences = (
+    instanceId: ProviderInstanceId,
+    next: {
+      readonly hiddenModels: ReadonlyArray<string>;
+      readonly modelOrder: ReadonlyArray<string>;
+    },
+  ) => {
+    const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
+    const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
+    const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
+    updateSettings({
+      providerModelPreferences:
+        hiddenModels.length === 0 && modelOrder.length === 0
+          ? rest
+          : {
+              ...rest,
+              [instanceId]: {
+                hiddenModels,
+                modelOrder,
+              },
+            },
+    });
+  };
+
+  const updateProviderFavoriteModels = (
+    instanceId: ProviderInstanceId,
+    nextFavoriteModels: ReadonlyArray<string>,
+  ) => {
+    const favoriteModels = [
+      ...new Set(nextFavoriteModels.map((slug) => slug.trim()).filter((slug) => slug.length > 0)),
+    ];
+    updateSettings({
+      favorites: [
+        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
+        ...favoriteModels.map((model) => ({ provider: instanceId, model })),
+      ],
+    });
+  };
+
+  const resetDefaultInstance = (driverKind: ProviderDriverKind) => {
+    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
+    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
+      string,
+      LegacyProviderSettings | undefined
+    >;
+    const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
+    const defaultLegacyProvider = defaultLegacyProviders[driverKind];
+    if (defaultLegacyProvider === undefined) return;
+    updateSettings({
+      providers: {
+        ...settings.providers,
+        [driverKind]: defaultLegacyProvider,
+      } as typeof settings.providers,
+      providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
+      providerModelPreferences: withoutProviderInstanceKey(
+        settings.providerModelPreferences,
+        defaultInstanceId,
+      ),
+      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], defaultInstanceId),
+    });
+  };
+
+  return (
+    <SettingsPageContainer>
       <SettingsSection
         title="Providers"
         headerAction={
@@ -1218,6 +1188,23 @@ export function GeneralSettingsPanel() {
           const liveProvider = serverProviders.find(
             (candidate) => candidate.instanceId === row.instanceId,
           );
+          const updateCandidate = liveProvider
+            ? providerUpdateCandidateByInstanceId.get(liveProvider.instanceId)
+            : undefined;
+          const isDriverUpdateRunning =
+            updateCandidate !== undefined &&
+            (updatingProviderDrivers.has(updateCandidate.driver) ||
+              serverProviders.some(
+                (provider) =>
+                  provider.driver === updateCandidate.driver && isProviderUpdateActive(provider),
+              ));
+          const showInlineUpdateButton =
+            updateCandidate !== undefined &&
+            hasOneClickUpdateProviderCandidate(updateCandidate, serverProviders);
+          const canRunInlineUpdate =
+            updateCandidate !== undefined &&
+            canOneClickUpdateProviderCandidate(updateCandidate, serverProviders) &&
+            !updatingProviderDrivers.has(updateCandidate.driver);
           const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
             hiddenModels: [],
             modelOrder: [],
@@ -1248,13 +1235,6 @@ export function GeneralSettingsPanel() {
                 }))
               }
               onUpdate={(next) => {
-                // When the user disables the exact instance the text-gen
-                // selection points at, fall back to the global default so we
-                // don't leave the selection dangling on a disabled instance.
-                // Prior kind-level behavior cleared on any kind-matching
-                // disable; instance-level addressing makes this narrower and
-                // more accurate (other instances of the same kind stay
-                // untouched).
                 const wasEnabled = row.instance.enabled ?? true;
                 const isDisabling = next.enabled === false && wasEnabled;
                 const shouldClearTextGen = isDisabling && textGenInstanceId === row.instanceId;
@@ -1287,6 +1267,17 @@ export function GeneralSettingsPanel() {
                   modelOrder,
                 })
               }
+              onRunUpdate={
+                showInlineUpdateButton && updateCandidate
+                  ? () => {
+                      if (!canRunInlineUpdate) {
+                        return;
+                      }
+                      void runProviderUpdate(updateCandidate);
+                    }
+                  : undefined
+              }
+              isUpdating={showInlineUpdateButton ? isDriverUpdateRunning : undefined}
             />
           );
         })}
@@ -1296,70 +1287,6 @@ export function GeneralSettingsPanel() {
         open={isAddInstanceDialogOpen}
         onOpenChange={setIsAddInstanceDialogOpen}
       />
-
-      <SettingsSection title="Advanced">
-        <SettingsRow
-          title="Keybindings"
-          description="Open the persisted `keybindings.json` file to edit advanced bindings directly."
-          status={
-            <>
-              <span className="block break-all font-mono text-[11px] text-foreground">
-                {keybindingsConfigPath ?? "Resolving keybindings path..."}
-              </span>
-              {openKeybindingsError ? (
-                <span className="mt-1 block text-destructive">{openKeybindingsError}</span>
-              ) : (
-                <span className="mt-1 block">Opens in your preferred editor.</span>
-              )}
-            </>
-          }
-          control={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!keybindingsConfigPath || isOpeningKeybindings}
-              onClick={openKeybindingsFile}
-            >
-              {isOpeningKeybindings ? "Opening..." : "Open file"}
-            </Button>
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection title="About">
-        {isElectron ? (
-          <AboutVersionSection />
-        ) : (
-          <SettingsRow
-            title={<AboutVersionTitle />}
-            description="Current version of the application."
-          />
-        )}
-        <SettingsRow
-          title="Diagnostics"
-          description={diagnosticsDescription}
-          status={
-            <>
-              <span className="block break-all font-mono text-[11px] text-foreground">
-                {logsDirectoryPath ?? "Resolving logs directory..."}
-              </span>
-              {openDiagnosticsError ? (
-                <span className="mt-1 block text-destructive">{openDiagnosticsError}</span>
-              ) : null}
-            </>
-          }
-          control={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!logsDirectoryPath || isOpeningLogsDirectory}
-              onClick={openLogsDirectory}
-            >
-              {isOpeningLogsDirectory ? "Opening..." : "Open logs folder"}
-            </Button>
-          }
-        />
-      </SettingsSection>
     </SettingsPageContainer>
   );
 }
