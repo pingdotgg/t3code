@@ -553,8 +553,10 @@ export const IntelliJIdeaIcon: Icon = (props) => {
 export const OpenCodeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
     <g clipPath="url(#opencode__clip0_1311_94969)">
-      <path d="M24 32H8V16H24V32Z" fill="#BCBBBB" />
-      <path d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#211E1E" />
+      <path className="dark:hidden" d="M24 32H8V16H24V32Z" fill="#CFCECD" />
+      <path className="dark:hidden" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#211E1E" />
+      <path className="hidden dark:block" d="M24 32H8V16H24V32Z" fill="#4B4646" />
+      <path className="hidden dark:block" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#F1ECEC" />
     </g>
     <defs>
       <clipPath id="opencode__clip0_1311_94969">

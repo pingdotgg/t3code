@@ -1,6 +1,7 @@
 import {
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type OpenCodeModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
   type ScopedThreadRef,
@@ -33,6 +34,12 @@ import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 
 type ProviderOptions = ProviderModelOptions[ProviderKind];
+type NamedOption = {
+  value: string;
+  label: string;
+  isDefault?: boolean | undefined;
+};
+
 type TraitsPersistence =
   | {
       threadRef?: ScopedThreadRef;
@@ -53,7 +60,27 @@ function getRawEffort(
   if (provider === "codex") {
     return trimOrNull((modelOptions as CodexModelOptions | undefined)?.reasoningEffort);
   }
+  if (provider === "opencode") {
+    return trimOrNull((modelOptions as OpenCodeModelOptions | undefined)?.variant);
+  }
   return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.effort);
+}
+
+function getRawAgent(modelOptions: ProviderOptions | null | undefined): string | null {
+  return trimOrNull((modelOptions as OpenCodeModelOptions | undefined)?.agent);
+}
+
+function resolveNamedOption(
+  options: ReadonlyArray<NamedOption>,
+  raw: string | null,
+): NamedOption | null {
+  if (raw) {
+    const matchingOption = options.find((option) => option.value === raw);
+    if (matchingOption) {
+      return matchingOption;
+    }
+  }
+  return options.find((option) => option.isDefault) ?? null;
 }
 
 function getRawContextWindow(
@@ -74,6 +101,12 @@ function buildNextOptions(
   if (provider === "codex") {
     return { ...(modelOptions as CodexModelOptions | undefined), ...patch } as CodexModelOptions;
   }
+  if (provider === "opencode") {
+    return {
+      ...(modelOptions as OpenCodeModelOptions | undefined),
+      ...patch,
+    } as OpenCodeModelOptions;
+  }
   return { ...(modelOptions as ClaudeModelOptions | undefined), ...patch } as ClaudeModelOptions;
 }
 
@@ -86,15 +119,21 @@ function getSelectedTraits(
   allowPromptInjectedEffort: boolean,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider);
-  const effortLevels = allowPromptInjectedEffort
-    ? caps.reasoningEffortLevels
-    : caps.reasoningEffortLevels.filter(
-        (option) => !caps.promptInjectedEffortLevels.includes(option.value),
-      );
+  const effortLevels =
+    provider === "opencode"
+      ? (caps.variantOptions ?? [])
+      : allowPromptInjectedEffort
+        ? caps.reasoningEffortLevels
+        : caps.reasoningEffortLevels.filter(
+            (option) => !caps.promptInjectedEffortLevels.includes(option.value),
+          );
 
   // Resolve effort from options (provider-specific key)
   const rawEffort = getRawEffort(provider, modelOptions);
-  const effort = resolveEffort(caps, rawEffort) ?? null;
+  const effort =
+    provider === "opencode"
+      ? (resolveNamedOption(effortLevels, rawEffort)?.value ?? null)
+      : (resolveEffort(caps, rawEffort) ?? null);
 
   // Thinking toggle (only for models that support it)
   const thinkingEnabled = caps.supportsThinkingToggle
@@ -125,6 +164,10 @@ function getSelectedTraits(
   const ultrathinkInBodyText =
     ultrathinkPromptControlled && isClaudeUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, ""));
 
+  const agentOptions = caps.agentOptions ?? [];
+  const selectedAgentOption =
+    provider === "opencode" ? resolveNamedOption(agentOptions, getRawAgent(modelOptions)) : null;
+
   return {
     caps,
     effort,
@@ -136,6 +179,9 @@ function getSelectedTraits(
     defaultContextWindow,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
+    agentOptions,
+    selectedAgent: selectedAgentOption?.value ?? null,
+    selectedAgentLabel: selectedAgentOption?.label ?? null,
   };
 }
 
@@ -189,6 +235,8 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     defaultContextWindow,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
+    agentOptions,
+    selectedAgent,
   } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
   const defaultEffort = getDefaultEffort(caps);
 
@@ -197,6 +245,10 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       if (!value) return;
       const nextOption = effortLevels.find((option) => option.value === value);
       if (!nextOption) return;
+      if (provider === "opencode") {
+        updateModelOptions(buildNextOptions(provider, modelOptions, { variant: nextOption.value }));
+        return;
+      }
       if (caps.promptInjectedEffortLevels.includes(nextOption.value)) {
         const nextPrompt =
           prompt.trim().length === 0
@@ -228,7 +280,12 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     ],
   );
 
-  if (effort === null && thinkingEnabled === null && contextWindowOptions.length <= 1) {
+  if (
+    effort === null &&
+    thinkingEnabled === null &&
+    contextWindowOptions.length <= 1 &&
+    agentOptions.length === 0
+  ) {
     return null;
   }
 
@@ -237,7 +294,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       {effort ? (
         <>
           <MenuGroup>
-            <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">Effort</div>
+            <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
+              {provider === "opencode" ? "Variant" : "Effort"}
+            </div>
             {ultrathinkInBodyText ? (
               <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
                 Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change effort.
@@ -254,7 +313,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   disabled={ultrathinkInBodyText}
                 >
                   {option.label}
-                  {option.value === defaultEffort ? " (default)" : ""}
+                  {(provider === "opencode" ? option.isDefault : option.value === defaultEffort)
+                    ? " (default)"
+                    : ""}
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>
@@ -322,6 +383,27 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           </MenuGroup>
         </>
       ) : null}
+      {agentOptions.length > 0 ? (
+        <>
+          <MenuDivider />
+          <MenuGroup>
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Agent</div>
+            <MenuRadioGroup
+              value={selectedAgent ?? ""}
+              onValueChange={(value) => {
+                updateModelOptions(buildNextOptions(provider, modelOptions, { agent: value }));
+              }}
+            >
+              {agentOptions.map((option) => (
+                <MenuRadioItem key={option.value} value={option.value}>
+                  {option.label}
+                  {option.isDefault ? " (default)" : ""}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuGroup>
+        </>
+      ) : null}
     </>
   );
 });
@@ -349,6 +431,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     contextWindow,
     defaultContextWindow,
     ultrathinkPromptControlled,
+    selectedAgentLabel,
   } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
 
   const effortLabel = effort
@@ -368,6 +451,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           : `Thinking ${thinkingEnabled ? "On" : "Off"}`,
     ...(caps.supportsFastMode && fastModeEnabled ? ["Fast"] : []),
     ...(contextWindowLabel ? [contextWindowLabel] : []),
+    ...(selectedAgentLabel ? [selectedAgentLabel] : []),
   ]
     .filter(Boolean)
     .join(" · ");
