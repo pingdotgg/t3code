@@ -951,7 +951,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
 
   const statusRemoteRefreshCache = yield* Cache.makeWith(refreshStatusRemoteCacheEntry, {
     capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY,
-    // Keep successful refreshes warm and briefly back off failed refreshes to avoid retry storms.
+    // Keep successful refreshes warm and back off failed auto-refreshes to avoid retry storms.
     timeToLive: (exit) =>
       Exit.isSuccess(exit)
         ? STATUS_UPSTREAM_REFRESH_INTERVAL

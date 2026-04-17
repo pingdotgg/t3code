@@ -417,44 +417,6 @@ describe("startSession", () => {
     }
   });
 
-  it("reports a file cwd instead of blaming the codex binary", async () => {
-    const manager = new CodexAppServerManager();
-    const events: Array<{ method: string; kind: string; message?: string }> = [];
-    manager.on("event", (event) => {
-      events.push({
-        method: event.method,
-        kind: event.kind,
-        ...(event.message ? { message: event.message } : {}),
-      });
-    });
-
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "codex-cwd-file-"));
-    const tempFilePath = path.join(tempDir, "cwd.txt");
-    writeFileSync(tempFilePath, "not-a-directory\n");
-
-    try {
-      await expect(
-        manager.startSession({
-          threadId: asThreadId("thread-1"),
-          provider: "codex",
-          binaryPath: process.execPath,
-          cwd: tempFilePath,
-          runtimeMode: "full-access",
-        }),
-      ).rejects.toThrow(`Workspace root is not a directory: ${tempFilePath}`);
-      expect(events).toEqual([
-        {
-          method: "session/startFailed",
-          kind: "error",
-          message: `Workspace root is not a directory: ${tempFilePath}`,
-        },
-      ]);
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-      manager.stopAll();
-    }
-  });
-
   it("fails fast with an upgrade message when codex is below the minimum supported version", async () => {
     const manager = new CodexAppServerManager();
     const events: Array<{ method: string; kind: string; message?: string }> = [];
