@@ -359,8 +359,8 @@ label:has(> select#reasoning-effort) select {
 
 /* Per-line direction detection for pre-wrap user messages and composer */
 .user-message-text,
-[data-testid="composer-editor"],
-[data-testid="composer-editor"] p {
+.composer-editor-bidi,
+.composer-editor-bidi p {
   unicode-bidi: plaintext;
 }
 
@@ -416,12 +416,12 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown ul {
-  padding-left: 1.25rem;
+  padding-inline-start: 1.25rem;
   list-style-type: disc;
 }
 
 .chat-markdown ol {
-  padding-left: 1.25rem;
+  padding-inline-start: 1.25rem;
   list-style-type: decimal;
 }
 
@@ -481,8 +481,8 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown blockquote {
-  border-left: 2px solid var(--border);
-  padding-left: 0.8rem;
+  border-inline-start: 2px solid var(--border);
+  padding-inline-start: 0.8rem;
   color: var(--muted-foreground);
 }
 
@@ -665,7 +665,7 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
-  text-align: left;
+  text-align: start;
 }
 
 .chat-markdown thead th {
