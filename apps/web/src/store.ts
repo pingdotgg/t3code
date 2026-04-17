@@ -14,12 +14,13 @@ import type {
   OrchestrationThreadActivity,
   OrchestrationThreadShell,
   ProjectId,
-  ProviderKind,
   ScopedProjectRef,
   ScopedThreadRef,
+  ProviderKind,
   ThreadId,
   TurnId,
 } from "@marcode/contracts";
+import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@marcode/shared/model";
 import { create } from "zustand";
 import {
@@ -1003,7 +1004,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex" || providerName === "claudeAgent" || providerName === "opencode") {
+  if (Schema.is(ProviderKind)(providerName)) {
     return providerName;
   }
   return "codex";

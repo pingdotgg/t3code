@@ -105,7 +105,7 @@ export class ServerSettingsService extends Context.Service<
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 
-const PROVIDER_ORDER: readonly ProviderKind[] = ["claudeAgent", "codex", "opencode"];
+const PROVIDER_ORDER: readonly ProviderKind[] = ["claudeAgent", "codex", "opencode", "cursor"];
 
 /**
  * Ensure the `textGenerationModelSelection` points to an enabled provider.

@@ -44,12 +44,7 @@ import {
   type UserInputQuestion,
   ClaudeAgentEffort,
 } from "@marcode/contracts";
-import {
-  applyClaudePromptEffortPrefix,
-  resolveApiModelId,
-  resolveEffort,
-  trimOrNull,
-} from "@marcode/shared/model";
+import { applyClaudePromptEffortPrefix, resolveEffort, trimOrNull } from "@marcode/shared/model";
 import {
   Cause,
   DateTime,
@@ -70,7 +65,7 @@ import {
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
+import { getClaudeModelCapabilities, resolveClaudeApiModelId } from "./ClaudeProvider.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -3064,7 +3059,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
-      const apiModelId = modelSelection ? resolveApiModelId(modelSelection) : undefined;
+      const apiModelId = modelSelection ? resolveClaudeApiModelId(modelSelection) : undefined;
       const effort = (resolveEffort(caps, modelSelection?.options?.effort) ??
         null) as ClaudeAgentEffort | null;
       const fastMode = modelSelection?.options?.fastMode === true && caps.supportsFastMode;
@@ -3095,7 +3090,13 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
         settingSources: [...CLAUDE_SETTING_SOURCES],
-        ...(effectiveEffort ? { effort: effectiveEffort } : {}),
+        // The SDK type lags the CLI here: Opus 4.7 accepts `xhigh` even though
+        // the published `Options["effort"]` union currently stops at `max`.
+        ...(effectiveEffort
+          ? {
+              effort: effectiveEffort as unknown as NonNullable<ClaudeQueryOptions["effort"]>,
+            }
+          : {}),
         ...(permissionMode ? { permissionMode } : {}),
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
@@ -3251,7 +3252,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (modelSelection?.model) {
-      const apiModelId = resolveApiModelId(modelSelection);
+      const apiModelId = resolveClaudeApiModelId(modelSelection);
       if (context.currentApiModelId !== apiModelId) {
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),

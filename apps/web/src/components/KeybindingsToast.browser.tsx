@@ -99,6 +99,7 @@ function createBaseServerConfig(): ServerConfig {
       providers: {
         codex: { enabled: true, binaryPath: "", homePath: "", customModels: [] },
         claudeAgent: { enabled: true, binaryPath: "", customModels: [], launchArgs: "" },
+        cursor: { enabled: true, binaryPath: "", apiEndpoint: "", customModels: [] },
         opencode: {
           enabled: true,
           binaryPath: "",
