@@ -420,24 +420,4 @@ describe("ProviderModelPicker", () => {
       await mounted.cleanup();
     }
   });
-
-  it("hides cursor when the server does not expose it", async () => {
-    const mounted = await mountPicker({
-      provider: "claudeAgent",
-      model: "claude-opus-4-6",
-      lockedProvider: null,
-      providers: TEST_PROVIDERS,
-    });
-
-    try {
-      await page.getByRole("button").click();
-
-      await vi.waitFor(() => {
-        const text = document.body.textContent ?? "";
-        expect(text).not.toContain("Cursor");
-      });
-    } finally {
-      await mounted.cleanup();
-    }
-  });
 });

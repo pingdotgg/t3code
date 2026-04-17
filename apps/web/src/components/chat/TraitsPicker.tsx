@@ -139,7 +139,9 @@ function getSelectedTraits(
 
   // Thinking toggle (only for models that support it)
   const thinkingEnabled = caps.supportsThinkingToggle
-    ? ((modelOptions as { thinking?: boolean } | undefined)?.thinking ?? true)
+    ? modelOptions && "thinking" in modelOptions
+      ? modelOptions.thinking === true
+      : null
     : null;
 
   // Fast mode
