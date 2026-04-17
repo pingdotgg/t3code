@@ -2147,6 +2147,84 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("reads recent commit subjects from repository history", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        yield* commitWithDate(
+          tmp,
+          "feature.txt",
+          "feature one\n",
+          "2024-01-01T12:00:00Z",
+          "feat: add feature one",
+        );
+        yield* commitWithDate(
+          tmp,
+          "bugfix.txt",
+          "bugfix\n",
+          "2024-01-02T12:00:00Z",
+          "fix(web): patch regression",
+        );
+
+        const core = yield* GitCore;
+        const subjects = yield* core.readRecentCommitSubjects({
+          cwd: tmp,
+          limit: 2,
+        });
+
+        expect(subjects).toEqual(["fix(web): patch regression", "feat: add feature one"]);
+      }),
+    );
+
+    it.effect("returns an empty recent commit subject list for a repo with no commits yet", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const core = yield* GitCore;
+        yield* core.initRepo({ cwd: tmp });
+
+        const subjects = yield* core.readRecentCommitSubjects({
+          cwd: tmp,
+          limit: 5,
+        });
+
+        expect(subjects).toEqual([]);
+      }),
+    );
+
+    it.effect("filters recent commit subjects by exact author identity across all refs", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        yield* git(tmp, ["config", "user.email", "me.name@example.com"]);
+        yield* git(tmp, ["config", "user.name", "Me Name"]);
+        yield* commitWithDate(
+          tmp,
+          "author.txt",
+          "author\n",
+          "2024-01-03T12:00:00Z",
+          "feat: author style",
+        );
+        yield* git(tmp, ["config", "user.email", "meXname@exampleYcom"]);
+        yield* git(tmp, ["config", "user.name", "False Positive"]);
+        yield* commitWithDate(
+          tmp,
+          "other.txt",
+          "other\n",
+          "2024-01-04T12:00:00Z",
+          "docs: regex false positive",
+        );
+
+        const core = yield* GitCore;
+        const subjects = yield* core.readRecentCommitSubjects({
+          cwd: tmp,
+          limit: 5,
+          author: "me.name@example.com",
+          scope: "allRefs",
+        });
+
+        expect(subjects).toEqual(["feat: author style"]);
+      }),
+    );
     it.effect("prepareCommitContext truncates oversized staged patches instead of failing", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
@@ -2180,7 +2258,6 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(rangeContext.diffPatch).toContain("[truncated]");
       }),
     );
-
     it.effect("pushes with upstream setup and then skips when up to date", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

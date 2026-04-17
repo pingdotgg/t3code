@@ -214,6 +214,7 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
       stagedSummary: input.stagedSummary,
       stagedPatch: input.stagedPatch,
       includeBranch: input.includeBranch === true,
+      styleGuidance: input.styleGuidance,
     });
 
     if (input.modelSelection.provider !== "claudeAgent") {
@@ -249,6 +250,8 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
       commitSummary: input.commitSummary,
       diffSummary: input.diffSummary,
       diffPatch: input.diffPatch,
+      styleGuidance: input.styleGuidance,
+      useDefaultTemplate: input.useDefaultTemplate,
     });
 
     if (input.modelSelection.provider !== "claudeAgent") {

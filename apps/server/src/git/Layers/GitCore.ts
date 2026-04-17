@@ -59,6 +59,7 @@ const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
+const STYLE_DISCOVERY_TIMEOUT_MS = 5_000;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitStatusDetails>({
   isRepo: false,
@@ -72,7 +73,6 @@ const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitStatusDetails>({
   aheadCount: 0,
   behindCount: 0,
 });
-
 type TraceTailState = {
   processedChars: number;
   remainder: string;
@@ -870,6 +870,64 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       },
     ).pipe(Effect.map((result) => result.code === 0));
 
+  const remoteRefExists = (cwd: string, refName: string): Effect.Effect<boolean, GitCommandError> =>
+    executeGit(
+      "GitCore.remoteRefExists",
+      cwd,
+      ["show-ref", "--verify", "--quiet", `refs/remotes/${refName}`],
+      {
+        allowNonZeroExit: true,
+        timeoutMs: STYLE_DISCOVERY_TIMEOUT_MS,
+      },
+    ).pipe(Effect.map((result) => result.code === 0));
+
+  const resolveCommitStyleHistoryRef = Effect.fn("resolveCommitStyleHistoryRef")(function* (
+    cwd: string,
+  ) {
+    const remoteNames = yield* runGitStdout(
+      "GitCore.readRecentCommitSubjects.remoteNames",
+      cwd,
+      ["remote"],
+      true,
+    ).pipe(
+      Effect.map(parseRemoteNamesInGitOrder),
+      Effect.catch(() => Effect.succeed<ReadonlyArray<string>>([])),
+    );
+
+    for (const remoteName of remoteNames) {
+      const defaultRemoteHeadRef = yield* executeGit(
+        "GitCore.readRecentCommitSubjects.defaultRemoteHeadRef",
+        cwd,
+        ["symbolic-ref", "--quiet", `refs/remotes/${remoteName}/HEAD`],
+        {
+          allowNonZeroExit: true,
+          timeoutMs: STYLE_DISCOVERY_TIMEOUT_MS,
+        },
+      ).pipe(Effect.map((result) => result.stdout.trim()));
+
+      if (defaultRemoteHeadRef.length > 0) {
+        return defaultRemoteHeadRef;
+      }
+    }
+
+    const candidateRemoteNames = remoteNames.length > 0 ? remoteNames : ["origin"];
+
+    for (const branchCandidate of DEFAULT_BASE_BRANCH_CANDIDATES) {
+      if (yield* branchExists(cwd, branchCandidate)) {
+        return branchCandidate;
+      }
+
+      for (const remoteName of candidateRemoteNames) {
+        const remoteCandidate = `${remoteName}/${branchCandidate}`;
+        if (yield* remoteRefExists(cwd, remoteCandidate)) {
+          return remoteCandidate;
+        }
+      }
+    }
+
+    return "HEAD";
+  });
+
   const resolveAvailableBranchName = Effect.fn("resolveAvailableBranchName")(function* (
     cwd: string,
     desiredBranch: string,
@@ -1634,6 +1692,55 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
+  const readRecentCommitSubjects: GitCoreShape["readRecentCommitSubjects"] = (input) =>
+    Effect.gen(function* () {
+      const limit = Math.max(1, input.limit ?? 10);
+      const args = ["log", "--format=%s", "--no-merges", "--max-count", String(limit)];
+
+      if (input.author?.trim()) {
+        // `git log --author` matches regexes by default, so force fixed-string matching
+        // to preserve the service contract's exact author identity semantics.
+        args.push("-F");
+        args.push(`--author=${input.author.trim()}`);
+      }
+
+      if (input.scope === "allRefs") {
+        args.push("--all");
+      } else {
+        const historyRef = yield* resolveCommitStyleHistoryRef(input.cwd).pipe(
+          Effect.catch(() => Effect.succeed("HEAD")),
+        );
+        args.push(historyRef);
+      }
+
+      const result = yield* executeGit("GitCore.readRecentCommitSubjects", input.cwd, args, {
+        allowNonZeroExit: true,
+        timeoutMs: STYLE_DISCOVERY_TIMEOUT_MS,
+      });
+
+      if (result.code !== 0) {
+        const stderr = result.stderr.trim();
+        const lower = stderr.toLowerCase();
+        if (
+          lower.includes("does not have any commits yet") ||
+          lower.includes("unknown revision or path not in the working tree")
+        ) {
+          return [];
+        }
+        return yield* createGitCommandError(
+          "GitCore.readRecentCommitSubjects",
+          input.cwd,
+          args,
+          stderr || "git log failed",
+        );
+      }
+
+      return result.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    });
+
   const isInsideWorkTree: GitCoreShape["isInsideWorkTree"] = (cwd) =>
     executeGit("GitCore.isInsideWorkTree", cwd, ["rev-parse", "--is-inside-work-tree"], {
       allowNonZeroExit: true,
@@ -2180,6 +2287,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     statusDetails,
     statusDetailsLocal,
     prepareCommitContext,
+    readRecentCommitSubjects,
     commit,
     pushCurrentBranch,
     pullCurrentBranch,

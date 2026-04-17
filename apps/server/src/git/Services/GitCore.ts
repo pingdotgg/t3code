@@ -56,6 +56,15 @@ export interface GitPreparedCommitContext {
   stagedPatch: string;
 }
 
+export interface GitRecentCommitSubjectsInput {
+  readonly cwd: string;
+  readonly limit?: number | undefined;
+  /** Exact author identity (email or name) to match when sampling commit history. */
+  readonly author?: string | undefined;
+  /** Which commit graph slice to sample from. */
+  readonly scope?: "defaultHistory" | "allRefs" | undefined;
+}
+
 export interface ExecuteGitProgress {
   readonly onStdoutLine?: (line: string) => Effect.Effect<void, never>;
   readonly onStderrLine?: (line: string) => Effect.Effect<void, never>;
@@ -84,7 +93,6 @@ export interface GitCommitOptions {
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
 }
-
 export interface GitPushResult {
   status: "pushed" | "skipped_up_to_date";
   branch: string;
@@ -170,6 +178,13 @@ export interface GitCoreShape {
     cwd: string,
     filePaths?: readonly string[],
   ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
+
+  /**
+   * Read recent commit subjects to infer the repository's preferred style.
+   */
+  readonly readRecentCommitSubjects: (
+    input: GitRecentCommitSubjectsInput,
+  ) => Effect.Effect<ReadonlyArray<string>, GitCommandError>;
 
   /**
    * Create a commit with provided subject/body.

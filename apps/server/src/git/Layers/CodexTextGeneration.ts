@@ -3,18 +3,14 @@ import { randomUUID } from "node:crypto";
 import { Effect, FileSystem, Layer, Option, Path, Schema, Scope, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { CodexModelSelection } from "@t3tools/contracts";
+import { CodexModelSelection, TextGenerationError } from "@t3tools/contracts";
+import { normalizeCodexModelOptionsWithCapabilities } from "@t3tools/shared/model";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { TextGenerationError } from "@t3tools/contracts";
-import {
-  type BranchNameGenerationInput,
-  type ThreadTitleGenerationResult,
-  type TextGenerationShape,
-  TextGeneration,
-} from "../Services/TextGeneration.ts";
+import { getCodexModelCapabilities } from "../../provider/Layers/CodexProvider.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -22,18 +18,22 @@ import {
   buildThreadTitlePrompt,
 } from "../Prompts.ts";
 import {
+  type BranchNameGenerationInput,
+  type TextGenerationShape,
+  type ThreadTitleGenerationResult,
+  TextGeneration,
+} from "../Services/TextGeneration.ts";
+import {
   normalizeCliError,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "../Utils.ts";
-import { getCodexModelCapabilities } from "../../provider/Layers/CodexProvider.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { normalizeCodexModelOptionsWithCapabilities } from "@t3tools/shared/model";
 
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
+
 const makeCodexTextGeneration = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -277,19 +277,20 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = Effect.fn(
     "CodexTextGeneration.generateCommitMessage",
   )(function* (input) {
-    const { prompt, outputSchema } = buildCommitMessagePrompt({
-      branch: input.branch,
-      stagedSummary: input.stagedSummary,
-      stagedPatch: input.stagedPatch,
-      includeBranch: input.includeBranch === true,
-    });
-
     if (input.modelSelection.provider !== "codex") {
       return yield* new TextGenerationError({
         operation: "generateCommitMessage",
         detail: "Invalid model selection.",
       });
     }
+
+    const { prompt, outputSchema } = buildCommitMessagePrompt({
+      branch: input.branch,
+      stagedSummary: input.stagedSummary,
+      stagedPatch: input.stagedPatch,
+      includeBranch: input.includeBranch === true,
+      styleGuidance: input.styleGuidance,
+    });
 
     const generated = yield* runCodexJson({
       operation: "generateCommitMessage",
@@ -311,20 +312,22 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const generatePrContent: TextGenerationShape["generatePrContent"] = Effect.fn(
     "CodexTextGeneration.generatePrContent",
   )(function* (input) {
-    const { prompt, outputSchema } = buildPrContentPrompt({
-      baseBranch: input.baseBranch,
-      headBranch: input.headBranch,
-      commitSummary: input.commitSummary,
-      diffSummary: input.diffSummary,
-      diffPatch: input.diffPatch,
-    });
-
     if (input.modelSelection.provider !== "codex") {
       return yield* new TextGenerationError({
         operation: "generatePrContent",
         detail: "Invalid model selection.",
       });
     }
+
+    const { prompt, outputSchema } = buildPrContentPrompt({
+      baseBranch: input.baseBranch,
+      headBranch: input.headBranch,
+      commitSummary: input.commitSummary,
+      diffSummary: input.diffSummary,
+      diffPatch: input.diffPatch,
+      styleGuidance: input.styleGuidance,
+      useDefaultTemplate: input.useDefaultTemplate,
+    });
 
     const generated = yield* runCodexJson({
       operation: "generatePrContent",

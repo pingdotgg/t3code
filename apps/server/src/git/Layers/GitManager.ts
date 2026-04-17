@@ -45,6 +45,12 @@ import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ProjectSetupScriptRunner } from "../../project/Services/ProjectSetupScriptRunner.ts";
 import { extractBranchNameFromRemoteRef } from "../remoteRefs.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  buildCommitStyleGuidance,
+  buildPrStyleGuidance,
+  COMMIT_STYLE_EXAMPLE_LIMIT,
+  PR_STYLE_EXAMPLE_LIMIT,
+} from "../StyleGuidance.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import {
   decodeGitHubPullRequestListJson,
@@ -710,6 +716,104 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.catch(() => Effect.succeed(null)));
 
+  const readRecentCommitSubjectsSafe = (
+    input: Parameters<typeof gitCore.readRecentCommitSubjects>[0],
+  ) => gitCore.readRecentCommitSubjects(input).pipe(Effect.catch(() => Effect.succeed([])));
+
+  const readRecentPullRequestExamplesSafe = (
+    input: Parameters<typeof gitHubCli.listRecentPullRequestExamples>[0],
+  ) => gitHubCli.listRecentPullRequestExamples(input).pipe(Effect.catch(() => Effect.succeed([])));
+
+  const readConfiguredAuthorIdentities = Effect.fn("readConfiguredAuthorIdentities")(function* (
+    cwd: string,
+  ) {
+    const [email, name] = yield* Effect.all(
+      [readConfigValueNullable(cwd, "user.email"), readConfigValueNullable(cwd, "user.name")],
+      {
+        concurrency: "unbounded",
+      },
+    );
+
+    const identities: string[] = [];
+    appendUnique(identities, email);
+    appendUnique(identities, name);
+    return identities;
+  });
+
+  const readAuthorCommitStyleExamples = Effect.fn("readAuthorCommitStyleExamples")(function* (
+    cwd: string,
+  ) {
+    const authorIdentities = yield* readConfiguredAuthorIdentities(cwd);
+    for (const author of authorIdentities) {
+      const subjects = yield* readRecentCommitSubjectsSafe({
+        cwd,
+        limit: COMMIT_STYLE_EXAMPLE_LIMIT,
+        author,
+        scope: "allRefs",
+      });
+      if (subjects.length > 0) {
+        return subjects;
+      }
+    }
+
+    return [];
+  });
+
+  const readRepositoryCommitStyleExamples = (cwd: string) =>
+    readRecentCommitSubjectsSafe({
+      cwd,
+      limit: COMMIT_STYLE_EXAMPLE_LIMIT,
+    });
+
+  const resolveCommitStyleGuidance = Effect.fn("resolveCommitStyleGuidance")(function* (
+    cwd: string,
+  ) {
+    const [authorCommitSubjects, repositoryCommitSubjects] = yield* Effect.all(
+      [readAuthorCommitStyleExamples(cwd), readRepositoryCommitStyleExamples(cwd)],
+      {
+        concurrency: "unbounded",
+      },
+    );
+
+    return buildCommitStyleGuidance({
+      authorCommitSubjects,
+      repositoryCommitSubjects,
+    });
+  });
+
+  const resolvePrStyleGuidance = Effect.fn("resolvePrStyleGuidance")(function* (cwd: string) {
+    const [
+      authorPullRequests,
+      repositoryPullRequests,
+      authorCommitSubjects,
+      repositoryCommitSubjects,
+    ] = yield* Effect.all(
+      [
+        readRecentPullRequestExamplesSafe({
+          cwd,
+          author: "@me",
+          limit: PR_STYLE_EXAMPLE_LIMIT,
+        }),
+        readRecentPullRequestExamplesSafe({
+          cwd,
+          limit: PR_STYLE_EXAMPLE_LIMIT,
+        }),
+        readAuthorCommitStyleExamples(cwd),
+        readRepositoryCommitStyleExamples(cwd),
+      ],
+      {
+        concurrency: "unbounded",
+      },
+    );
+
+    return buildPrStyleGuidance({
+      authorPullRequests,
+      repositoryPullRequests,
+      authorCommitSubjects,
+      repositoryCommitSubjects,
+    });
+  });
+
   const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
     cwd: string,
     branch: string | null,
@@ -1066,12 +1170,14 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         };
       }
 
+      const styleGuidance = yield* resolveCommitStyleGuidance(input.cwd);
       const generated = yield* textGeneration
         .generateCommitMessage({
           cwd: input.cwd,
           branch: input.branch,
           stagedSummary: limitContext(context.stagedSummary, 8_000),
           stagedPatch: limitContext(context.stagedPatch, 50_000),
+          styleGuidance,
           ...(input.includeBranch ? { includeBranch: true } : {}),
           modelSelection: input.modelSelection,
         })
@@ -1244,6 +1350,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       label: "Generating PR content...",
     });
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseBranch);
+    const prStyleGuidance = yield* resolvePrStyleGuidance(cwd);
 
     const generated = yield* textGeneration.generatePrContent({
       cwd,
@@ -1252,6 +1359,8 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       commitSummary: limitContext(rangeContext.commitSummary, 20_000),
       diffSummary: limitContext(rangeContext.diffSummary, 20_000),
       diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+      styleGuidance: prStyleGuidance.guidance,
+      useDefaultTemplate: prStyleGuidance.useDefaultTemplate,
       modelSelection,
     });
 

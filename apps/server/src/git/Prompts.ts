@@ -20,6 +20,7 @@ export interface CommitMessagePromptInput {
   stagedSummary: string;
   stagedPatch: string;
   includeBranch: boolean;
+  styleGuidance?: string | undefined;
 }
 
 export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
@@ -37,6 +38,8 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
       ? ["- branch must be a short semantic git branch fragment for this change"]
       : []),
     "- capture the primary user-visible or developer-visible change",
+    "- do not invent PR numbers, issue numbers, or ticket IDs unless the user explicitly supplied them",
+    ...(input.styleGuidance ? ["", input.styleGuidance] : []),
     "",
     `Branch: ${input.branch ?? "(detached)"}`,
     "",
@@ -77,17 +80,29 @@ export interface PrContentPromptInput {
   commitSummary: string;
   diffSummary: string;
   diffPatch: string;
+  styleGuidance?: string | undefined;
+  useDefaultTemplate?: boolean | undefined;
 }
 
 export function buildPrContentPrompt(input: PrContentPromptInput) {
+  const useDefaultTemplate = input.useDefaultTemplate !== false;
   const prompt = [
     "You write GitHub pull request content.",
     "Return a JSON object with keys: title, body.",
     "Rules:",
     "- title should be concise and specific",
-    "- body must be markdown and include headings '## Summary' and '## Testing'",
-    "- under Summary, provide short bullet points",
-    "- under Testing, include bullet points with concrete checks or 'Not run' where appropriate",
+    ...(useDefaultTemplate
+      ? [
+          "- body must be markdown and include headings '## Summary' and '## Testing'",
+          "- under Summary, provide short bullet points",
+          "- under Testing, include bullet points with concrete checks or 'Not run' where appropriate",
+        ]
+      : [
+          "- body must be markdown",
+          "- follow the provided style guidance for title, tone, and body structure",
+          "- if the examples do not show a testing section, do not force one",
+        ]),
+    ...(input.styleGuidance ? ["", input.styleGuidance] : []),
     "",
     `Base branch: ${input.baseBranch}`,
     `Head branch: ${input.headBranch}`,

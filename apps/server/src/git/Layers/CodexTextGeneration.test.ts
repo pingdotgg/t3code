@@ -14,15 +14,18 @@ const DEFAULT_TEST_MODEL_SELECTION = {
   model: "gpt-5.4-mini",
 };
 
-const CodexTextGenerationTestLayer = CodexTextGenerationLive.pipe(
-  Layer.provideMerge(ServerSettingsService.layerTest()),
-  Layer.provideMerge(
-    ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3code-codex-text-generation-test-",
-    }),
-  ),
-  Layer.provideMerge(NodeServices.layer),
-);
+const makeCodexTextGenerationTestLayer = () =>
+  CodexTextGenerationLive.pipe(
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3code-codex-text-generation-test-",
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+const CodexTextGenerationTestLayer = makeCodexTextGenerationTestLayer();
 
 function makeFakeCodexBinary(
   dir: string,
@@ -223,6 +226,33 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     ),
   );
 
+  it.effect("includes provided commit style guidance in the codex prompt", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "feat: add commit style guidance",
+          body: "",
+        }),
+        stdinMustContain: "Current author's recent commit subjects:",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/default-commit-style",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          styleGuidance:
+            "Commit style guidance:\n- Prefer the current author's own recent commit style when examples are available.\nCurrent author's recent commit subjects:\n- feat: add commit style guidance",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(generated.subject).toBe("feat: add commit style guidance");
+      }),
+    ),
+  );
+
   it.effect(
     "forwards codex fast mode and non-default reasoning effort into codex exec config",
     () =>
@@ -279,7 +309,6 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
       }),
     ),
   );
-
   it.effect("generates commit message with branch when includeBranch is true", () =>
     withFakeCodexEnv(
       {
@@ -332,6 +361,36 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         expect(generated.title).toBe("Improve orchestration flow");
         expect(generated.body.startsWith("## Summary")).toBe(true);
         expect(generated.body.endsWith("\n\n")).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("includes provided PR style guidance while keeping the default template", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          title: "feat: add repo style guidance",
+          body: "\n## Summary\n- add guidance\n\n## Testing\n- Not run\n",
+        }),
+        stdinMustContain: "Default the PR title to Conventional Commits: type(scope): summary",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generatePrContent({
+          cwd: process.cwd(),
+          baseBranch: "main",
+          headBranch: "feature/repo-style-guidance",
+          commitSummary: "feat: add repo style guidance",
+          diffSummary: "2 files changed",
+          diffPatch: "diff --git a/a.ts b/a.ts",
+          styleGuidance:
+            "PR style guidance:\n- No recent pull request examples are available from this author or repository.\n- Default the PR title to Conventional Commits: type(scope): summary",
+          useDefaultTemplate: true,
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(generated.title).toBe("feat: add repo style guidance");
       }),
     ),
   );
@@ -631,6 +690,68 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
             "Codex CLI command failed: codex execution failed",
           );
         }
+      }),
+    ),
+  );
+});
+
+it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive commit style examples", (it) => {
+  it.effect("includes recent commit subjects in commit prompt style guidance", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "fix(web): patch sidebar focus ring",
+          body: "",
+        }),
+        stdinMustContain: "fix(web): patch sidebar focus ring",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/style-guidance",
+          stagedSummary: "M sidebar.tsx",
+          stagedPatch: "diff --git a/sidebar.tsx b/sidebar.tsx",
+          styleGuidance:
+            "Commit style guidance:\n- Prefer the current author's own recent commit style when examples are available.\nCurrent author's recent commit subjects:\n- fix(web): patch sidebar focus ring\n- Add compact chat timeline icons",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(generated.subject).toBe("fix(web): patch sidebar focus ring");
+      }),
+    ),
+  );
+});
+
+it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive PR title examples", (it) => {
+  it.effect("includes recent PR examples in pull request prompt style guidance", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          title: "Add customizable worktree branch naming",
+          body: "\nJust say what changed.\n",
+        }),
+        stdinMustContain: "Add customizable worktree branch naming",
+        stdinMustNotContain: "include headings '## Summary' and '## Testing'",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generatePrContent({
+          cwd: process.cwd(),
+          baseBranch: "main",
+          headBranch: "feature/worktree-names",
+          commitSummary: "feat: add command palette",
+          diffSummary: "2 files changed",
+          diffPatch: "diff --git a/a.ts b/a.ts",
+          styleGuidance:
+            "PR style guidance:\n- Prefer the current author's own recent pull request style when examples are available.\nCurrent author's recent pull requests:\n1. Title: Add customizable worktree branch naming\n   Body:\nJust say what changed.",
+          useDefaultTemplate: false,
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(generated.title).toBe("Add customizable worktree branch naming");
       }),
     ),
   );

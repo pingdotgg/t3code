@@ -7,6 +7,7 @@ import {
   GitHubCli,
   type GitHubRepositoryCloneUrls,
   type GitHubCliShape,
+  type GitHubPullRequestTextExample,
 } from "../Services/GitHubCli.ts";
 import {
   decodeGitHubPullRequestJson,
@@ -15,6 +16,7 @@ import {
 } from "../githubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const STYLE_DISCOVERY_TIMEOUT_MS = 5_000;
 
 function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown): GitHubCliError {
   if (error instanceof Error) {
@@ -73,6 +75,12 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   sshUrl: TrimmedNonEmptyString,
 });
 
+const RawGitHubPullRequestTextExampleListSchema = Schema.Array(
+  Schema.Struct({
+    title: TrimmedNonEmptyString,
+    body: Schema.optional(Schema.NullOr(Schema.String)),
+  }),
+);
 function normalizeRepositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawGitHubRepositoryCloneUrlsSchema>,
 ): GitHubRepositoryCloneUrls {
@@ -83,10 +91,23 @@ function normalizeRepositoryCloneUrls(
   };
 }
 
+function normalizePullRequestTextExample(
+  raw: Schema.Schema.Type<typeof RawGitHubPullRequestTextExampleListSchema>[number],
+): GitHubPullRequestTextExample {
+  return {
+    title: raw.title,
+    body: raw.body?.trim() ?? "",
+  };
+}
+
 function decodeGitHubJson<S extends Schema.Top>(
   raw: string,
   schema: S,
-  operation: "listOpenPullRequests" | "getPullRequest" | "getRepositoryCloneUrls",
+  operation:
+    | "listOpenPullRequests"
+    | "listRecentPullRequestExamples"
+    | "getPullRequest"
+    | "getRepositoryCloneUrls",
   invalidDetail: string,
 ): Effect.Effect<S["Type"], GitHubCliError, S["DecodingServices"]> {
   return Schema.decodeEffect(Schema.fromJsonString(schema))(raw).pipe(
@@ -152,6 +173,35 @@ const makeGitHubCli = Effect.sync(() => {
                 }),
               ),
         ),
+      ),
+    listRecentPullRequestExamples: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "list",
+          "--state",
+          "all",
+          ...(input.author ? ["--author", input.author] : []),
+          "--limit",
+          String(input.limit ?? 10),
+          "--json",
+          "title,body",
+        ],
+        timeoutMs: STYLE_DISCOVERY_TIMEOUT_MS,
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed([])
+            : decodeGitHubJson(
+                raw,
+                RawGitHubPullRequestTextExampleListSchema,
+                "listRecentPullRequestExamples",
+                "GitHub CLI returned invalid PR example list JSON.",
+              ),
+        ),
+        Effect.map((pullRequests) => pullRequests.map(normalizePullRequestTextExample)),
       ),
     getPullRequest: (input) =>
       execute({

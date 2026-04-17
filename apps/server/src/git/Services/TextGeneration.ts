@@ -20,6 +20,8 @@ export interface CommitMessageGenerationInput {
   branch: string | null;
   stagedSummary: string;
   stagedPatch: string;
+  /** Optional author/repository style guidance assembled by GitManager. */
+  styleGuidance?: string | undefined;
   /** When true, the model also returns a semantic branch name for the change. */
   includeBranch?: boolean;
   /** What model and provider to use for generation. */
@@ -40,6 +42,10 @@ export interface PrContentGenerationInput {
   commitSummary: string;
   diffSummary: string;
   diffPatch: string;
+  /** Optional author/repository style guidance assembled by GitManager. */
+  styleGuidance?: string | undefined;
+  /** When true, fall back to the default Summary/Testing PR body template. */
+  useDefaultTemplate?: boolean | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }

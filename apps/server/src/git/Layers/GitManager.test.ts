@@ -35,6 +35,8 @@ import {
 interface FakeGhScenario {
   prListSequence?: string[];
   prListByHeadSelector?: Record<string, string>;
+  recentPrExamples?: Array<{ title: string; body?: string }>;
+  recentPrExamplesByAuthor?: Record<string, Array<{ title: string; body?: string }>>;
   prListSequenceByHeadSelector?: Record<string, string[]>;
   createdPrUrl?: string;
   defaultBranch?: string;
@@ -59,7 +61,8 @@ interface FakeGitTextGeneration {
     branch: string | null;
     stagedSummary: string;
     stagedPatch: string;
-    includeBranch?: boolean;
+    styleGuidance?: string | undefined;
+    includeBranch?: boolean | undefined;
     modelSelection: ModelSelection;
   }) => Effect.Effect<
     { subject: string; body: string; branch?: string | undefined },
@@ -72,6 +75,8 @@ interface FakeGitTextGeneration {
     commitSummary: string;
     diffSummary: string;
     diffPatch: string;
+    styleGuidance?: string | undefined;
+    useDefaultTemplate?: boolean | undefined;
     modelSelection: ModelSelection;
   }) => Effect.Effect<{ title: string; body: string }, TextGenerationError>;
   generateBranchName: (input: {
@@ -365,6 +370,29 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     }
 
     if (args[0] === "pr" && args[1] === "list") {
+      if (!args.includes("--head")) {
+        const authorIndex = args.findIndex((value) => value === "--author");
+        const author =
+          authorIndex >= 0 && authorIndex < args.length - 1 ? args[authorIndex + 1] : undefined;
+        const examples =
+          typeof author === "string"
+            ? (scenario.recentPrExamplesByAuthor?.[author] ?? [])
+            : (scenario.recentPrExamples ?? []);
+        return Effect.succeed({
+          stdout:
+            JSON.stringify(
+              examples.map((example) => ({
+                title: example.title,
+                body: example.body ?? "",
+              })),
+            ) + "\n",
+          stderr: "",
+          code: 0,
+          signal: null,
+          timedOut: false,
+        });
+      }
+
       const headSelectorIndex = args.findIndex((value) => value === "--head");
       const headSelector =
         headSelectorIndex >= 0 && headSelectorIndex < args.length - 1
@@ -540,6 +568,30 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             raw
               .map((entry) => normalizeFakePullRequestSummary(entry))
               .filter((entry): entry is GitHubPullRequestSummary => entry !== null),
+          ),
+        ),
+      listRecentPullRequestExamples: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "list",
+            "--state",
+            "all",
+            ...(input.author ? ["--author", input.author] : []),
+            "--limit",
+            String(input.limit ?? 10),
+            "--json",
+            "title,body",
+          ],
+        }).pipe(
+          Effect.map((result) =>
+            (JSON.parse(result.stdout) as ReadonlyArray<{ title: string; body?: string }>).map(
+              (pullRequest) => ({
+                title: pullRequest.title,
+                body: pullRequest.body ?? "",
+              }),
+            ),
           ),
         ),
       createPullRequest: (input) =>
@@ -1362,6 +1414,46 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "prefers the current author's prior commit style when generating a commit message",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        fs.writeFileSync(path.join(repoDir, "other.txt"), "other\n");
+        yield* runGit(repoDir, ["config", "user.email", "other@example.com"]);
+        yield* runGit(repoDir, ["config", "user.name", "Other User"]);
+        yield* runGit(repoDir, ["add", "other.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "docs: other user change"]);
+        yield* runGit(repoDir, ["config", "user.email", "test@example.com"]);
+        yield* runGit(repoDir, ["config", "user.name", "Test User"]);
+        fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nmine\n");
+
+        let capturedStyleGuidance = "";
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitMessage: (input) =>
+              Effect.sync(() => {
+                capturedStyleGuidance = input.styleGuidance ?? "";
+                return {
+                  subject: "Implement stacked git actions",
+                  body: "",
+                };
+              }),
+          },
+        });
+
+        yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit",
+        });
+
+        expect(capturedStyleGuidance).toContain("Current author's recent commit subjects:");
+        expect(capturedStyleGuidance).toContain("Initial commit");
+        expect(capturedStyleGuidance).not.toContain("docs: other user change");
+      }),
+  );
+
   it.effect("creates feature branch, commits, and pushes with featureBranch option", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -2042,7 +2134,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("created");
       expect(result.pr.number).toBe(88);
-      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
+      expect(ghCalls.filter((call) => call.includes("--state open --limit 1"))).toHaveLength(2);
       expect(
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
@@ -2117,6 +2209,80 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect(
           ghCalls.some((call) =>
             call.includes("pr create --base main --head feature/no-fork-match"),
+          ),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect(
+    "prefers the current author's prior PR style when generating pull request content",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/style-guidance"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        fs.writeFileSync(path.join(repoDir, "changes.txt"), "change\n");
+        yield* runGit(repoDir, ["add", "changes.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/style-guidance"]);
+
+        let capturedStyleGuidance = "";
+        let capturedUseDefaultTemplate: boolean | undefined;
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            recentPrExamplesByAuthor: {
+              "@me": [
+                {
+                  title: "Improve reconnect flow",
+                  body: "Just say what changed.\n\n- tighten reconnect flow",
+                },
+              ],
+            },
+            recentPrExamples: [
+              {
+                title: "feat: default repo title",
+                body: "## Summary\n- repo template\n\n## Testing\n- Not run",
+              },
+            ],
+            prListSequence: [
+              "[]",
+              JSON.stringify([
+                {
+                  number: 203,
+                  title: "Improve reconnect flow",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/203",
+                  baseRefName: "main",
+                  headRefName: "feature/style-guidance",
+                },
+              ]),
+            ],
+          },
+          textGeneration: {
+            generatePrContent: (input) =>
+              Effect.sync(() => {
+                capturedStyleGuidance = input.styleGuidance ?? "";
+                capturedUseDefaultTemplate = input.useDefaultTemplate;
+                return {
+                  title: "Improve reconnect flow",
+                  body: "Just say what changed.",
+                };
+              }),
+          },
+        });
+
+        yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+        });
+
+        expect(capturedUseDefaultTemplate).toBe(false);
+        expect(capturedStyleGuidance).toContain("Current author's recent pull requests:");
+        expect(capturedStyleGuidance).toContain("Just say what changed.");
+        expect(
+          ghCalls.some((call) =>
+            call.includes("pr list --state all --author @me --limit 4 --json title,body"),
           ),
         ).toBe(true);
       }),
