@@ -156,7 +156,7 @@ jobs:
             target: AppImage
             arch: x64
           - label: Windows x64
-            runner: blacksmith-32vcpu-windows-2025
+            runner: windows-2022 # blacksmith-32vcpu-windows-2025
             platform: win
             target: nsis
             arch: x64
