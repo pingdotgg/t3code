@@ -368,6 +368,10 @@ jobs:
           shopt -s nullglob
           found_windows_manifest=false
           for x64_manifest in release-assets/*-win-x64.yml; do
+            if [[ "$(basename "$x64_manifest")" == builder-debug-* ]]; then
+              continue
+            fi
+
             arm64_manifest="${x64_manifest/-x64.yml/-arm64.yml}"
             output_manifest="${x64_manifest/-win-x64.yml/.yml}"
             if [[ ! -f "$arm64_manifest" ]]; then
