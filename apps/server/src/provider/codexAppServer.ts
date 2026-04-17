@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { readCodexAccountSnapshot, type CodexAccountSnapshot } from "./codexAccount";
+import { readCodexAccountSnapshot, type CodexAccountSnapshot } from "./codexAccount.ts";
 
 interface JsonRpcProbeResponse {
   readonly id?: unknown;

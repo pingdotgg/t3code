@@ -147,13 +147,13 @@ const buildCmd = Command.make(
 
       yield* Effect.log("[cli] Running tsdown...");
       yield* runCommand(
-        ChildProcess.make({
+        ChildProcess.make(process.execPath, ["--run", "build:bundle"], {
           cwd: serverDir,
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
-          // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
+          // Windows needs shell mode to resolve `.cmd` shims on PATH.
           shell: process.platform === "win32",
-        })`bun tsdown`,
+        }),
       );
 
       const webDist = path.join(repoRoot, "apps/web/dist");
@@ -203,10 +203,8 @@ const publishCmd = Command.make(
       }
 
       yield* Effect.acquireUseRelease(
-        // Acquire: backup package.json, resolve catalog: deps, strip devDependencies/scripts
+        // Acquire: backup package.json, resolve catalog dependencies, and strip devDependencies/scripts
         Effect.gen(function* () {
-          // Resolve catalog dependencies before any file mutations. If this throws,
-          // acquire fails and no release hook runs, so filesystem must still be untouched.
           const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
           const pkg: PackageJson = {
             name: serverPackageJson.name,
@@ -216,25 +214,22 @@ const publishCmd = Command.make(
             version,
             engines: serverPackageJson.engines,
             files: serverPackageJson.files,
-            dependencies: serverPackageJson.dependencies,
-            overrides: rootPackageJson.overrides,
+            dependencies: resolveCatalogDependencies(
+              serverPackageJson.dependencies,
+              rootPackageJson.workspaces.catalog,
+              "apps/server",
+            ),
+            overrides: resolveCatalogDependencies(
+              rootPackageJson.overrides,
+              rootPackageJson.workspaces.catalog,
+              "apps/server",
+            ),
           };
-
-          pkg.dependencies = resolveCatalogDependencies(
-            pkg.dependencies,
-            rootPackageJson.workspaces.catalog,
-            "apps/server dependencies",
-          );
-          pkg.overrides = resolveCatalogDependencies(
-            pkg.overrides,
-            rootPackageJson.workspaces.catalog,
-            "root overrides",
-          );
 
           const original = yield* fs.readFileString(packageJsonPath);
           yield* fs.writeFileString(backupPath, original);
           yield* fs.writeFileString(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
-          yield* Effect.log("[cli] Resolved package.json for publish");
+          yield* Effect.log("[cli] Prepared package.json for publish");
 
           const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);
           return { iconBackups };

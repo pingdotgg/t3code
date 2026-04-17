@@ -1,23 +1,19 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-interface MacUpdateFile {
+export interface UpdateManifestFile {
   readonly url: string;
   readonly sha512: string;
   readonly size: number;
 }
 
-type MacUpdateScalar = string | number | boolean;
+export type UpdateManifestScalar = string | number | boolean;
 
-interface MacUpdateManifest {
+export interface UpdateManifest {
   readonly version: string;
   readonly releaseDate: string;
-  readonly files: ReadonlyArray<MacUpdateFile>;
-  readonly extras: Readonly<Record<string, MacUpdateScalar>>;
+  readonly files: ReadonlyArray<UpdateManifestFile>;
+  readonly extras: Readonly<Record<string, UpdateManifestScalar>>;
 }
 
-interface MutableMacUpdateFile {
+interface MutableUpdateManifestFile {
   url?: string;
   sha512?: string;
   size?: number;
@@ -31,10 +27,11 @@ function stripSingleQuotes(value: string): string {
 }
 
 function parseFileRecord(
-  currentFile: MutableMacUpdateFile | null,
+  currentFile: MutableUpdateManifestFile | null,
   sourcePath: string,
   lineNumber: number,
-): MacUpdateFile | null {
+  platformLabel: string,
+): UpdateManifestFile | null {
   if (currentFile === null) {
     return null;
   }
@@ -44,7 +41,7 @@ function parseFileRecord(
     typeof currentFile.size !== "number"
   ) {
     throw new Error(
-      `Invalid macOS update manifest at ${sourcePath}:${lineNumber}: incomplete file entry.`,
+      `Invalid ${platformLabel} update manifest at ${sourcePath}:${lineNumber}: incomplete file entry.`,
     );
   }
   return {
@@ -54,7 +51,7 @@ function parseFileRecord(
   };
 }
 
-function parseScalarValue(rawValue: string): MacUpdateScalar {
+function parseScalarValue(rawValue: string): UpdateManifestScalar {
   const trimmed = rawValue.trim();
   const isQuoted = trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2;
   const value = isQuoted ? trimmed.slice(1, -1).replace(/''/g, "'") : trimmed;
@@ -67,14 +64,18 @@ function parseScalarValue(rawValue: string): MacUpdateScalar {
   return value;
 }
 
-export function parseMacUpdateManifest(raw: string, sourcePath: string): MacUpdateManifest {
+export function parseUpdateManifest(
+  raw: string,
+  sourcePath: string,
+  platformLabel: string,
+): UpdateManifest {
   const lines = raw.split(/\r?\n/);
-  const files: MacUpdateFile[] = [];
-  const extras: Record<string, MacUpdateScalar> = {};
+  const files: UpdateManifestFile[] = [];
+  const extras: Record<string, UpdateManifestScalar> = {};
   let version: string | null = null;
   let releaseDate: string | null = null;
   let inFiles = false;
-  let currentFile: MutableMacUpdateFile | null = null;
+  let currentFile: MutableUpdateManifestFile | null = null;
 
   for (const [index, rawLine] of lines.entries()) {
     const lineNumber = index + 1;
@@ -83,7 +84,7 @@ export function parseMacUpdateManifest(raw: string, sourcePath: string): MacUpda
 
     const fileUrlMatch = line.match(/^  - url:\s*(.+)$/);
     if (fileUrlMatch?.[1]) {
-      const finalized = parseFileRecord(currentFile, sourcePath, lineNumber);
+      const finalized = parseFileRecord(currentFile, sourcePath, lineNumber, platformLabel);
       if (finalized) files.push(finalized);
       currentFile = { url: stripSingleQuotes(fileUrlMatch[1].trim()) };
       inFiles = true;
@@ -94,7 +95,7 @@ export function parseMacUpdateManifest(raw: string, sourcePath: string): MacUpda
     if (fileShaMatch?.[1]) {
       if (currentFile === null) {
         throw new Error(
-          `Invalid macOS update manifest at ${sourcePath}:${lineNumber}: sha512 without a file entry.`,
+          `Invalid ${platformLabel} update manifest at ${sourcePath}:${lineNumber}: sha512 without a file entry.`,
         );
       }
       currentFile.sha512 = stripSingleQuotes(fileShaMatch[1].trim());
@@ -105,7 +106,7 @@ export function parseMacUpdateManifest(raw: string, sourcePath: string): MacUpda
     if (fileSizeMatch?.[1]) {
       if (currentFile === null) {
         throw new Error(
-          `Invalid macOS update manifest at ${sourcePath}:${lineNumber}: size without a file entry.`,
+          `Invalid ${platformLabel} update manifest at ${sourcePath}:${lineNumber}: size without a file entry.`,
         );
       }
       currentFile.size = Number(fileSizeMatch[1]);
@@ -118,7 +119,7 @@ export function parseMacUpdateManifest(raw: string, sourcePath: string): MacUpda
     }
 
     if (inFiles && currentFile !== null) {
-      const finalized = parseFileRecord(currentFile, sourcePath, lineNumber);
+      const finalized = parseFileRecord(currentFile, sourcePath, lineNumber, platformLabel);
       if (finalized) files.push(finalized);
       currentFile = null;
     }
@@ -127,7 +128,7 @@ export function parseMacUpdateManifest(raw: string, sourcePath: string): MacUpda
     const topLevelMatch = line.match(/^([A-Za-z][A-Za-z0-9]*):\s*(.+)$/);
     if (!topLevelMatch?.[1] || topLevelMatch[2] === undefined) {
       throw new Error(
-        `Invalid macOS update manifest at ${sourcePath}:${lineNumber}: unsupported line '${line}'.`,
+        `Invalid ${platformLabel} update manifest at ${sourcePath}:${lineNumber}: unsupported line '${line}'.`,
       );
     }
 
@@ -137,7 +138,7 @@ export function parseMacUpdateManifest(raw: string, sourcePath: string): MacUpda
     if (key === "version") {
       if (typeof value !== "string") {
         throw new Error(
-          `Invalid macOS update manifest at ${sourcePath}:${lineNumber}: version must be a string.`,
+          `Invalid ${platformLabel} update manifest at ${sourcePath}:${lineNumber}: version must be a string.`,
         );
       }
       version = value;
@@ -147,7 +148,7 @@ export function parseMacUpdateManifest(raw: string, sourcePath: string): MacUpda
     if (key === "releaseDate") {
       if (typeof value !== "string") {
         throw new Error(
-          `Invalid macOS update manifest at ${sourcePath}:${lineNumber}: releaseDate must be a string.`,
+          `Invalid ${platformLabel} update manifest at ${sourcePath}:${lineNumber}: releaseDate must be a string.`,
         );
       }
       releaseDate = value;
@@ -161,17 +162,19 @@ export function parseMacUpdateManifest(raw: string, sourcePath: string): MacUpda
     extras[key] = value;
   }
 
-  const finalized = parseFileRecord(currentFile, sourcePath, lines.length);
+  const finalized = parseFileRecord(currentFile, sourcePath, lines.length, platformLabel);
   if (finalized) files.push(finalized);
 
   if (!version) {
-    throw new Error(`Invalid macOS update manifest at ${sourcePath}: missing version.`);
+    throw new Error(`Invalid ${platformLabel} update manifest at ${sourcePath}: missing version.`);
   }
   if (!releaseDate) {
-    throw new Error(`Invalid macOS update manifest at ${sourcePath}: missing releaseDate.`);
+    throw new Error(
+      `Invalid ${platformLabel} update manifest at ${sourcePath}: missing releaseDate.`,
+    );
   }
   if (files.length === 0) {
-    throw new Error(`Invalid macOS update manifest at ${sourcePath}: missing files.`);
+    throw new Error(`Invalid ${platformLabel} update manifest at ${sourcePath}: missing files.`);
   }
 
   return {
@@ -183,16 +186,17 @@ export function parseMacUpdateManifest(raw: string, sourcePath: string): MacUpda
 }
 
 function mergeExtras(
-  primary: Readonly<Record<string, MacUpdateScalar>>,
-  secondary: Readonly<Record<string, MacUpdateScalar>>,
-): Record<string, MacUpdateScalar> {
-  const merged: Record<string, MacUpdateScalar> = { ...primary };
+  primary: Readonly<Record<string, UpdateManifestScalar>>,
+  secondary: Readonly<Record<string, UpdateManifestScalar>>,
+  platformLabel: string,
+): Record<string, UpdateManifestScalar> {
+  const merged: Record<string, UpdateManifestScalar> = { ...primary };
 
   for (const [key, value] of Object.entries(secondary)) {
     const existing = merged[key];
     if (existing !== undefined && existing !== value) {
       throw new Error(
-        `Cannot merge macOS update manifests: conflicting '${key}' values ('${existing}' vs '${value}').`,
+        `Cannot merge ${platformLabel} update manifests: conflicting '${key}' values ('${existing}' vs '${value}').`,
       );
     }
     merged[key] = value;
@@ -201,22 +205,23 @@ function mergeExtras(
   return merged;
 }
 
-export function mergeMacUpdateManifests(
-  primary: MacUpdateManifest,
-  secondary: MacUpdateManifest,
-): MacUpdateManifest {
+export function mergeUpdateManifests(
+  primary: UpdateManifest,
+  secondary: UpdateManifest,
+  platformLabel: string,
+): UpdateManifest {
   if (primary.version !== secondary.version) {
     throw new Error(
-      `Cannot merge macOS update manifests with different versions (${primary.version} vs ${secondary.version}).`,
+      `Cannot merge ${platformLabel} update manifests with different versions (${primary.version} vs ${secondary.version}).`,
     );
   }
 
-  const filesByUrl = new Map<string, MacUpdateFile>();
+  const filesByUrl = new Map<string, UpdateManifestFile>();
   for (const file of [...primary.files, ...secondary.files]) {
     const existing = filesByUrl.get(file.url);
     if (existing && (existing.sha512 !== file.sha512 || existing.size !== file.size)) {
       throw new Error(
-        `Cannot merge macOS update manifests: conflicting file entry for ${file.url}.`,
+        `Cannot merge ${platformLabel} update manifests: conflicting file entry for ${file.url}.`,
       );
     }
     filesByUrl.set(file.url, file);
@@ -227,7 +232,7 @@ export function mergeMacUpdateManifests(
     releaseDate:
       primary.releaseDate >= secondary.releaseDate ? primary.releaseDate : secondary.releaseDate,
     files: [...filesByUrl.values()],
-    extras: mergeExtras(primary.extras, secondary.extras),
+    extras: mergeExtras(primary.extras, secondary.extras, platformLabel),
   };
 }
 
@@ -235,15 +240,20 @@ function quoteYamlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-function serializeScalarValue(value: MacUpdateScalar): string {
+function serializeScalarValue(value: UpdateManifestScalar): string {
   if (typeof value === "string") {
     return quoteYamlString(value);
   }
   return String(value);
 }
 
-export function serializeMacUpdateManifest(manifest: MacUpdateManifest): string {
-  const lines = [`version: ${manifest.version}`, "files:"];
+export function serializeUpdateManifest(
+  manifest: UpdateManifest,
+  options: {
+    readonly platformLabel: string;
+  },
+): string {
+  const lines = [`version: ${quoteYamlString(manifest.version)}`, "files:"];
 
   for (const file of manifest.files) {
     lines.push(`  - url: ${file.url}`);
@@ -254,7 +264,9 @@ export function serializeMacUpdateManifest(manifest: MacUpdateManifest): string 
   for (const key of Object.keys(manifest.extras).toSorted()) {
     const value = manifest.extras[key];
     if (value === undefined) {
-      throw new Error(`Cannot serialize macOS update manifest: missing value for '${key}'.`);
+      throw new Error(
+        `Cannot serialize ${options.platformLabel} update manifest: missing value for '${key}'.`,
+      );
     }
     lines.push(`${key}: ${serializeScalarValue(value)}`);
   }
@@ -262,26 +274,4 @@ export function serializeMacUpdateManifest(manifest: MacUpdateManifest): string 
   lines.push(`releaseDate: ${quoteYamlString(manifest.releaseDate)}`);
   lines.push("");
   return lines.join("\n");
-}
-
-function main(args: ReadonlyArray<string>): void {
-  const [arm64PathArg, x64PathArg, outputPathArg] = args;
-  if (!arm64PathArg || !x64PathArg) {
-    throw new Error(
-      "Usage: node scripts/merge-mac-update-manifests.ts <latest-mac.yml> <latest-mac-x64.yml> [output-path]",
-    );
-  }
-
-  const arm64Path = resolve(arm64PathArg);
-  const x64Path = resolve(x64PathArg);
-  const outputPath = resolve(outputPathArg ?? arm64PathArg);
-
-  const arm64Manifest = parseMacUpdateManifest(readFileSync(arm64Path, "utf8"), arm64Path);
-  const x64Manifest = parseMacUpdateManifest(readFileSync(x64Path, "utf8"), x64Path);
-  const merged = mergeMacUpdateManifests(arm64Manifest, x64Manifest);
-  writeFileSync(outputPath, serializeMacUpdateManifest(merged));
-}
-
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2));
 }

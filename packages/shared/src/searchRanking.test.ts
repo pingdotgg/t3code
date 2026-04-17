@@ -6,7 +6,7 @@ import {
   normalizeSearchQuery,
   scoreQueryMatch,
   scoreSubsequenceMatch,
-} from "./searchRanking";
+} from "./searchRanking.ts";
 
 describe("normalizeSearchQuery", () => {
   it("trims and lowercases queries", () => {

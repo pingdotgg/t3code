@@ -86,14 +86,20 @@ function CommandPaletteResultRow(props: {
       {props.item.icon}
       {props.item.description ? (
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-sm text-foreground">{props.item.title}</span>
+          <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
+            {props.item.titleLeadingContent}
+            <span className="truncate">{props.item.title}</span>
+            {props.item.titleTrailingContent}
+          </span>
           <span className="truncate text-muted-foreground/70 text-xs">
             {props.item.description}
           </span>
         </span>
       ) : (
-        <span className="flex min-w-0 items-center gap-1.5 truncate text-sm text-foreground">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground">
+          {props.item.titleLeadingContent}
           <span className="truncate">{props.item.title}</span>
+          {props.item.titleTrailingContent}
         </span>
       )}
       {props.item.timestamp ? (

@@ -6,7 +6,7 @@ import {
   getAutoUpdateDisabledReason,
   nextStatusAfterDownloadFailure,
   shouldBroadcastDownloadProgress,
-} from "./updateState";
+} from "./updateState.ts";
 
 const baseState: DesktopUpdateState = {
   enabled: true,

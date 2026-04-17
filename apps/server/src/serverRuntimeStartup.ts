@@ -21,23 +21,24 @@ import {
   Console,
 } from "effect";
 
-import { ServerConfig } from "./config";
-import { Keybindings } from "./keybindings";
-import { Open } from "./open";
-import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
-import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
-import { ServerLifecycleEvents } from "./serverLifecycleEvents";
-import { ServerSettingsService } from "./serverSettings";
-import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
-import { ServerAuth } from "./auth/Services/ServerAuth";
+import { ServerConfig } from "./config.ts";
+import { Keybindings } from "./keybindings.ts";
+import { Open } from "./open.ts";
+import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor.ts";
+import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
+import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
   isWildcardHost,
   issueHeadlessServeAccessInfo,
-} from "./startupAccess";
+} from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Data.TaggedError("ServerRuntimeStartupError")<{
   readonly message: string;
@@ -281,6 +282,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const keybindings = yield* Keybindings;
   const orchestrationReactor = yield* OrchestrationReactor;
+  const providerSessionReaper = yield* ProviderSessionReaper;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
@@ -325,7 +327,10 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
     yield* Effect.logDebug("startup phase: starting orchestration reactors");
     yield* runStartupPhase(
       "reactors.start",
-      orchestrationReactor.start().pipe(Scope.provide(reactorScope)),
+      Effect.gen(function* () {
+        yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
+        yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+      }),
     );
 
     const welcomeBase = yield* resolveWelcomeBase;

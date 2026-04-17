@@ -17,6 +17,10 @@ export interface CommandPaletteItem {
   readonly description?: string;
   readonly timestamp?: string;
   readonly icon: ReactNode;
+  /** Optional content rendered inline before the title text. */
+  readonly titleLeadingContent?: ReactNode;
+  /** Optional content rendered inline after the title text (before the timestamp). */
+  readonly titleTrailingContent?: ReactNode;
   readonly shortcutCommand?: KeybindingCommand;
 }
 
@@ -102,20 +106,24 @@ export function buildProjectActionItems(input: {
   }));
 }
 
-export function buildThreadActionItems(input: {
-  threads: ReadonlyArray<
-    Pick<
-      SidebarThreadSummary,
-      "archivedAt" | "branch" | "createdAt" | "environmentId" | "id" | "projectId" | "title"
-    > & {
-      updatedAt?: string | undefined;
-      latestUserMessageAt?: string | null;
-    }
-  >;
+export type BuildThreadActionItemsThread = Pick<
+  SidebarThreadSummary,
+  "archivedAt" | "branch" | "createdAt" | "environmentId" | "id" | "projectId" | "title"
+> & {
+  updatedAt?: string | undefined;
+  latestUserMessageAt?: string | null;
+};
+
+export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {
+  threads: ReadonlyArray<TThread>;
   activeThreadId?: Thread["id"];
   projectTitleById: ReadonlyMap<Project["id"], string>;
   sortOrder: SidebarThreadSortOrder;
   icon: ReactNode;
+  /** Optional content rendered inline before the title text per-thread. */
+  renderLeadingContent?: (thread: TThread) => ReactNode;
+  /** Optional content rendered inline after the title text per-thread. */
+  renderTrailingContent?: (thread: TThread) => ReactNode;
   runThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => Promise<void>;
   limit?: number;
 }): CommandPaletteActionItem[] {
@@ -140,6 +148,9 @@ export function buildThreadActionItems(input: {
       descriptionParts.push("Current thread");
     }
 
+    const leadingContent = input.renderLeadingContent?.(thread);
+    const trailingContent = input.renderTrailingContent?.(thread);
+
     return {
       kind: "action",
       value: `thread:${thread.id}`,
@@ -150,6 +161,8 @@ export function buildThreadActionItems(input: {
         thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
       ),
       icon: input.icon,
+      ...(leadingContent ? { titleLeadingContent: leadingContent } : {}),
+      ...(trailingContent ? { titleTrailingContent: trailingContent } : {}),
       run: async () => {
         await input.runThread(thread);
       },

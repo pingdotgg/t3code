@@ -7,7 +7,7 @@ import {
   resolveHeadlessConnectionHost,
   resolveHeadlessConnectionString,
   resolveListeningPort,
-} from "./startupAccess";
+} from "./startupAccess.ts";
 
 it("prefers localhost when no explicit host is configured", () => {
   expect(resolveHeadlessConnectionHost(undefined)).toBe("localhost");

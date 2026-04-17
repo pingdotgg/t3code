@@ -3,7 +3,7 @@ import * as Net from "node:net";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import { NetError, NetService } from "./Net";
+import { NetError, NetService } from "./Net.ts";
 
 const closeServer = (server: Net.Server) =>
   Effect.sync(() => {
