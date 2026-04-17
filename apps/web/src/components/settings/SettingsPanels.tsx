@@ -1603,7 +1603,7 @@ export function ArchivedThreadsPanel() {
                 }}
               >
                 <div className="min-w-0 flex-1">
-                  <h3 className="truncate text-sm font-medium text-foreground">{thread.title}</h3>
+                  <h3 dir="auto" className="truncate text-sm font-medium text-foreground">{thread.title}</h3>
                   <p className="text-xs text-muted-foreground">
                     Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
                     {" \u00b7 Created "}
