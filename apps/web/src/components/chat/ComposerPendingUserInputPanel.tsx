@@ -153,7 +153,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const customAnswerActive = progress.customAnswer.trim().length > 0;
 
   return (
-    <div dir="auto" className="px-4 py-3 sm:px-5">
+    <div className="px-4 py-3 sm:px-5">
       <div className="mb-2 flex items-center gap-3">
         <span className="text-[11px] font-semibold tracking-widest text-muted-foreground/55 uppercase">
           {activeQuestion.header}
