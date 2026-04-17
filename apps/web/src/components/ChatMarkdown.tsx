@@ -498,22 +498,27 @@ function MarkdownCodeBlock({
     };
 
     if (typeof navigator !== "undefined" && navigator.clipboard != null) {
-      void navigator.clipboard.writeText(code).then(onSuccess).catch(() => undefined);
+      void navigator.clipboard
+        .writeText(code)
+        .then(onSuccess)
+        .catch(() => undefined);
       return;
     }
 
+    // Fallback for non-secure contexts (e.g. HTTP over Tailscale)
+    const textarea = document.createElement("textarea");
+    textarea.value = code;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
     try {
-      const textarea = document.createElement("textarea");
-      textarea.value = code;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
       textarea.select();
       const ok = document.execCommand("copy");
-      document.body.removeChild(textarea);
       if (ok) onSuccess();
     } catch {
       // Ignore clipboard failures in unsupported browser contexts.
+    } finally {
+      document.body.removeChild(textarea);
     }
   }, [code]);
 
