@@ -5,7 +5,7 @@ on:
     tags:
       - "v*.*.*"
   schedule:
-    - cron: "0 9 * * *"
+    - cron: "0 */3 * * *"
   workflow_dispatch:
     inputs:
       channel:
@@ -26,8 +26,45 @@ permissions:
   id-token: write
 
 jobs:
+  check_changes:
+    name: Check for changes since last nightly
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    outputs:
+      has_changes: ${{ steps.check.outputs.has_changes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: check
+        name: Compare HEAD to last nightly tag
+        run: |
+          last_nightly_tag=$(git tag --list 'nightly-v*' --sort=-creatordate | head -n 1)
+          if [[ -z "$last_nightly_tag" ]]; then
+            echo "No previous nightly tag found. Proceeding with release."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          last_nightly_sha=$(git rev-parse "$last_nightly_tag^{commit}")
+          head_sha=$(git rev-parse HEAD)
+
+          if [[ "$last_nightly_sha" == "$head_sha" ]]; then
+            echo "No changes on main since last nightly release ($last_nightly_tag). Skipping."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Changes detected on main since $last_nightly_tag ($last_nightly_sha → $head_sha). Proceeding."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
   preflight:
     name: Preflight
+    needs: [check_changes]
+    if: |
+      !failure() && !cancelled() &&
+      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
