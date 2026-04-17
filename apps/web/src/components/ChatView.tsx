@@ -14,6 +14,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ServerProvider,
+  type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
@@ -553,6 +554,7 @@ interface PersistentThreadTerminalDrawerProps {
   splitShortcutLabel: string | undefined;
   newShortcutLabel: string | undefined;
   closeShortcutLabel: string | undefined;
+  keybindings: ResolvedKeybindingsConfig;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
@@ -565,6 +567,7 @@ function PersistentThreadTerminalDrawer({
   splitShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
+  keybindings,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
   const serverThread = useThreadById(threadId);
@@ -719,6 +722,7 @@ function PersistentThreadTerminalDrawer({
         splitShortcutLabel={visible ? splitShortcutLabel : undefined}
         newShortcutLabel={visible ? newShortcutLabel : undefined}
         closeShortcutLabel={visible ? closeShortcutLabel : undefined}
+        keybindings={keybindings}
         onActiveTerminalChange={activateTerminal}
         onCloseTerminal={closeTerminal}
         onHeightChange={setTerminalHeight}
@@ -5231,6 +5235,7 @@ export default function ChatView({
           splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
           newShortcutLabel={newTerminalShortcutLabel ?? undefined}
           closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+          keybindings={keybindings}
           onAddTerminalContext={addTerminalContextToDraft}
         />
       ))}
