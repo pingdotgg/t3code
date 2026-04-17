@@ -474,6 +474,9 @@ jobs:
         with:
           node-version-file: package.json
 
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
       - id: update_versions
         name: Update version strings
         env:
