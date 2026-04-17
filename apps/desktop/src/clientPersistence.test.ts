@@ -52,6 +52,10 @@ const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   diffWordWrap: true,
+  sidebarProjectGroupingMode: "repository_path",
+  sidebarProjectGroupingOverrides: {
+    "environment-1:/tmp/project-a": "separate",
+  },
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
   timestampFormat: "24-hour",
