@@ -54,7 +54,161 @@ function nonEmptyTrimmed(value: unknown): string | undefined {
 }
 
 function readNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function readUnixSecondsAsIso(value: unknown): string | undefined {
+  const numeric = readNumber(value);
+  if (numeric === undefined) {
+    return undefined;
+  }
+  if (numeric > 10_000_000_000) {
+    const date = new Date(numeric);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+  }
+  return toIsoDateTimeFromUnixSeconds(numeric);
+}
+
+function readWindowDurationMins(record: Record<string, unknown>): number | undefined {
+  const direct =
+    readNumber(record.windowDurationMins) ??
+    readNumber(record.windowDurationMinutes) ??
+    readNumber(record.window_duration_mins) ??
+    readNumber(record.window_duration_minutes) ??
+    readNumber(record.durationMinutes);
+  if (direct !== undefined) {
+    return direct;
+  }
+
+  const seconds =
+    readNumber(record.windowDurationSeconds) ??
+    readNumber(record.window_duration_seconds) ??
+    readNumber(record.durationSeconds);
+  if (seconds !== undefined) {
+    return seconds / 60;
+  }
+  return undefined;
+}
+
+function readUsedPercent(record: Record<string, unknown>): number | undefined {
+  const direct =
+    readNumber(record.usedPercent) ??
+    readNumber(record.used_percent) ??
+    readNumber(record.usagePercent) ??
+    readNumber(record.usage_percent) ??
+    readNumber(record.percentUsed) ??
+    readNumber(record.percent_used);
+  if (direct !== undefined) {
+    return direct;
+  }
+
+  const used =
+    readNumber(record.used) ??
+    readNumber(record.usedTokens) ??
+    readNumber(record.used_tokens) ??
+    readNumber(record.tokensUsed) ??
+    readNumber(record.tokens_used);
+  const limit =
+    readNumber(record.limit) ??
+    readNumber(record.total) ??
+    readNumber(record.max) ??
+    readNumber(record.maxTokens) ??
+    readNumber(record.max_tokens) ??
+    readNumber(record.tokensLimit) ??
+    readNumber(record.tokens_limit);
+  if (used !== undefined && limit !== undefined && limit > 0) {
+    return (used / limit) * 100;
+  }
+
+  const remaining =
+    readNumber(record.remaining) ??
+    readNumber(record.remainingTokens) ??
+    readNumber(record.remaining_tokens) ??
+    readNumber(record.tokensRemaining) ??
+    readNumber(record.tokens_remaining);
+  if (remaining !== undefined && limit !== undefined && limit > 0) {
+    return ((limit - remaining) / limit) * 100;
+  }
+
+  return undefined;
+}
+
+function withFallbackCodexWindowDurations(
+  windows: ReadonlyArray<CodexRateLimitWindowSnapshot>,
+): ReadonlyArray<CodexRateLimitWindowSnapshot> {
+  if (windows.length === 0 || windows.every((window) => window.windowDurationMins !== undefined)) {
+    return windows;
+  }
+
+  const SESSION_WINDOW_MINS = 300;
+  const WEEKLY_WINDOW_MINS = 10_080;
+  const missingDurationCount = windows.filter(
+    (window) => window.windowDurationMins === undefined,
+  ).length;
+
+  if (missingDurationCount === 0) {
+    return windows;
+  }
+
+  const knownDurations = windows
+    .map((window) => window.windowDurationMins)
+    .filter(
+      (duration): duration is number => typeof duration === "number" && Number.isFinite(duration),
+    );
+  const knownShortest = knownDurations.length > 0 ? Math.min(...knownDurations) : undefined;
+  const knownLongest = knownDurations.length > 0 ? Math.max(...knownDurations) : undefined;
+  const prefersSessionFallback =
+    knownShortest === undefined || Math.abs(knownShortest - SESSION_WINDOW_MINS) <= 60;
+  const prefersWeeklyFallback =
+    knownLongest !== undefined && Math.abs(knownLongest - WEEKLY_WINDOW_MINS) <= 240;
+
+  const byResetTime = [...windows].toSorted((left, right) => {
+    const leftAt = left.resetsAt ? Date.parse(left.resetsAt) : Number.NaN;
+    const rightAt = right.resetsAt ? Date.parse(right.resetsAt) : Number.NaN;
+    if (Number.isNaN(leftAt) && Number.isNaN(rightAt)) return 0;
+    if (Number.isNaN(leftAt)) return 1;
+    if (Number.isNaN(rightAt)) return -1;
+    return leftAt - rightAt;
+  });
+
+  const fallbackDurationByWindow = new Map<CodexRateLimitWindowSnapshot, number>();
+  if (byResetTime.length === 1) {
+    fallbackDurationByWindow.set(byResetTime[0]!, knownShortest ?? SESSION_WINDOW_MINS);
+  } else {
+    byResetTime.forEach((window, index) => {
+      if (index === 0) {
+        fallbackDurationByWindow.set(
+          window,
+          prefersSessionFallback ? SESSION_WINDOW_MINS : (knownShortest ?? SESSION_WINDOW_MINS),
+        );
+        return;
+      }
+      if (index === byResetTime.length - 1) {
+        fallbackDurationByWindow.set(
+          window,
+          prefersWeeklyFallback ? WEEKLY_WINDOW_MINS : (knownLongest ?? WEEKLY_WINDOW_MINS),
+        );
+        return;
+      }
+      fallbackDurationByWindow.set(window, knownLongest ?? WEEKLY_WINDOW_MINS);
+    });
+  }
+
+  return windows.map((window) =>
+    window.windowDurationMins !== undefined
+      ? window
+      : {
+          ...window,
+          windowDurationMins: fallbackDurationByWindow.get(window) ?? SESSION_WINDOW_MINS,
+        },
+  );
 }
 
 function collectCodexRateLimitWindows(value: unknown): ReadonlyArray<CodexRateLimitWindowSnapshot> {
@@ -73,10 +227,14 @@ function collectCodexRateLimitWindows(value: unknown): ReadonlyArray<CodexRateLi
     }
     seen.add(record);
 
-    const usedPercent = readNumber(record.usedPercent);
+    const usedPercent = readUsedPercent(record);
     if (usedPercent !== undefined) {
-      const windowDurationMins = readNumber(record.windowDurationMins);
-      const resetsAt = toIsoDateTimeFromUnixSeconds(readNumber(record.resetsAt));
+      const windowDurationMins = readWindowDurationMins(record);
+      const resetsAt =
+        readUnixSecondsAsIso(record.resetsAt) ??
+        readUnixSecondsAsIso(record.resetAt) ??
+        readUnixSecondsAsIso(record.reset_at) ??
+        readUnixSecondsAsIso(record.resets_at);
       return [
         {
           usedPercent,
@@ -104,10 +262,12 @@ export function readCodexRateLimitsSnapshot(result: unknown): CodexRateLimitsSna
   const preferred = readObject(readObject(record?.rateLimitsByLimitId)?.codex);
   const candidate =
     preferred?.rateLimits ??
+    preferred?.limits ??
     record?.rateLimits ??
+    record?.limits ??
     preferred ??
     (record && readNumber(record.usedPercent) !== undefined ? record : undefined);
-  const windows = collectCodexRateLimitWindows(candidate);
+  const windows = withFallbackCodexWindowDurations(collectCodexRateLimitWindows(candidate));
   return windows.length > 0 ? { windows } : undefined;
 }
 
