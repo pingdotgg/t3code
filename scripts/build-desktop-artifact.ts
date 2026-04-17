@@ -9,6 +9,7 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
+import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -82,14 +83,7 @@ function getDefaultArch(platform: typeof BuildPlatform.Type): typeof BuildArch.T
     return "x64";
   }
 
-  if (process.arch === "arm64" && config.archChoices.includes("arm64")) {
-    return "arm64";
-  }
-  if (process.arch === "x64" && config.archChoices.includes("x64")) {
-    return "x64";
-  }
-
-  return config.archChoices[0] ?? "x64";
+  return getDefaultBuildArch(platform, process.arch, process.env, config);
 }
 
 class BuildScriptError extends Data.TaggedError("BuildScriptError")<{
