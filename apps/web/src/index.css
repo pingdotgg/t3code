@@ -252,6 +252,36 @@ label:has(> select#reasoning-effort) select {
   word-break: break-word;
 }
 
+/* Bidirectional text direction detection for mixed RTL/LTR content */
+.chat-markdown p,
+.chat-markdown li,
+.chat-markdown td,
+.chat-markdown th,
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6,
+.chat-markdown blockquote {
+  unicode-bidi: plaintext;
+}
+
+/* Code and tables remain LTR regardless of surrounding text direction */
+.chat-markdown pre,
+.chat-markdown code,
+.chat-markdown table {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* Per-line direction detection for pre-wrap user messages and composer */
+.user-message-text,
+[data-testid="composer-editor"],
+[data-testid="composer-editor"] p {
+  unicode-bidi: plaintext;
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }
