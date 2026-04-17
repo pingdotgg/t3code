@@ -18,7 +18,7 @@ import {
   resolveModelSlugForProvider,
   resolveSelectableModel,
   trimOrNull,
-} from "./model";
+} from "./model.ts";
 
 const codexCaps: ModelCapabilities = {
   reasoningEffortLevels: [

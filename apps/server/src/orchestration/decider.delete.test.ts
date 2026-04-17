@@ -14,9 +14,10 @@ import { describe, expect, it } from "vitest";
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
-const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
-const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
-const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asCommandId = (value: string): CommandId => CommandId.make(value);
+const asEventId = (value: string): EventId => EventId.make(value);
+const asProjectId = (value: string): ProjectId => ProjectId.make(value);
+const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 
 async function seedReadModel(): Promise<OrchestrationReadModel> {
   const now = new Date().toISOString();
@@ -29,9 +30,9 @@ async function seedReadModel(): Promise<OrchestrationReadModel> {
       aggregateId: asProjectId("project-delete"),
       type: "project.created",
       occurredAt: now,
-      commandId: CommandId.makeUnsafe("cmd-project-create"),
+      commandId: asCommandId("cmd-project-create"),
       causationEventId: null,
-      correlationId: CommandId.makeUnsafe("cmd-project-create"),
+      correlationId: asCommandId("cmd-project-create"),
       metadata: {},
       payload: {
         projectId: asProjectId("project-delete"),
@@ -53,9 +54,9 @@ async function seedReadModel(): Promise<OrchestrationReadModel> {
       aggregateId: asThreadId("thread-delete-1"),
       type: "thread.created",
       occurredAt: now,
-      commandId: CommandId.makeUnsafe("cmd-thread-create-1"),
+      commandId: asCommandId("cmd-thread-create-1"),
       causationEventId: null,
-      correlationId: CommandId.makeUnsafe("cmd-thread-create-1"),
+      correlationId: asCommandId("cmd-thread-create-1"),
       metadata: {},
       payload: {
         threadId: asThreadId("thread-delete-1"),
@@ -83,9 +84,9 @@ async function seedReadModel(): Promise<OrchestrationReadModel> {
       aggregateId: asThreadId("thread-delete-2"),
       type: "thread.created",
       occurredAt: now,
-      commandId: CommandId.makeUnsafe("cmd-thread-create-2"),
+      commandId: asCommandId("cmd-thread-create-2"),
       causationEventId: null,
-      correlationId: CommandId.makeUnsafe("cmd-thread-create-2"),
+      correlationId: asCommandId("cmd-thread-create-2"),
       metadata: {},
       payload: {
         threadId: asThreadId("thread-delete-2"),
@@ -149,7 +150,7 @@ describe("decider deletion flows", () => {
         decideOrchestrationCommand({
           command: {
             type: "project.delete",
-            commandId: CommandId.makeUnsafe("cmd-project-delete-no-force"),
+            commandId: asCommandId("cmd-project-delete-no-force"),
             projectId: asProjectId("project-delete"),
           },
           readModel,
@@ -162,7 +163,7 @@ describe("decider deletion flows", () => {
     const readModel = await seedReadModel();
     const projectDeleteCommand: Extract<OrchestrationCommand, { type: "project.delete" }> = {
       type: "project.delete",
-      commandId: CommandId.makeUnsafe("cmd-project-delete-force"),
+      commandId: asCommandId("cmd-project-delete-force"),
       projectId: asProjectId("project-delete"),
       force: true,
     };

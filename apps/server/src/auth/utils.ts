@@ -2,7 +2,18 @@ import type { AuthClientMetadata, AuthClientMetadataDeviceType } from "@t3tools/
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as Crypto from "node:crypto";
 
-export const SESSION_COOKIE_NAME = "t3_session";
+const SESSION_COOKIE_NAME = "t3_session";
+
+export function resolveSessionCookieName(input: {
+  readonly mode: "web" | "desktop";
+  readonly port: number;
+}): string {
+  if (input.mode !== "desktop") {
+    return SESSION_COOKIE_NAME;
+  }
+
+  return `${SESSION_COOKIE_NAME}_${input.port}`;
+}
 
 export function base64UrlEncode(input: string | Uint8Array): string {
   const buffer = typeof input === "string" ? Buffer.from(input, "utf8") : Buffer.from(input);

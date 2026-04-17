@@ -29,6 +29,7 @@ export const PROVIDER_OPTIONS: Array<{
 }> = [
   { value: "codex", label: "Codex", available: true },
   { value: "claudeAgent", label: "Claude", available: true },
+  { value: "opencode", label: "OpenCode", available: true },
   { value: "cursor", label: "Cursor", available: false },
 ];
 
@@ -145,6 +146,14 @@ export function deriveActiveWorkStartedAt(
   session: SessionActivityState | null,
   sendStartedAt: string | null,
 ): string | null {
+  const runningTurnId =
+    session?.orchestrationStatus === "running" ? (session.activeTurnId ?? null) : null;
+  if (runningTurnId !== null) {
+    if (latestTurn?.turnId === runningTurnId) {
+      return latestTurn.startedAt ?? sendStartedAt;
+    }
+    return sendStartedAt;
+  }
   if (!isLatestTurnSettled(latestTurn, session)) {
     return latestTurn?.startedAt ?? sendStartedAt;
   }
@@ -340,16 +349,15 @@ export function deriveActivePlanState(
   latestTurnId: TurnId | undefined,
 ): ActivePlanState | null {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const candidates = ordered.filter((activity) => {
-    if (activity.kind !== "turn.plan.updated") {
-      return false;
-    }
-    if (!latestTurnId) {
-      return true;
-    }
-    return activity.turnId === latestTurnId;
-  });
-  const latest = candidates.at(-1);
+  const allPlanActivities = ordered.filter((activity) => activity.kind === "turn.plan.updated");
+  // Prefer plan from the current turn; fall back to the most recent plan from any turn
+  // so that TodoWrite tasks persist across follow-up messages.
+  const latest =
+    (latestTurnId
+      ? allPlanActivities.filter((activity) => activity.turnId === latestTurnId).at(-1)
+      : undefined) ??
+    allPlanActivities.at(-1) ??
+    null;
   if (!latest) {
     return null;
   }
@@ -464,7 +472,7 @@ export function deriveWorkLogEntries(
   const entries = ordered
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
     .filter((activity) => activity.kind !== "tool.started")
-    .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
+    .filter((activity) => activity.kind !== "task.started")
     .filter((activity) => activity.kind !== "context-window.updated")
     .filter((activity) => activity.summary !== "Checkpoint captured")
     .filter((activity) => !isPlanBoundaryToolActivity(activity))
@@ -494,16 +502,39 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
+  const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
+  const taskSummary =
+    isTaskActivity && typeof payload?.summary === "string" && payload.summary.length > 0
+      ? payload.summary
+      : null;
+  const taskDetailAsLabel =
+    isTaskActivity &&
+    !taskSummary &&
+    typeof payload?.detail === "string" &&
+    payload.detail.length > 0
+      ? payload.detail
+      : null;
+  const taskLabel = taskSummary || taskDetailAsLabel;
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
-    label: activity.summary,
-    tone: activity.tone === "approval" ? "info" : activity.tone,
+    label: taskLabel || activity.summary,
+    tone:
+      activity.kind === "task.progress"
+        ? "thinking"
+        : activity.tone === "approval"
+          ? "info"
+          : activity.tone,
     activityKind: activity.kind,
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
-  if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
+  if (
+    !taskDetailAsLabel &&
+    payload &&
+    typeof payload.detail === "string" &&
+    payload.detail.length > 0
+  ) {
     const detail = stripTrailingExitCode(payload.detail).output;
     if (detail) {
       entry.detail = detail;

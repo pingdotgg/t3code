@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { logCleanupCauseUnlessInterrupted } from "./ThreadDeletionReactor.ts";
 
 describe("logCleanupCauseUnlessInterrupted", () => {
-  const threadId = ThreadId.makeUnsafe("thread-deletion-reactor-test");
+  const threadId = ThreadId.make("thread-deletion-reactor-test");
 
   it("swallows ordinary cleanup failures", async () => {
     const exit = await Effect.runPromiseExit(

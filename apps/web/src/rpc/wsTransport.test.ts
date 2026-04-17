@@ -417,6 +417,56 @@ describe("WsTransport", () => {
     await transport.dispose();
   }, 5_000);
 
+  it("clears slow unary request tracking when the transport reconnects", async () => {
+    const slowAckThresholdMs = 25;
+    setSlowRpcAckThresholdMsForTests(slowAckThresholdMs);
+    const transport = createTransport("ws://localhost:3020");
+
+    const requestPromise = transport.request((client) =>
+      client[WS_METHODS.serverUpsertKeybinding]({
+        command: "terminal.toggle",
+        key: "ctrl+k",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(firstSocket.sent).toHaveLength(1);
+    });
+
+    const firstRequest = JSON.parse(firstSocket.sent[0] ?? "{}") as { id: string };
+
+    await waitFor(() => {
+      expect(getSlowRpcAckRequests()).toMatchObject([
+        {
+          requestId: firstRequest.id,
+          tag: WS_METHODS.serverUpsertKeybinding,
+        },
+      ]);
+    }, 1_000);
+
+    void requestPromise.catch(() => undefined);
+
+    await transport.reconnect();
+
+    expect(getSlowRpcAckRequests()).toEqual([]);
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    });
+
+    const secondSocket = getSocket();
+    secondSocket.open();
+
+    await transport.dispose();
+  }, 5_000);
+
   it("sends unary RPC requests and resolves successful exits", async () => {
     const transport = createTransport("ws://localhost:3020");
 
@@ -624,6 +674,115 @@ describe("WsTransport", () => {
       },
     };
     socket.serverMessage(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: secondRequest.id,
+        values: [secondEvent],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(listener).toHaveBeenLastCalledWith(secondEvent);
+    });
+
+    unsubscribe();
+    await transport.dispose();
+  });
+
+  it("re-subscribes live stream listeners after an explicit transport reconnect", async () => {
+    const transport = createTransport("ws://localhost:3020");
+    const listener = vi.fn();
+    const onResubscribe = vi.fn();
+
+    const unsubscribe = transport.subscribe(
+      (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+      listener,
+      { onResubscribe },
+    );
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(firstSocket.sent).toHaveLength(1);
+    });
+
+    const firstRequest = JSON.parse(firstSocket.sent[0] ?? "{}") as { id: string };
+    const firstEvent = {
+      version: 1,
+      sequence: 1,
+      type: "welcome",
+      payload: {
+        environment: {
+          environmentId: "environment-local",
+          label: "Local environment",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.0.0-test",
+          capabilities: { repositoryIdentity: true },
+        },
+        cwd: "/tmp/one",
+        projectName: "one",
+      },
+    };
+
+    firstSocket.serverMessage(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: firstRequest.id,
+        values: [firstEvent],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(listener).toHaveBeenLastCalledWith(firstEvent);
+    });
+
+    await transport.reconnect();
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    });
+
+    const secondSocket = getSocket();
+    expect(secondSocket).not.toBe(firstSocket);
+    expect(firstSocket.readyState).toBe(MockWebSocket.CLOSED);
+
+    secondSocket.open();
+
+    await waitFor(() => {
+      expect(secondSocket.sent).toHaveLength(1);
+    });
+
+    const secondRequest = JSON.parse(secondSocket.sent[0] ?? "{}") as {
+      id: string;
+      tag: string;
+    };
+    expect(secondRequest.tag).toBe(WS_METHODS.subscribeServerLifecycle);
+    expect(secondRequest.id).not.toBe(firstRequest.id);
+    expect(onResubscribe).toHaveBeenCalledOnce();
+
+    const secondEvent = {
+      version: 1,
+      sequence: 2,
+      type: "welcome",
+      payload: {
+        environment: {
+          environmentId: "environment-local",
+          label: "Local environment",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.0.0-test",
+          capabilities: { repositoryIdentity: true },
+        },
+        cwd: "/tmp/two",
+        projectName: "two",
+      },
+    };
+
+    secondSocket.serverMessage(
       JSON.stringify({
         _tag: "Chunk",
         requestId: secondRequest.id,

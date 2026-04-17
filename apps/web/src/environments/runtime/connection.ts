@@ -1,28 +1,14 @@
 import type {
   EnvironmentId,
-  OrchestrationEvent,
-  OrchestrationReadModel,
+  OrchestrationShellSnapshot,
+  OrchestrationShellStreamEvent,
   ServerConfig,
   ServerLifecycleWelcomePayload,
   TerminalEvent,
 } from "@t3tools/contracts";
 import type { KnownEnvironment } from "@t3tools/client-runtime";
 
-import {
-  deriveReplayRetryDecision,
-  type OrchestrationRecoveryReason,
-} from "../../orchestrationRecovery";
-import {
-  createOrchestrationRecoveryCoordinator,
-  type ReplayRetryTracker,
-} from "../../orchestrationRecovery";
-import { isTransportConnectionErrorMessage } from "~/rpc/transportError";
 import type { WsRpcClient } from "~/rpc/wsRpcClient";
-
-const REPLAY_RECOVERY_RETRY_DELAY_MS = 100;
-const MAX_NO_PROGRESS_REPLAY_RETRIES = 3;
-const RECOVERY_TRANSPORT_RETRY_DELAY_MS = 250;
-const MAX_RECOVERY_TRANSPORT_RETRIES = 20;
 
 export interface EnvironmentConnection {
   readonly kind: "primary" | "saved";
@@ -35,11 +21,14 @@ export interface EnvironmentConnection {
 }
 
 interface OrchestrationHandlers {
-  readonly applyEventBatch: (
-    events: ReadonlyArray<OrchestrationEvent>,
+  readonly applyShellEvent: (
+    event: OrchestrationShellStreamEvent,
     environmentId: EnvironmentId,
   ) => void;
-  readonly syncSnapshot: (snapshot: OrchestrationReadModel, environmentId: EnvironmentId) => void;
+  readonly syncShellSnapshot: (
+    snapshot: OrchestrationShellSnapshot,
+    environmentId: EnvironmentId,
+  ) => void;
   readonly applyTerminalEvent: (event: TerminalEvent, environmentId: EnvironmentId) => void;
 }
 
@@ -52,33 +41,31 @@ interface EnvironmentConnectionInput extends OrchestrationHandlers {
   readonly onWelcome?: (payload: ServerLifecycleWelcomePayload) => void;
 }
 
-function createSnapshotBootstrapController(input: {
-  readonly isBootstrapped: () => boolean;
-  readonly runSnapshotRecovery: (
-    reason: Extract<OrchestrationRecoveryReason, "bootstrap" | "replay-failed">,
-  ) => Promise<void>;
-}) {
-  let inFlight: Promise<void> | null = null;
+function createBootstrapGate() {
+  let resolve: (() => void) | null = null;
+  let reject: ((error: unknown) => void) | null = null;
+  let promise = new Promise<void>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
 
   return {
-    ensureSnapshotRecovery(
-      reason: Extract<OrchestrationRecoveryReason, "bootstrap" | "replay-failed">,
-    ): Promise<void> {
-      if (input.isBootstrapped()) {
-        return Promise.resolve();
-      }
-
-      if (inFlight !== null) {
-        return inFlight;
-      }
-
-      const nextInFlight = input.runSnapshotRecovery(reason).finally(() => {
-        if (inFlight === nextInFlight) {
-          inFlight = null;
-        }
+    wait: () => promise,
+    resolve: () => {
+      resolve?.();
+      resolve = null;
+      reject = null;
+    },
+    reject: (error: unknown) => {
+      reject?.(error);
+      resolve = null;
+      reject = null;
+    },
+    reset: () => {
+      promise = new Promise<void>((nextResolve, nextReject) => {
+        resolve = nextResolve;
+        reject = nextReject;
       });
-      inFlight = nextInFlight;
-      return inFlight;
     },
   };
 }
@@ -86,10 +73,6 @@ function createSnapshotBootstrapController(input: {
 export function createEnvironmentConnection(
   input: EnvironmentConnectionInput,
 ): EnvironmentConnection {
-  const recovery = createOrchestrationRecoveryCoordinator();
-  let replayRetryTracker: ReplayRetryTracker | null = null;
-  const pendingDomainEvents: OrchestrationEvent[] = [];
-  let flushPendingDomainEventsScheduled = false;
   const environmentId = input.knownEnvironment.environmentId;
 
   if (!environmentId) {
@@ -99,6 +82,7 @@ export function createEnvironmentConnection(
   }
 
   let disposed = false;
+  const bootstrapGate = createBootstrapGate();
 
   const observeEnvironmentIdentity = (nextEnvironmentId: EnvironmentId, source: string) => {
     if (environmentId !== nextEnvironmentId) {
@@ -107,148 +91,6 @@ export function createEnvironmentConnection(
       );
     }
   };
-
-  const flushPendingDomainEvents = () => {
-    flushPendingDomainEventsScheduled = false;
-    if (disposed || pendingDomainEvents.length === 0) {
-      return;
-    }
-
-    const events = pendingDomainEvents.splice(0, pendingDomainEvents.length);
-    const nextEvents = recovery.markEventBatchApplied(events);
-    if (nextEvents.length === 0) {
-      return;
-    }
-    input.applyEventBatch(nextEvents, environmentId);
-  };
-
-  const schedulePendingDomainEventFlush = () => {
-    if (flushPendingDomainEventsScheduled) {
-      return;
-    }
-
-    flushPendingDomainEventsScheduled = true;
-    queueMicrotask(flushPendingDomainEvents);
-  };
-
-  const retryTransportRecoveryOperation = async <T>(operation: () => Promise<T>): Promise<T> => {
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        return await operation();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (
-          disposed ||
-          !isTransportConnectionErrorMessage(message) ||
-          attempt >= MAX_RECOVERY_TRANSPORT_RETRIES - 1
-        ) {
-          throw error;
-        }
-
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, RECOVERY_TRANSPORT_RETRY_DELAY_MS);
-        });
-
-        if (disposed) {
-          throw error;
-        }
-      }
-    }
-  };
-  const scheduleReplayRecovery = (reason: "sequence-gap" | "resubscribe") => {
-    void runReplayRecovery(reason).catch(() => undefined);
-  };
-
-  const runReplayRecovery = async (reason: "sequence-gap" | "resubscribe"): Promise<void> => {
-    if (!recovery.beginReplayRecovery(reason)) {
-      return;
-    }
-
-    const fromSequenceExclusive = recovery.getState().latestSequence;
-    try {
-      const events = await retryTransportRecoveryOperation(() =>
-        input.client.orchestration.replayEvents({ fromSequenceExclusive }),
-      );
-      if (!disposed) {
-        const nextEvents = recovery.markEventBatchApplied(events);
-        if (nextEvents.length > 0) {
-          input.applyEventBatch(nextEvents, environmentId);
-        }
-      }
-    } catch {
-      replayRetryTracker = null;
-      recovery.failReplayRecovery();
-      if (disposed) {
-        return;
-      }
-      await snapshotBootstrap.ensureSnapshotRecovery("replay-failed");
-      return;
-    }
-
-    if (disposed) {
-      return;
-    }
-
-    const replayCompletion = recovery.completeReplayRecovery();
-    const retryDecision = deriveReplayRetryDecision({
-      previousTracker: replayRetryTracker,
-      completion: replayCompletion,
-      recoveryState: recovery.getState(),
-      baseDelayMs: REPLAY_RECOVERY_RETRY_DELAY_MS,
-      maxNoProgressRetries: MAX_NO_PROGRESS_REPLAY_RETRIES,
-    });
-    replayRetryTracker = retryDecision.tracker;
-
-    if (retryDecision.shouldRetry) {
-      if (retryDecision.delayMs > 0) {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, retryDecision.delayMs);
-        });
-        if (disposed) {
-          return;
-        }
-      }
-      scheduleReplayRecovery(reason);
-    } else if (replayCompletion.shouldReplay && import.meta.env.MODE !== "test") {
-      console.warn(
-        "[orchestration-recovery]",
-        "Stopping replay recovery after no-progress retries.",
-        {
-          environmentId,
-          state: recovery.getState(),
-        },
-      );
-    }
-  };
-
-  const runSnapshotRecovery = async (
-    reason: Extract<OrchestrationRecoveryReason, "bootstrap" | "replay-failed">,
-  ): Promise<void> => {
-    const started = recovery.beginSnapshotRecovery(reason);
-    if (!started) {
-      return;
-    }
-
-    try {
-      const snapshot = await retryTransportRecoveryOperation(() =>
-        input.client.orchestration.getSnapshot(),
-      );
-      if (!disposed) {
-        input.syncSnapshot(snapshot, environmentId);
-        if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
-          scheduleReplayRecovery("sequence-gap");
-        }
-      }
-    } catch (error) {
-      recovery.failSnapshotRecovery();
-      throw error;
-    }
-  };
-
-  const snapshotBootstrap = createSnapshotBootstrapController({
-    isBootstrapped: () => recovery.getState().bootstrapped,
-    runSnapshotRecovery,
-  });
 
   const unsubLifecycle = input.client.server.subscribeLifecycle(
     (event: Parameters<Parameters<WsRpcClient["server"]["subscribeLifecycle"]>[0]>[0]) => {
@@ -273,26 +115,21 @@ export function createEnvironmentConnection(
     },
   );
 
-  const unsubDomainEvent = input.client.orchestration.onDomainEvent(
-    (event: Parameters<Parameters<WsRpcClient["orchestration"]["onDomainEvent"]>[0]>[0]) => {
-      const action = recovery.classifyDomainEvent(event.sequence);
-      if (action === "apply") {
-        pendingDomainEvents.push(event);
-        schedulePendingDomainEventFlush();
+  const unsubShell = input.client.orchestration.subscribeShell(
+    (item: Parameters<Parameters<WsRpcClient["orchestration"]["subscribeShell"]>[0]>[0]) => {
+      if (item.kind === "snapshot") {
+        input.syncShellSnapshot(item.snapshot, environmentId);
+        bootstrapGate.resolve();
         return;
       }
-      if (action === "recover") {
-        flushPendingDomainEvents();
-        scheduleReplayRecovery("sequence-gap");
-      }
+      input.applyShellEvent(item, environmentId);
     },
     {
       onResubscribe: () => {
         if (disposed) {
           return;
         }
-        flushPendingDomainEvents();
-        scheduleReplayRecovery("resubscribe");
+        bootstrapGate.reset();
       },
     },
   );
@@ -303,13 +140,9 @@ export function createEnvironmentConnection(
     },
   );
 
-  void snapshotBootstrap.ensureSnapshotRecovery("bootstrap").catch(() => undefined);
-
   const cleanup = () => {
     disposed = true;
-    flushPendingDomainEventsScheduled = false;
-    pendingDomainEvents.length = 0;
-    unsubDomainEvent();
+    unsubShell();
     unsubTerminalEvent();
     unsubLifecycle();
     unsubConfig();
@@ -320,11 +153,17 @@ export function createEnvironmentConnection(
     environmentId,
     knownEnvironment: input.knownEnvironment,
     client: input.client,
-    ensureBootstrapped: () => snapshotBootstrap.ensureSnapshotRecovery("bootstrap"),
+    ensureBootstrapped: () => bootstrapGate.wait(),
     reconnect: async () => {
-      await input.client.reconnect();
-      await input.refreshMetadata?.();
-      await snapshotBootstrap.ensureSnapshotRecovery("bootstrap");
+      bootstrapGate.reset();
+      try {
+        await input.client.reconnect();
+        await input.refreshMetadata?.();
+        await bootstrapGate.wait();
+      } catch (error) {
+        bootstrapGate.reject(error);
+        throw error;
+      }
     },
     dispose: async () => {
       cleanup();

@@ -2,10 +2,10 @@ import { AuthSessionId, type AuthClientMetadata, type AuthClientSession } from "
 import { Clock, DateTime, Duration, Effect, Layer, PubSub, Ref, Schema, Stream } from "effect";
 import { Option } from "effect";
 
+import { ServerConfig } from "../../config.ts";
 import { AuthSessionRepositoryLive } from "../../persistence/Layers/AuthSessions.ts";
 import { AuthSessionRepository } from "../../persistence/Services/AuthSessions.ts";
 import { ServerSecretStore } from "../Services/ServerSecretStore.ts";
-import { SESSION_COOKIE_NAME } from "../utils.ts";
 import {
   SessionCredentialError,
   SessionCredentialService,
@@ -17,6 +17,7 @@ import {
 import {
   base64UrlDecodeUtf8,
   base64UrlEncode,
+  resolveSessionCookieName,
   signPayload,
   timingSafeEqualBase64Url,
 } from "../utils.ts";
@@ -81,11 +82,16 @@ function toAuthClientSession(input: Omit<AuthClientSession, "current">): AuthCli
 }
 
 export const makeSessionCredentialService = Effect.gen(function* () {
+  const serverConfig = yield* ServerConfig;
   const secretStore = yield* ServerSecretStore;
   const authSessions = yield* AuthSessionRepository;
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<string, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
+  const cookieName = resolveSessionCookieName({
+    mode: serverConfig.mode,
+    port: serverConfig.port,
+  });
 
   const toSessionCredentialError = (message: string) => (cause: unknown) =>
     new SessionCredentialError({
@@ -472,7 +478,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
     }).pipe(Effect.mapError(toSessionCredentialError("Failed to revoke other sessions.")));
 
   return {
-    cookieName: SESSION_COOKIE_NAME,
+    cookieName,
     issue,
     verify,
     issueWebSocketToken,

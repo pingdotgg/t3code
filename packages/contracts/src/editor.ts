@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { TrimmedNonEmptyString } from "./baseSchemas";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
@@ -8,12 +8,14 @@ type EditorDefinition = {
   readonly id: string;
   readonly label: string;
   readonly commands: readonly [string, ...string[]] | null;
+  readonly baseArgs?: readonly string[];
   readonly launchStyle: EditorLaunchStyle;
 };
 
 export const EDITORS = [
   { id: "cursor", label: "Cursor", commands: ["cursor"], launchStyle: "goto" },
   { id: "trae", label: "Trae", commands: ["trae"], launchStyle: "goto" },
+  { id: "kiro", label: "Kiro", commands: ["kiro"], baseArgs: ["ide"], launchStyle: "goto" },
   { id: "vscode", label: "VS Code", commands: ["code"], launchStyle: "goto" },
   {
     id: "vscode-insiders",

@@ -30,7 +30,7 @@ function CommandDialogBackdrop({ className, ...props }: CommandDialogPrimitive.B
   return (
     <CommandDialogPrimitive.Backdrop
       className={cn(
-        "fixed inset-0 z-50 bg-black/32 backdrop-blur-sm transition-all duration-200 data-ending-style:opacity-0 data-starting-style:opacity-0",
+        "fixed inset-0 z-50 bg-background/60 transition-all duration-200 data-ending-style:opacity-0 data-starting-style:opacity-0",
         className,
       )}
       data-slot="command-dialog-backdrop"
@@ -90,11 +90,14 @@ function Command({
 
 function CommandInput({
   className,
+  wrapperClassName,
   placeholder = undefined,
   ...props
-}: React.ComponentProps<typeof AutocompleteInput>) {
+}: React.ComponentProps<typeof AutocompleteInput> & {
+  wrapperClassName?: string | undefined;
+}) {
   return (
-    <div className="px-2.5 py-1.5">
+    <div className={cn("px-2.5 py-1.5", wrapperClassName)}>
       <AutocompleteInput
         autoFocus
         className={cn(

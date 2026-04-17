@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 
-import { ServerConfigShape } from "../../config.ts";
+import type { ServerConfigShape } from "../../config.ts";
 import { ServerConfig } from "../../config.ts";
 import { BootstrapCredentialServiceLive } from "./BootstrapCredentialService.ts";
 import { ServerSecretStoreLive } from "./ServerSecretStore.ts";

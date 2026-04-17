@@ -39,6 +39,15 @@ type RpcStreamMethod<TTag extends RpcTag> =
     ? (listener: (event: TEvent) => void, options?: StreamSubscriptionOptions) => () => void
     : never;
 
+type RpcInputStreamMethod<TTag extends RpcTag> =
+  RpcMethod<TTag> extends (input: any, options?: any) => Stream.Stream<infer TEvent, any, any>
+    ? (
+        input: RpcInput<TTag>,
+        listener: (event: TEvent) => void,
+        options?: StreamSubscriptionOptions,
+      ) => () => void
+    : never;
+
 interface GitRunStackedActionOptions {
   readonly onProgress?: (event: GitActionProgressEvent) => void;
 }
@@ -58,6 +67,9 @@ export interface WsRpcClient {
   readonly projects: {
     readonly searchEntries: RpcUnaryMethod<typeof WS_METHODS.projectsSearchEntries>;
     readonly writeFile: RpcUnaryMethod<typeof WS_METHODS.projectsWriteFile>;
+  };
+  readonly filesystem: {
+    readonly browse: RpcUnaryMethod<typeof WS_METHODS.filesystemBrowse>;
   };
   readonly shell: {
     readonly openInEditor: (input: {
@@ -101,12 +113,11 @@ export interface WsRpcClient {
     readonly subscribeAuthAccess: RpcStreamMethod<typeof WS_METHODS.subscribeAuthAccess>;
   };
   readonly orchestration: {
-    readonly getSnapshot: RpcUnaryNoArgMethod<typeof ORCHESTRATION_WS_METHODS.getSnapshot>;
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
     readonly getTurnDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getTurnDiff>;
     readonly getFullThreadDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getFullThreadDiff>;
-    readonly replayEvents: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.replayEvents>;
-    readonly onDomainEvent: RpcStreamMethod<typeof WS_METHODS.subscribeOrchestrationDomainEvents>;
+    readonly subscribeShell: RpcStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeShell>;
+    readonly subscribeThread: RpcInputStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeThread>;
   };
 }
 
@@ -136,6 +147,9 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.projectsSearchEntries](input)),
       writeFile: (input) =>
         transport.request((client) => client[WS_METHODS.projectsWriteFile](input)),
+    },
+    filesystem: {
+      browse: (input) => transport.request((client) => client[WS_METHODS.filesystemBrowse](input)),
     },
     shell: {
       openInEditor: (input) =>
@@ -219,21 +233,21 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         ),
     },
     orchestration: {
-      getSnapshot: () =>
-        transport.request((client) => client[ORCHESTRATION_WS_METHODS.getSnapshot]({})),
       dispatchCommand: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.dispatchCommand](input)),
       getTurnDiff: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getTurnDiff](input)),
       getFullThreadDiff: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getFullThreadDiff](input)),
-      replayEvents: (input) =>
-        transport
-          .request((client) => client[ORCHESTRATION_WS_METHODS.replayEvents](input))
-          .then((events) => [...events]),
-      onDomainEvent: (listener, options) =>
+      subscribeShell: (listener, options) =>
         transport.subscribe(
-          (client) => client[WS_METHODS.subscribeOrchestrationDomainEvents]({}),
+          (client) => client[ORCHESTRATION_WS_METHODS.subscribeShell]({}),
+          listener,
+          options,
+        ),
+      subscribeThread: (input, listener, options) =>
+        transport.subscribe(
+          (client) => client[ORCHESTRATION_WS_METHODS.subscribeThread](input),
           listener,
           options,
         ),

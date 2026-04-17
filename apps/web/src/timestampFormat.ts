@@ -57,8 +57,7 @@ export function formatRelativeTime(isoDate: string): { value: string; suffix: st
   const diffMs = Date.now() - new Date(isoDate).getTime();
   if (diffMs < 0) return { value: "just now", suffix: null };
   const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 5) return { value: "just now", suffix: null };
-  if (seconds < 60) return { value: `${seconds}s`, suffix: "ago" };
+  if (seconds < 60) return { value: "just now", suffix: null };
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return { value: `${minutes}m`, suffix: "ago" };
   const hours = Math.floor(minutes / 60);

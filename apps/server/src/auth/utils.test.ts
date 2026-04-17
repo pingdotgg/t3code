@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveAuthClientMetadata } from "./utils";
+import { deriveAuthClientMetadata } from "./utils.ts";
 
 describe("deriveAuthClientMetadata", () => {
   it("labels Electron user agents as Electron instead of Chrome", () => {

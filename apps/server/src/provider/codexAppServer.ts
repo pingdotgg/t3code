@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
-import { readCodexAccountSnapshot, type CodexAccountSnapshot } from "./codexAccount";
+import type { ServerProviderSkill } from "@t3tools/contracts";
+import { readCodexAccountSnapshot, type CodexAccountSnapshot } from "./codexAccount.ts";
 
 interface JsonRpcProbeResponse {
   readonly id?: unknown;
@@ -10,8 +11,72 @@ interface JsonRpcProbeResponse {
   };
 }
 
+export interface CodexDiscoverySnapshot {
+  readonly account: CodexAccountSnapshot;
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+}
+
 function readErrorMessage(response: JsonRpcProbeResponse): string | undefined {
   return typeof response.error?.message === "string" ? response.error.message : undefined;
+}
+
+function readObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function readArray(value: unknown): ReadonlyArray<unknown> | undefined {
+  return Array.isArray(value) ? value : undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function nonEmptyTrimmed(value: unknown): string | undefined {
+  const candidate = readString(value)?.trim();
+  return candidate ? candidate : undefined;
+}
+
+function parseCodexSkillsResult(result: unknown, cwd: string): ReadonlyArray<ServerProviderSkill> {
+  const resultRecord = readObject(result);
+  const dataBuckets = readArray(resultRecord?.data) ?? [];
+  const matchingBucket = dataBuckets.find(
+    (value) => nonEmptyTrimmed(readObject(value)?.cwd) === cwd,
+  );
+  const rawSkills =
+    readArray(readObject(matchingBucket)?.skills) ?? readArray(resultRecord?.skills) ?? [];
+
+  return rawSkills.flatMap((value) => {
+    const skill = readObject(value);
+    const display = readObject(skill?.interface);
+    const name = nonEmptyTrimmed(skill?.name);
+    const path = nonEmptyTrimmed(skill?.path);
+    if (!name || !path) {
+      return [];
+    }
+
+    return [
+      {
+        name,
+        path,
+        enabled: skill?.enabled !== false,
+        ...(nonEmptyTrimmed(skill?.description)
+          ? { description: nonEmptyTrimmed(skill?.description) }
+          : {}),
+        ...(nonEmptyTrimmed(skill?.scope) ? { scope: nonEmptyTrimmed(skill?.scope) } : {}),
+        ...(nonEmptyTrimmed(display?.displayName)
+          ? { displayName: nonEmptyTrimmed(display?.displayName) }
+          : {}),
+        ...(nonEmptyTrimmed(skill?.shortDescription) || nonEmptyTrimmed(display?.shortDescription)
+          ? {
+              shortDescription:
+                nonEmptyTrimmed(skill?.shortDescription) ??
+                nonEmptyTrimmed(display?.shortDescription),
+            }
+          : {}),
+      } satisfies ServerProviderSkill,
+    ];
+  });
 }
 
 export function buildCodexInitializeParams() {
@@ -40,11 +105,12 @@ export function killCodexChildProcess(child: ChildProcessWithoutNullStreams): vo
   child.kill();
 }
 
-export async function probeCodexAccount(input: {
+export async function probeCodexDiscovery(input: {
   readonly binaryPath: string;
   readonly homePath?: string;
+  readonly cwd: string;
   readonly signal?: AbortSignal;
-}): Promise<CodexAccountSnapshot> {
+}): Promise<CodexDiscoverySnapshot> {
   return await new Promise((resolve, reject) => {
     const child = spawn(input.binaryPath, ["app-server"], {
       env: {
@@ -57,6 +123,8 @@ export async function probeCodexAccount(input: {
     const output = readline.createInterface({ input: child.stdout });
 
     let completed = false;
+    let account: CodexAccountSnapshot | undefined;
+    let skills: ReadonlyArray<ServerProviderSkill> | undefined;
 
     const cleanup = () => {
       output.removeAllListeners();
@@ -79,15 +147,25 @@ export async function probeCodexAccount(input: {
         reject(
           error instanceof Error
             ? error
-            : new Error(`Codex account probe failed: ${String(error)}.`),
+            : new Error(`Codex discovery probe failed: ${String(error)}.`),
         ),
       );
 
+    const maybeResolve = () => {
+      if (account && skills !== undefined) {
+        const resolvedAccount = account;
+        const resolvedSkills = skills;
+        finish(() => resolve({ account: resolvedAccount, skills: resolvedSkills }));
+      }
+    };
+
     if (input.signal?.aborted) {
-      fail(new Error("Codex account probe aborted."));
+      fail(new Error("Codex discovery probe aborted."));
       return;
     }
-    input.signal?.addEventListener("abort", () => fail(new Error("Codex account probe aborted.")));
+    input.signal?.addEventListener("abort", () =>
+      fail(new Error("Codex discovery probe aborted.")),
+    );
 
     const writeMessage = (message: unknown) => {
       if (!child.stdin.writable) {
@@ -103,7 +181,7 @@ export async function probeCodexAccount(input: {
       try {
         parsed = JSON.parse(line);
       } catch {
-        fail(new Error("Received invalid JSON from codex app-server during account probe."));
+        fail(new Error("Received invalid JSON from codex app-server during discovery probe."));
         return;
       }
 
@@ -120,18 +198,27 @@ export async function probeCodexAccount(input: {
         }
 
         writeMessage({ method: "initialized" });
-        writeMessage({ id: 2, method: "account/read", params: {} });
+        writeMessage({ id: 2, method: "skills/list", params: { cwds: [input.cwd] } });
+        writeMessage({ id: 3, method: "account/read", params: {} });
         return;
       }
 
       if (response.id === 2) {
+        const errorMessage = readErrorMessage(response);
+        skills = errorMessage ? [] : parseCodexSkillsResult(response.result, input.cwd);
+        maybeResolve();
+        return;
+      }
+
+      if (response.id === 3) {
         const errorMessage = readErrorMessage(response);
         if (errorMessage) {
           fail(new Error(`account/read failed: ${errorMessage}`));
           return;
         }
 
-        finish(() => resolve(readCodexAccountSnapshot(response.result)));
+        account = readCodexAccountSnapshot(response.result);
+        maybeResolve();
       }
     });
 

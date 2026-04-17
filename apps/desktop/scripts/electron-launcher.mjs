@@ -6,8 +6,8 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -19,10 +19,13 @@ import { fileURLToPath } from "node:url";
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_BUNDLE_ID = isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code";
-const LAUNCHER_VERSION = 1;
+const LAUNCHER_VERSION = 2;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const desktopDir = resolve(__dirname, "..");
+const repoRoot = resolve(desktopDir, "..", "..");
+const defaultIconPath = join(desktopDir, "resources", "icon.icns");
+const developmentMacIconPngPath = join(repoRoot, "assets", "dev", "blueprint-macos-1024.png");
 
 function setPlistString(plistPath, key, value) {
   const replaceResult = spawnSync("plutil", ["-replace", key, "-string", value, plistPath], {
@@ -43,6 +46,68 @@ function setPlistString(plistPath, key, value) {
   throw new Error(`Failed to update plist key "${key}" at ${plistPath}: ${details}`.trim());
 }
 
+function runChecked(command, args) {
+  const result = spawnSync(command, args, { encoding: "utf8" });
+  if (result.status === 0) {
+    return;
+  }
+
+  const details = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  throw new Error(`Failed to run ${command} ${args.join(" ")}: ${details}`.trim());
+}
+
+function ensureDevelopmentIconIcns(runtimeDir) {
+  const generatedIconPath = join(runtimeDir, "icon-dev.icns");
+  mkdirSync(runtimeDir, { recursive: true });
+
+  if (!existsSync(developmentMacIconPngPath)) {
+    return defaultIconPath;
+  }
+
+  const sourceMtimeMs = statSync(developmentMacIconPngPath).mtimeMs;
+  if (existsSync(generatedIconPath) && statSync(generatedIconPath).mtimeMs >= sourceMtimeMs) {
+    return generatedIconPath;
+  }
+
+  const iconsetRoot = mkdtempSync(join(runtimeDir, "dev-iconset-"));
+  const iconsetDir = join(iconsetRoot, "icon.iconset");
+  mkdirSync(iconsetDir, { recursive: true });
+
+  try {
+    for (const size of [16, 32, 128, 256, 512]) {
+      runChecked("sips", [
+        "-z",
+        String(size),
+        String(size),
+        developmentMacIconPngPath,
+        "--out",
+        join(iconsetDir, `icon_${size}x${size}.png`),
+      ]);
+
+      const retinaSize = size * 2;
+      runChecked("sips", [
+        "-z",
+        String(retinaSize),
+        String(retinaSize),
+        developmentMacIconPngPath,
+        "--out",
+        join(iconsetDir, `icon_${size}x${size}@2x.png`),
+      ]);
+    }
+
+    runChecked("iconutil", ["-c", "icns", iconsetDir, "-o", generatedIconPath]);
+    return generatedIconPath;
+  } catch (error) {
+    console.warn(
+      "[desktop-launcher] Failed to generate dev macOS icon, falling back to default icon.",
+      error,
+    );
+    return defaultIconPath;
+  } finally {
+    rmSync(iconsetRoot, { recursive: true, force: true });
+  }
+}
+
 function patchMainBundleInfoPlist(appBundlePath, iconPath) {
   const infoPlistPath = join(appBundlePath, "Contents", "Info.plist");
   setPlistString(infoPlistPath, "CFBundleDisplayName", APP_DISPLAY_NAME);
@@ -53,40 +118,6 @@ function patchMainBundleInfoPlist(appBundlePath, iconPath) {
   const resourcesDir = join(appBundlePath, "Contents", "Resources");
   copyFileSync(iconPath, join(resourcesDir, "icon.icns"));
   copyFileSync(iconPath, join(resourcesDir, "electron.icns"));
-}
-
-function patchHelperBundleInfoPlists(appBundlePath) {
-  const frameworksDir = join(appBundlePath, "Contents", "Frameworks");
-  if (!existsSync(frameworksDir)) {
-    return;
-  }
-
-  for (const entry of readdirSync(frameworksDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.endsWith(".app")) {
-      continue;
-    }
-    if (!entry.name.startsWith("Electron Helper")) {
-      continue;
-    }
-
-    const helperPlistPath = join(frameworksDir, entry.name, "Contents", "Info.plist");
-    if (!existsSync(helperPlistPath)) {
-      continue;
-    }
-
-    const suffix = entry.name.replace("Electron Helper", "").replace(".app", "").trim();
-    const helperName = suffix
-      ? `${APP_DISPLAY_NAME} Helper ${suffix}`
-      : `${APP_DISPLAY_NAME} Helper`;
-    const helperIdSuffix = suffix.replace(/[()]/g, "").trim().toLowerCase().replace(/\s+/g, "-");
-    const helperBundleId = helperIdSuffix
-      ? `${APP_BUNDLE_ID}.helper.${helperIdSuffix}`
-      : `${APP_BUNDLE_ID}.helper`;
-
-    setPlistString(helperPlistPath, "CFBundleDisplayName", helperName);
-    setPlistString(helperPlistPath, "CFBundleName", helperName);
-    setPlistString(helperPlistPath, "CFBundleIdentifier", helperBundleId);
-  }
 }
 
 function readJson(path) {
@@ -102,7 +133,7 @@ function buildMacLauncher(electronBinaryPath) {
   const runtimeDir = join(desktopDir, ".electron-runtime");
   const targetAppBundlePath = join(runtimeDir, `${APP_DISPLAY_NAME}.app`);
   const targetBinaryPath = join(targetAppBundlePath, "Contents", "MacOS", "Electron");
-  const iconPath = join(desktopDir, "resources", "icon.icns");
+  const iconPath = isDevelopment ? ensureDevelopmentIconIcns(runtimeDir) : defaultIconPath;
   const metadataPath = join(runtimeDir, "metadata.json");
 
   mkdirSync(runtimeDir, { recursive: true });
@@ -126,7 +157,6 @@ function buildMacLauncher(electronBinaryPath) {
   rmSync(targetAppBundlePath, { recursive: true, force: true });
   cpSync(sourceAppBundlePath, targetAppBundlePath, { recursive: true });
   patchMainBundleInfoPlist(targetAppBundlePath, iconPath);
-  patchHelperBundleInfoPlists(targetAppBundlePath);
   writeFileSync(metadataPath, `${JSON.stringify(expectedMetadata, null, 2)}\n`);
 
   return targetBinaryPath;
@@ -137,6 +167,12 @@ export function resolveElectronPath() {
   const electronBinaryPath = require("electron");
 
   if (process.platform !== "darwin") {
+    return electronBinaryPath;
+  }
+
+  // Dev launches do not need a renamed app bundle badly enough to risk breaking
+  // Electron helper resource lookup on macOS.
+  if (isDevelopment) {
     return electronBinaryPath;
   }
 

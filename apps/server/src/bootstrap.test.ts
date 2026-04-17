@@ -10,7 +10,7 @@ import * as Fiber from "effect/Fiber";
 import { TestClock } from "effect/testing";
 import { vi } from "vitest";
 
-import { readBootstrapEnvelope, resolveFdPath } from "./bootstrap";
+import { readBootstrapEnvelope, resolveFdPath } from "./bootstrap.ts";
 import { assertNone, assertSome } from "@effect/vitest/utils";
 
 const openSyncInterceptor = vi.hoisted(() => ({ failPath: null as string | null }));

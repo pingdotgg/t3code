@@ -7,7 +7,7 @@ import {
   KeybindingRule,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
-} from "./keybindings";
+} from "./keybindings.ts";
 
 const decode = <S extends Schema.Top>(
   schema: S,
@@ -40,6 +40,12 @@ it.effect("parses keybinding rules", () =>
       command: "diff.toggle",
     });
     assert.strictEqual(parsedDiffToggle.command, "diff.toggle");
+
+    const parsedCommandPalette = yield* decode(KeybindingRule, {
+      key: "mod+k",
+      command: "commandPalette.toggle",
+    });
+    assert.strictEqual(parsedCommandPalette.command, "commandPalette.toggle");
 
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",

@@ -2,7 +2,7 @@ import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/
 import { type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -33,6 +33,12 @@ export function useThreadActions() {
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const router = useRouter();
   const { handleNewThread } = useNewThreadHandler();
+  // Keep a ref so archiveThread can call handleNewThread without appearing in
+  // its dependency array — handleNewThread is inherently unstable (depends on
+  // the projects list) and would otherwise cascade new references into every
+  // sidebar row via archiveThread → attemptArchiveThread.
+  const handleNewThreadRef = useRef(handleNewThread);
+  handleNewThreadRef.current = handleNewThread;
   const queryClient = useQueryClient();
 
   const resolveThreadTarget = useCallback((target: ScopedThreadRef) => {
@@ -73,10 +79,10 @@ export function useThreadActions() {
         currentRouteThreadRef?.threadId === threadRef.threadId &&
         currentRouteThreadRef.environmentId === threadRef.environmentId
       ) {
-        await handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId));
+        await handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId));
       }
     },
-    [getCurrentRouteThreadRef, handleNewThread, resolveThreadTarget],
+    [getCurrentRouteThreadRef, resolveThreadTarget],
   );
 
   const unarchiveThread = useCallback(async (target: ScopedThreadRef) => {

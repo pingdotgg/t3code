@@ -21,23 +21,24 @@ import {
   Console,
 } from "effect";
 
-import { ServerConfig } from "./config";
-import { Keybindings } from "./keybindings";
-import { Open } from "./open";
-import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
-import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
-import { ServerLifecycleEvents } from "./serverLifecycleEvents";
-import { ServerSettingsService } from "./serverSettings";
-import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
-import { ServerAuth } from "./auth/Services/ServerAuth";
+import { ServerConfig } from "./config.ts";
+import { Keybindings } from "./keybindings.ts";
+import { Open } from "./open.ts";
+import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor.ts";
+import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
+import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
   isWildcardHost,
   issueHeadlessServeAccessInfo,
-} from "./startupAccess";
+} from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Data.TaggedError("ServerRuntimeStartupError")<{
   readonly message: string;
@@ -157,7 +158,18 @@ export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
   model: DEFAULT_MODEL_BY_PROVIDER.codex,
 });
 
-const autoBootstrapWelcome = Effect.gen(function* () {
+export const resolveWelcomeBase = Effect.gen(function* () {
+  const serverConfig = yield* ServerConfig;
+  const segments = serverConfig.cwd.split(/[/\\]/).filter(Boolean);
+  const projectName = segments[segments.length - 1] ?? "project";
+
+  return {
+    cwd: serverConfig.cwd,
+    projectName,
+  } as const;
+});
+
+export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngineService;
@@ -221,12 +233,7 @@ const autoBootstrapWelcome = Effect.gen(function* () {
     });
   }
 
-  const segments = serverConfig.cwd.split(/[/\\]/).filter(Boolean);
-  const projectName = segments[segments.length - 1] ?? "project";
-
   return {
-    cwd: serverConfig.cwd,
-    projectName,
     ...(bootstrapProjectId ? { bootstrapProjectId } : {}),
     ...(bootstrapThreadId ? { bootstrapThreadId } : {}),
   } as const;
@@ -271,10 +278,11 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
     Effect.withSpan(`server.startup.${phase}`),
   );
 
-const makeServerRuntimeStartup = Effect.gen(function* () {
+export const makeServerRuntimeStartup = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const keybindings = yield* Keybindings;
   const orchestrationReactor = yield* OrchestrationReactor;
+  const providerSessionReaper = yield* ProviderSessionReaper;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
@@ -319,18 +327,19 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
     yield* Effect.logDebug("startup phase: starting orchestration reactors");
     yield* runStartupPhase(
       "reactors.start",
-      orchestrationReactor.start().pipe(Scope.provide(reactorScope)),
+      Effect.gen(function* () {
+        yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
+        yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+      }),
     );
 
-    yield* Effect.logDebug("startup phase: preparing welcome payload");
-    const welcome = yield* runStartupPhase("welcome.prepare", autoBootstrapWelcome);
+    const welcomeBase = yield* resolveWelcomeBase;
     const environment = yield* serverEnvironment.getDescriptor;
+    yield* Effect.logDebug("startup phase: preparing welcome payload");
     yield* Effect.logDebug("startup phase: publishing welcome event", {
       environmentId: environment.environmentId,
-      cwd: welcome.cwd,
-      projectName: welcome.projectName,
-      bootstrapProjectId: welcome.bootstrapProjectId,
-      bootstrapThreadId: welcome.bootstrapThreadId,
+      cwd: welcomeBase.cwd,
+      projectName: welcomeBase.projectName,
     });
     yield* runStartupPhase(
       "welcome.publish",
@@ -339,10 +348,47 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
         type: "welcome",
         payload: {
           environment,
-          ...welcome,
+          ...welcomeBase,
         },
       }),
     );
+
+    if (serverConfig.autoBootstrapProjectFromCwd) {
+      yield* Effect.forkScoped(
+        runStartupPhase(
+          "welcome.autobootstrap",
+          Effect.gen(function* () {
+            const bootstrapTargets = yield* resolveAutoBootstrapWelcomeTargets;
+            if (!bootstrapTargets.bootstrapProjectId && !bootstrapTargets.bootstrapThreadId) {
+              return;
+            }
+
+            yield* Effect.logDebug("startup phase: publishing bootstrapped welcome event", {
+              environmentId: environment.environmentId,
+              cwd: welcomeBase.cwd,
+              projectName: welcomeBase.projectName,
+              bootstrapProjectId: bootstrapTargets.bootstrapProjectId,
+              bootstrapThreadId: bootstrapTargets.bootstrapThreadId,
+            });
+            yield* lifecycleEvents.publish({
+              version: 1,
+              type: "welcome",
+              payload: {
+                environment,
+                ...welcomeBase,
+                ...bootstrapTargets,
+              },
+            });
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("startup auto-bootstrap welcome failed", {
+                cause,
+              }),
+            ),
+          ),
+        ),
+      );
+    }
   }).pipe(
     Effect.annotateSpans({
       "server.mode": serverConfig.mode,

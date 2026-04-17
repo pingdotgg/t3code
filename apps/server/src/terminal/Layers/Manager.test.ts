@@ -24,25 +24,28 @@ import {
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 
-import type { TerminalManagerShape } from "../Services/Manager";
+import type { TerminalManagerShape } from "../Services/Manager.ts";
 import {
   type PtyAdapterShape,
   type PtyExitEvent,
   type PtyProcess,
   type PtySpawnInput,
   PtySpawnError,
-} from "../Services/PTY";
-import { makeTerminalManagerWithOptions } from "./Manager";
+} from "../Services/PTY.ts";
+import { makeTerminalManagerWithOptions } from "./Manager.ts";
 
 class FakePtyProcess implements PtyProcess {
   readonly writes: string[] = [];
   readonly resizeCalls: Array<{ cols: number; rows: number }> = [];
   readonly killSignals: Array<string | undefined> = [];
+  readonly pid: number;
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
   killed = false;
 
-  constructor(readonly pid: number) {}
+  constructor(pid: number) {
+    this.pid = pid;
+  }
 
   write(data: string): void {
     this.writes.push(data);
@@ -88,9 +91,12 @@ class FakePtyAdapter implements PtyAdapterShape {
   readonly spawnInputs: PtySpawnInput[] = [];
   readonly processes: FakePtyProcess[] = [];
   readonly spawnFailures: Error[] = [];
+  private readonly mode: "sync" | "async";
   private nextPid = 9000;
 
-  constructor(private readonly mode: "sync" | "async" = "sync") {}
+  constructor(mode: "sync" | "async" = "sync") {
+    this.mode = mode;
+  }
 
   spawn(input: PtySpawnInput): Effect.Effect<PtyProcess, PtySpawnError> {
     this.spawnInputs.push(input);
@@ -188,6 +194,8 @@ function multiTerminalHistoryLogPath(
 
 interface CreateManagerOptions {
   shellResolver?: () => string;
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
   subprocessChecker?: (terminalPid: number) => Effect.Effect<boolean>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -222,6 +230,8 @@ const createManager = (
         historyLineLimit,
         ptyAdapter,
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
+        ...(options.platform !== undefined ? { platform: options.platform } : {}),
+        ...(options.env !== undefined ? { env: options.env } : {}),
         ...(options.subprocessChecker !== undefined
           ? { subprocessChecker: options.subprocessChecker }
           : {}),
@@ -291,6 +301,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("preserves non-notFound cwd stat failures", () =>
     Effect.gen(function* () {
+      if (process.platform === "win32") return;
+
       const { manager, baseDir } = yield* createManager();
       const blockedRoot = path.join(baseDir, "blocked-root");
       const blockedCwd = path.join(blockedRoot, "cwd");
@@ -821,8 +833,12 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("retries with fallback shells when preferred shell spawn fails", () =>
     Effect.gen(function* () {
+      const missingShell =
+        process.platform === "win32"
+          ? "C:\\definitely\\missing-shell.exe"
+          : "/definitely/missing-shell -l";
       const { manager, ptyAdapter } = yield* createManager(5, {
-        shellResolver: () => "/definitely/missing-shell -l",
+        shellResolver: () => missingShell,
       });
       ptyAdapter.spawnFailures.push(new Error("posix_spawnp failed."));
 
@@ -830,12 +846,17 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
       assert.equal(snapshot.status, "running");
       expect(ptyAdapter.spawnInputs.length).toBeGreaterThanOrEqual(2);
-      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/definitely/missing-shell");
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe(
+        process.platform === "win32" ? missingShell : "/definitely/missing-shell",
+      );
 
       if (process.platform === "win32") {
         expect(
           ptyAdapter.spawnInputs.some(
-            (input) => input.shell === "cmd.exe" || input.shell === "powershell.exe",
+            (input) =>
+              input.shell === "pwsh.exe" ||
+              input.shell === "powershell.exe" ||
+              input.shell === "cmd.exe",
           ),
         ).toBe(true);
       } else {
@@ -845,6 +866,56 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
             .some((input) => input.shell !== "/definitely/missing-shell"),
         ).toBe(true);
       }
+    }),
+  );
+
+  it.effect("prefers PowerShell over ComSpec for Windows terminals", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        platform: "win32",
+        env: {
+          ComSpec: "C:\\Windows\\System32\\cmd.exe",
+          PATH: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+        },
+      });
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]).toEqual(
+        expect.objectContaining({
+          shell: "pwsh.exe",
+          args: ["-NoLogo"],
+        }),
+      );
+    }),
+  );
+
+  it.effect("falls back to built-in PowerShell by absolute path on Windows", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        platform: "win32",
+        env: {
+          ComSpec: "C:\\Windows\\System32\\cmd.exe",
+          PATH: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+        },
+        shellResolver: () => "C:\\missing\\custom-shell.exe",
+      });
+      ptyAdapter.spawnFailures.push(
+        new Error("spawn custom-shell.exe ENOENT"),
+        new Error("spawn pwsh.exe ENOENT"),
+      );
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "C:\\missing\\custom-shell.exe",
+        "pwsh.exe",
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      ]);
+      expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
+      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
     }),
   );
 

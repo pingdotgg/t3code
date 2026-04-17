@@ -11,7 +11,7 @@ import {
   TerminalSessionSnapshot,
   TerminalThreadInput,
   TerminalWriteInput,
-} from "./terminal";
+} from "./terminal.ts";
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;

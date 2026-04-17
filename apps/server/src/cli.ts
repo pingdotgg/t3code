@@ -40,30 +40,31 @@ import {
   RuntimeMode,
   type ServerConfigShape,
   type StartupPresentation,
-} from "./config";
-import { readBootstrapEnvelope } from "./bootstrap";
-import { expandHomePath, resolveBaseDir } from "./os-jank";
-import { runServer } from "./server";
+} from "./config.ts";
+import { readBootstrapEnvelope } from "./bootstrap.ts";
+import { expandHomePath, resolveBaseDir } from "./os-jank.ts";
+import { runServer } from "./server.ts";
 import { AuthControlPlaneRuntimeLive } from "./auth/Layers/AuthControlPlane.ts";
 import {
   formatIssuedPairingCredential,
   formatIssuedSession,
   formatPairingCredentialList,
   formatSessionList,
-} from "./cliAuthFormat";
-import { AuthControlPlane, AuthControlPlaneShape } from "./auth/Services/AuthControlPlane.ts";
+} from "./cliAuthFormat.ts";
+import { AuthControlPlane } from "./auth/Services/AuthControlPlane.ts";
+import type { AuthControlPlaneShape } from "./auth/Services/AuthControlPlane.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
-import { OrchestrationLayerLive } from "./orchestration/runtimeLayer";
+import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
-import { getAutoBootstrapDefaultModelSelection } from "./serverRuntimeStartup";
+import { getAutoBootstrapDefaultModelSelection } from "./serverRuntimeStartup.ts";
 import {
   clearPersistedServerRuntimeState,
   readPersistedServerRuntimeState,
-} from "./serverRuntimeState";
-import { WorkspacePaths } from "./workspace/Services/WorkspacePaths";
-import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
+} from "./serverRuntimeState.ts";
+import { WorkspacePaths } from "./workspace/Services/WorkspacePaths.ts";
+import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 
 const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
 

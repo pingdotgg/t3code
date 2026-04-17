@@ -2,7 +2,7 @@ import type { ServerProvider } from "@t3tools/contracts";
 import { Duration, Effect, PubSub, Ref, Scope, Stream } from "effect";
 import * as Semaphore from "effect/Semaphore";
 
-import type { ServerProviderShape } from "./Services/ServerProvider";
+import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 import { ServerSettingsError } from "@t3tools/contracts";
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
@@ -11,6 +11,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly getSettings: Effect.Effect<Settings>;
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
+  readonly initialSnapshot: (settings: Settings) => ServerProvider;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
   readonly refreshInterval?: Duration.Input;
 }): Effect.fn.Return<ServerProviderShape, ServerSettingsError, Scope.Scope> {
@@ -20,7 +21,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     PubSub.shutdown,
   );
   const initialSettings = yield* input.getSettings;
-  const initialSnapshot = yield* input.checkProvider;
+  const initialSnapshot = input.initialSnapshot(initialSettings);
   const snapshotRef = yield* Ref.make(initialSnapshot);
   const settingsRef = yield* Ref.make(initialSettings);
 

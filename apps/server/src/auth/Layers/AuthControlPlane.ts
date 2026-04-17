@@ -10,8 +10,10 @@ import { layerConfig as SqlitePersistenceLayerLive } from "../../persistence/Lay
 import {
   AuthControlPlane,
   AuthControlPlaneError,
-  AuthControlPlaneShape,
   DEFAULT_SESSION_SUBJECT,
+} from "../Services/AuthControlPlane.ts";
+import type {
+  AuthControlPlaneShape,
   IssuedBearerSession,
   IssuedPairingLink,
 } from "../Services/AuthControlPlane.ts";

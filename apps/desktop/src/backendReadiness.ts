@@ -4,9 +4,11 @@ export interface WaitForHttpReadyOptions {
   readonly requestTimeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
   readonly signal?: AbortSignal;
+  readonly path?: string;
+  readonly isReady?: (response: Response) => boolean;
 }
 
-const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_INTERVAL_MS = 100;
 const DEFAULT_REQUEST_TIMEOUT_MS = 1_000;
 
@@ -57,6 +59,8 @@ export async function waitForHttpReady(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const intervalMs = options?.intervalMs ?? DEFAULT_INTERVAL_MS;
   const requestTimeoutMs = options?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const readinessPath = options?.path ?? "/";
+  const isReady = options?.isReady ?? ((response: Response) => response.ok);
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
@@ -74,11 +78,11 @@ export async function waitForHttpReady(
     signal?.addEventListener("abort", abortRequest, { once: true });
 
     try {
-      const response = await fetchImpl(`${baseUrl}/api/auth/session`, {
+      const response = await fetchImpl(new URL(readinessPath, baseUrl).toString(), {
         redirect: "manual",
         signal: requestController.signal,
       });
-      if (response.ok) {
+      if (isReady(response)) {
         return;
       }
     } catch (error) {

@@ -16,6 +16,14 @@ import {
 } from "../../pairingUrl";
 
 import { resolvePrimaryEnvironmentHttpUrl } from "./target";
+import { Data, Predicate } from "effect";
+
+export class BootstrapHttpError extends Data.TaggedError("BootstrapHttpError")<{
+  readonly message: string;
+  readonly status: number;
+}> {}
+const isBootstrapHttpError = (u: unknown): u is BootstrapHttpError =>
+  Predicate.isTagged(u, "BootstrapHttpError");
 
 export interface ServerPairingLinkRecord {
   readonly id: string;
@@ -49,6 +57,7 @@ type ServerAuthGateState =
     };
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
+let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
 
@@ -87,10 +96,10 @@ export async function fetchSessionState(): Promise<AuthSessionState> {
       credentials: "include",
     });
     if (!response.ok) {
-      throw new BootstrapHttpError(
-        `Failed to load server auth session state (${response.status}).`,
-        response.status,
-      );
+      throw new BootstrapHttpError({
+        message: `Failed to load server auth session state (${response.status}).`,
+        status: response.status,
+      });
     }
     return (await response.json()) as AuthSessionState;
   });
@@ -115,10 +124,10 @@ async function exchangeBootstrapCredential(credential: string): Promise<AuthBoot
 
     if (!response.ok) {
       const message = await response.text();
-      throw new BootstrapHttpError(
-        message || `Failed to bootstrap auth session (${response.status}).`,
-        response.status,
-      );
+      throw new BootstrapHttpError({
+        message: message || `Failed to bootstrap auth session (${response.status}).`,
+        status: response.status,
+      });
     }
 
     return (await response.json()) as AuthBootstrapResult;
@@ -146,16 +155,6 @@ const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
 const BOOTSTRAP_RETRY_TIMEOUT_MS = 15_000;
 const BOOTSTRAP_RETRY_STEP_MS = 500;
 
-export class BootstrapHttpError extends Error {
-  readonly status: number;
-
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = "BootstrapHttpError";
-    this.status = status;
-  }
-}
-
 export async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<T> {
   const startedAt = Date.now();
   while (true) {
@@ -182,7 +181,7 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
 }
 
 function isTransientBootstrapError(error: unknown): boolean {
-  if (error instanceof BootstrapHttpError) {
+  if (isBootstrapHttpError(error)) {
     return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
   }
 
@@ -226,6 +225,7 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
     throw new Error("Enter a pairing token to continue.");
   }
 
+  resolvedAuthenticatedGateState = null;
   await exchangeBootstrapCredential(trimmedCredential);
   bootstrapPromise = null;
   stripPairingTokenFromUrl();
@@ -343,19 +343,31 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
+  if (resolvedAuthenticatedGateState?.status === "authenticated") {
+    return resolvedAuthenticatedGateState;
+  }
+
   if (bootstrapPromise) {
     return bootstrapPromise;
   }
 
   const nextPromise = bootstrapServerAuth();
   bootstrapPromise = nextPromise;
-  return nextPromise.finally(() => {
-    if (bootstrapPromise === nextPromise) {
-      bootstrapPromise = null;
-    }
-  });
+  return nextPromise
+    .then((result) => {
+      if (result.status === "authenticated") {
+        resolvedAuthenticatedGateState = result;
+      }
+      return result;
+    })
+    .finally(() => {
+      if (bootstrapPromise === nextPromise) {
+        bootstrapPromise = null;
+      }
+    });
 }
 
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
+  resolvedAuthenticatedGateState = null;
 }

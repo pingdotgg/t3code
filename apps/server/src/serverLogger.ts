@@ -1,6 +1,6 @@
 import { Effect, Logger, References, Layer } from "effect";
 
-import { ServerConfig } from "./config";
+import { ServerConfig } from "./config.ts";
 
 export const ServerLoggerLive = Effect.gen(function* () {
   const config = yield* ServerConfig;

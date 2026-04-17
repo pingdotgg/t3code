@@ -6,7 +6,7 @@
  *
  * @module ThreadDeletionReactor
  */
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { Effect, Scope } from "effect";
 
 /**
@@ -31,7 +31,7 @@ export interface ThreadDeletionReactorShape {
 /**
  * ThreadDeletionReactor - Service tag for thread deletion cleanup workers.
  */
-export class ThreadDeletionReactor extends ServiceMap.Service<
+export class ThreadDeletionReactor extends Context.Service<
   ThreadDeletionReactor,
   ThreadDeletionReactorShape
 >()("t3/orchestration/Services/ThreadDeletionReactor") {}

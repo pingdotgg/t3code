@@ -1,10 +1,9 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import type { EnvironmentId, GitBranch, ThreadId } from "@t3tools/contracts";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronDownIcon } from "lucide-react";
 import {
-  type CSSProperties,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -38,6 +37,7 @@ import {
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
+  ComboboxListVirtualized,
   ComboboxPopup,
   ComboboxStatus,
   ComboboxTrigger,
@@ -49,6 +49,9 @@ interface BranchToolbarBranchSelectorProps {
   threadId: ThreadId;
   draftId?: DraftId;
   envLocked: boolean;
+  effectiveEnvModeOverride?: "local" | "worktree";
+  activeThreadBranchOverride?: string | null;
+  onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
@@ -77,6 +80,9 @@ export function BranchToolbarBranchSelector({
   threadId,
   draftId,
   envLocked,
+  effectiveEnvModeOverride,
+  activeThreadBranchOverride,
+  onActiveThreadBranchOverrideChange,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
@@ -91,7 +97,9 @@ export function BranchToolbarBranchSelector({
   const serverThread = useStore(serverThreadSelector);
   const serverSession = serverThread?.session ?? null;
   const setThreadBranchAction = useStore((store) => store.setThreadBranch);
-  const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
+  const draftThread = useComposerDraftStore((store) =>
+    draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
+  );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
 
   const activeProjectRef = serverThread
@@ -106,16 +114,21 @@ export function BranchToolbarBranchSelector({
   const activeProject = useStore(activeProjectSelector);
 
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
-  const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
+  const activeThreadBranch =
+    activeThreadBranchOverride !== undefined
+      ? activeThreadBranchOverride
+      : (serverThread?.branch ?? draftThread?.branch ?? null);
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== undefined;
-  const effectiveEnvMode = resolveEffectiveEnvMode({
-    activeWorktreePath,
-    hasServerThread,
-    draftThreadEnvMode: draftThread?.envMode,
-  });
+  const effectiveEnvMode =
+    effectiveEnvModeOverride ??
+    resolveEffectiveEnvMode({
+      activeWorktreePath,
+      hasServerThread,
+      draftThreadEnvMode: draftThread?.envMode,
+    });
 
   // ---------------------------------------------------------------------------
   // Thread branch mutation (colocated — only this component calls it)
@@ -144,6 +157,7 @@ export function BranchToolbarBranchSelector({
         });
       }
       if (hasServerThread) {
+        onActiveThreadBranchOverrideChange?.(branch);
         setThreadBranchAction(threadRef, branch, worktreePath);
         return;
       }
@@ -165,6 +179,7 @@ export function BranchToolbarBranchSelector({
       serverSession,
       activeWorktreePath,
       hasServerThread,
+      onActiveThreadBranchOverrideChange,
       setThreadBranchAction,
       setDraftThreadContext,
       draftId,
@@ -388,7 +403,7 @@ export function BranchToolbarBranchSelector({
   }, [activeThreadBranch, activeWorktreePath, currentGitBranch, effectiveEnvMode, setThreadBranch]);
 
   // ---------------------------------------------------------------------------
-  // Combobox / virtualizer plumbing
+  // Combobox / list plumbing
   // ---------------------------------------------------------------------------
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -423,49 +438,22 @@ export function BranchToolbarBranchSelector({
 
     void fetchNextPage().catch(() => undefined);
   }, [fetchNextPage, hasNextPage, isBranchMenuOpen, isFetchingNextPage]);
-  const branchListVirtualizer = useVirtualizer({
-    count: filteredBranchPickerItems.length,
-    estimateSize: (index) =>
-      filteredBranchPickerItems[index] === checkoutPullRequestItemValue ? 44 : 28,
-    getScrollElement: () => branchListScrollElementRef.current,
-    overscan: 12,
-    enabled: isBranchMenuOpen && shouldVirtualizeBranchList,
-    initialRect: {
-      height: 224,
-      width: 0,
-    },
-  });
-  const virtualBranchRows = branchListVirtualizer.getVirtualItems();
-  const setBranchListRef = useCallback(
-    (element: HTMLDivElement | null) => {
-      branchListScrollElementRef.current =
-        (element?.parentElement as HTMLDivElement | null) ?? null;
-      if (element) {
-        branchListVirtualizer.measure();
-      }
-    },
-    [branchListVirtualizer],
-  );
-
-  useEffect(() => {
-    if (!isBranchMenuOpen || !shouldVirtualizeBranchList) return;
-    queueMicrotask(() => {
-      branchListVirtualizer.measure();
-    });
-  }, [
-    branchListVirtualizer,
-    filteredBranchPickerItems.length,
-    isBranchMenuOpen,
-    shouldVirtualizeBranchList,
-  ]);
+  const branchListRef = useRef<LegendListRef | null>(null);
+  const setBranchListRef = useCallback((element: HTMLDivElement | null) => {
+    branchListScrollElementRef.current = (element?.parentElement as HTMLDivElement | null) ?? null;
+  }, []);
 
   useEffect(() => {
     if (!isBranchMenuOpen) {
       return;
     }
 
-    branchListScrollElementRef.current?.scrollTo({ top: 0 });
-  }, [deferredTrimmedBranchQuery, isBranchMenuOpen]);
+    if (shouldVirtualizeBranchList) {
+      branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+    } else {
+      branchListScrollElementRef.current?.scrollTo({ top: 0 });
+    }
+  }, [deferredTrimmedBranchQuery, isBranchMenuOpen, shouldVirtualizeBranchList]);
 
   useEffect(() => {
     const scrollElement = branchListScrollElementRef.current;
@@ -485,8 +473,9 @@ export function BranchToolbarBranchSelector({
   }, [isBranchMenuOpen, maybeFetchNextBranchPage]);
 
   useEffect(() => {
+    if (shouldVirtualizeBranchList) return;
     maybeFetchNextBranchPage();
-  }, [branches.length, maybeFetchNextBranchPage]);
+  }, [branches.length, maybeFetchNextBranchPage, shouldVirtualizeBranchList]);
 
   const triggerLabel = getBranchTriggerLabel({
     activeWorktreePath,
@@ -494,7 +483,7 @@ export function BranchToolbarBranchSelector({
     resolvedActiveBranch,
   });
 
-  function renderPickerItem(itemValue: string, index: number, style?: CSSProperties) {
+  function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
       return (
         <ComboboxItem
@@ -502,7 +491,6 @@ export function BranchToolbarBranchSelector({
           key={itemValue}
           index={index}
           value={itemValue}
-          style={style}
           onClick={() => {
             if (!prReference || !onCheckoutPullRequestRequest) {
               return;
@@ -527,7 +515,6 @@ export function BranchToolbarBranchSelector({
           key={itemValue}
           index={index}
           value={itemValue}
-          style={style}
           onClick={() => createBranch(trimmedBranchQuery)}
         >
           <span className="truncate">Create new branch &quot;{trimmedBranchQuery}&quot;</span>
@@ -555,7 +542,6 @@ export function BranchToolbarBranchSelector({
         key={itemValue}
         index={index}
         value={itemValue}
-        style={style}
         onClick={() => selectBranch(branch)}
       >
         <div className="flex w-full items-center justify-between gap-2">
@@ -573,8 +559,13 @@ export function BranchToolbarBranchSelector({
       autoHighlight
       virtualized={shouldVirtualizeBranchList}
       onItemHighlighted={(_value, eventDetails) => {
-        if (!isBranchMenuOpen || eventDetails.index < 0) return;
-        branchListVirtualizer.scrollToIndex(eventDetails.index, { align: "auto" });
+        if (!isBranchMenuOpen || eventDetails.index < 0 || eventDetails.reason !== "keyboard") {
+          return;
+        }
+        branchListRef.current?.scrollIndexIntoView?.({
+          index: eventDetails.index,
+          animated: false,
+        });
       }}
       onOpenChange={handleOpenChange}
       open={isBranchMenuOpen}
@@ -602,30 +593,30 @@ export function BranchToolbarBranchSelector({
         </div>
         <ComboboxEmpty>No branches found.</ComboboxEmpty>
 
-        <ComboboxList ref={setBranchListRef} className="max-h-56">
-          {shouldVirtualizeBranchList ? (
-            <div
-              className="relative"
-              style={{
-                height: `${branchListVirtualizer.getTotalSize()}px`,
+        {shouldVirtualizeBranchList ? (
+          <ComboboxListVirtualized>
+            <LegendList<string>
+              ref={branchListRef}
+              data={filteredBranchPickerItems}
+              keyExtractor={(item) => item}
+              renderItem={({ item, index }) => renderPickerItem(item, index)}
+              estimatedItemSize={28}
+              drawDistance={336}
+              onEndReached={() => {
+                if (hasNextPage && !isFetchingNextPage) {
+                  void fetchNextPage().catch(() => undefined);
+                }
               }}
-            >
-              {virtualBranchRows.map((virtualRow) => {
-                const itemValue = filteredBranchPickerItems[virtualRow.index];
-                if (!itemValue) return null;
-                return renderPickerItem(itemValue, virtualRow.index, {
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${virtualRow.start}px)`,
-                });
-              })}
-            </div>
-          ) : (
-            filteredBranchPickerItems.map((itemValue, index) => renderPickerItem(itemValue, index))
-          )}
-        </ComboboxList>
+              style={{ maxHeight: "14rem" }}
+            />
+          </ComboboxListVirtualized>
+        ) : (
+          <ComboboxList ref={setBranchListRef} className="max-h-56">
+            {filteredBranchPickerItems.map((itemValue, index) =>
+              renderPickerItem(itemValue, index),
+            )}
+          </ComboboxList>
+        )}
         {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
       </ComboboxPopup>
     </Combobox>

@@ -9,7 +9,6 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -18,9 +17,10 @@ import {
   applyOrchestrationEvents,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
+  selectThreadByRef,
+  selectThreadExistsByRef,
   setThreadBranch,
   selectThreadsAcrossEnvironments,
-  syncServerReadModel,
   type AppState,
   type EnvironmentState,
 } from "./store";
@@ -245,74 +245,127 @@ function makeEvent<T extends OrchestrationEvent["type"]>(
   } as Extract<OrchestrationEvent, { type: T }>;
 }
 
-function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"][number]>) {
-  return {
-    id: ThreadId.make("thread-1"),
-    projectId: ProjectId.make("project-1"),
-    title: "Thread",
-    modelSelection: {
-      provider: "codex",
-      model: "gpt-5.3-codex",
-    },
-    runtimeMode: DEFAULT_RUNTIME_MODE,
-    interactionMode: DEFAULT_INTERACTION_MODE,
-    branch: null,
-    worktreePath: null,
-    latestTurn: null,
-    createdAt: "2026-02-27T00:00:00.000Z",
-    updatedAt: "2026-02-27T00:00:00.000Z",
-    archivedAt: null,
-    deletedAt: null,
-    messages: [],
-    activities: [],
-    proposedPlans: [],
-    checkpoints: [],
-    session: null,
-    ...overrides,
-  } satisfies OrchestrationReadModel["threads"][number];
-}
-
-function makeReadModel(thread: OrchestrationReadModel["threads"][number]): OrchestrationReadModel {
-  return {
-    snapshotSequence: 1,
-    updatedAt: "2026-02-27T00:00:00.000Z",
-    projects: [
-      {
-        id: ProjectId.make("project-1"),
-        title: "Project",
-        workspaceRoot: "/tmp/project",
-        defaultModelSelection: {
-          provider: "codex",
-          model: "gpt-5.3-codex",
+describe("thread selection memoization", () => {
+  it("returns stable thread references for repeated reads of the same state", () => {
+    const thread = makeThread({
+      messages: [
+        {
+          id: MessageId.make("message-1"),
+          role: "user",
+          text: "hello",
+          createdAt: "2026-02-13T00:01:00.000Z",
+          streaming: false,
         },
-        createdAt: "2026-02-27T00:00:00.000Z",
-        updatedAt: "2026-02-27T00:00:00.000Z",
-        deletedAt: null,
-        scripts: [],
-      },
-    ],
-    threads: [thread],
-  };
-}
+      ],
+      activities: [
+        {
+          id: EventId.make("activity-1"),
+          tone: "info",
+          kind: "step",
+          summary: "working",
+          payload: {},
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-02-13T00:01:30.000Z",
+        },
+      ],
+      proposedPlans: [
+        {
+          id: "plan-1",
+          turnId: null,
+          planMarkdown: "plan",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: "2026-02-13T00:02:00.000Z",
+          updatedAt: "2026-02-13T00:02:00.000Z",
+        },
+      ],
+      turnDiffSummaries: [
+        {
+          turnId: TurnId.make("turn-1"),
+          completedAt: "2026-02-13T00:03:00.000Z",
+          files: [],
+        },
+      ],
+    });
+    const state = makeState(thread);
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
 
-function makeReadModelProject(
-  overrides: Partial<OrchestrationReadModel["projects"][number]>,
-): OrchestrationReadModel["projects"][number] {
-  return {
-    id: ProjectId.make("project-1"),
-    title: "Project",
-    workspaceRoot: "/tmp/project",
-    defaultModelSelection: {
-      provider: "codex",
-      model: "gpt-5.3-codex",
-    },
-    createdAt: "2026-02-27T00:00:00.000Z",
-    updatedAt: "2026-02-27T00:00:00.000Z",
-    deletedAt: null,
-    scripts: [],
-    ...overrides,
-  };
-}
+    const first = selectThreadByRef(state, ref);
+    const second = selectThreadByRef(state, ref);
+
+    expect(first).toBeDefined();
+    expect(second).toBe(first);
+    expect(second?.messages).toBe(first?.messages);
+    expect(second?.activities).toBe(first?.activities);
+    expect(second?.proposedPlans).toBe(first?.proposedPlans);
+    expect(second?.turnDiffSummaries).toBe(first?.turnDiffSummaries);
+  });
+
+  it("reuses the derived thread when the app state wrapper changes but thread data does not", () => {
+    const thread = makeThread({
+      messages: [
+        {
+          id: MessageId.make("message-1"),
+          role: "assistant",
+          text: "done",
+          createdAt: "2026-02-13T00:01:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const state = makeState(thread);
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+    const wrappedState: AppState = {
+      ...state,
+      environmentStateById: { ...state.environmentStateById },
+    };
+
+    const first = selectThreadByRef(state, ref);
+    const second = selectThreadByRef(wrappedState, ref);
+
+    expect(second).toBe(first);
+  });
+
+  it("updates the derived thread when the underlying thread data changes", () => {
+    const thread = makeThread();
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+    const firstState = makeState(thread);
+    const secondState = makeState({
+      ...thread,
+      messages: [
+        {
+          id: MessageId.make("message-2"),
+          role: "user",
+          text: "new",
+          createdAt: "2026-02-13T00:04:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+
+    const first = selectThreadByRef(firstState, ref);
+    const second = selectThreadByRef(secondState, ref);
+
+    expect(second).not.toBe(first);
+    expect(second?.messages).toHaveLength(1);
+    expect(second?.messages[0]?.text).toBe("new");
+  });
+
+  it("checks thread existence without materializing the full thread", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+
+    expect(selectThreadExistsByRef(state, ref)).toBe(true);
+    expect(
+      selectThreadExistsByRef(
+        state,
+        scopeThreadRef(thread.environmentId, ThreadId.make("missing")),
+      ),
+    ).toBe(false);
+    expect(selectThreadExistsByRef(state, null)).toBe(false);
+  });
+});
 
 describe("setThreadBranch", () => {
   it("updates only the scoped thread environment", () => {
@@ -351,159 +404,6 @@ describe("setThreadBranch", () => {
     expect(
       environmentStateOf(next, remoteEnvironmentId).threadShellById[sharedThreadId]?.worktreePath,
     ).toBe("/tmp/remote-worktree");
-  });
-});
-
-describe("store read model sync", () => {
-  it("marks bootstrap complete after snapshot sync", () => {
-    const initialState = withActiveEnvironmentState(
-      localEnvironmentStateOf(makeState(makeThread())),
-      {
-        bootstrapComplete: false,
-      },
-    );
-
-    const next = syncServerReadModel(
-      initialState,
-      makeReadModel(makeReadModelThread({})),
-      localEnvironmentId,
-    );
-
-    expect(localEnvironmentStateOf(next).bootstrapComplete).toBe(true);
-  });
-
-  it("preserves claude model slugs without an active session", () => {
-    const initialState = makeState(makeThread());
-    const readModel = makeReadModel(
-      makeReadModelThread({
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-6",
-        },
-      }),
-    );
-
-    const next = syncServerReadModel(initialState, readModel, localEnvironmentId);
-
-    expect(threadsOf(next)[0]?.modelSelection.model).toBe("claude-opus-4-6");
-  });
-
-  it("resolves claude aliases when session provider is claudeAgent", () => {
-    const initialState = makeState(makeThread());
-    const readModel = makeReadModel(
-      makeReadModelThread({
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "sonnet",
-        },
-        session: {
-          threadId: ThreadId.make("thread-1"),
-          status: "ready",
-          providerName: "claudeAgent",
-          runtimeMode: "approval-required",
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: "2026-02-27T00:00:00.000Z",
-        },
-      }),
-    );
-
-    const next = syncServerReadModel(initialState, readModel, localEnvironmentId);
-
-    expect(threadsOf(next)[0]?.modelSelection.model).toBe("claude-sonnet-4-6");
-  });
-
-  it("preserves project and thread updatedAt timestamps from the read model", () => {
-    const initialState = makeState(makeThread());
-    const readModel = makeReadModel(
-      makeReadModelThread({
-        updatedAt: "2026-02-27T00:05:00.000Z",
-      }),
-    );
-
-    const next = syncServerReadModel(initialState, readModel, localEnvironmentId);
-
-    expect(projectsOf(next)[0]?.updatedAt).toBe("2026-02-27T00:00:00.000Z");
-    expect(threadsOf(next)[0]?.updatedAt).toBe("2026-02-27T00:05:00.000Z");
-  });
-
-  it("maps archivedAt from the read model", () => {
-    const initialState = makeState(makeThread());
-    const archivedAt = "2026-02-28T00:00:00.000Z";
-    const next = syncServerReadModel(
-      initialState,
-      makeReadModel(
-        makeReadModelThread({
-          archivedAt,
-        }),
-      ),
-      localEnvironmentId,
-    );
-
-    expect(threadsOf(next)[0]?.archivedAt).toBe(archivedAt);
-  });
-
-  it("replaces projects using snapshot order during recovery", () => {
-    const project1 = ProjectId.make("project-1");
-    const project2 = ProjectId.make("project-2");
-    const project3 = ProjectId.make("project-3");
-    const initialState: AppState = makeEmptyState({
-      projectIds: [project2, project1],
-      projectById: {
-        [project2]: {
-          id: project2,
-          environmentId: localEnvironmentId,
-          name: "Project 2",
-          cwd: "/tmp/project-2",
-          defaultModelSelection: {
-            provider: "codex",
-            model: DEFAULT_MODEL_BY_PROVIDER.codex,
-          },
-          createdAt: "2026-02-27T00:00:00.000Z",
-          updatedAt: "2026-02-27T00:00:00.000Z",
-          scripts: [],
-        },
-        [project1]: {
-          id: project1,
-          environmentId: localEnvironmentId,
-          name: "Project 1",
-          cwd: "/tmp/project-1",
-          defaultModelSelection: {
-            provider: "codex",
-            model: DEFAULT_MODEL_BY_PROVIDER.codex,
-          },
-          createdAt: "2026-02-27T00:00:00.000Z",
-          updatedAt: "2026-02-27T00:00:00.000Z",
-          scripts: [],
-        },
-      },
-    });
-    const readModel: OrchestrationReadModel = {
-      snapshotSequence: 2,
-      updatedAt: "2026-02-27T00:00:00.000Z",
-      projects: [
-        makeReadModelProject({
-          id: project1,
-          title: "Project 1",
-          workspaceRoot: "/tmp/project-1",
-        }),
-        makeReadModelProject({
-          id: project2,
-          title: "Project 2",
-          workspaceRoot: "/tmp/project-2",
-        }),
-        makeReadModelProject({
-          id: project3,
-          title: "Project 3",
-          workspaceRoot: "/tmp/project-3",
-        }),
-      ],
-      threads: [],
-    };
-
-    const next = syncServerReadModel(initialState, readModel, localEnvironmentId);
-
-    expect(projectsOf(next).map((project) => project.id)).toEqual([project1, project2, project3]);
   });
 });
 

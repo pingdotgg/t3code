@@ -9,7 +9,11 @@
 import type {
   OrchestrationCheckpointSummary,
   OrchestrationProject,
+  OrchestrationProjectShell,
   OrchestrationReadModel,
+  OrchestrationShellSnapshot,
+  OrchestrationThread,
+  OrchestrationThreadShell,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -45,6 +49,17 @@ export interface ProjectionSnapshotQueryShape {
   readonly getSnapshot: () => Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>;
 
   /**
+   * Read the latest orchestration shell snapshot.
+   *
+   * Returns only projects and thread shell summaries so clients can bootstrap
+   * lightweight navigation state without hydrating every thread body.
+   */
+  readonly getShellSnapshot: () => Effect.Effect<
+    OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * Read aggregate projection counts without hydrating the full read model.
    */
   readonly getCounts: () => Effect.Effect<ProjectionSnapshotCounts, ProjectionRepositoryError>;
@@ -55,6 +70,13 @@ export interface ProjectionSnapshotQueryShape {
   readonly getActiveProjectByWorkspaceRoot: (
     workspaceRoot: string,
   ) => Effect.Effect<Option.Option<OrchestrationProject>, ProjectionRepositoryError>;
+
+  /**
+   * Read a single active project shell row by id.
+   */
+  readonly getProjectShellById: (
+    projectId: ProjectId,
+  ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectionRepositoryError>;
 
   /**
    * Read the earliest active thread for a project.
@@ -69,6 +91,20 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<ProjectionThreadCheckpointContext>, ProjectionRepositoryError>;
+
+  /**
+   * Read a single active thread shell row by id.
+   */
+  readonly getThreadShellById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
+
+  /**
+   * Read a single active thread detail snapshot by id.
+   */
+  readonly getThreadDetailById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
 }
 
 /**

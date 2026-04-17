@@ -9,6 +9,7 @@
 import {
   IsoDateTime,
   ModelSelection,
+  NonNegativeInt,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -33,6 +34,10 @@ export const ProjectionThread = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
+  latestUserMessageAt: Schema.NullOr(IsoDateTime),
+  pendingApprovalCount: NonNegativeInt,
+  pendingUserInputCount: NonNegativeInt,
+  hasActionableProposedPlan: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

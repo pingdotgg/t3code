@@ -8,7 +8,7 @@ import {
   launchDetached,
   resolveAvailableEditors,
   resolveEditorLaunch,
-} from "./open";
+} from "./open.ts";
 
 it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
   it.effect("returns commands for command-based editors", () =>
@@ -40,6 +40,16 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       assert.deepEqual(traeLaunch, {
         command: "trae",
         args: ["/tmp/workspace"],
+      });
+
+      const kiroLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "kiro" },
+        "darwin",
+        { PATH: "" },
+      );
+      assert.deepEqual(kiroLaunch, {
+        command: "kiro",
+        args: ["ide", "/tmp/workspace"],
       });
 
       const vscodeLaunch = yield* resolveEditorLaunch(
@@ -120,6 +130,16 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       assert.deepEqual(traeLineAndColumn, {
         command: "trae",
         args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
+      });
+
+      const kiroLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "kiro" },
+        "darwin",
+        { PATH: "" },
+      );
+      assert.deepEqual(kiroLineAndColumn, {
+        command: "kiro",
+        args: ["ide", "--goto", "/tmp/workspace/src/open.ts:71:5"],
       });
 
       const vscodeLineAndColumn = yield* resolveEditorLaunch(
@@ -354,6 +374,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editors-" });
 
       yield* fs.writeFileString(path.join(dir, "trae.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "kiro.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "code-insiders.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "codium.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "explorer.CMD"), "MZ");
@@ -361,7 +382,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
         PATH: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
-      assert.deepEqual(editors, ["trae", "vscode-insiders", "vscodium", "file-manager"]);
+      assert.deepEqual(editors, ["trae", "kiro", "vscode-insiders", "vscodium", "file-manager"]);
     }),
   );
 
