@@ -2108,9 +2108,7 @@ export function ConnectionsSettings() {
                               </span>
                               <Input
                                 value={savedBackendSshUsername}
-                                onChange={(event) =>
-                                  setSavedBackendSshUsername(event.target.value)
-                                }
+                                onChange={(event) => setSavedBackendSshUsername(event.target.value)}
                                 placeholder="julius"
                                 disabled={isAddingSavedBackend}
                                 spellCheck={false}

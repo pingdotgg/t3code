@@ -53,7 +53,11 @@ import type {
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
 import type { EnvironmentId } from "./baseSchemas.ts";
-import type { AuthBearerBootstrapResult, AuthSessionState, AuthWebSocketTokenResult } from "./auth.ts";
+import type {
+  AuthBearerBootstrapResult,
+  AuthSessionState,
+  AuthWebSocketTokenResult,
+} from "./auth.ts";
 import type { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
 import type { ExecutionEnvironmentDescriptor } from "./environment.ts";
