@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
 import { pathToFileURL } from "node:url";
 
@@ -297,6 +297,28 @@ export async function findAvailablePort(): Promise<number> {
   return port;
 }
 
+function detectMacosQuarantineHint(binaryPath: string): string | null {
+  try {
+    const resolvedPath = execFileSync("which", [binaryPath], {
+      encoding: "utf8",
+      timeout: 3_000,
+    }).trim();
+    const xattr = execFileSync("xattr", ["-l", resolvedPath], {
+      encoding: "utf8",
+      timeout: 3_000,
+    });
+    if (xattr.includes("com.apple.quarantine")) {
+      return (
+        `macOS quarantine is blocking the OpenCode binary. ` +
+        `Run: xattr -d com.apple.quarantine ${resolvedPath}`
+      );
+    }
+  } catch {
+    // Best-effort detection — don't fail the original error path.
+  }
+  return null;
+}
+
 export async function startOpenCodeServerProcess(input: {
   readonly binaryPath: string;
   readonly port?: number;
@@ -367,10 +389,15 @@ export async function startOpenCodeServerProcess(input: {
       const exitReason = signal
         ? `signal: ${signal}`
         : `code: ${code ?? "unknown"}`;
+      const hint =
+        signal === "SIGKILL" && process.platform === "darwin"
+          ? detectMacosQuarantineHint(input.binaryPath)
+          : null;
       reject(
         new Error(
           [
             `OpenCode server exited before startup completed (${exitReason}).`,
+            hint,
             stdout.trim() ? `stdout:\n${stdout.trim()}` : null,
             stderr.trim() ? `stderr:\n${stderr.trim()}` : null,
           ]

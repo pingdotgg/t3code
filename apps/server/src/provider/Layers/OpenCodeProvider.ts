@@ -103,6 +103,14 @@ function formatOpenCodeProbeError(input: {
     };
   }
 
+  if (lower.includes("quarantine")) {
+    return {
+      installed: true,
+      message:
+        "macOS is blocking the OpenCode binary (quarantine). Run `xattr -d com.apple.quarantine $(which opencode)` to fix this.",
+    };
+  }
+
   return {
     installed: true,
     message: detail
