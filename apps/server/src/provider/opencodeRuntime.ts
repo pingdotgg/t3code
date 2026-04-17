@@ -340,7 +340,7 @@ export async function startOpenCodeServerProcess(input: {
       child.stdout.off("data", onStdout);
       child.stderr.off("data", onStderr);
       child.off("error", onError);
-      child.off("exit", onExit);
+      child.off("close", onClose);
     };
 
     const onStdout = (chunk: string) => {
@@ -362,12 +362,15 @@ export async function startOpenCodeServerProcess(input: {
       reject(error);
     };
 
-    const onExit = (code: number | null) => {
+    const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
       cleanup();
+      const exitReason = signal
+        ? `signal: ${signal}`
+        : `code: ${code ?? "unknown"}`;
       reject(
         new Error(
           [
-            `OpenCode server exited before startup completed (code: ${code ?? "unknown"}).`,
+            `OpenCode server exited before startup completed (${exitReason}).`,
             stdout.trim() ? `stdout:\n${stdout.trim()}` : null,
             stderr.trim() ? `stderr:\n${stderr.trim()}` : null,
           ]
@@ -380,7 +383,7 @@ export async function startOpenCodeServerProcess(input: {
     child.stdout.on("data", onStdout);
     child.stderr.on("data", onStderr);
     child.once("error", onError);
-    child.once("exit", onExit);
+    child.once("close", onClose);
   });
 
   return {
