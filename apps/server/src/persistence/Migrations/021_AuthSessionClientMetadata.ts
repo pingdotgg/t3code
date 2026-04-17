@@ -4,6 +4,18 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  const existingTables = yield* sql<{ readonly name: string }>`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN ('auth_pairing_links', 'auth_sessions')
+  `;
+  const tableNames = new Set(existingTables.map((table) => table.name));
+
+  if (!tableNames.has("auth_pairing_links") || !tableNames.has("auth_sessions")) {
+    return;
+  }
+
   const pairingLinkColumns = yield* sql<{ readonly name: string }>`
     PRAGMA table_info(auth_pairing_links)
   `;

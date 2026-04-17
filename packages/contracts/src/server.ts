@@ -81,6 +81,28 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+const ServerProviderUsagePercent = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)).check(
+  Schema.isLessThanOrEqualTo(100),
+);
+
+export const ServerProviderUsageWindow = Schema.Struct({
+  kind: Schema.Literals(["session", "weekly"]),
+  label: TrimmedNonEmptyString,
+  usedPercent: ServerProviderUsagePercent,
+  resetsAt: Schema.optional(IsoDateTime),
+  windowDurationMins: Schema.optional(NonNegativeInt),
+});
+export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
+
+export const ServerProviderUsageLimits = Schema.Struct({
+  source: Schema.Literals(["codexAppServer", "claudeStatusProbe"]),
+  available: Schema.Boolean,
+  reason: Schema.optional(TrimmedNonEmptyString),
+  windows: Schema.Array(ServerProviderUsageWindow),
+  checkedAt: IsoDateTime,
+});
+export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
+
 export const ServerProvider = Schema.Struct({
   provider: ProviderKind,
   enabled: Schema.Boolean,
@@ -95,6 +117,7 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  usageLimits: Schema.optional(ServerProviderUsageLimits),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

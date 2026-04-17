@@ -1,7 +1,12 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { ServerProviderSkill, ServerProviderUsageLimits } from "@t3tools/contracts";
 import { readCodexAccountSnapshot, type CodexAccountSnapshot } from "./codexAccount.ts";
+import {
+  makeUsageLimitsSnapshot,
+  toIsoDateTimeFromUnixSeconds,
+  type RawUsageWindowInput,
+} from "./providerUsageLimits.ts";
 
 interface JsonRpcProbeResponse {
   readonly id?: unknown;
@@ -14,6 +19,17 @@ interface JsonRpcProbeResponse {
 export interface CodexDiscoverySnapshot {
   readonly account: CodexAccountSnapshot;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly rateLimits?: CodexRateLimitsSnapshot;
+}
+
+export interface CodexRateLimitWindowSnapshot {
+  readonly usedPercent: number;
+  readonly windowDurationMins?: number;
+  readonly resetsAt?: string;
+}
+
+export interface CodexRateLimitsSnapshot {
+  readonly windows: ReadonlyArray<CodexRateLimitWindowSnapshot>;
 }
 
 function readErrorMessage(response: JsonRpcProbeResponse): string | undefined {
@@ -35,6 +51,86 @@ function readString(value: unknown): string | undefined {
 function nonEmptyTrimmed(value: unknown): string | undefined {
   const candidate = readString(value)?.trim();
   return candidate ? candidate : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function collectCodexRateLimitWindows(value: unknown): ReadonlyArray<CodexRateLimitWindowSnapshot> {
+  const seen = new Set<object>();
+  const visit = (candidate: unknown): ReadonlyArray<CodexRateLimitWindowSnapshot> => {
+    if (Array.isArray(candidate)) {
+      return candidate.flatMap(visit);
+    }
+
+    const record = readObject(candidate);
+    if (!record) {
+      return [];
+    }
+    if (seen.has(record)) {
+      return [];
+    }
+    seen.add(record);
+
+    const usedPercent = readNumber(record.usedPercent);
+    if (usedPercent !== undefined) {
+      const windowDurationMins = readNumber(record.windowDurationMins);
+      const resetsAt = toIsoDateTimeFromUnixSeconds(readNumber(record.resetsAt));
+      return [
+        {
+          usedPercent,
+          ...(windowDurationMins !== undefined ? { windowDurationMins } : {}),
+          ...(resetsAt ? { resetsAt } : {}),
+        },
+      ];
+    }
+
+    return Object.values(record).flatMap(visit);
+  };
+
+  const deduped = new Map<string, CodexRateLimitWindowSnapshot>();
+  for (const window of visit(value)) {
+    const key = JSON.stringify(window);
+    if (!deduped.has(key)) {
+      deduped.set(key, window);
+    }
+  }
+  return [...deduped.values()];
+}
+
+export function readCodexRateLimitsSnapshot(result: unknown): CodexRateLimitsSnapshot | undefined {
+  const record = readObject(result);
+  const preferred = readObject(readObject(record?.rateLimitsByLimitId)?.codex);
+  const candidate =
+    preferred?.rateLimits ??
+    record?.rateLimits ??
+    preferred ??
+    (record && readNumber(record.usedPercent) !== undefined ? record : undefined);
+  const windows = collectCodexRateLimitWindows(candidate);
+  return windows.length > 0 ? { windows } : undefined;
+}
+
+export function normalizeCodexUsageLimits(input: {
+  readonly checkedAt: string;
+  readonly rateLimits?: CodexRateLimitsSnapshot;
+}): ServerProviderUsageLimits {
+  const windows: RawUsageWindowInput[] =
+    input.rateLimits?.windows.map((window) => ({
+      label: "Codex quota window",
+      usedPercent: window.usedPercent,
+      ...(window.resetsAt ? { resetsAt: window.resetsAt } : {}),
+      ...(typeof window.windowDurationMins === "number"
+        ? { windowDurationMins: window.windowDurationMins }
+        : {}),
+    })) ?? [];
+
+  return makeUsageLimitsSnapshot({
+    source: "codexAppServer",
+    checkedAt: input.checkedAt,
+    windows,
+    unavailableReason: "No Codex subscription quota windows reported.",
+  });
 }
 
 function parseCodexSkillsResult(result: unknown, cwd: string): ReadonlyArray<ServerProviderSkill> {
@@ -105,6 +201,68 @@ export function killCodexChildProcess(child: ChildProcessWithoutNullStreams): vo
   child.kill();
 }
 
+interface CodexDiscoveryProbeState {
+  account?: CodexAccountSnapshot;
+  skills?: ReadonlyArray<ServerProviderSkill>;
+  rateLimits: CodexRateLimitsSnapshot | undefined;
+  rateLimitsResponseReceived: boolean;
+}
+
+function isCodexDiscoveryComplete(state: CodexDiscoveryProbeState): boolean {
+  return Boolean(state.account) && state.skills !== undefined && state.rateLimitsResponseReceived;
+}
+
+function sendCodexDiscoveryRequests(writeMessage: (message: unknown) => void, cwd: string): void {
+  writeMessage({ method: "initialized" });
+  writeMessage({ id: 2, method: "skills/list", params: { cwds: [cwd] } });
+  writeMessage({ id: 3, method: "account/read", params: {} });
+  writeMessage({ id: 4, method: "account/rateLimits/read", params: {} });
+}
+
+function applyCodexDiscoveryResponse(input: {
+  readonly response: JsonRpcProbeResponse;
+  readonly cwd: string;
+  readonly state: CodexDiscoveryProbeState;
+  readonly writeMessage: (message: unknown) => void;
+}): { readonly shouldResolve: boolean } {
+  const { response, cwd, state, writeMessage } = input;
+
+  if (response.id === 1) {
+    const errorMessage = readErrorMessage(response);
+    if (errorMessage) {
+      throw new Error(`initialize failed: ${errorMessage}`);
+    }
+    sendCodexDiscoveryRequests(writeMessage, cwd);
+    return { shouldResolve: false };
+  }
+
+  if (response.id === 2) {
+    const errorMessage = readErrorMessage(response);
+    state.skills = errorMessage ? [] : parseCodexSkillsResult(response.result, cwd);
+    return { shouldResolve: isCodexDiscoveryComplete(state) };
+  }
+
+  if (response.id === 3) {
+    const errorMessage = readErrorMessage(response);
+    if (errorMessage) {
+      throw new Error(`account/read failed: ${errorMessage}`);
+    }
+    state.account = readCodexAccountSnapshot(response.result);
+    return { shouldResolve: isCodexDiscoveryComplete(state) };
+  }
+
+  if (response.id === 4) {
+    const errorMessage = readErrorMessage(response);
+    if (!errorMessage) {
+      state.rateLimits = readCodexRateLimitsSnapshot(response.result);
+    }
+    state.rateLimitsResponseReceived = true;
+    return { shouldResolve: isCodexDiscoveryComplete(state) };
+  }
+
+  return { shouldResolve: false };
+}
+
 export async function probeCodexDiscovery(input: {
   readonly binaryPath: string;
   readonly homePath?: string;
@@ -123,8 +281,10 @@ export async function probeCodexDiscovery(input: {
     const output = readline.createInterface({ input: child.stdout });
 
     let completed = false;
-    let account: CodexAccountSnapshot | undefined;
-    let skills: ReadonlyArray<ServerProviderSkill> | undefined;
+    const state: CodexDiscoveryProbeState = {
+      rateLimits: undefined,
+      rateLimitsResponseReceived: false,
+    };
 
     const cleanup = () => {
       output.removeAllListeners();
@@ -152,11 +312,16 @@ export async function probeCodexDiscovery(input: {
       );
 
     const maybeResolve = () => {
-      if (account && skills !== undefined) {
-        const resolvedAccount = account;
-        const resolvedSkills = skills;
-        finish(() => resolve({ account: resolvedAccount, skills: resolvedSkills }));
+      if (!isCodexDiscoveryComplete(state)) {
+        return;
       }
+      finish(() =>
+        resolve({
+          account: state.account!,
+          skills: state.skills!,
+          ...(state.rateLimits ? { rateLimits: state.rateLimits } : {}),
+        }),
+      );
     };
 
     if (input.signal?.aborted) {
@@ -189,36 +354,20 @@ export async function probeCodexDiscovery(input: {
         return;
       }
 
-      const response = parsed as JsonRpcProbeResponse;
-      if (response.id === 1) {
-        const errorMessage = readErrorMessage(response);
-        if (errorMessage) {
-          fail(new Error(`initialize failed: ${errorMessage}`));
+      try {
+        const response = parsed as JsonRpcProbeResponse;
+        const next = applyCodexDiscoveryResponse({
+          response,
+          cwd: input.cwd,
+          state,
+          writeMessage,
+        });
+        if (!next.shouldResolve) {
           return;
         }
-
-        writeMessage({ method: "initialized" });
-        writeMessage({ id: 2, method: "skills/list", params: { cwds: [input.cwd] } });
-        writeMessage({ id: 3, method: "account/read", params: {} });
-        return;
-      }
-
-      if (response.id === 2) {
-        const errorMessage = readErrorMessage(response);
-        skills = errorMessage ? [] : parseCodexSkillsResult(response.result, input.cwd);
         maybeResolve();
-        return;
-      }
-
-      if (response.id === 3) {
-        const errorMessage = readErrorMessage(response);
-        if (errorMessage) {
-          fail(new Error(`account/read failed: ${errorMessage}`));
-          return;
-        }
-
-        account = readCodexAccountSnapshot(response.result);
-        maybeResolve();
+      } catch (error) {
+        fail(error);
       }
     });
 

@@ -265,6 +265,96 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ),
       );
 
+      it.effect("includes codex subscription usage windows", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(
+            () =>
+              Effect.succeed({
+                type: "chatgpt" as const,
+                planType: "pro" as const,
+                sparkEnabled: true,
+              }),
+            undefined,
+            ({ checkedAt }) =>
+              Effect.succeed({
+                source: "codexAppServer" as const,
+                available: true,
+                checkedAt,
+                windows: [
+                  {
+                    kind: "session",
+                    label: "Session",
+                    usedPercent: 28,
+                  },
+                  {
+                    kind: "weekly",
+                    label: "Weekly",
+                    usedPercent: 61,
+                  },
+                ],
+              }),
+          );
+
+          assert.deepStrictEqual(
+            status.usageLimits?.windows.map((window) => window.kind),
+            ["session", "weekly"],
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("returns unavailable usage for codex api key accounts", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const status = yield* checkCodexProviderStatus(
+            () =>
+              Effect.succeed({
+                type: "apiKey" as const,
+                planType: null,
+                sparkEnabled: false,
+              }),
+            undefined,
+            ({ checkedAt }) =>
+              Effect.succeed({
+                source: "codexAppServer" as const,
+                available: true,
+                checkedAt,
+                windows: [
+                  {
+                    kind: "session",
+                    label: "Session",
+                    usedPercent: 99,
+                  },
+                ],
+              }),
+          );
+
+          assert.strictEqual(status.usageLimits?.available, false);
+          assert.strictEqual(
+            status.usageLimits?.reason,
+            "Usage limits unavailable for API key Codex accounts.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("hides spark from codex models for unsupported chatgpt plans", () =>
         Effect.gen(function* () {
           yield* withTempCodexHome();
@@ -1123,6 +1213,90 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               input: { hint: "component-or-screen" },
             },
           ]);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("includes parsed claude usage windows", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            () => Effect.succeed("maxplan"),
+            undefined,
+            ({ checkedAt }) =>
+              Effect.succeed({
+                source: "claudeStatusProbe" as const,
+                available: true,
+                checkedAt,
+                windows: [
+                  {
+                    kind: "session",
+                    label: "Session",
+                    usedPercent: 35,
+                  },
+                  {
+                    kind: "weekly",
+                    label: "Weekly",
+                    usedPercent: 52,
+                  },
+                ],
+              }),
+          );
+
+          assert.deepStrictEqual(
+            status.usageLimits?.windows.map((window) => window.kind),
+            ["session", "weekly"],
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("keeps claude healthy when usage parsing fails", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            () => Effect.succeed("maxplan"),
+            undefined,
+            ({ checkedAt }) =>
+              Effect.succeed({
+                source: "claudeStatusProbe" as const,
+                available: false,
+                checkedAt,
+                reason: "Usage limits unavailable for this Claude account.",
+                windows: [],
+              }),
+          );
+
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.usageLimits?.available, false);
+          assert.strictEqual(
+            status.usageLimits?.reason,
+            "Usage limits unavailable for this Claude account.",
+          );
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

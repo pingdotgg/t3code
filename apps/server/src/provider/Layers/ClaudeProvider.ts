@@ -6,8 +6,9 @@ import type {
   ServerProviderAuth,
   ServerProviderSlashCommand,
   ServerProviderState,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
-import { Cache, Duration, Effect, Equal, Layer, Option, Result, Schema, Stream } from "effect";
+import { Cache, Duration, Effect, Equal, Layer, Option, Ref, Result, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import {
@@ -27,10 +28,12 @@ import {
   type CommandResult,
 } from "../providerSnapshot.ts";
 import { compareCliVersions } from "../cliVersion.ts";
+import { parseClaudeUsageLimitsOutput, probeClaudeUsageLimits } from "../claudeUsageProbe.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { ClaudeProvider } from "../Services/ClaudeProvider.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerSettingsError } from "@t3tools/contracts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = {
   reasoningEffortLevels: [],
@@ -516,6 +519,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   resolveSlashCommands?: (
     binaryPath: string,
   ) => Effect.Effect<ReadonlyArray<ServerProviderSlashCommand> | undefined>,
+  resolveUsageLimits?: (input: {
+    readonly binaryPath: string;
+    readonly launchArgs: string;
+    readonly checkedAt: string;
+  }) => Effect.Effect<ServerProviderUsageLimits | undefined>,
 ): Effect.fn.Return<
   ServerProvider,
   ServerSettingsError,
@@ -628,6 +636,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         )
       : undefined) ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
+  const resolvedUsageLimits =
+    (resolveUsageLimits
+      ? yield* resolveUsageLimits({
+          binaryPath: claudeSettings.binaryPath,
+          launchArgs: claudeSettings.launchArgs,
+          checkedAt,
+        }).pipe(Effect.orElseSucceed(() => undefined))
+      : undefined) ?? undefined;
 
   // ── Auth check + subscription detection ────────────────────────────
 
@@ -654,6 +670,20 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     subscriptionType = yield* resolveSubscriptionType(claudeSettings.binaryPath);
   }
 
+  const usageLimits =
+    normalizeClaudeAuthMethod(authMethod) === "apiKey"
+      ? makeUnavailableUsageLimits({
+          source: "claudeStatusProbe",
+          checkedAt,
+          reason: "Usage limits unavailable for Claude API key accounts.",
+        })
+      : (resolvedUsageLimits ??
+        makeUnavailableUsageLimits({
+          source: "claudeStatusProbe",
+          checkedAt,
+          reason: "Usage limits unavailable for this Claude account.",
+        }));
+
   // ── Handle auth results (same logic as before, adjusted models) ──
 
   if (Result.isFailure(authProbe)) {
@@ -673,6 +703,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           error instanceof Error
             ? `Could not verify Claude authentication status: ${error.message}.`
             : "Could not verify Claude authentication status.",
+        usageLimits,
       },
     });
   }
@@ -690,6 +721,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "warning",
         auth: { status: "unknown" },
         message: "Could not verify Claude authentication status. Timed out while running command.",
+        usageLimits,
       },
     });
   }
@@ -710,6 +742,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...parsed.auth,
         ...(authMetadata ? authMetadata : {}),
       },
+      usageLimits,
       ...(parsed.message
         ? { message: parsed.message }
         : opus47UpgradeMessage
@@ -764,12 +797,62 @@ export const ClaudeProviderLive = Layer.effect(
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const usageProbeStateRef = yield* Ref.make(
+      new Map<string, { rawOutput: string; fetchedAtMs: number; inFlight: boolean }>(),
+    );
+    const usageProbeTtlMs = 5 * 60 * 1000;
 
     const subscriptionProbeCache = yield* Cache.make({
       capacity: 1,
       timeToLive: Duration.minutes(5),
       lookup: (binaryPath: string) => probeClaudeCapabilities(binaryPath),
     });
+    const refreshUsageProbe = (key: string, binaryPath: string, launchArgs: string) =>
+      Effect.gen(function* () {
+        yield* Ref.update(usageProbeStateRef, (current) => {
+          const next = new Map(current);
+          const existing = next.get(key);
+          next.set(key, {
+            rawOutput: existing?.rawOutput ?? "",
+            fetchedAtMs: existing?.fetchedAtMs ?? 0,
+            inFlight: true,
+          });
+          return next;
+        });
+
+        const rawOutput = yield* Effect.tryPromise(() =>
+          probeClaudeUsageLimits({
+            binaryPath,
+            launchArgs,
+            cwd: process.cwd(),
+            checkedAt: "",
+          }),
+        ).pipe(
+          Effect.map((result) => result.rawOutput),
+          Effect.orElseSucceed(() => ""),
+        );
+
+        yield* Ref.update(usageProbeStateRef, (current) => {
+          const next = new Map(current);
+          next.set(key, {
+            rawOutput,
+            fetchedAtMs: Date.now(),
+            inFlight: false,
+          });
+          return next;
+        });
+      }).pipe(
+        Effect.ensuring(
+          Ref.update(usageProbeStateRef, (current) => {
+            const next = new Map(current);
+            const existing = next.get(key);
+            if (existing) {
+              next.set(key, { ...existing, inFlight: false });
+            }
+            return next;
+          }),
+        ),
+      );
 
     const checkProvider = checkClaudeProviderStatus(
       (binaryPath) =>
@@ -780,6 +863,33 @@ export const ClaudeProviderLive = Layer.effect(
         Cache.get(subscriptionProbeCache, binaryPath).pipe(
           Effect.map((probe) => probe?.slashCommands),
         ),
+      (input) =>
+        Effect.gen(function* () {
+          const key = JSON.stringify([input.binaryPath, input.launchArgs]);
+          const entry = (yield* Ref.get(usageProbeStateRef)).get(key);
+          const isFresh = entry !== undefined && Date.now() - entry.fetchedAtMs < usageProbeTtlMs;
+
+          if ((!entry || !isFresh) && !entry?.inFlight) {
+            yield* Effect.sync(() => {
+              void Effect.runPromiseExit(
+                refreshUsageProbe(key, input.binaryPath, input.launchArgs),
+              );
+            });
+          }
+
+          if (!entry) {
+            return makeUnavailableUsageLimits({
+              source: "claudeStatusProbe",
+              checkedAt: input.checkedAt,
+              reason: "Usage limits are still loading for this Claude account.",
+            });
+          }
+
+          return parseClaudeUsageLimitsOutput({
+            output: entry.rawOutput,
+            checkedAt: input.checkedAt,
+          });
+        }),
     ).pipe(
       Effect.provideService(ServerSettingsService, serverSettings),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
