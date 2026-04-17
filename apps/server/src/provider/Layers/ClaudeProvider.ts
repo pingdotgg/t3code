@@ -820,12 +820,13 @@ export const ClaudeProviderLive = Layer.effect(
           return next;
         });
 
+        const checkedAt = new Date().toISOString();
         const rawOutput = yield* Effect.tryPromise(() =>
           probeClaudeUsageLimits({
             binaryPath,
             launchArgs,
             cwd: process.cwd(),
-            checkedAt: "",
+            checkedAt,
           }),
         ).pipe(
           Effect.map((result) => result.rawOutput),

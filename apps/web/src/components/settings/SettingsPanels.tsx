@@ -280,7 +280,7 @@ function ProviderUsageLimitsBlock({ provider }: { provider: ServerProvider | und
 
         return (
           <div
-            key={`${window.kind}-${window.label}-${window.windowDurationMins ?? "na"}-${window.resetsAt ?? "na"}-${Math.round(window.usedPercent * 100)}`}
+            key={`${window.kind}-${window.label}-${window.windowDurationMins ?? "na"}-${window.resetsAt ?? "na"}-${Math.round(window.usedPercent)}`}
             className="space-y-1.5"
           >
             <div className="flex items-center justify-between gap-3 text-[11px]">
