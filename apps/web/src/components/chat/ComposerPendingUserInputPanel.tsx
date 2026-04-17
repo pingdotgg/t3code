@@ -124,7 +124,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }
 
   return (
-    <div className="px-4 py-3 sm:px-5">
+    <div dir="auto" className="px-4 py-3 sm:px-5">
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
           {prompt.questions.length > 1 ? (
@@ -137,9 +137,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           </span>
         </div>
       </div>
-      <p className="mt-1.5 text-sm text-foreground/90">{activeQuestion.question}</p>
+      <p dir="auto" className="mt-1.5 text-sm text-foreground/90">{activeQuestion.question}</p>
       {activeQuestion.multiSelect ? (
-        <p className="mt-1 text-xs text-muted-foreground/65">Select one or more options.</p>
+        <p dir="auto" className="mt-1 text-xs text-muted-foreground/65">Select one or more options.</p>
       ) : null}
       <div className="mt-3 space-y-1">
         {activeQuestion.options.map((option, index) => {
@@ -152,7 +152,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               disabled={isResponding}
               onClick={() => handleOptionSelection(activeQuestion.id, option.label)}
               className={cn(
-                "group flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150",
+                "group flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-start transition-all duration-150",
                 isSelected
                   ? "border-blue-500/40 bg-blue-500/8 text-foreground"
                   : "border-transparent bg-muted/20 text-foreground/80 hover:bg-muted/40 hover:border-border/40",
@@ -171,10 +171,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   {shortcutKey}
                 </kbd>
               ) : null}
-              <div className="min-w-0 flex-1">
-                <span className="text-sm font-medium">{option.label}</span>
+              <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+                <span dir="auto" className="text-sm font-medium">{option.label}</span>
                 {option.description && option.description !== option.label ? (
-                  <span className="ml-2 text-xs text-muted-foreground/50">
+                  <span dir="auto" className="text-xs text-muted-foreground/50">
                     {option.description}
                   </span>
                 ) : null}
