@@ -370,9 +370,32 @@ const buildAppUnderTest = (options?: {
       ...options?.config,
     };
     const layerConfig = Layer.succeed(ServerConfig, config);
+    const gitCoreLayer = Layer.mock(GitCore)({
+      isInsideWorkTree: () => Effect.succeed(false),
+      listWorkspaceFiles: () =>
+        Effect.succeed({
+          paths: [],
+          truncated: false,
+        }),
+      filterIgnoredPaths: (_cwd, relativePaths) => Effect.succeed(relativePaths),
+      ...options?.layers?.gitCore,
+    });
     const gitManagerLayer = Layer.mock(GitManager)({
       ...options?.layers?.gitManager,
     });
+    const workspaceEntriesLayer = WorkspaceEntriesLive.pipe(
+      Layer.provide(WorkspacePathsLive),
+      Layer.provideMerge(gitCoreLayer),
+    );
+    const workspaceAndProjectServicesLayer = Layer.mergeAll(
+      WorkspacePathsLive,
+      workspaceEntriesLayer,
+      WorkspaceFileSystemLive.pipe(
+        Layer.provide(WorkspacePathsLive),
+        Layer.provide(workspaceEntriesLayer),
+      ),
+      ProjectFaviconResolverLive,
+    );
     const gitStatusBroadcasterLayer = options?.layers?.gitStatusBroadcaster
       ? Layer.mock(GitStatusBroadcaster)({
           ...options.layers.gitStatusBroadcaster,
@@ -416,11 +439,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.open,
         }),
       ),
-      Layer.provide(
-        Layer.mock(GitCore)({
-          ...options?.layers?.gitCore,
-        }),
-      ),
+      Layer.provide(gitCoreLayer),
       Layer.provide(gitManagerLayer),
       Layer.provideMerge(gitStatusBroadcasterLayer),
       Layer.provide(
@@ -2013,6 +2032,58 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.isAtLeast(response.entries.length, 1);
       assert.isTrue(response.entries.some((entry) => entry.path === "needle-file.ts"));
+      assert.equal(response.truncated, false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.searchEntries excludes gitignored files", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-project-search-gitignored-",
+      });
+      yield* fs.writeFileString(path.join(workspaceDir, ".gitignore"), ".venv/\n");
+      yield* fs.makeDirectory(path.join(workspaceDir, ".venv", "lib"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, ".venv", "lib", "ignored-search-target.ts"),
+        "export const ignored = true;",
+      );
+      yield* fs.makeDirectory(path.join(workspaceDir, "src"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, "src", "tracked.ts"),
+        "export const ok = 1;",
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitCore: {
+            isInsideWorkTree: () => Effect.succeed(true),
+            listWorkspaceFiles: () =>
+              Effect.succeed({
+                paths: ["src/tracked.ts"],
+                truncated: false,
+              }),
+            filterIgnoredPaths: (_cwd, relativePaths) =>
+              Effect.succeed(
+                relativePaths.filter((relativePath) => !relativePath.startsWith(".venv/")),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsSearchEntries]({
+            cwd: workspaceDir,
+            query: "ignored-search-target",
+            limit: 10,
+          }),
+        ),
+      );
+
+      assert.equal(response.entries.length, 0);
       assert.equal(response.truncated, false);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

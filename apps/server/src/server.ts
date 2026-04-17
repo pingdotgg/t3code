@@ -185,13 +185,20 @@ const GitLayerLive = Layer.empty.pipe(
 
 const TerminalLayerLive = TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive));
 
+const WorkspaceEntriesLayerLive = WorkspaceEntriesLive.pipe(
+  Layer.provide(WorkspacePathsLive),
+  Layer.provideMerge(GitCoreLive),
+);
+
+const WorkspaceFileSystemLayerLive = WorkspaceFileSystemLive.pipe(
+  Layer.provide(WorkspacePathsLive),
+  Layer.provide(WorkspaceEntriesLayerLive),
+);
+
 const WorkspaceLayerLive = Layer.mergeAll(
   WorkspacePathsLive,
-  WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive)),
-  WorkspaceFileSystemLive.pipe(
-    Layer.provide(WorkspacePathsLive),
-    Layer.provide(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
-  ),
+  WorkspaceEntriesLayerLive,
+  WorkspaceFileSystemLayerLive,
 );
 
 const AuthLayerLive = ServerAuthLive.pipe(
