@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  buildSidebarProjectSnapshots,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -21,7 +20,9 @@ import {
   sortProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { EnvironmentId, OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { scopeProjectRef } from "@t3tools/client-runtime";
 import {
   DEFAULT_INTERACTION_MODE,
@@ -686,14 +687,18 @@ describe("buildSidebarProjectSnapshots", () => {
     });
 
     const grouped = buildSidebarProjectSnapshots({
-      orderedProjects: [localProject, remoteProject],
-      primaryEnvironmentId: localEnvironmentId,
-      savedEnvironmentRegistryById: {
-        [remoteEnvironmentId]: {
-          label: "Remote",
-        },
+      projects: [localProject, remoteProject],
+      settings: {
+        sidebarProjectGroupingMode: DEFAULT_CLIENT_SETTINGS.sidebarProjectGroupingMode,
+        sidebarProjectGroupingOverrides: DEFAULT_CLIENT_SETTINGS.sidebarProjectGroupingOverrides,
       },
-      savedEnvironmentRuntimeById: {},
+      primaryEnvironmentId: localEnvironmentId,
+      resolveEnvironmentLabel: (environmentId) => {
+        if (environmentId === remoteEnvironmentId) {
+          return "Remote";
+        }
+        return null;
+      },
     });
 
     expect(grouped).toHaveLength(1);
@@ -724,10 +729,13 @@ describe("buildSidebarProjectSnapshots", () => {
     });
 
     const grouped = buildSidebarProjectSnapshots({
-      orderedProjects: [localProject, remoteProject],
+      projects: [localProject, remoteProject],
+      settings: {
+        sidebarProjectGroupingMode: DEFAULT_CLIENT_SETTINGS.sidebarProjectGroupingMode,
+        sidebarProjectGroupingOverrides: DEFAULT_CLIENT_SETTINGS.sidebarProjectGroupingOverrides,
+      },
       primaryEnvironmentId: localEnvironmentId,
-      savedEnvironmentRegistryById: {},
-      savedEnvironmentRuntimeById: {},
+      resolveEnvironmentLabel: () => null,
     });
 
     expect(grouped).toHaveLength(2);

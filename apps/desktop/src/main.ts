@@ -58,6 +58,7 @@ import { showDesktopConfirmDialog } from "./confirmDialog";
 import { resolveDesktopServerExposure } from "./serverExposure";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
+import { doesVersionMatchDesktopUpdateChannel } from "./updateChannels";
 import { ServerListeningDetector } from "./serverListeningDetector";
 import {
   createInitialDesktopUpdateState,
@@ -159,6 +160,35 @@ const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linu
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 
+function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextMenuItem[] {
+  const normalizedItems: ContextMenuItem[] = [];
+
+  for (const sourceItem of source) {
+    if (typeof sourceItem.id !== "string" || typeof sourceItem.label !== "string") {
+      continue;
+    }
+
+    const normalizedItem: ContextMenuItem = {
+      id: sourceItem.id,
+      label: sourceItem.label,
+      destructive: sourceItem.destructive === true,
+      disabled: sourceItem.disabled === true,
+    };
+
+    if (sourceItem.children) {
+      const normalizedChildren = normalizeContextMenuItems(sourceItem.children);
+      if (normalizedChildren.length === 0) {
+        continue;
+      }
+      normalizedItem.children = normalizedChildren;
+    }
+
+    normalizedItems.push(normalizedItem);
+  }
+
+  return normalizedItems;
+}
+
 type WindowTitleBarOptions = Pick<
   BrowserWindowConstructorOptions,
   "titleBarOverlay" | "titleBarStyle" | "trafficLightPosition"
@@ -190,7 +220,7 @@ let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
 let backendObservabilitySettings = readPersistedBackendObservabilitySettings();
-let desktopSettings = readDesktopSettings(DESKTOP_SETTINGS_PATH);
+let desktopSettings = readDesktopSettings(DESKTOP_SETTINGS_PATH, app.getVersion());
 let desktopServerExposureMode: DesktopServerExposureMode = desktopSettings.serverExposureMode;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
@@ -1140,7 +1170,7 @@ function applyAutoUpdaterChannel(channel: DesktopUpdateChannel): void {
   autoUpdater.allowPrerelease = channel === "nightly";
   autoUpdater.allowDowngrade = channel === "nightly";
   console.info(
-    `[desktop-updater] Using update channel '${channel}' (allowPrerelease=${channel === "nightly"}).`,
+    `[desktop-updater] Using update channel '${channel}' (allowPrerelease=${channel === "nightly"}, allowDowngrade=${channel === "nightly"}).`,
   );
 }
 
@@ -1285,6 +1315,15 @@ function configureAutoUpdater(): void {
     console.info("[desktop-updater] Looking for updates...");
   });
   autoUpdater.on("update-available", (info) => {
+    if (!doesVersionMatchDesktopUpdateChannel(info.version, updateState.channel)) {
+      console.info(
+        `[desktop-updater] Ignoring ${info.version} because it does not match the selected '${updateState.channel}' channel.`,
+      );
+      setUpdateState(reduceDesktopUpdateStateOnNoUpdate(updateState, new Date().toISOString()));
+      lastLoggedDownloadMilestone = -1;
+      return;
+    }
+
     setUpdateState(
       reduceDesktopUpdateStateOnUpdateAvailable(
         updateState,
@@ -1705,14 +1744,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTEXT_MENU_CHANNEL,
     async (_event, items: ContextMenuItem[], position?: { x: number; y: number }) => {
-      const normalizedItems = items
-        .filter((item) => typeof item.id === "string" && typeof item.label === "string")
-        .map((item) => ({
-          id: item.id,
-          label: item.label,
-          destructive: item.destructive === true,
-          disabled: item.disabled === true,
-        }));
+      const normalizedItems = normalizeContextMenuItems(items);
       if (normalizedItems.length === 0) {
         return null;
       }
@@ -1733,28 +1765,37 @@ function registerIpcHandlers(): void {
       if (!window) return null;
 
       return new Promise<string | null>((resolve) => {
-        const template: MenuItemConstructorOptions[] = [];
-        let hasInsertedDestructiveSeparator = false;
-        for (const item of normalizedItems) {
-          if (item.destructive && !hasInsertedDestructiveSeparator && template.length > 0) {
-            template.push({ type: "separator" });
-            hasInsertedDestructiveSeparator = true;
-          }
-          const itemOption: MenuItemConstructorOptions = {
-            label: item.label,
-            enabled: !item.disabled,
-            click: () => resolve(item.id),
-          };
-          if (item.destructive) {
-            const destructiveIcon = getDestructiveMenuIcon();
-            if (destructiveIcon) {
-              itemOption.icon = destructiveIcon;
+        const buildTemplate = (
+          entries: readonly ContextMenuItem[],
+        ): MenuItemConstructorOptions[] => {
+          const template: MenuItemConstructorOptions[] = [];
+          let hasInsertedDestructiveSeparator = false;
+          for (const item of entries) {
+            if (item.destructive && !hasInsertedDestructiveSeparator && template.length > 0) {
+              template.push({ type: "separator" });
+              hasInsertedDestructiveSeparator = true;
             }
+            const itemOption: MenuItemConstructorOptions = {
+              label: item.label,
+              enabled: !item.disabled,
+            };
+            if (item.children && item.children.length > 0) {
+              itemOption.submenu = buildTemplate(item.children);
+            } else {
+              itemOption.click = () => resolve(item.id);
+            }
+            if (item.destructive && (!item.children || item.children.length === 0)) {
+              const destructiveIcon = getDestructiveMenuIcon();
+              if (destructiveIcon) {
+                itemOption.icon = destructiveIcon;
+              }
+            }
+            template.push(itemOption);
           }
-          template.push(itemOption);
-        }
+          return template;
+        };
 
-        const menu = Menu.buildFromTemplate(template);
+        const menu = Menu.buildFromTemplate(buildTemplate(normalizedItems));
         menu.popup({
           window,
           ...popupPosition,
@@ -1792,12 +1833,13 @@ function registerIpcHandlers(): void {
     }
 
     const nextChannel = rawChannel as DesktopUpdateChannel;
-    if (nextChannel === desktopSettings.updateChannel) {
-      return updateState;
-    }
 
     desktopSettings = setDesktopUpdateChannelPreference(desktopSettings, nextChannel);
     writeDesktopSettings(DESKTOP_SETTINGS_PATH, desktopSettings);
+
+    if (nextChannel === updateState.channel) {
+      return updateState;
+    }
 
     const enabled = shouldEnableAutoUpdates();
     setUpdateState(createBaseUpdateState(nextChannel, enabled));

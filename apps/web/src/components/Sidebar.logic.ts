@@ -1,15 +1,12 @@
 import * as React from "react";
-import { scopeProjectRef } from "@t3tools/client-runtime";
-import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import { deriveLogicalProjectKey } from "../logicalProject";
 import {
   getThreadSortTimestamp,
   sortThreads,
   toSortableTimestamp,
   type ThreadSortInput,
 } from "../lib/threadSort";
-import type { Project, SidebarThreadSummary, Thread } from "../types";
+import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 
@@ -19,13 +16,6 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
-export type SidebarEnvironmentPresence = "local-only" | "remote-only" | "mixed";
-export type SidebarProjectSnapshot = Project & {
-  projectKey: string;
-  environmentPresence: SidebarEnvironmentPresence;
-  memberProjectRefs: readonly ScopedProjectRef[];
-  remoteEnvironmentLabels: readonly string[];
-};
 type SidebarProject = {
   id: string;
   name: string;
@@ -72,92 +62,6 @@ type ThreadStatusInput = Pick<
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
   dispose: () => void;
-}
-
-type SavedEnvironmentRegistryLabel = {
-  label: string;
-};
-
-type SavedEnvironmentRuntimeDescriptor = {
-  descriptor?: {
-    label?: string | null;
-  } | null;
-};
-
-export function buildSidebarProjectSnapshots(input: {
-  orderedProjects: readonly Project[];
-  primaryEnvironmentId: EnvironmentId | null;
-  savedEnvironmentRegistryById: Record<string, SavedEnvironmentRegistryLabel | undefined>;
-  savedEnvironmentRuntimeById: Record<string, SavedEnvironmentRuntimeDescriptor | undefined>;
-}): SidebarProjectSnapshot[] {
-  const groupedMembers = new Map<string, Project[]>();
-  for (const project of input.orderedProjects) {
-    const logicalKey = deriveLogicalProjectKey(project);
-    const existing = groupedMembers.get(logicalKey);
-    if (existing) {
-      existing.push(project);
-    } else {
-      groupedMembers.set(logicalKey, [project]);
-    }
-  }
-
-  const result: SidebarProjectSnapshot[] = [];
-  const seen = new Set<string>();
-  for (const project of input.orderedProjects) {
-    const logicalKey = deriveLogicalProjectKey(project);
-    if (seen.has(logicalKey)) continue;
-    seen.add(logicalKey);
-
-    const members = groupedMembers.get(logicalKey);
-    if (!members || members.length === 0) continue;
-
-    const representative: Project | undefined =
-      (input.primaryEnvironmentId
-        ? members.find((entry) => entry.environmentId === input.primaryEnvironmentId)
-        : undefined) ?? members[0];
-    if (!representative) continue;
-
-    const hasLocal =
-      input.primaryEnvironmentId !== null &&
-      members.some((entry) => entry.environmentId === input.primaryEnvironmentId);
-    const hasRemote =
-      input.primaryEnvironmentId !== null
-        ? members.some((entry) => entry.environmentId !== input.primaryEnvironmentId)
-        : false;
-
-    const memberProjectRefs = members.map((entry) =>
-      scopeProjectRef(entry.environmentId, entry.id),
-    );
-    const remoteEnvironmentLabels = members
-      .filter(
-        (entry) =>
-          input.primaryEnvironmentId !== null && entry.environmentId !== input.primaryEnvironmentId,
-      )
-      .map((entry) => {
-        const runtime = input.savedEnvironmentRuntimeById[entry.environmentId];
-        const saved = input.savedEnvironmentRegistryById[entry.environmentId];
-        return runtime?.descriptor?.label ?? saved?.label ?? entry.environmentId;
-      });
-
-    result.push({
-      id: representative.id,
-      environmentId: representative.environmentId,
-      name: representative.name,
-      cwd: representative.cwd,
-      repositoryIdentity: representative.repositoryIdentity ?? null,
-      defaultModelSelection: representative.defaultModelSelection,
-      createdAt: representative.createdAt,
-      updatedAt: representative.updatedAt,
-      scripts: representative.scripts,
-      projectKey: logicalKey,
-      environmentPresence:
-        hasLocal && hasRemote ? "mixed" : hasRemote ? "remote-only" : "local-only",
-      memberProjectRefs,
-      remoteEnvironmentLabels,
-    });
-  }
-
-  return result;
 }
 
 export function createThreadJumpHintVisibilityController(input: {

@@ -2,6 +2,7 @@
 import "../index.css";
 
 import {
+  type ContextMenuItem,
   EventId,
   ORCHESTRATION_WS_METHODS,
   EnvironmentId,
@@ -18,12 +19,7 @@ import {
   OrchestrationSessionStatus,
   DEFAULT_SERVER_SETTINGS,
 } from "@t3tools/contracts";
-import {
-  scopedProjectKey,
-  scopedThreadKey,
-  scopeProjectRef,
-  scopeThreadRef,
-} from "@t3tools/client-runtime";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -53,6 +49,7 @@ import { __resetLocalApiForTests } from "../localApi";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
+import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { selectBootstrapCompleteForActiveEnvironment, useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
@@ -79,10 +76,21 @@ const THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, THREAD_ID);
 const THREAD_KEY = scopedThreadKey(THREAD_REF);
 const UUID_ROUTE_RE = /^\/draft\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_DRAFT_KEY = `${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`;
-const PROJECT_KEY = scopedProjectKey(scopeProjectRef(LOCAL_ENVIRONMENT_ID, PROJECT_ID));
 const SIDEBAR_DELETE_PROJECT_ID = "project-delete" as ProjectId;
 const SIDEBAR_DELETE_PROJECT_NAME = "Archived Only Project";
 const SIDEBAR_OTHER_PROJECT_ID = "project-other" as ProjectId;
+const PROJECT_LOGICAL_KEY = deriveLogicalProjectKeyFromSettings(
+  {
+    environmentId: LOCAL_ENVIRONMENT_ID,
+    id: PROJECT_ID,
+    cwd: "/repo/project",
+    repositoryIdentity: null,
+  },
+  {
+    sidebarProjectGroupingMode: DEFAULT_CLIENT_SETTINGS.sidebarProjectGroupingMode,
+    sidebarProjectGroupingOverrides: DEFAULT_CLIENT_SETTINGS.sidebarProjectGroupingOverrides,
+  },
+);
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'></svg>";
@@ -192,6 +200,7 @@ function createBaseServerConfig(): ServerConfig {
 function createMockEnvironmentApi(input: {
   browse: EnvironmentApi["filesystem"]["browse"];
   dispatchCommand: EnvironmentApi["orchestration"]["dispatchCommand"];
+  subscribeShell?: EnvironmentApi["orchestration"]["subscribeShell"];
 }): EnvironmentApi {
   return {
     terminal: {} as EnvironmentApi["terminal"],
@@ -208,11 +217,24 @@ function createMockEnvironmentApi(input: {
       getFullThreadDiff: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["orchestration"]["getFullThreadDiff"],
-      subscribeShell: (() => () => undefined) as EnvironmentApi["orchestration"]["subscribeShell"],
+      subscribeShell:
+        input.subscribeShell ??
+        ((() => () => undefined) as EnvironmentApi["orchestration"]["subscribeShell"]),
       subscribeThread: (() => () =>
         undefined) as EnvironmentApi["orchestration"]["subscribeThread"],
     },
   };
+}
+
+function resolveProjectDeleteMenuItemId(items: readonly ContextMenuItem<string>[]): string | null {
+  const deleteItem = items.find((item) => item.label === "Remove project");
+  if (!deleteItem) {
+    return null;
+  }
+  if (Array.isArray(deleteItem.children) && deleteItem.children.length > 0) {
+    return deleteItem.children[0]?.id ?? null;
+  }
+  return deleteItem.id;
 }
 
 function createUserMessage(options: {
@@ -1730,12 +1752,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
     customWsRpcResolver = null;
     document.body.innerHTML = "";
   });
-  it("re-expands the bootstrap project using its scoped key", async () => {
+  it("re-expands the bootstrap project using its logical key", async () => {
     useUiStateStore.setState({
       projectExpandedById: {
-        [PROJECT_KEY]: false,
+        [PROJECT_LOGICAL_KEY]: false,
       },
-      projectOrder: [PROJECT_KEY],
+      projectOrder: [PROJECT_LOGICAL_KEY],
       threadLastVisitedAtById: {},
     });
 
@@ -1750,7 +1772,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await vi.waitFor(
         () => {
-          expect(useUiStateStore.getState().projectExpandedById[PROJECT_KEY]).toBe(true);
+          expect(useUiStateStore.getState().projectExpandedById[PROJECT_LOGICAL_KEY]).toBe(true);
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -1775,8 +1797,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("removes a project when only archived threads remain", async () => {
     const showContextMenu = vi
       .fn<LocalApi["contextMenu"]["show"]>()
-      .mockResolvedValue("delete" as never);
+      .mockImplementation(async (items) => resolveProjectDeleteMenuItemId(items) as never);
     const confirm = vi.fn<LocalApi["dialogs"]["confirm"]>().mockResolvedValue(true);
+    const dispatchCommand = vi.fn(async () => ({
+      sequence: fixture.snapshot.snapshotSequence + 1,
+    }));
     window.nativeApi = {
       contextMenu: { show: showContextMenu },
       dialogs: {
@@ -1784,6 +1809,25 @@ describe("ChatView timeline estimator parity (full app)", () => {
         pickFolder: vi.fn().mockResolvedValue(null),
       },
     } as unknown as LocalApi;
+    __setEnvironmentApiOverrideForTests(
+      LOCAL_ENVIRONMENT_ID,
+      createMockEnvironmentApi({
+        browse: vi.fn(async () => ({
+          parentPath: "/repo",
+          entries: [],
+        })),
+        dispatchCommand,
+        subscribeShell: (listener) => {
+          queueMicrotask(() => {
+            listener({
+              kind: "snapshot",
+              snapshot: toShellSnapshot(fixture.snapshot),
+            });
+          });
+          return () => undefined;
+        },
+      }),
+    );
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -1797,14 +1841,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
           bootstrapProjectId: SIDEBAR_OTHER_PROJECT_ID,
           bootstrapThreadId: THREAD_ID,
         };
-      },
-      resolveRpc: (body) => {
-        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
-          return {
-            sequence: fixture.snapshot.snapshotSequence + 1,
-          };
-        }
-        return undefined;
       },
     });
 
@@ -1821,20 +1857,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(() => {
         expect(showContextMenu).toHaveBeenCalled();
-        expect(confirm).toHaveBeenCalledWith(`Remove project "${SIDEBAR_DELETE_PROJECT_NAME}"?`);
+        expect(confirm).toHaveBeenCalledWith(
+          expect.stringContaining(`Remove project "${SIDEBAR_DELETE_PROJECT_NAME}"?`),
+        );
       });
 
       await vi.waitFor(() => {
-        const dispatchRequest = wsRequests.find(
-          (request) =>
-            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
-            request.type === "project.delete",
-        ) as { _tag: string; type?: string; projectId?: string } | undefined;
-        expect(dispatchRequest).toMatchObject({
-          _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
-          type: "project.delete",
-          projectId: SIDEBAR_DELETE_PROJECT_ID,
-        });
+        expect(dispatchCommand).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "project.delete",
+            projectId: SIDEBAR_DELETE_PROJECT_ID,
+          }),
+        );
       });
       expect(document.body.textContent).not.toContain(
         "Delete or archive all active threads in this project before removing it.",
@@ -1848,8 +1882,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("blocks project removal when active threads still exist", async () => {
     const showContextMenu = vi
       .fn<LocalApi["contextMenu"]["show"]>()
-      .mockResolvedValue("delete" as never);
+      .mockImplementation(async (items) => resolveProjectDeleteMenuItemId(items) as never);
     const confirm = vi.fn<LocalApi["dialogs"]["confirm"]>().mockResolvedValue(true);
+    const dispatchCommand = vi.fn(async () => ({
+      sequence: fixture.snapshot.snapshotSequence + 1,
+    }));
     window.nativeApi = {
       contextMenu: { show: showContextMenu },
       dialogs: {
@@ -1857,6 +1894,25 @@ describe("ChatView timeline estimator parity (full app)", () => {
         pickFolder: vi.fn().mockResolvedValue(null),
       },
     } as unknown as LocalApi;
+    __setEnvironmentApiOverrideForTests(
+      LOCAL_ENVIRONMENT_ID,
+      createMockEnvironmentApi({
+        browse: vi.fn(async () => ({
+          parentPath: "/repo",
+          entries: [],
+        })),
+        dispatchCommand,
+        subscribeShell: (listener) => {
+          queueMicrotask(() => {
+            listener({
+              kind: "snapshot",
+              snapshot: toShellSnapshot(fixture.snapshot),
+            });
+          });
+          return () => undefined;
+        },
+      }),
+    );
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -1892,13 +1948,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         )
         .toBeInTheDocument();
       expect(confirm).not.toHaveBeenCalled();
-      expect(
-        wsRequests.some(
-          (request) =>
-            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
-            request.type === "project.delete",
-        ),
-      ).toBe(false);
+      expect(dispatchCommand).not.toHaveBeenCalled();
     } finally {
       await mounted.cleanup();
       delete window.nativeApi;

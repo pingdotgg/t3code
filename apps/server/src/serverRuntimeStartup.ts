@@ -32,6 +32,7 @@ import { ServerSettingsService } from "./serverSettings";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { ServerAuth } from "./auth/Services/ServerAuth";
+import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -281,6 +282,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const keybindings = yield* Keybindings;
   const orchestrationReactor = yield* OrchestrationReactor;
+  const providerSessionReaper = yield* ProviderSessionReaper;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
@@ -325,7 +327,10 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
     yield* Effect.logDebug("startup phase: starting orchestration reactors");
     yield* runStartupPhase(
       "reactors.start",
-      orchestrationReactor.start().pipe(Scope.provide(reactorScope)),
+      Effect.gen(function* () {
+        yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
+        yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+      }),
     );
 
     const welcomeBase = yield* resolveWelcomeBase;

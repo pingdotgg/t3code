@@ -1,7 +1,8 @@
 import type { DesktopAppBranding, DesktopAppStageLabel } from "@t3tools/contracts";
 
+import { isNightlyDesktopVersion } from "./updateChannels";
+
 const APP_BASE_NAME = "T3 Code";
-const NIGHTLY_VERSION_PATTERN = /-nightly\.\d{8}\.\d+$/;
 
 export function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -11,7 +12,7 @@ export function resolveDesktopAppStageLabel(input: {
     return "Dev";
   }
 
-  return NIGHTLY_VERSION_PATTERN.test(input.appVersion) ? "Nightly" : "Alpha";
+  return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
 }
 
 export function resolveDesktopAppBranding(input: {
