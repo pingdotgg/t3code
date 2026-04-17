@@ -80,8 +80,6 @@ export const ModelSelection = Schema.Union([
   ClaudeModelSelection,
   CursorModelSelection,
   OpenCodeModelSelection,
-  CursorModelSelection,
-  OpenCodeModelSelection,
 ]);
 export type ModelSelection = typeof ModelSelection.Type;
 

@@ -109,6 +109,4 @@ export const RoutingTextGenerationLive = Layer.effect(
   Layer.provide(InternalClaudeLayer),
   Layer.provide(InternalCursorLayer),
   Layer.provide(InternalOpenCodeLayer),
-  Layer.provide(InternalCursorLayer),
-  Layer.provide(InternalOpenCodeLayer),
 );
