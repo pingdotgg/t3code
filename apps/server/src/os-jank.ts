@@ -1,11 +1,20 @@
 import * as OS from "node:os";
 import { Effect, Path } from "effect";
 import {
+  readPathFromLoginShell,
+  readEnvironmentFromWindowsShell,
+  resolveWindowsEnvironment,
+  type CommandAvailabilityOptions,
+  type WindowsShellEnvironmentReader,
   listLoginShellCandidates,
   mergePathEntries,
   readPathFromLaunchctl,
-  readPathFromLoginShell,
 } from "@t3tools/shared/shell";
+
+type WindowsCommandAvailabilityChecker = (
+  command: string,
+  options?: CommandAvailabilityOptions,
+) => boolean;
 
 function logPathHydrationWarning(message: string, error?: unknown): void {
   console.warn(`[server] ${message}`, error instanceof Error ? error.message : (error ?? ""));
@@ -16,19 +25,36 @@ export function fixPath(
     env?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
     readPath?: typeof readPathFromLoginShell;
+    readWindowsEnvironment?: WindowsShellEnvironmentReader;
+    isWindowsCommandAvailable?: WindowsCommandAvailabilityChecker;
     readLaunchctlPath?: typeof readPathFromLaunchctl;
     userShell?: string;
     logWarning?: (message: string, error?: unknown) => void;
   } = {},
 ): void {
   const platform = options.platform ?? process.platform;
-  if (platform !== "darwin" && platform !== "linux") return;
-
   const env = options.env ?? process.env;
   const logWarning = options.logWarning ?? logPathHydrationWarning;
   const readPath = options.readPath ?? readPathFromLoginShell;
 
   try {
+    if (platform === "win32") {
+      const repairedEnvironment = resolveWindowsEnvironment(env, {
+        readEnvironment: options.readWindowsEnvironment ?? readEnvironmentFromWindowsShell,
+        ...(options.isWindowsCommandAvailable
+          ? { commandAvailable: options.isWindowsCommandAvailable }
+          : {}),
+      });
+      for (const [key, value] of Object.entries(repairedEnvironment)) {
+        if (value !== undefined) {
+          env[key] = value;
+        }
+      }
+      return;
+    }
+
+    if (platform !== "darwin" && platform !== "linux") return;
+
     let shellPath: string | undefined;
     for (const shell of listLoginShellCandidates(platform, env.SHELL, options.userShell)) {
       try {

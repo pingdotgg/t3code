@@ -3,8 +3,18 @@ import {
   mergePathEntries,
   readPathFromLaunchctl,
   readEnvironmentFromLoginShell,
+  resolveWindowsEnvironment,
 } from "@t3tools/shared/shell";
-import type { ShellEnvironmentReader } from "@t3tools/shared/shell";
+import type {
+  CommandAvailabilityOptions,
+  ShellEnvironmentReader,
+  WindowsShellEnvironmentReader,
+} from "@t3tools/shared/shell";
+
+type WindowsCommandAvailabilityChecker = (
+  command: string,
+  options?: CommandAvailabilityOptions,
+) => boolean;
 
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
@@ -25,19 +35,39 @@ export function syncShellEnvironment(
   options: {
     platform?: NodeJS.Platform;
     readEnvironment?: ShellEnvironmentReader;
+    readWindowsEnvironment?: WindowsShellEnvironmentReader;
+    isWindowsCommandAvailable?: WindowsCommandAvailabilityChecker;
     readLaunchctlPath?: typeof readPathFromLaunchctl;
     userShell?: string;
     logWarning?: (message: string, error?: unknown) => void;
   } = {},
 ): void {
   const platform = options.platform ?? process.platform;
-  if (platform !== "darwin" && platform !== "linux") return;
 
   const logWarning = options.logWarning ?? logShellEnvironmentWarning;
   const readEnvironment = options.readEnvironment ?? readEnvironmentFromLoginShell;
   const shellEnvironment: Partial<Record<string, string>> = {};
 
   try {
+    if (platform === "win32") {
+      const repairedEnvironment = resolveWindowsEnvironment(env, {
+        ...(options.readWindowsEnvironment
+          ? { readEnvironment: options.readWindowsEnvironment }
+          : {}),
+        ...(options.isWindowsCommandAvailable
+          ? { commandAvailable: options.isWindowsCommandAvailable }
+          : {}),
+      });
+      for (const [key, value] of Object.entries(repairedEnvironment)) {
+        if (value !== undefined) {
+          env[key] = value;
+        }
+      }
+      return;
+    }
+
+    if (platform !== "darwin" && platform !== "linux") return;
+
     for (const shell of listLoginShellCandidates(platform, env.SHELL, options.userShell)) {
       try {
         Object.assign(shellEnvironment, readEnvironment(shell, LOGIN_SHELL_ENV_NAMES));

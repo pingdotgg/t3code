@@ -148,7 +148,7 @@ describe("syncShellEnvironment", () => {
     expect(env.PATH).toBe("/opt/homebrew/bin:/usr/bin");
   });
 
-  it("does nothing outside macOS and linux", () => {
+  it("does nothing on unsupported platforms", () => {
     const env: NodeJS.ProcessEnv = {
       SHELL: "C:/Program Files/Git/bin/bash.exe",
       PATH: "C:\\Windows\\System32",
@@ -160,12 +160,130 @@ describe("syncShellEnvironment", () => {
     }));
 
     syncShellEnvironment(env, {
-      platform: "win32",
+      platform: "freebsd",
       readEnvironment,
     });
 
     expect(readEnvironment).not.toHaveBeenCalled();
     expect(env.PATH).toBe("C:\\Windows\\System32");
     expect(env.SSH_AUTH_SOCK).toBe("/tmp/inherited.sock");
+  });
+
+  it("hydrates PATH on Windows by merging PowerShell PATH with inherited PATH", () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: "C:\\Windows\\System32",
+      APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+      LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+      USERPROFILE: "C:\\Users\\testuser",
+    };
+    const readWindowsEnvironment = vi.fn(() => ({
+      PATH: "C:\\Custom\\Bin;C:\\Windows\\System32",
+    }));
+    const isWindowsCommandAvailable = vi.fn(() => true);
+
+    syncShellEnvironment(env, {
+      platform: "win32",
+      readWindowsEnvironment,
+      isWindowsCommandAvailable,
+    });
+
+    expect(readWindowsEnvironment).toHaveBeenCalledWith(["PATH"], { loadProfile: false });
+    expect(env.PATH).toBe(
+      [
+        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+        "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
+        "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+        "C:\\Users\\testuser\\.bun\\bin",
+        "C:\\Users\\testuser\\scoop\\shims",
+        "C:\\Custom\\Bin",
+        "C:\\Windows\\System32",
+      ].join(";"),
+    );
+    expect(isWindowsCommandAvailable).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads the PowerShell profile on Windows when node is not available", () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: "C:\\Windows\\System32",
+      APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+      LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+      USERPROFILE: "C:\\Users\\testuser",
+    };
+    const readWindowsEnvironment = vi.fn(
+      (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
+        options?.loadProfile
+          ? {
+              PATH: "C:\\Profile\\Node;C:\\Windows\\System32",
+              FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
+              FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
+            }
+          : { PATH: "C:\\Custom\\Bin;C:\\Windows\\System32" },
+    );
+    const isWindowsCommandAvailable = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+    syncShellEnvironment(env, {
+      platform: "win32",
+      readWindowsEnvironment,
+      isWindowsCommandAvailable,
+    });
+
+    expect(env.PATH).toBe(
+      [
+        "C:\\Profile\\Node",
+        "C:\\Windows\\System32",
+        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+        "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
+        "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+        "C:\\Users\\testuser\\.bun\\bin",
+        "C:\\Users\\testuser\\scoop\\shims",
+        "C:\\Custom\\Bin",
+      ].join(";"),
+    );
+    expect(env.FNM_DIR).toBe("C:\\Users\\testuser\\AppData\\Roaming\\fnm");
+    expect(env.FNM_MULTISHELL_PATH).toBe(
+      "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
+    );
+    expect(readWindowsEnvironment).toHaveBeenNthCalledWith(1, ["PATH"], { loadProfile: false });
+    expect(readWindowsEnvironment).toHaveBeenNthCalledWith(
+      2,
+      ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"],
+      { loadProfile: true },
+    );
+  });
+
+  it("preserves baseline Windows env when the profile probe fails", () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: "C:\\Windows\\System32",
+      APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+      USERPROFILE: "C:\\Users\\testuser",
+    };
+    const readWindowsEnvironment = vi.fn(
+      (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) => {
+        if (options?.loadProfile) {
+          throw new Error("profile load failed");
+        }
+        return { PATH: "C:\\Custom\\Bin;C:\\Windows\\System32" };
+      },
+    );
+    const isWindowsCommandAvailable = vi.fn(() => false);
+
+    syncShellEnvironment(env, {
+      platform: "win32",
+      readWindowsEnvironment,
+      isWindowsCommandAvailable,
+    });
+
+    expect(env.PATH).toBe(
+      [
+        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\.bun\\bin",
+        "C:\\Users\\testuser\\scoop\\shims",
+        "C:\\Custom\\Bin",
+        "C:\\Windows\\System32",
+      ].join(";"),
+    );
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
   });
 });
