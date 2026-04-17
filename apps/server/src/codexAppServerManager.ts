@@ -25,16 +25,16 @@ import {
   formatCodexCliUpgradeMessage,
   isCodexCliVersionSupported,
   parseCodexCliVersion,
-} from "./provider/codexCliVersion";
+} from "./provider/codexCliVersion.ts";
 import {
   readCodexAccountSnapshot,
   resolveCodexModelForAccount,
   type CodexAccountSnapshot,
-} from "./provider/codexAccount";
-import { buildCodexInitializeParams, killCodexChildProcess } from "./provider/codexAppServer";
+} from "./provider/codexAccount.ts";
+import { buildCodexInitializeParams, killCodexChildProcess } from "./provider/codexAppServer.ts";
 
-export { buildCodexInitializeParams } from "./provider/codexAppServer";
-export { readCodexAccountSnapshot, resolveCodexModelForAccount } from "./provider/codexAccount";
+export { buildCodexInitializeParams } from "./provider/codexAppServer.ts";
+export { readCodexAccountSnapshot, resolveCodexModelForAccount } from "./provider/codexAccount.ts";
 
 type PendingRequestKey = string;
 

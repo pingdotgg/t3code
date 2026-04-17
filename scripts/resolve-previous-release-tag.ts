@@ -196,8 +196,10 @@ const command = Command.make(
     ),
 ).pipe(Command.withDescription("Resolve the previous release tag for a stable or nightly series."));
 
-Command.run(command, { version: "0.0.0" }).pipe(
-  Effect.scoped,
-  Effect.provide(NodeServices.layer),
-  NodeRuntime.runMain,
-);
+if (import.meta.main) {
+  Command.run(command, { version: "0.0.0" }).pipe(
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
+}

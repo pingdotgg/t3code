@@ -24,25 +24,28 @@ import {
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 
-import type { TerminalManagerShape } from "../Services/Manager";
+import type { TerminalManagerShape } from "../Services/Manager.ts";
 import {
   type PtyAdapterShape,
   type PtyExitEvent,
   type PtyProcess,
   type PtySpawnInput,
   PtySpawnError,
-} from "../Services/PTY";
-import { makeTerminalManagerWithOptions } from "./Manager";
+} from "../Services/PTY.ts";
+import { makeTerminalManagerWithOptions } from "./Manager.ts";
 
 class FakePtyProcess implements PtyProcess {
   readonly writes: string[] = [];
   readonly resizeCalls: Array<{ cols: number; rows: number }> = [];
   readonly killSignals: Array<string | undefined> = [];
+  readonly pid: number;
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
   killed = false;
 
-  constructor(readonly pid: number) {}
+  constructor(pid: number) {
+    this.pid = pid;
+  }
 
   write(data: string): void {
     this.writes.push(data);
@@ -88,9 +91,12 @@ class FakePtyAdapter implements PtyAdapterShape {
   readonly spawnInputs: PtySpawnInput[] = [];
   readonly processes: FakePtyProcess[] = [];
   readonly spawnFailures: Error[] = [];
+  private readonly mode: "sync" | "async";
   private nextPid = 9000;
 
-  constructor(private readonly mode: "sync" | "async" = "sync") {}
+  constructor(mode: "sync" | "async" = "sync") {
+    this.mode = mode;
+  }
 
   spawn(input: PtySpawnInput): Effect.Effect<PtyProcess, PtySpawnError> {
     this.spawnInputs.push(input);

@@ -1,6 +1,6 @@
 import { Context } from "effect";
 
-import type { ServerProviderShape } from "./ServerProvider";
+import type { ServerProviderShape } from "./ServerProvider.ts";
 
 export interface CodexProviderShape extends ServerProviderShape {}
 

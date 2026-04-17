@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ServerListeningDetector } from "./serverListeningDetector";
+import { ServerListeningDetector } from "./serverListeningDetector.ts";
 
 describe("ServerListeningDetector", () => {
   it("resolves when the server logs the listening line", async () => {

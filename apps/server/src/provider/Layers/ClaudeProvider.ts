@@ -25,11 +25,11 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
   type CommandResult,
-} from "../providerSnapshot";
-import { compareCliVersions } from "../cliVersion";
-import { makeManagedServerProvider } from "../makeManagedServerProvider";
-import { ClaudeProvider } from "../Services/ClaudeProvider";
-import { ServerSettingsService } from "../../serverSettings";
+} from "../providerSnapshot.ts";
+import { compareCliVersions } from "../cliVersion.ts";
+import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { ClaudeProvider } from "../Services/ClaudeProvider.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerSettingsError } from "@t3tools/contracts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = {

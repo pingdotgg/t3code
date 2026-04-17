@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch.ts";
 
 describe("resolveDesktopRuntimeInfo", () => {
   it("detects Rosetta-translated Intel builds on Apple Silicon", () => {

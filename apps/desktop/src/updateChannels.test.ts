@@ -4,7 +4,7 @@ import {
   doesVersionMatchDesktopUpdateChannel,
   isNightlyDesktopVersion,
   resolveDefaultDesktopUpdateChannel,
-} from "./updateChannels";
+} from "./updateChannels.ts";
 
 describe("isNightlyDesktopVersion", () => {
   it("detects packaged nightly versions", () => {

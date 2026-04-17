@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { TrimmedNonEmptyString } from "./baseSchemas";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const DEFAULT_TERMINAL_ID = "default";
 

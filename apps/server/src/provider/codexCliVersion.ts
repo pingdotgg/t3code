@@ -1,4 +1,4 @@
-import { compareCliVersions, normalizeCliVersion } from "./cliVersion";
+import { compareCliVersions, normalizeCliVersion } from "./cliVersion.ts";
 
 const CODEX_VERSION_PATTERN = /\bv?(\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?)\b/;
 

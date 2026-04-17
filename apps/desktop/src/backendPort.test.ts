@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { resolveDesktopBackendPort } from "./backendPort";
+import { resolveDesktopBackendPort } from "./backendPort.ts";
 
 describe("resolveDesktopBackendPort", () => {
   it("returns the starting port when it is available", async () => {

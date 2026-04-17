@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCliArgs } from "./cliArgs";
+import { parseCliArgs } from "./cliArgs.ts";
 
 describe("parseCliArgs", () => {
   it("returns empty result for empty string", () => {

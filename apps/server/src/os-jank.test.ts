@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { fixPath } from "./os-jank";
+import { fixPath } from "./os-jank.ts";
 
 describe("fixPath", () => {
   it("hydrates PATH on linux using the resolved login shell", () => {
