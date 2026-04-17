@@ -124,7 +124,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }
 
   return (
-    <div dir="auto" className="px-4 py-3 sm:px-5">
+    <div className="px-4 py-3 sm:px-5">
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
           {prompt.questions.length > 1 ? (
@@ -137,9 +137,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           </span>
         </div>
       </div>
-      <p dir="auto" className="mt-1.5 text-sm text-foreground/90">{activeQuestion.question}</p>
+      <p dir="auto" className="mt-1.5 text-sm text-foreground/90">
+        {activeQuestion.question}
+      </p>
       {activeQuestion.multiSelect ? (
-        <p dir="auto" className="mt-1 text-xs text-muted-foreground/65">Select one or more options.</p>
+        <p dir="auto" className="mt-1 text-xs text-muted-foreground/65">
+          Select one or more options.
+        </p>
       ) : null}
       <div className="mt-3 space-y-1">
         {activeQuestion.options.map((option, index) => {
@@ -172,7 +176,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 </kbd>
               ) : null}
               <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
-                <span dir="auto" className="text-sm font-medium">{option.label}</span>
+                <span dir="auto" className="text-sm font-medium">
+                  {option.label}
+                </span>
                 {option.description && option.description !== option.label ? (
                   <span dir="auto" className="text-xs text-muted-foreground/50">
                     {option.description}
