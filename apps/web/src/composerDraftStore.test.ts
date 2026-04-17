@@ -561,6 +561,49 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
+  it("revokes draft image blob URLs when clearing a project's draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    const revokeSpy = vi.fn<(url: string) => void>();
+    URL.revokeObjectURL = revokeSpy;
+
+    try {
+      store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+      store.addImage(draftId, makeImage({ id: "img-project-clear", previewUrl: "blob:clear" }));
+
+      store.clearProjectDraftThreadId(projectRef);
+
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
+      expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+      expect(revokeSpy).toHaveBeenCalledWith("blob:clear");
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl;
+    }
+  });
+
+  it("revokes draft image blob URLs when clearing a matching project draft thread by id", () => {
+    const store = useComposerDraftStore.getState();
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    const revokeSpy = vi.fn<(url: string) => void>();
+    URL.revokeObjectURL = revokeSpy;
+
+    try {
+      store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+      store.addImage(
+        draftId,
+        makeImage({ id: "img-project-clear-by-id", previewUrl: "blob:clear-by-id" }),
+      );
+
+      store.clearProjectDraftThreadById(projectRef, draftId);
+
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
+      expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+      expect(revokeSpy).toHaveBeenCalledWith("blob:clear-by-id");
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl;
+    }
+  });
+
   it("clears orphaned composer drafts when remapping a project to a new draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
