@@ -13,6 +13,7 @@ export default defineConfig([
     entry: ["src/main.ts"],
     clean: true,
     noExternal: (id) => id.startsWith("@t3tools/") || id.startsWith("effect-acp"),
+    copy: [{ from: "src/sshScripts/*", to: "dist-electron/sshScripts" }],
   },
   {
     ...shared,

@@ -315,97 +315,48 @@ function getDefaultSshAskpassDirectory(): string {
   return Path.join(OS.tmpdir(), SSH_ASKPASS_DIR_NAME);
 }
 
+const SSH_SCRIPTS_DIR = Path.join(__dirname, "sshScripts");
+const sshScriptCache = new Map<string, string>();
+
+function readSshScriptTemplate(fileName: string): string {
+  const cached = sshScriptCache.get(fileName);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const contents = FS.readFileSync(Path.join(SSH_SCRIPTS_DIR, fileName), "utf8");
+  sshScriptCache.set(fileName, contents);
+  return contents;
+}
+
+function stripTrailingNewlines(value: string): string {
+  return value.replace(/\n+$/u, "");
+}
+
+function applyScriptPlaceholders(
+  template: string,
+  replacements: Readonly<Record<string, string>>,
+): string {
+  let result = template;
+  for (const [token, value] of Object.entries(replacements)) {
+    result = result.replaceAll(`@@${token}@@`, value);
+  }
+  return result;
+}
+
+function toCrlf(value: string): string {
+  return value.replace(/\r?\n/gu, "\r\n");
+}
+
 function buildPosixSshAskpassScript(): string {
-  return [
-    "#!/bin/sh",
-    "set -eu",
-    'PROMPT="${1:-SSH authentication}"',
-    'if [ "${T3_SSH_AUTH_SECRET+x}" = "x" ]; then',
-    '  printf "%s\\n" "$T3_SSH_AUTH_SECRET"',
-    "  exit 0",
-    "fi",
-    "if command -v osascript >/dev/null 2>&1; then",
-    "  T3_SSH_ASKPASS_PROMPT=\"$PROMPT\" /usr/bin/osascript <<'APPLESCRIPT'",
-    'set promptText to system attribute "T3_SSH_ASKPASS_PROMPT"',
-    "try",
-    '  set dialogResult to display dialog promptText default answer "" with hidden answer buttons {"Cancel", "OK"} default button "OK" cancel button "Cancel"',
-    "  text returned of dialogResult",
-    "on error number -128",
-    "  error number -128",
-    "end try",
-    "APPLESCRIPT",
-    "  exit $?",
-    "fi",
-    "if command -v zenity >/dev/null 2>&1; then",
-    '  zenity --password --title="SSH authentication" --text="$PROMPT"',
-    "  exit $?",
-    "fi",
-    "if command -v kdialog >/dev/null 2>&1; then",
-    '  kdialog --title "SSH authentication" --password "$PROMPT"',
-    "  exit $?",
-    "fi",
-    "if command -v ssh-askpass >/dev/null 2>&1; then",
-    '  ssh-askpass "$PROMPT"',
-    "  exit $?",
-    "fi",
-    "printf 'Unable to open an SSH password prompt on this desktop.\\n' >&2",
-    "exit 1",
-    "",
-  ].join("\n");
+  return readSshScriptTemplate("askpass-posix.sh");
 }
 
 function buildWindowsSshAskpassScript(): string {
-  return [
-    "if ($env:T3_SSH_AUTH_SECRET -ne $null) {",
-    "  [Console]::Out.WriteLine($env:T3_SSH_AUTH_SECRET)",
-    "  exit 0",
-    "}",
-    "Add-Type -AssemblyName System.Windows.Forms",
-    "[System.Windows.Forms.Application]::EnableVisualStyles()",
-    '$prompt = if ($args.Length -gt 0 -and $args[0]) { $args[0] } else { "SSH authentication" }',
-    "$form = New-Object System.Windows.Forms.Form",
-    '$form.Text = "SSH authentication"',
-    "$form.Width = 420",
-    "$form.Height = 185",
-    '$form.StartPosition = "CenterScreen"',
-    '$form.FormBorderStyle = "FixedDialog"',
-    "$form.MaximizeBox = $false",
-    "$form.MinimizeBox = $false",
-    "$form.TopMost = $true",
-    "$label = New-Object System.Windows.Forms.Label",
-    "$label.Left = 16",
-    "$label.Top = 16",
-    "$label.Width = 372",
-    "$label.Height = 34",
-    "$label.Text = $prompt",
-    "$textbox = New-Object System.Windows.Forms.TextBox",
-    "$textbox.Left = 16",
-    "$textbox.Top = 60",
-    "$textbox.Width = 372",
-    "$textbox.UseSystemPasswordChar = $true",
-    "$okButton = New-Object System.Windows.Forms.Button",
-    '$okButton.Text = "OK"',
-    "$okButton.Left = 232",
-    "$okButton.Top = 100",
-    "$okButton.Width = 75",
-    "$cancelButton = New-Object System.Windows.Forms.Button",
-    '$cancelButton.Text = "Cancel"',
-    "$cancelButton.Left = 313",
-    "$cancelButton.Top = 100",
-    "$cancelButton.Width = 75",
-    "$okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK",
-    "$cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel",
-    "$form.AcceptButton = $okButton",
-    "$form.CancelButton = $cancelButton",
-    "$form.Controls.Add($label)",
-    "$form.Controls.Add($textbox)",
-    "$form.Controls.Add($okButton)",
-    "$form.Controls.Add($cancelButton)",
-    "$result = $form.ShowDialog()",
-    "if ($result -ne [System.Windows.Forms.DialogResult]::OK) { exit 1 }",
-    "[Console]::Out.WriteLine($textbox.Text)",
-    "",
-  ].join("\r\n");
+  return toCrlf(readSshScriptTemplate("askpass-windows.ps1"));
+}
+
+function buildWindowsSshAskpassLauncherScript(): string {
+  return toCrlf(readSshScriptTemplate("askpass-windows.cmd"));
 }
 
 function buildSshAskpassHelperDescriptor(input?: {
@@ -423,11 +374,7 @@ function buildSshAskpassHelperDescriptor(input?: {
       files: [
         {
           path: pathModule.join(directory, "ssh-askpass.cmd"),
-          contents: [
-            "@echo off",
-            'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0ssh-askpass.ps1" %*',
-            "",
-          ].join("\r\n"),
+          contents: buildWindowsSshAskpassLauncherScript(),
         },
         {
           path: powershellPath,
@@ -640,71 +587,12 @@ async function resolveDesktopSshTarget(alias: string): Promise<DesktopSshEnviron
 }
 
 function buildRemoteLaunchScript(input?: { readonly packageSpec?: string }): string {
-  const runnerScript = buildRemoteT3RunnerScript(input);
-  return `
-set -eu
-STATE_KEY="$1"
-STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
-SERVER_HOME="$STATE_DIR/server-home"
-PORT_FILE="$STATE_DIR/port"
-PID_FILE="$STATE_DIR/pid"
-LOG_FILE="$STATE_DIR/server.log"
-RUNNER_FILE="$STATE_DIR/run-t3.sh"
-mkdir -p "$STATE_DIR" "$SERVER_HOME"
-cat >"$RUNNER_FILE" <<'SH'
-${runnerScript}
-SH
-chmod 700 "$RUNNER_FILE"
-pick_port() {
-  node - "$PORT_FILE" <<'NODE'
-const fs = require("node:fs");
-const net = require("node:net");
-const filePath = process.argv[2];
-const raw = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8").trim() : "";
-const preferred = Number.parseInt(raw, 10);
-const start = Number.isInteger(preferred) ? preferred : ${DEFAULT_REMOTE_PORT};
-const end = start + ${REMOTE_PORT_SCAN_WINDOW};
-
-function tryPort(port) {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.unref();
-    server.once("error", () => resolve(false));
-    server.listen(port, "127.0.0.1", () => {
-      server.close((error) => resolve(error ? false : port));
-    });
+  return applyScriptPlaceholders(readSshScriptTemplate("remote-launch.sh"), {
+    T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
+    T3_PICK_PORT_SCRIPT: stripTrailingNewlines(readSshScriptTemplate("remote-pick-port.cjs")),
+    T3_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),
+    T3_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
   });
-}
-
-(async () => {
-  for (let port = start; port < end; port += 1) {
-    const available = await tryPort(port);
-    if (available) {
-      process.stdout.write(String(port));
-      return;
-    }
-  }
-  process.exit(1);
-})().catch(() => process.exit(1));
-NODE
-}
-REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
-if [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-  :
-else
-  REMOTE_PORT="$(pick_port)" || true
-  if [ -z "$REMOTE_PORT" ]; then
-    printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
-    exit 1
-  fi
-  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
-  REMOTE_PID="$!"
-  printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
-  printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-fi
-printf '{"remotePort":%s}\\n' "$REMOTE_PORT"
-`.trimStart();
 }
 
 function getLastNonEmptyOutputLine(stdout: string): string | null {
@@ -736,40 +624,21 @@ export function resolveRemoteT3CliPackageSpec(input: {
 
 function buildRemoteT3RunnerScript(input?: { readonly packageSpec?: string }): string {
   const packageSpec = input?.packageSpec?.trim() || "t3@latest";
-  return [
-    "#!/bin/sh",
-    "set -eu",
-    "if command -v t3 >/dev/null 2>&1; then",
-    '  exec t3 "$@"',
-    "fi",
-    "if command -v npx >/dev/null 2>&1; then",
-    `  exec npx --yes ${packageSpec} "$@"`,
-    "fi",
-    "if command -v npm >/dev/null 2>&1; then",
-    `  exec npm exec --yes ${packageSpec} -- "$@"`,
-    "fi",
-    `printf 'Remote host is missing the t3 CLI and could not install ${packageSpec} because npx and npm are unavailable on PATH.\\n' >&2`,
-    "exit 1",
-  ].join("\n");
+  return stripTrailingNewlines(
+    applyScriptPlaceholders(readSshScriptTemplate("remote-runner.sh"), {
+      T3_PACKAGE_SPEC: packageSpec,
+    }),
+  );
 }
 
 function buildRemotePairingScript(
   target: DesktopSshEnvironmentTarget,
   input?: { readonly packageSpec?: string },
 ): string {
-  const runnerScript = buildRemoteT3RunnerScript(input);
-  return `
-set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/${remoteStateKey(target)}"
-SERVER_HOME="$STATE_DIR/server-home"
-RUNNER_FILE="$STATE_DIR/run-t3.sh"
-mkdir -p "$STATE_DIR" "$SERVER_HOME"
-cat >"$RUNNER_FILE" <<'SH'
-${runnerScript}
-SH
-chmod 700 "$RUNNER_FILE"
-"$RUNNER_FILE" auth pairing create --base-dir "$SERVER_HOME" --json
-`.trimStart();
+  return applyScriptPlaceholders(readSshScriptTemplate("remote-pairing.sh"), {
+    T3_STATE_KEY: remoteStateKey(target),
+    T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
+  });
 }
 
 async function launchOrReuseRemoteServer(
