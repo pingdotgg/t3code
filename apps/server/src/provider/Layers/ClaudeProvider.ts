@@ -1,5 +1,6 @@
 import type {
   ClaudeSettings,
+  ClaudeModelSelection,
   ModelCapabilities,
   ServerProvider,
   ServerProviderModel,
@@ -163,6 +164,14 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
   );
 }
 
+export function resolveClaudeApiModelId(modelSelection: ClaudeModelSelection): string {
+  switch (modelSelection.options?.contextWindow) {
+    case "1m":
+      return `${modelSelection.model}[1m]`;
+    default:
+      return modelSelection.model;
+  }
+}
 export function parseClaudeAuthStatusFromOutput(result: CommandResult): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: Pick<ServerProviderAuth, "status">;

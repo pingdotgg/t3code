@@ -10,6 +10,7 @@
     "catalog": {
       "effect": "4.0.0-beta.45",
       "@effect/atom-react": "4.0.0-beta.45",
+      "@effect/openapi-generator": "4.0.0-beta.45",
       "@effect/platform-bun": "4.0.0-beta.45",
       "@effect/platform-node": "4.0.0-beta.45",
       "@effect/platform-node-shared": "4.0.0-beta.45",

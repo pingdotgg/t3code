@@ -938,7 +938,13 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
-  const preview = workEntryPreview(workEntry, workspaceRoot);
+  const rawPreview = workEntryPreview(workEntry, workspaceRoot);
+  const preview =
+    rawPreview &&
+    normalizeCompactToolLabel(rawPreview).toLowerCase() ===
+      normalizeCompactToolLabel(heading).toLowerCase()
+      ? null
+      : rawPreview;
   const rawCommand = workEntryRawCommand(workEntry);
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
@@ -953,20 +959,20 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           <EntryIcon className="size-3" />
         </span>
         <div className="min-w-0 flex-1 overflow-hidden">
-          <div className="max-w-full">
-            <p
-              className={cn(
-                "truncate text-xs leading-5",
-                workToneClass(workEntry.tone),
-                preview ? "text-muted-foreground/70" : "",
-              )}
-              title={rawCommand ? undefined : displayText}
-            >
-              <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                {heading}
-              </span>
-              {preview &&
-                (rawCommand ? (
+          {rawCommand ? (
+            <div className="max-w-full">
+              <p
+                className={cn(
+                  "truncate text-xs leading-5",
+                  workToneClass(workEntry.tone),
+                  preview ? "text-muted-foreground/70" : "",
+                )}
+                title={displayText}
+              >
+                <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
+                  {heading}
+                </span>
+                {preview && (
                   <Tooltip>
                     <TooltipTrigger
                       closeDelay={0}
@@ -988,11 +994,36 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                       </div>
                     </TooltipPopup>
                   </Tooltip>
-                ) : (
-                  <span className="text-muted-foreground/55"> - {preview}</span>
-                ))}
-            </p>
-          </div>
+                )}
+              </p>
+            </div>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger
+                className="block min-w-0 w-full text-left"
+                title={displayText}
+                aria-label={displayText}
+              >
+                <p
+                  className={cn(
+                    "truncate text-[11px] leading-5",
+                    workToneClass(workEntry.tone),
+                    preview ? "text-muted-foreground/70" : "",
+                  )}
+                >
+                  <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
+                    {heading}
+                  </span>
+                  {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
+                </p>
+              </TooltipTrigger>
+              <TooltipPopup className="max-w-[min(720px,calc(100vw-2rem))]">
+                <p className="whitespace-pre-wrap wrap-break-word text-xs leading-5">
+                  {displayText}
+                </p>
+              </TooltipPopup>
+            </Tooltip>
+          )}
         </div>
       </div>
       {hasChangedFiles && !previewIsChangedFiles && (

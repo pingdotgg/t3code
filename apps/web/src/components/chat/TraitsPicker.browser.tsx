@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   ClaudeModelOptions,
   CodexModelOptions,
+  CursorModelOptions,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
   OpenCodeModelOptions,
@@ -475,6 +476,90 @@ async function mountCodexPicker(props: { model?: string; options?: CodexModelOpt
   };
 }
 
+async function mountCursorPicker(props: { model?: string; options?: CursorModelOptions }) {
+  const model = props.model ?? DEFAULT_MODEL_BY_PROVIDER.cursor;
+  const cursorThreadId = ThreadId.make("thread-cursor-traits");
+  const cursorThreadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, cursorThreadId);
+  const cursorThreadKey = scopedThreadKey(cursorThreadRef);
+  const host = document.createElement("div");
+  document.body.append(host);
+
+  useComposerDraftStore.setState({
+    draftsByThreadKey: {
+      [cursorThreadKey]: {
+        prompt: "",
+        images: [],
+        nonPersistedImageIds: [],
+        persistedAttachments: [],
+        terminalContexts: [],
+        modelSelectionByProvider: {
+          cursor: {
+            provider: "cursor",
+            model,
+            ...(props.options ? { options: props.options } : {}),
+          },
+        },
+        activeProvider: "cursor",
+        runtimeMode: null,
+        interactionMode: null,
+      },
+    },
+    draftThreadsByThreadKey: {},
+    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+  });
+
+  const screen = await render(
+    <TraitsPicker
+      provider="cursor"
+      models={[
+        {
+          slug: "composer-2",
+          name: "Composer 2",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: true,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+        {
+          slug: "claude-opus-4-6",
+          name: "Opus 4.6",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: true,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [
+              { value: "200k", label: "200K", isDefault: true },
+              { value: "1m", label: "1M" },
+            ],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ]}
+      threadRef={cursorThreadRef}
+      model={model}
+      prompt=""
+      modelOptions={props.options}
+      onPromptChange={() => {}}
+    />,
+    { container: host },
+  );
+
+  const cleanup = async () => {
+    await screen.unmount();
+    host.remove();
+  };
+
+  return {
+    [Symbol.asyncDispose]: cleanup,
+    cleanup,
+  };
+}
+
 describe("TraitsPicker (Codex)", () => {
   afterEach(() => {
     document.body.innerHTML = "";
@@ -625,6 +710,73 @@ describe("TraitsPicker (OpenCode)", () => {
       const text = document.body.textContent ?? "";
       expect(text).toContain("Medium · Plan");
       expect(text).not.toContain("Medium · plan");
+    });
+  });
+});
+
+describe("TraitsPicker (Cursor)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    localStorage.removeItem(COMPOSER_DRAFT_STORAGE_KEY);
+    useComposerDraftStore.setState({
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: {},
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+      stickyModelSelectionByProvider: {},
+    });
+  });
+
+  it("uses the selected fast mode menu label for the trigger in fast-only state", async () => {
+    await using _ = await mountCursorPicker({
+      model: "composer-2",
+      options: { fastMode: false },
+    });
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Normal");
+    });
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Fast Mode");
+      expect(text).toContain("off");
+      expect(text).toContain("on");
+    });
+  });
+
+  it("shows Normal for Cursor Opus 4.6 when fast mode and context window are both at defaults", async () => {
+    await using _ = await mountCursorPicker({
+      model: "claude-opus-4-6",
+      options: { fastMode: false },
+    });
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Normal");
+    });
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Fast Mode");
+      expect(text).toContain("Context Window");
+      expect(text).toContain("200K (default)");
+      expect(text).toContain("1M");
+    });
+  });
+
+  it("shows Normal · 1M for Cursor Opus 4.6 when fast mode is off and context window is overridden", async () => {
+    await using _ = await mountCursorPicker({
+      model: "claude-opus-4-6",
+      options: { fastMode: false, contextWindow: "1m" },
+    });
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent ?? "").toContain("Normal · 1M");
     });
   });
 });

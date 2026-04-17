@@ -15,12 +15,12 @@ import type {
   OrchestrationThreadShell,
   OrchestrationThreadActivity,
   ProjectId,
-  ProviderKind,
   ScopedProjectRef,
   ScopedThreadRef,
-  ThreadId,
-  TurnId,
 } from "@t3tools/contracts";
+import { ProviderKind } from "@t3tools/contracts";
+import type { ThreadId, TurnId } from "@t3tools/contracts";
+import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import {
@@ -1001,7 +1001,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex" || providerName === "claudeAgent" || providerName === "opencode") {
+  if (Schema.is(ProviderKind)(providerName)) {
     return providerName;
   }
   return "codex";

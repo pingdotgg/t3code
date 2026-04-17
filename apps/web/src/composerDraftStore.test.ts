@@ -91,7 +91,7 @@ function resetComposerDraftStore() {
 }
 
 function modelSelection(
-  provider: "codex" | "claudeAgent",
+  provider: "codex" | "claudeAgent" | "cursor",
   model: string,
   options?: ModelSelection["options"],
 ): ModelSelection {
@@ -1002,6 +1002,60 @@ describe("composerDraftStore modelSelection", () => {
     );
   });
 
+  it("keeps explicit Cursor reset overrides on the selection", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelSelection(
+      threadRef,
+      modelSelection("cursor", "claude-opus-4-6", {
+        reasoning: "xhigh",
+        fastMode: true,
+        thinking: false,
+      }),
+    );
+
+    store.setProviderModelOptions(threadRef, "cursor", {
+      reasoning: "medium",
+      fastMode: false,
+      thinking: true,
+    });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "claude-opus-4-6", {
+        reasoning: "medium",
+        fastMode: false,
+        thinking: true,
+      }),
+    );
+  });
+
+  it("preserves the selected Cursor model when only traits change", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProviderModelOptions(
+      threadRef,
+      "cursor",
+      {
+        reasoning: "high",
+      },
+      {
+        model: "gpt-5.4",
+        persistSticky: true,
+      },
+    );
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "gpt-5.4", {
+        reasoning: "high",
+      }),
+    );
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "gpt-5.4", {
+        reasoning: "high",
+      }),
+    );
+  });
+
   it("updates only the draft when sticky persistence is omitted", () => {
     const store = useComposerDraftStore.getState();
 
@@ -1172,6 +1226,24 @@ describe("composerDraftStore sticky composer settings", () => {
       modelSelection("codex", "gpt-5.4"),
     );
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("codex");
+  });
+
+  it("drops empty cursor model options when normalizing sticky state", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setStickyModelSelection(
+      modelSelection("cursor", "gpt-5.4", {
+        reasoning: undefined,
+        fastMode: undefined,
+        thinking: undefined,
+        contextWindow: undefined,
+      }),
+    );
+
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "gpt-5.4"),
+    );
+    expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("cursor");
   });
 
   it("applies sticky activeProvider to new drafts", () => {

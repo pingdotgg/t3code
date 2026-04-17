@@ -2,6 +2,7 @@ import {
   ServerSettings,
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type CursorModelOptions,
   type OpenCodeModelOptions,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -90,12 +91,20 @@ export function applyServerSettingsPatch(
                 selectionPatch.options as ClaudeModelOptions | undefined,
               ),
             }
-          : {
-              provider,
-              model,
-              ...withModelSelectionOptions(
-                selectionPatch.options as OpenCodeModelOptions | undefined,
-              ),
-            },
+          : provider === "cursor"
+            ? {
+                provider,
+                model,
+                ...withModelSelectionOptions(
+                  selectionPatch.options as CursorModelOptions | undefined,
+                ),
+              }
+            : {
+                provider,
+                model,
+                ...withModelSelectionOptions(
+                  selectionPatch.options as OpenCodeModelOptions | undefined,
+                ),
+              },
   };
 }

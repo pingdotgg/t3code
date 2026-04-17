@@ -24,6 +24,7 @@
         "@t3tools/contracts": "workspace:*",
         "@t3tools/shared": "workspace:*",
         "@types/node": "catalog:",
+        "effect-acp": "workspace:*",
         "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
@@ -65,6 +66,7 @@
         "@t3tools/web": "workspace:*",
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
+        "effect-acp": "workspace:*",
         "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
@@ -149,6 +151,21 @@
         "vitest": "catalog:",
       },
     },
+    "packages/effect-acp": {
+      "name": "effect-acp",
+      "dependencies": {
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/language-service": "catalog:",
+        "@effect/openapi-generator": "catalog:",
+        "@effect/platform-node": "catalog:",
+        "@effect/vitest": "catalog:",
+        "tsdown": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "packages/shared": {
       "name": "@t3tools/shared",
       "version": "0.0.0-alpha.1",
@@ -198,6 +215,7 @@
   "catalog": {
     "@effect/atom-react": "4.0.0-beta.45",
     "@effect/language-service": "0.84.2",
+    "@effect/openapi-generator": "4.0.0-beta.45",
     "@effect/platform-bun": "4.0.0-beta.45",
     "@effect/platform-node": "4.0.0-beta.45",
     "@effect/platform-node-shared": "4.0.0-beta.45",
@@ -296,6 +314,8 @@
     "@effect/atom-react": ["@effect/atom-react@4.0.0-beta.45", "", { "peerDependencies": { "effect": "^4.0.0-beta.45", "react": "^19.2.4", "scheduler": "*" } }, "sha512-jCoiae9UNeis9Yoal1p5V/P4eJK9nX89wORom7X5LpR2Ok920SZJc8dIeYkRXRAp9BCYJ/yWcO8gGLf7do71vg=="],
 
     "@effect/language-service": ["@effect/language-service@0.84.2", "", { "bin": { "effect-language-service": "cli.js" } }, "sha512-l04qNxpiA8rY5yXWckRPJ7Mk5MNerXuNymSFf+IdflfI5i8jgL1bpBNLuP6ijg7wgjdHc/KmTnCj2kT0SCntuA=="],
+
+    "@effect/openapi-generator": ["@effect/openapi-generator@4.0.0-beta.45", "", { "peerDependencies": { "@effect/platform-node": "^4.0.0-beta.45", "effect": "^4.0.0-beta.45" }, "bin": { "openapigen": "dist/bin.js" } }, "sha512-zT1UPzapV6mZebMuYhoDPQj/FKNn4R+oDgz1hEcQwazal4+lVDyEYGhRl0PgZroy6CP78fAOWNgW7TriGqSlOQ=="],
 
     "@effect/platform-bun": ["@effect/platform-bun@4.0.0-beta.45", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.45" }, "peerDependencies": { "effect": "^4.0.0-beta.45" } }, "sha512-dZsbkJ+o4JfKE1OIAlMq8YWhmEfXxtTYennYADK/M/XlOtkFLsc2jkZppDvMznVni6JpFxWc7wd5rUf8jBVP5g=="],
 
@@ -1060,6 +1080,8 @@
     "ee-first": ["ee-first@1.1.1", "", {}, "sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow=="],
 
     "effect": ["effect@4.0.0-beta.45", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.5.3", "find-my-way-ts": "^0.1.6", "ini": "^6.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^1.11.8", "multipasta": "^0.2.7", "toml": "^3.0.0", "uuid": "^13.0.0", "yaml": "^2.8.2" } }, "sha512-vvNrUWqnzBIW1hRMa+zw0CLRW6HLgdu7hQ6K7PT/rS+UY/73Ma11O+Oi9oc9zwL8KcN37M47UDseAdlF0bGNWw=="],
+
+    "effect-acp": ["effect-acp@workspace:packages/effect-acp"],
 
     "electron": ["electron@40.6.0", "", { "dependencies": { "@electron/get": "^2.0.0", "@types/node": "^24.9.0", "extract-zip": "^2.0.1" }, "bin": { "electron": "cli.js" } }, "sha512-ett8W+yOFGDuM0vhJMamYSkrbV3LoaffzJd9GfjI96zRAxyrNqUSKqBpf/WGbQCweDxX2pkUCUfrv4wwKpsFZA=="],
 

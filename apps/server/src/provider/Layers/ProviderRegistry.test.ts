@@ -30,11 +30,17 @@ import {
   readCodexConfigModelProvider,
 } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider.ts";
-import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry.ts";
+import {
+  haveProvidersChanged,
+  mergeProviderSnapshot,
+  ProviderRegistryLive,
+} from "./ProviderRegistry.ts";
 import { OpenCodeProvider } from "../Services/OpenCodeProvider.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
+
+process.env.T3CODE_CURSOR_ENABLED = "1";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -577,10 +583,106 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         assert.strictEqual(haveProvidersChanged(providers, [...providers]), false);
       });
 
-      it.effect("does not probe provider health during registry startup", () =>
+      it("preserves previously discovered provider models when a refresh returns none", () => {
+        const previousProvider = {
+          provider: "cursor",
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-04-14T00:00:00.000Z",
+          version: "2026.04.09-f2b0fcd",
+          models: [
+            {
+              slug: "claude-opus-4-6",
+              name: "Opus 4.6",
+              isCustom: false,
+              capabilities: {
+                reasoningEffortLevels: [{ value: "high", label: "High", isDefault: true }],
+                supportsFastMode: true,
+                supportsThinkingToggle: true,
+                contextWindowOptions: [],
+                promptInjectedEffortLevels: [],
+              },
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-04-14T00:01:00.000Z",
+          models: [],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...previousProvider.models,
+        ]);
+      });
+
+      it("fills missing capabilities from the previous provider snapshot", () => {
+        const previousProvider = {
+          provider: "cursor",
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-04-14T00:00:00.000Z",
+          version: "2026.04.09-f2b0fcd",
+          models: [
+            {
+              slug: "claude-opus-4-6",
+              name: "Opus 4.6",
+              isCustom: false,
+              capabilities: {
+                reasoningEffortLevels: [{ value: "high", label: "High", isDefault: true }],
+                supportsFastMode: true,
+                supportsThinkingToggle: true,
+                contextWindowOptions: [],
+                promptInjectedEffortLevels: [],
+              },
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-04-14T00:01:00.000Z",
+          models: [
+            {
+              slug: "claude-opus-4-6",
+              name: "Opus 4.6",
+              isCustom: false,
+              capabilities: {
+                reasoningEffortLevels: [],
+                supportsFastMode: false,
+                supportsThinkingToggle: false,
+                contextWindowOptions: [],
+                promptInjectedEffortLevels: [],
+              },
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...previousProvider.models,
+        ]);
+      });
+
+      it.effect("probes enabled providers in the background during registry startup", () =>
         Effect.gen(function* () {
           let spawnCount = 0;
-          const serverSettings = yield* makeMutableServerSettingsService();
+          const serverSettings = yield* makeMutableServerSettingsService(
+            Schema.decodeSync(ServerSettings)(
+              deepMerge(DEFAULT_SERVER_SETTINGS, {
+                providers: {
+                  claudeAgent: { enabled: false },
+                  cursor: { enabled: false },
+                },
+              }),
+            ),
+          );
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
@@ -616,11 +718,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry;
-            assert.deepStrictEqual(yield* registry.getProviders, []);
-            assert.strictEqual(spawnCount, 0);
-
-            const refreshed = yield* registry.refresh("codex");
             assert.strictEqual(spawnCount > 0, true);
+            const refreshed = yield* Effect.gen(function* () {
+              for (let remainingAttempts = 50; remainingAttempts > 0; remainingAttempts -= 1) {
+                const providers = yield* registry.getProviders;
+                const codexProvider = providers.find((provider) => provider.provider === "codex");
+                if (codexProvider?.status === "ready") {
+                  return providers;
+                }
+                yield* Effect.sleep("10 millis");
+              }
+              return yield* registry.getProviders;
+            });
             assert.strictEqual(
               refreshed.find((provider) => provider.provider === "codex")?.status,
               "ready",
@@ -657,6 +766,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                   }
                   return { stdout: "", stderr: "spawn ENOENT", code: 1 };
                 }
+                if (joined === "about --format json") {
+                  return {
+                    stdout: JSON.stringify({
+                      cliVersion: "2026.04.09-f2b0fcd",
+                      userEmail: null,
+                    }),
+                    stderr: "",
+                    code: 0,
+                  };
+                }
+                if (joined === "about") {
+                  return { stdout: "", stderr: "spawn ENOENT", code: 1 };
+                }
                 if (joined === "login status") {
                   return { stdout: "Logged in\n", stderr: "", code: 0 };
                 }
@@ -670,9 +792,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry;
-
-            const initial = yield* registry.getProviders;
-            assert.deepStrictEqual(initial, []);
 
             const refreshed = yield* registry.refresh("codex");
             assert.strictEqual(
@@ -703,6 +822,77 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             );
           }).pipe(Effect.provide(runtimeServices));
         }),
+      );
+
+      it.effect(
+        "keeps cursor disabled and skips probing when the provider setting is disabled",
+        () =>
+          Effect.gen(function* () {
+            const serverSettings = yield* makeMutableServerSettingsService(
+              Schema.decodeSync(ServerSettings)(
+                deepMerge(DEFAULT_SERVER_SETTINGS, {
+                  providers: {
+                    cursor: {
+                      enabled: false,
+                    },
+                  },
+                }),
+              ),
+            );
+            let cursorSpawned = false;
+            const scope = yield* Scope.make();
+            yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+            const providerRegistryLayer = ProviderRegistryLive.pipe(
+              Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-",
+                }),
+              ),
+              Layer.provideMerge(
+                mockCommandSpawnerLayer((command, args) => {
+                  if (command === "agent") {
+                    cursorSpawned = true;
+                  }
+                  const joined = args.join(" ");
+                  if (joined === "--version") {
+                    return { stdout: `${command} 1.0.0\n`, stderr: "", code: 0 };
+                  }
+                  if (joined === "login status") {
+                    return { stdout: "Logged in\n", stderr: "", code: 0 };
+                  }
+                  if (joined === "auth status") {
+                    return { stdout: '{"authenticated":true}\n', stderr: "", code: 0 };
+                  }
+                  throw new Error(`Unexpected args: ${command} ${joined}`);
+                }),
+              ),
+            );
+            const runtimeServices = yield* Layer.build(
+              Layer.mergeAll(
+                Layer.succeed(ServerSettingsService, serverSettings),
+                providerRegistryLayer,
+              ),
+            ).pipe(Scope.provide(scope));
+
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry;
+              const providers = yield* registry.getProviders;
+              const cursorProvider = providers.find((provider) => provider.provider === "cursor");
+
+              assert.deepStrictEqual(
+                providers.map((provider) => provider.provider),
+                ["codex", "claudeAgent", "opencode", "cursor"],
+              );
+              assert.strictEqual(cursorProvider?.enabled, false);
+              assert.strictEqual(cursorProvider?.status, "disabled");
+              assert.strictEqual(
+                cursorProvider?.message,
+                "Cursor is disabled in T3 Code settings.",
+              );
+              assert.strictEqual(cursorSpawned, false);
+            }).pipe(Effect.provide(runtimeServices));
+          }),
       );
 
       it.effect("skips codex probes entirely when the provider is disabled", () =>

@@ -73,10 +73,23 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     }),
   );
 
-  it("hydrates cached provider status onto current settings-derived models", () => {
+  it("hydrates cached provider status while preserving current settings-derived models", () => {
     const cachedCodex = makeProvider("codex", {
       checkedAt: "2026-04-10T12:00:00.000Z",
-      models: [],
+      models: [
+        {
+          slug: "gpt-5-mini",
+          name: "GPT-5 Mini",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
       message: "Cached message",
       skills: [
         {
@@ -112,6 +125,21 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       }),
       {
         ...fallbackCodex,
+        models: [
+          ...fallbackCodex.models,
+          {
+            slug: "gpt-5-mini",
+            name: "GPT-5 Mini",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [],
+              supportsFastMode: false,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+        ],
         installed: cachedCodex.installed,
         version: cachedCodex.version,
         status: cachedCodex.status,

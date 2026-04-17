@@ -11,7 +11,6 @@ import { Effect, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ClaudeModelSelection } from "@t3tools/contracts";
-import { resolveApiModelId } from "@t3tools/shared/model";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { TextGenerationError } from "@t3tools/contracts";
@@ -30,6 +29,7 @@ import {
   toJsonSchemaObject,
 } from "../Utils.ts";
 import { normalizeClaudeModelOptionsWithCapabilities } from "@t3tools/shared/model";
+import { resolveClaudeApiModelId } from "../../provider/Layers/ClaudeProvider.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "../../provider/Layers/ClaudeProvider.ts";
 
@@ -110,7 +110,7 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
           "--json-schema",
           jsonSchemaStr,
           "--model",
-          resolveApiModelId(modelSelection),
+          resolveClaudeApiModelId(modelSelection),
           ...(normalizedOptions?.effort ? ["--effort", normalizedOptions.effort] : []),
           ...(Object.keys(settings).length > 0 ? ["--settings", JSON.stringify(settings)] : []),
           "--dangerously-skip-permissions",
