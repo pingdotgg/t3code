@@ -2,7 +2,7 @@ import type { ServerProvider } from "@t3tools/contracts";
 import { Duration, Effect, PubSub, Ref, Scope, Stream } from "effect";
 import * as Semaphore from "effect/Semaphore";
 
-import type { ServerProviderShape } from "./Services/ServerProvider";
+import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 import { ServerSettingsError } from "@t3tools/contracts";
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <

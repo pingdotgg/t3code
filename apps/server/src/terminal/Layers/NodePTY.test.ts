@@ -1,7 +1,7 @@
 import { FileSystem, Path, Effect } from "effect";
 import { assert, it } from "@effect/vitest";
 
-import { ensureNodePtySpawnHelperExecutable } from "./NodePTY";
+import { ensureNodePtySpawnHelperExecutable } from "./NodePTY.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 it.layer(NodeServices.layer)("ensureNodePtySpawnHelperExecutable", (it) => {

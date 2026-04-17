@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveDesktopServerExposure, resolveLanAdvertisedHost } from "./serverExposure";
+import { resolveDesktopServerExposure, resolveLanAdvertisedHost } from "./serverExposure.ts";
 
 describe("resolveLanAdvertisedHost", () => {
   it("prefers an explicit host override", () => {

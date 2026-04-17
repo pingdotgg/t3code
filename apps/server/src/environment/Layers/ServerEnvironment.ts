@@ -3,7 +3,7 @@ import { Effect, FileSystem, Layer, Path, Random } from "effect";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerEnvironment, type ServerEnvironmentShape } from "../Services/ServerEnvironment.ts";
-import { version } from "../../../package.json" with { type: "json" };
+import packageJson from "../../../package.json" with { type: "json" };
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 
 function platformOs(): ExecutionEnvironmentDescriptor["platform"]["os"] {
@@ -77,7 +77,7 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
       os: platformOs(),
       arch: platformArch(),
     },
-    serverVersion: version,
+    serverVersion: packageJson.version,
     capabilities: {
       repositoryIdentity: true,
     },

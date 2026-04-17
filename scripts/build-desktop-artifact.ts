@@ -1,9 +1,5 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
@@ -14,7 +10,18 @@ import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Config, Data, Effect, FileSystem, Layer, Logger, Option, Path, Schema } from "effect";
+import {
+  Config,
+  Data,
+  Effect,
+  FileSystem,
+  Layer,
+  Logger,
+  Option,
+  Path,
+  Schema,
+  Stream,
+} from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -91,12 +98,49 @@ class BuildScriptError extends Data.TaggedError("BuildScriptError")<{
   readonly cause?: unknown;
 }> {}
 
-function resolveGitCommitHash(repoRoot: string): string {
-  const result = spawnSync("git", ["rev-parse", "--short=12", "HEAD"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  if (result.status !== 0) {
+const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
+  stream.pipe(
+    Stream.decodeText(),
+    Stream.runFold(
+      () => "",
+      (acc, chunk) => acc + chunk,
+    ),
+  );
+
+const spawnAndCollectOutput = Effect.fn("spawnAndCollectOutput")(function* (
+  command: ChildProcess.Command,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const child = yield* spawner.spawn(command);
+
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [
+      collectStreamAsString(child.stdout),
+      collectStreamAsString(child.stderr),
+      child.exitCode.pipe(Effect.map(Number)),
+    ],
+    { concurrency: "unbounded" },
+  );
+
+  return { stdout, stderr, exitCode } as const;
+});
+
+const resolveGitCommitHash = Effect.fn("resolveGitCommitHash")(function* (repoRoot: string) {
+  const result = yield* spawnAndCollectOutput(
+    ChildProcess.make("git", ["rev-parse", "--short=12", "HEAD"], {
+      cwd: repoRoot,
+    }),
+  ).pipe(
+    Effect.catch(() =>
+      Effect.succeed({
+        stdout: "",
+        stderr: "",
+        exitCode: 1,
+      }),
+    ),
+  );
+
+  if (result.exitCode !== 0) {
     return "unknown";
   }
   const hash = result.stdout.trim();
@@ -104,11 +148,13 @@ function resolveGitCommitHash(repoRoot: string): string {
     return "unknown";
   }
   return hash.toLowerCase();
-}
+});
 
-function resolvePythonForNodeGyp(): string | undefined {
+const resolvePythonForNodeGyp = Effect.fn("resolvePythonForNodeGyp")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const configured = process.env.npm_config_python ?? process.env.PYTHON;
-  if (configured && existsSync(configured)) {
+  if (configured && (yield* fs.exists(configured))) {
     return configured;
   }
 
@@ -116,28 +162,37 @@ function resolvePythonForNodeGyp(): string | undefined {
     const localAppData = process.env.LOCALAPPDATA;
     if (localAppData) {
       for (const version of ["Python313", "Python312", "Python311", "Python310"]) {
-        const candidate = join(localAppData, "Programs", "Python", version, "python.exe");
-        if (existsSync(candidate)) {
+        const candidate = path.join(localAppData, "Programs", "Python", version, "python.exe");
+        if (yield* fs.exists(candidate)) {
           return candidate;
         }
       }
     }
   }
 
-  const probe = spawnSync("python", ["-c", "import sys;print(sys.executable)"], {
-    encoding: "utf8",
-  });
-  if (probe.status !== 0) {
+  const probe = yield* spawnAndCollectOutput(
+    ChildProcess.make("python", ["-c", "import sys;print(sys.executable)"]),
+  ).pipe(
+    Effect.catch(() =>
+      Effect.succeed({
+        stdout: "",
+        stderr: "",
+        exitCode: 1,
+      }),
+    ),
+  );
+
+  if (probe.exitCode !== 0) {
     return undefined;
   }
 
   const executable = probe.stdout.trim();
-  if (!executable || !existsSync(executable)) {
+  if (!executable || !(yield* fs.exists(executable))) {
     return undefined;
   }
 
   return executable;
-}
+});
 
 interface ResolvedBuildOptions {
   readonly platform: typeof BuildPlatform.Type;
@@ -654,7 +709,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const appVersion = options.version ?? serverPackageJson.version;
   const iconAssets = resolveDesktopBuildIconAssets(appVersion);
-  const commitHash = resolveGitCommitHash(repoRoot);
+  const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
     prefix: `t3code-desktop-${options.platform}-stage-`,
@@ -709,9 +764,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     options.platform,
     stageResourcesDir,
     {
-      macIconPng: join(repoRoot, iconAssets.macIconPng),
-      linuxIconPng: join(repoRoot, iconAssets.linuxIconPng),
-      windowsIconIco: join(repoRoot, iconAssets.windowsIconIco),
+      macIconPng: path.join(repoRoot, iconAssets.macIconPng),
+      linuxIconPng: path.join(repoRoot, iconAssets.linuxIconPng),
+      windowsIconIco: path.join(repoRoot, iconAssets.windowsIconIco),
     },
     options.verbose,
   );
@@ -727,7 +782,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     description: "T3 Code desktop build",
     author: "T3 Tools",
-    main: "apps/desktop/dist-electron/main.js",
+    main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,
       options.target,
@@ -777,7 +832,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   if (process.platform === "win32") {
-    const python = resolvePythonForNodeGyp();
+    const python = yield* resolvePythonForNodeGyp();
     if (python) {
       buildEnv.PYTHON = python;
       buildEnv.npm_config_python = python;

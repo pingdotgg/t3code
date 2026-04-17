@@ -8,7 +8,7 @@ import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
-} from "./providerStatusCache";
+} from "./providerStatusCache.ts";
 
 const makeProvider = (
   provider: ServerProvider["provider"],

@@ -18,7 +18,7 @@ import {
   writeSavedEnvironmentRegistry,
   writeSavedEnvironmentSecret,
   type DesktopSecretStorage,
-} from "./clientPersistence";
+} from "./clientPersistence.ts";
 
 const tempDirectories: string[] = [];
 

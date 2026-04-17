@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { truncate } from "./String";
+import { truncate } from "./String.ts";
 
 describe("truncate", () => {
   it("trims surrounding whitespace", () => {

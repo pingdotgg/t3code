@@ -11,7 +11,7 @@ import {
   reduceDesktopUpdateStateOnInstallFailure,
   reduceDesktopUpdateStateOnNoUpdate,
   reduceDesktopUpdateStateOnUpdateAvailable,
-} from "./updateMachine";
+} from "./updateMachine.ts";
 
 const runtimeInfo = {
   hostArch: "x64",

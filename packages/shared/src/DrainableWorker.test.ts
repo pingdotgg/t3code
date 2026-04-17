@@ -2,7 +2,7 @@ import { it } from "@effect/vitest";
 import { describe, expect } from "vitest";
 import { Deferred, Effect } from "effect";
 
-import { makeDrainableWorker } from "./DrainableWorker";
+import { makeDrainableWorker } from "./DrainableWorker.ts";
 
 describe("makeDrainableWorker", () => {
   it.live("waits for work enqueued during active processing before draining", () =>

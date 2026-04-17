@@ -1,7 +1,7 @@
 import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
 import { Schema } from "effect";
-import { deepMerge } from "./Struct";
-import { fromLenientJson } from "./schemaJson";
+import { deepMerge } from "./Struct.ts";
+import { fromLenientJson } from "./schemaJson.ts";
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 

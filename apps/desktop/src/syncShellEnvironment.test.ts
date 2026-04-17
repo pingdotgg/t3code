@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { syncShellEnvironment } from "./syncShellEnvironment";
+import { syncShellEnvironment } from "./syncShellEnvironment.ts";
 
 describe("syncShellEnvironment", () => {
   it("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on macOS", () => {

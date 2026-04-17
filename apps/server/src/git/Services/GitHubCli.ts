@@ -8,7 +8,7 @@
 import { Context } from "effect";
 import type { Effect } from "effect";
 
-import type { ProcessRunResult } from "../../processRunner";
+import type { ProcessRunResult } from "../../processRunner.ts";
 import type { GitHubCliError } from "@t3tools/contracts";
 
 export interface GitHubPullRequestSummary {

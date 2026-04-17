@@ -3,9 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "types": ["node", "bun"],
-    "lib": ["ES2023", "esnext.disposable"],
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
+    "lib": ["ESNext", "esnext.disposable"],
     "plugins": [
       {
         "name": "@effect/language-service",

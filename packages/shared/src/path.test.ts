@@ -4,7 +4,7 @@ import {
   isUncPath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
-} from "./path";
+} from "./path.ts";
 
 describe("path helpers", () => {
   it("detects windows drive paths", () => {

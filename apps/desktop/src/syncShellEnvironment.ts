@@ -3,8 +3,8 @@ import {
   mergePathEntries,
   readPathFromLaunchctl,
   readEnvironmentFromLoginShell,
-  ShellEnvironmentReader,
 } from "@t3tools/shared/shell";
+import type { ShellEnvironmentReader } from "@t3tools/shared/shell";
 
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",

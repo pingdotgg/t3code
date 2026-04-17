@@ -5,7 +5,7 @@ import type {
   AuthSessionId,
 } from "@t3tools/contracts";
 import { Data, DateTime, Duration, Effect, Context } from "effect";
-import { SessionRole } from "./SessionCredentialService";
+import type { SessionRole } from "./SessionCredentialService.ts";
 
 export const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 

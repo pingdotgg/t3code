@@ -1,6 +1,9 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+#!/usr/bin/env node
+
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import {
   mergeUpdateManifests,
@@ -9,7 +12,8 @@ import {
   type UpdateManifest,
 } from "./lib/update-manifest.ts";
 
-export type UpdateManifestPlatform = "mac" | "win";
+const UpdateManifestPlatform = Schema.Literals(["mac", "win"]);
+export type UpdateManifestPlatform = typeof UpdateManifestPlatform.Type;
 
 function getPlatformLabel(platform: UpdateManifestPlatform): string {
   return platform === "mac" ? "macOS" : "Windows";
@@ -40,52 +44,65 @@ export function serializePlatformUpdateManifest(
   });
 }
 
-function parseArgs(args: ReadonlyArray<string>): {
-  platform: UpdateManifestPlatform;
-  primaryPath: string;
-  secondaryPath: string;
-  outputPath: string;
-} {
-  const [platformFlag, platformValue, primaryPathArg, secondaryPathArg, outputPathArg] = args;
-  if (platformFlag !== "--platform" || (platformValue !== "mac" && platformValue !== "win")) {
-    throw new Error(
-      "Usage: node scripts/merge-update-manifests.ts --platform <mac|win> <primary-path> <secondary-path> [output-path]",
-    );
-  }
-  if (!primaryPathArg || !secondaryPathArg) {
-    throw new Error(
-      "Usage: node scripts/merge-update-manifests.ts --platform <mac|win> <primary-path> <secondary-path> [output-path]",
-    );
-  }
+export const mergeUpdateManifestFiles = Effect.fn("mergeUpdateManifestFiles")(function* (
+  platform: UpdateManifestPlatform,
+  primaryPathArg: string,
+  secondaryPathArg: string,
+  outputPathArg: string | undefined,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
-  const primaryPath = resolve(primaryPathArg);
-  const secondaryPath = resolve(secondaryPathArg);
-  const outputPath = resolve(outputPathArg ?? primaryPathArg);
+  const primaryPath = path.resolve(primaryPathArg);
+  const secondaryPath = path.resolve(secondaryPathArg);
+  const outputPath = path.resolve(outputPathArg ?? primaryPathArg);
 
-  return {
-    platform: platformValue,
-    primaryPath,
-    secondaryPath,
-    outputPath,
-  };
-}
-
-function main(args: ReadonlyArray<string>): void {
-  const { platform, primaryPath, secondaryPath, outputPath } = parseArgs(args);
   const primaryManifest = parsePlatformUpdateManifest(
     platform,
-    readFileSync(primaryPath, "utf8"),
+    yield* fs.readFileString(primaryPath),
     primaryPath,
   );
   const secondaryManifest = parsePlatformUpdateManifest(
     platform,
-    readFileSync(secondaryPath, "utf8"),
+    yield* fs.readFileString(secondaryPath),
     secondaryPath,
   );
   const merged = mergePlatformUpdateManifests(platform, primaryManifest, secondaryManifest);
-  writeFileSync(outputPath, serializePlatformUpdateManifest(platform, merged));
-}
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2));
+  yield* fs.writeFileString(outputPath, serializePlatformUpdateManifest(platform, merged));
+});
+
+export const mergeUpdateManifestsCommand = Command.make(
+  "merge-update-manifests",
+  {
+    platform: Flag.choice("platform", UpdateManifestPlatform.literals).pipe(
+      Flag.withDescription("Update manifest platform."),
+    ),
+    primaryPath: Argument.string("primary-path").pipe(
+      Argument.withDescription("Primary update manifest path. Defaults to the output path."),
+    ),
+    secondaryPath: Argument.string("secondary-path").pipe(
+      Argument.withDescription(
+        "Secondary update manifest path to merge into the primary manifest.",
+      ),
+    ),
+    outputPath: Argument.string("output-path").pipe(
+      Argument.withDescription("Optional output path for the merged manifest."),
+      Argument.optional,
+    ),
+  },
+  ({ platform, primaryPath, secondaryPath, outputPath }) =>
+    mergeUpdateManifestFiles(
+      platform,
+      primaryPath,
+      secondaryPath,
+      Option.getOrUndefined(outputPath),
+    ),
+).pipe(Command.withDescription("Merge two Electron updater manifests into a multi-arch manifest."));
+
+if (import.meta.main) {
+  Command.run(mergeUpdateManifestsCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }

@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { compareCliVersions, normalizeCliVersion } from "./cliVersion";
+import { compareCliVersions, normalizeCliVersion } from "./cliVersion.ts";
 
 describe("cliVersion", () => {
   it("normalizes versions with a missing patch segment", () => {

@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
 
-import { type ServerConfigShape } from "./config";
-import { formatHostForUrl, isWildcardHost } from "./startupAccess";
+import { type ServerConfigShape } from "./config.ts";
+import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
 export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),

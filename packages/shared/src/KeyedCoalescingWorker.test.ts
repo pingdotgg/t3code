@@ -2,7 +2,7 @@ import { it } from "@effect/vitest";
 import { describe, expect } from "vitest";
 import { Deferred, Effect } from "effect";
 
-import { makeKeyedCoalescingWorker } from "./KeyedCoalescingWorker";
+import { makeKeyedCoalescingWorker } from "./KeyedCoalescingWorker.ts";
 
 describe("makeKeyedCoalescingWorker", () => {
   it.live("waits for latest work enqueued during active processing before draining the key", () =>

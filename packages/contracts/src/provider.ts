@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { TrimmedNonEmptyString } from "./baseSchemas";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ApprovalRequestId,
   EventId,
@@ -7,7 +7,7 @@ import {
   ProviderItemId,
   ThreadId,
   TurnId,
-} from "./baseSchemas";
+} from "./baseSchemas.ts";
 import {
   ChatAttachment,
   ModelSelection,
@@ -21,7 +21,7 @@ import {
   ProviderSandboxMode,
   ProviderUserInputAnswers,
   RuntimeMode,
-} from "./orchestration";
+} from "./orchestration.ts";
 
 const ProviderSessionStatus = Schema.Literals([
   "connecting",

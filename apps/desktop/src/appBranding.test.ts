@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveDesktopAppBranding, resolveDesktopAppStageLabel } from "./appBranding";
+import { resolveDesktopAppBranding, resolveDesktopAppStageLabel } from "./appBranding.ts";
 
 describe("resolveDesktopAppStageLabel", () => {
   it("uses Dev in desktop development", () => {

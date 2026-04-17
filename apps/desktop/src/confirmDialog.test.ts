@@ -11,7 +11,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { showDesktopConfirmDialog } from "./confirmDialog";
+import { showDesktopConfirmDialog } from "./confirmDialog.ts";
 
 describe("showDesktopConfirmDialog", () => {
   beforeEach(() => {

@@ -4,7 +4,7 @@ const shared = {
   format: "cjs" as const,
   outDir: "dist-electron",
   sourcemap: true,
-  outExtensions: () => ({ js: ".js" }),
+  outExtensions: () => ({ js: ".cjs" }),
 };
 
 export default defineConfig([

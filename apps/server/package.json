@@ -15,8 +15,9 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "bun run src/bin.ts",
+    "dev": "node --watch src/bin.ts",
     "build": "node scripts/cli.ts build",
+    "build:bundle": "tsdown",
     "start": "node dist/bin.mjs",
     "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",

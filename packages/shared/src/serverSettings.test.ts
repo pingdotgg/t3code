@@ -5,7 +5,7 @@ import {
   extractPersistedServerObservabilitySettings,
   normalizePersistedServerSettingString,
   parsePersistedServerObservabilitySettings,
-} from "./serverSettings";
+} from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
   it("normalizes optional persisted strings", () => {

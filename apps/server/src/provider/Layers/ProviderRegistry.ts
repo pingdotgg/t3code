@@ -6,14 +6,14 @@
 import type { ProviderKind, ServerProvider } from "@t3tools/contracts";
 import { Effect, Equal, FileSystem, Layer, Path, PubSub, Ref, Stream } from "effect";
 
-import { ServerConfig } from "../../config";
-import { ClaudeProviderLive } from "./ClaudeProvider";
-import { CodexProviderLive } from "./CodexProvider";
-import type { ClaudeProviderShape } from "../Services/ClaudeProvider";
-import { ClaudeProvider } from "../Services/ClaudeProvider";
-import type { CodexProviderShape } from "../Services/CodexProvider";
-import { CodexProvider } from "../Services/CodexProvider";
-import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry";
+import { ServerConfig } from "../../config.ts";
+import { ClaudeProviderLive } from "./ClaudeProvider.ts";
+import { CodexProviderLive } from "./CodexProvider.ts";
+import type { ClaudeProviderShape } from "../Services/ClaudeProvider.ts";
+import { ClaudeProvider } from "../Services/ClaudeProvider.ts";
+import type { CodexProviderShape } from "../Services/CodexProvider.ts";
+import { CodexProvider } from "../Services/CodexProvider.ts";
+import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import {
   hydrateCachedProvider,
   PROVIDER_CACHE_IDS,
@@ -21,7 +21,7 @@ import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
-} from "../providerStatusCache";
+} from "../providerStatusCache.ts";
 
 const loadProviders = (
   codexProvider: CodexProviderShape,

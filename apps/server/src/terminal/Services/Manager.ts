@@ -22,7 +22,7 @@ import {
   TerminalSessionStatus,
   TerminalWriteInput,
 } from "@t3tools/contracts";
-import { PtyProcess } from "./PTY";
+import type { PtyProcess } from "./PTY.ts";
 import { Effect, Context } from "effect";
 
 export {

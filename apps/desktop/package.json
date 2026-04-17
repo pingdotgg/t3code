@@ -2,13 +2,14 @@
   "name": "@t3tools/desktop",
   "version": "0.0.20",
   "private": true,
-  "main": "dist-electron/main.js",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
   "scripts": {
     "dev": "bun run --parallel dev:bundle dev:electron",
     "dev:bundle": "tsdown --watch",
-    "dev:electron": "bun run scripts/dev-electron.mjs",
+    "dev:electron": "node scripts/dev-electron.mjs",
     "build": "tsdown",
-    "start": "bun run scripts/start-electron.mjs",
+    "start": "node scripts/start-electron.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"

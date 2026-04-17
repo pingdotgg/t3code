@@ -1,6 +1,6 @@
 import { Schema } from "effect";
-import { TrimmedNonEmptyString } from "./baseSchemas";
-import type { ProviderKind } from "./orchestration";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import type { ProviderKind } from "./orchestration.ts";
 
 export const CodexReasoningEffort = Schema.Literals(["xhigh", "high", "medium", "low"]);
 export type CodexReasoningEffort = typeof CodexReasoningEffort.Type;

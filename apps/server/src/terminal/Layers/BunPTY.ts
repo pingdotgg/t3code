@@ -1,13 +1,16 @@
 import { Effect, Layer } from "effect";
-import { PtyAdapter, PtyAdapterShape, PtyExitEvent, PtyProcess } from "../Services/PTY";
+import { PtyAdapter } from "../Services/PTY.ts";
+import type { PtyAdapterShape, PtyExitEvent, PtyProcess } from "../Services/PTY.ts";
 
 class BunPtyProcess implements PtyProcess {
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
   private readonly decoder = new TextDecoder();
+  private readonly process: Bun.Subprocess;
   private didExit = false;
 
-  constructor(private readonly process: Bun.Subprocess) {
+  constructor(process: Bun.Subprocess) {
+    this.process = process;
     void this.process.exited
       .then((exitCode) => {
         this.emitExit({

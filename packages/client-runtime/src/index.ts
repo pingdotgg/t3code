@@ -1,2 +1,2 @@
-export * from "./knownEnvironment";
-export * from "./scoped";
+export * from "./knownEnvironment.ts";
+export * from "./scoped.ts";
