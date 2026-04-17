@@ -56,7 +56,6 @@ interface OpenCodeSessionContext {
   readonly messageRoleById: Map<string, "user" | "assistant">;
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
-  readonly emittedTextLengthByPartId: Map<string, number>;
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
@@ -454,7 +453,6 @@ export function makeOpenCodeAdapterLive(_options?: OpenCodeAdapterLiveOptions) {
         const previousText = context.emittedTextByPartId.get(part.id);
         const { latestText, deltaToEmit } = mergeOpenCodeAssistantText(previousText, text);
         context.emittedTextByPartId.set(part.id, latestText);
-        context.emittedTextLengthByPartId.set(part.id, latestText.length);
         if (latestText !== text) {
           context.partById.set(
             part.id,
@@ -520,10 +518,7 @@ export function makeOpenCodeAdapterLive(_options?: OpenCodeAdapterLiveOptions) {
                 "properties" in event
                   ? (event.properties as { sessionID?: unknown }).sessionID
                   : undefined;
-              if (
-                typeof payloadSessionId === "string" &&
-                payloadSessionId !== context.openCodeSessionId
-              ) {
+              if (payloadSessionId !== context.openCodeSessionId) {
                 continue;
               }
 
@@ -585,7 +580,6 @@ export function makeOpenCodeAdapterLive(_options?: OpenCodeAdapterLiveOptions) {
                     break;
                   }
                   context.emittedTextByPartId.set(event.properties.partID, nextText);
-                  context.emittedTextLengthByPartId.set(event.properties.partID, nextText.length);
                   if (existingPart.type === "text" || existingPart.type === "reasoning") {
                     context.partById.set(event.properties.partID, {
                       ...existingPart,
@@ -949,7 +943,6 @@ export function makeOpenCodeAdapterLive(_options?: OpenCodeAdapterLiveOptions) {
             pendingQuestions: new Map(),
             partById: new Map(),
             emittedTextByPartId: new Map(),
-            emittedTextLengthByPartId: new Map(),
             messageRoleById: new Map(),
             completedAssistantPartIds: new Set(),
             turns: [],
@@ -1290,10 +1283,9 @@ export function makeOpenCodeAdapterLive(_options?: OpenCodeAdapterLiveOptions) {
       const stopAll: OpenCodeAdapterShape["stopAll"] = () =>
         Effect.tryPromise({
           try: async () => {
-            await Promise.all(
-              [...sessions.values()].map((context) => stopOpenCodeContext(context)),
-            );
+            const contexts = [...sessions.values()];
             sessions.clear();
+            await Promise.all(contexts.map((context) => stopOpenCodeContext(context)));
           },
           catch: (cause) =>
             new ProviderAdapterProcessError({

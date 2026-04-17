@@ -32,8 +32,10 @@ const runtimeMock = vi.hoisted(() => {
     sessionCreateUrls: [] as string[],
     authHeaders: [] as Array<string | null>,
     abortCalls: [] as string[],
+    closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptAsyncError: null as Error | null,
+    closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
   };
@@ -45,8 +47,10 @@ const runtimeMock = vi.hoisted(() => {
       state.sessionCreateUrls.length = 0;
       state.authHeaders.length = 0;
       state.abortCalls.length = 0;
+      state.closeCalls.length = 0;
       state.revertCalls.length = 0;
       state.promptAsyncError = null;
+      state.closeError = null;
       state.messages = [];
       state.subscribedEvents = [];
     },
@@ -69,6 +73,17 @@ vi.mock("../opencodeRuntime.ts", async () => {
         close() {},
       };
     }),
+    connectToOpenCodeServer: vi.fn(async ({ serverUrl }: { serverUrl?: string }) => ({
+      url: serverUrl ?? "http://127.0.0.1:4301",
+      process: null,
+      external: Boolean(serverUrl),
+      close() {
+        runtimeMock.state.closeCalls.push(serverUrl ?? "http://127.0.0.1:4301");
+        if (runtimeMock.state.closeError) {
+          throw runtimeMock.state.closeError;
+        }
+      },
+    })),
     createOpenCodeSdkClient: vi.fn(
       ({ baseUrl, serverPassword }: { baseUrl: string; serverPassword?: string }) => ({
         session: {
@@ -197,6 +212,30 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("clears session state when stopAll cleanup fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      yield* adapter.startSession({
+        provider: "opencode",
+        threadId: asThreadId("thread-stop-all-a"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.startSession({
+        provider: "opencode",
+        threadId: asThreadId("thread-stop-all-b"),
+        runtimeMode: "full-access",
+      });
+
+      runtimeMock.state.closeError = new Error("close failed");
+      const error = yield* adapter.stopAll().pipe(Effect.flip);
+      const sessions = yield* adapter.listSessions();
+
+      assert.equal(error._tag, "ProviderAdapterProcessError");
+      assert.equal(error.detail, "close failed");
+      assert.deepEqual(sessions, []);
+    }),
+  );
+
   it.effect("rolls back session state when sendTurn fails before OpenCode accepts the prompt", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
@@ -294,6 +333,25 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         {
           type: "message.updated",
           properties: {
+            info: {
+              id: "msg-missing-session",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/other-session",
+            info: {
+              id: "msg-other-session",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
             sessionID: "http://127.0.0.1:9999/session",
             info: {
               id: "msg-native-log",
@@ -342,7 +400,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       }).pipe(Effect.provide(adapterLayer));
 
       assert.equal(session.threadId, "thread-native-log");
-      assert.equal(nativeEvents.length > 0, true);
+      assert.equal(nativeEvents.length, 1);
       assert.equal(
         nativeEvents.some((record) => record.event?.provider === "opencode"),
         true,
