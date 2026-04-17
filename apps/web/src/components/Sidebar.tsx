@@ -11,12 +11,7 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import {
-  prStatusIndicator,
-  resolveThreadPr,
-  terminalStatusFromRunningIds,
-  ThreadStatusLabel,
-} from "./ThreadStatusIndicators";
+import { prStatusIndicator, resolveThreadPr, ThreadStatusLabel } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -70,7 +65,11 @@ import {
   selectThreadByRef,
   useStore,
 } from "../store";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import {
+  normalizeRunningPorts,
+  selectThreadTerminalState,
+  useTerminalStateStore,
+} from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
 import {
   resolveShortcutCommand,
@@ -198,6 +197,42 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
+
+interface TerminalStatusIndicator {
+  label: string;
+  colorClass: string;
+  pulse: boolean;
+  primaryWebPort: number | null;
+}
+
+function terminalStatusFromTerminalState(
+  runningTerminalIds: string[],
+  runningTerminalPorts: Record<string, number[]>,
+): TerminalStatusIndicator | null {
+  if (runningTerminalIds.length === 0) {
+    return null;
+  }
+
+  const runningPorts = normalizeRunningPorts(
+    runningTerminalIds.flatMap((terminalId) => runningTerminalPorts[terminalId] ?? []),
+  );
+  const primaryWebPort = runningPorts[0] ?? null;
+
+  return {
+    label:
+      primaryWebPort === null
+        ? "Terminal process running"
+        : runningPorts.length === 1
+          ? `Open web server: http://localhost:${primaryWebPort}`
+          : `Open web server: http://localhost:${primaryWebPort} (detected web ports: ${runningPorts.join(", ")})`,
+    colorClass:
+      primaryWebPort === null
+        ? "text-teal-600 dark:text-teal-300/90"
+        : "text-sky-600 dark:text-sky-300/90",
+    pulse: true,
+    primaryWebPort,
+  };
+}
 
 function threadJumpLabelMapsEqual(
   left: ReadonlyMap<string, string>,
@@ -336,9 +371,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const hasSelection = useThreadSelectionStore((state) => state.selectedThreadKeys.size > 0);
-  const runningTerminalIds = useTerminalStateStore(
-    (state) =>
-      selectThreadTerminalState(state.terminalStateByThreadKey, threadRef).runningTerminalIds,
+  const terminalState = useTerminalStateStore((state) =>
+    selectThreadTerminalState(state.terminalStateByThreadKey, threadRef),
   );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread =
@@ -379,7 +413,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr);
-  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
+  const terminalStatus = terminalStatusFromTerminalState(
+    terminalState.runningTerminalIds,
+    terminalState.runningTerminalPorts,
+  );
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
     ? "pointer-events-none opacity-0"
@@ -452,6 +489,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       openPrLink(event, prStatus.url);
     },
     [openPrLink, prStatus],
+  );
+  const handleTerminalStatusClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (terminalStatus?.primaryWebPort == null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const api = readLocalApi();
+      if (!api) return;
+      void api.shell
+        .openExternal(`http://localhost:${terminalStatus.primaryWebPort}`)
+        .catch(() => undefined);
+    },
+    [terminalStatus],
   );
   const handleRenameInputRef = useCallback(
     (element: HTMLInputElement | null) => {
@@ -606,16 +656,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          {terminalStatus && (
-            <span
-              role="img"
-              aria-label={terminalStatus.label}
-              title={terminalStatus.label}
-              className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-            >
-              <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
-            </span>
-          )}
+          {terminalStatus &&
+            (terminalStatus.primaryWebPort === null ? (
+              <span
+                role="img"
+                aria-label={terminalStatus.label}
+                title={terminalStatus.label}
+                className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+              >
+                <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
+              </span>
+            ) : (
+              <button
+                type="button"
+                aria-label={terminalStatus.label}
+                title={terminalStatus.label}
+                className={`inline-flex cursor-pointer items-center justify-center rounded-sm ${terminalStatus.colorClass} outline-hidden transition-colors hover:bg-accent hover:text-sky-700 focus-visible:ring-1 focus-visible:ring-ring dark:hover:text-sky-200`}
+                onClick={handleTerminalStatusClick}
+              >
+                <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
+              </button>
+            ))}
           <div className="flex min-w-12 justify-end">
             {isConfirmingArchive ? (
               <button

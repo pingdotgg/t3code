@@ -205,6 +205,7 @@ describe("TerminalEvent", () => {
         terminalId: DEFAULT_TERMINAL_ID,
         createdAt: new Date().toISOString(),
         hasRunningSubprocess: true,
+        runningPorts: [3000],
       }),
     ).toBe(true);
   });

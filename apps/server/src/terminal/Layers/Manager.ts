@@ -28,7 +28,18 @@ import {
   terminalRestartsTotal,
   terminalSessionsTotal,
 } from "../../observability/Metrics.ts";
-import { runProcess } from "../../processRunner.ts";
+import { arePortListsEqual, normalizeRunningPorts } from "../../process/utils.ts";
+import {
+  TerminalProcessInspector,
+  TerminalProcessInspectionError,
+  type TerminalSubprocessActivity,
+  type TerminalSubprocessInspector,
+} from "../../process/Services/TerminalProcessInspector.ts";
+import {
+  DEFAULT_WEB_PORT_PROBE_TTL_MS,
+  WebPortInspector,
+  type TerminalWebPortInspector,
+} from "../../process/Services/WebPortInspector.ts";
 import {
   TerminalCwdError,
   TerminalHistoryError,
@@ -48,21 +59,12 @@ import {
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_SUBPROCESS_ACTIVITY_ERROR_LOG_THROTTLE_MS = 30_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
-
-class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubprocessCheckError>()(
-  "TerminalSubprocessCheckError",
-  {
-    message: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-    terminalPid: Schema.Number,
-    command: Schema.Literals(["powershell", "pgrep", "ps"]),
-  },
-) {}
 
 class TerminalProcessSignalError extends Schema.TaggedErrorClass<TerminalProcessSignalError>()(
   "TerminalProcessSignalError",
@@ -73,8 +75,94 @@ class TerminalProcessSignalError extends Schema.TaggedErrorClass<TerminalProcess
   },
 ) {}
 
-interface TerminalSubprocessChecker {
-  (terminalPid: number): Effect.Effect<boolean, TerminalSubprocessCheckError>;
+interface SubprocessActivityErrorLogState {
+  fingerprint: string;
+  lastLoggedAt: number;
+  suppressedRepeats: number;
+}
+
+export function describeSubprocessInspectorError(error: unknown): {
+  fingerprint: string;
+  error: string;
+  operation?: string;
+  command?: string;
+  detail?: string;
+  cause?: string;
+} {
+  if (Schema.is(TerminalProcessInspectionError)(error)) {
+    const cause =
+      error.cause instanceof Error
+        ? error.cause.message
+        : typeof error.cause === "string"
+          ? error.cause
+          : error.cause === undefined || error.cause === null
+            ? undefined
+            : String(error.cause);
+    return {
+      fingerprint: JSON.stringify([
+        error.operation,
+        error.terminalPid,
+        error.command,
+        error.detail,
+        cause ?? "",
+      ]),
+      error: error.message,
+      operation: error.operation,
+      command: error.command,
+      detail: error.detail,
+      ...(cause ? { cause } : {}),
+    };
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    fingerprint: message,
+    error: message,
+  };
+}
+
+export function nextSubprocessActivityErrorLogState(input: {
+  previous: SubprocessActivityErrorLogState | undefined;
+  fingerprint: string;
+  now: number;
+  throttleMs: number;
+}): {
+  shouldLog: boolean;
+  suppressedRepeats: number;
+  next: SubprocessActivityErrorLogState;
+} {
+  if (!input.previous || input.previous.fingerprint !== input.fingerprint) {
+    return {
+      shouldLog: true,
+      suppressedRepeats: 0,
+      next: {
+        fingerprint: input.fingerprint,
+        lastLoggedAt: input.now,
+        suppressedRepeats: 0,
+      },
+    };
+  }
+
+  if (input.now - input.previous.lastLoggedAt >= input.throttleMs) {
+    return {
+      shouldLog: true,
+      suppressedRepeats: input.previous.suppressedRepeats,
+      next: {
+        fingerprint: input.fingerprint,
+        lastLoggedAt: input.now,
+        suppressedRepeats: 0,
+      },
+    };
+  }
+
+  return {
+    shouldLog: false,
+    suppressedRepeats: input.previous.suppressedRepeats + 1,
+    next: {
+      ...input.previous,
+      suppressedRepeats: input.previous.suppressedRepeats + 1,
+    },
+  };
 }
 
 interface ShellCandidate {
@@ -113,6 +201,7 @@ interface TerminalSessionState {
   unsubscribeData: (() => void) | null;
   unsubscribeExit: (() => void) | null;
   hasRunningSubprocess: boolean;
+  runningSubprocessPorts: number[];
   runtimeEnv: Record<string, string> | null;
 }
 
@@ -346,108 +435,6 @@ function isRetryableShellSpawnError(error: PtySpawnError): boolean {
     message.includes("no such file")
   );
 }
-
-function checkWindowsSubprocessActivity(
-  terminalPid: number,
-): Effect.Effect<boolean, TerminalSubprocessCheckError> {
-  const command = [
-    `$children = Get-CimInstance Win32_Process -Filter "ParentProcessId = ${terminalPid}" -ErrorAction SilentlyContinue`,
-    "if ($children) { exit 0 }",
-    "exit 1",
-  ].join("; ");
-  return Effect.tryPromise({
-    try: () =>
-      runProcess("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
-        timeoutMs: 1_500,
-        allowNonZeroExit: true,
-        maxBufferBytes: 32_768,
-        outputMode: "truncate",
-      }),
-    catch: (cause) =>
-      new TerminalSubprocessCheckError({
-        message: "Failed to check Windows terminal subprocess activity.",
-        cause,
-        terminalPid,
-        command: "powershell",
-      }),
-  }).pipe(Effect.map((result) => result.code === 0));
-}
-
-const checkPosixSubprocessActivity = Effect.fn("terminal.checkPosixSubprocessActivity")(function* (
-  terminalPid: number,
-): Effect.fn.Return<boolean, TerminalSubprocessCheckError> {
-  const runPgrep = Effect.tryPromise({
-    try: () =>
-      runProcess("pgrep", ["-P", String(terminalPid)], {
-        timeoutMs: 1_000,
-        allowNonZeroExit: true,
-        maxBufferBytes: 32_768,
-        outputMode: "truncate",
-      }),
-    catch: (cause) =>
-      new TerminalSubprocessCheckError({
-        message: "Failed to inspect terminal subprocesses with pgrep.",
-        cause,
-        terminalPid,
-        command: "pgrep",
-      }),
-  });
-
-  const runPs = Effect.tryPromise({
-    try: () =>
-      runProcess("ps", ["-eo", "pid=,ppid="], {
-        timeoutMs: 1_000,
-        allowNonZeroExit: true,
-        maxBufferBytes: 262_144,
-        outputMode: "truncate",
-      }),
-    catch: (cause) =>
-      new TerminalSubprocessCheckError({
-        message: "Failed to inspect terminal subprocesses with ps.",
-        cause,
-        terminalPid,
-        command: "ps",
-      }),
-  });
-
-  const pgrepResult = yield* Effect.exit(runPgrep);
-  if (pgrepResult._tag === "Success") {
-    if (pgrepResult.value.code === 0) {
-      return pgrepResult.value.stdout.trim().length > 0;
-    }
-    if (pgrepResult.value.code === 1) {
-      return false;
-    }
-  }
-
-  const psResult = yield* Effect.exit(runPs);
-  if (psResult._tag === "Failure" || psResult.value.code !== 0) {
-    return false;
-  }
-
-  for (const line of psResult.value.stdout.split(/\r?\n/g)) {
-    const [pidRaw, ppidRaw] = line.trim().split(/\s+/g);
-    const pid = Number(pidRaw);
-    const ppid = Number(ppidRaw);
-    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-    if (ppid === terminalPid) {
-      return true;
-    }
-  }
-  return false;
-});
-
-const defaultSubprocessChecker = Effect.fn("terminal.defaultSubprocessChecker")(function* (
-  terminalPid: number,
-): Effect.fn.Return<boolean, TerminalSubprocessCheckError> {
-  if (!Number.isInteger(terminalPid) || terminalPid <= 0) {
-    return false;
-  }
-  if (process.platform === "win32") {
-    return yield* checkWindowsSubprocessActivity(terminalPid);
-  }
-  return yield* checkPosixSubprocessActivity(terminalPid);
-});
 
 function capHistory(history: string, maxLines: number): string {
   if (history.length === 0) return history;
@@ -694,9 +681,11 @@ interface TerminalManagerOptions {
   historyLineLimit?: number;
   ptyAdapter: PtyAdapterShape;
   shellResolver?: () => string;
+  subprocessInspector?: TerminalSubprocessInspector;
+  webPortInspector?: TerminalWebPortInspector;
+  webPortProbeCacheTtlMs?: number;
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
-  subprocessChecker?: TerminalSubprocessChecker;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
@@ -722,12 +711,17 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
     const platform = options.platform ?? process.platform;
     const baseEnv = options.env ?? process.env;
     const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
-    const subprocessChecker = options.subprocessChecker ?? defaultSubprocessChecker;
+    const subprocessInspector =
+      options.subprocessInspector ?? (yield* TerminalProcessInspector).inspect;
+    const webPortInspector = options.webPortInspector ?? (yield* WebPortInspector).inspect;
+    const webPortProbeCacheTtlMs = options.webPortProbeCacheTtlMs ?? DEFAULT_WEB_PORT_PROBE_TTL_MS;
     const subprocessPollIntervalMs =
       options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
     const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
     const maxRetainedInactiveSessions =
       options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
+    const webPortProbeCache = new Map<number, { isWeb: true; checkedAt: number }>();
+    const subprocessActivityErrorLogState = new Map<string, SubprocessActivityErrorLogState>();
 
     yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
 
@@ -745,6 +739,66 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         for (const listener of terminalEventListeners) {
           yield* listener(event).pipe(Effect.ignoreCause({ log: true }));
         }
+      });
+
+    const inspectWebPortCached = (port: number) =>
+      Effect.gen(function* () {
+        const now = Date.now();
+        const cached = webPortProbeCache.get(port);
+        for (const [cachedPort, entry] of webPortProbeCache) {
+          if (cachedPort !== port && now - entry.checkedAt > webPortProbeCacheTtlMs) {
+            webPortProbeCache.delete(cachedPort);
+          }
+        }
+
+        if (cached && now - cached.checkedAt <= webPortProbeCacheTtlMs) {
+          return true;
+        }
+
+        const probeResult = yield* webPortInspector(port).pipe(Effect.exit);
+        if (probeResult._tag === "Success") {
+          if (probeResult.value) {
+            webPortProbeCache.set(port, {
+              isWeb: true,
+              checkedAt: Date.now(),
+            });
+            return true;
+          }
+          webPortProbeCache.delete(port);
+          return false;
+        }
+
+        if (cached) {
+          webPortProbeCache.set(port, {
+            isWeb: true,
+            checkedAt: Date.now(),
+          });
+          return true;
+        }
+
+        return false;
+      });
+
+    const detectWebPorts = (runningPorts: number[]) =>
+      Effect.gen(function* () {
+        if (runningPorts.length === 0) {
+          return [] as number[];
+        }
+
+        const checks = yield* Effect.forEach(
+          runningPorts,
+          (port) =>
+            Effect.map(inspectWebPortCached(port), (isWeb) => ({
+              port,
+              isWeb,
+            })),
+          { concurrency: "unbounded" },
+        );
+
+        return checks
+          .filter((entry) => entry.isWeb)
+          .map((entry) => entry.port)
+          .toSorted((left, right) => left - right);
       });
 
     const historyPath = (threadId: string, terminalId: string) => {
@@ -1210,6 +1264,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           session.process = null;
           session.pid = null;
           session.hasRunningSubprocess = false;
+          session.runningSubprocessPorts = [];
           session.status = "exited";
           session.pendingHistoryControlSequence = "";
           session.pendingProcessEvents = [];
@@ -1277,6 +1332,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         session.process = null;
         session.pid = null;
         session.hasRunningSubprocess = false;
+        session.runningSubprocessPorts = [];
         session.status = "exited";
         session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
@@ -1370,6 +1426,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         session.exitCode = null;
         session.exitSignal = null;
         session.hasRunningSubprocess = false;
+        session.runningSubprocessPorts = [];
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
@@ -1443,6 +1500,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           session.unsubscribeData = null;
           session.unsubscribeExit = null;
           session.hasRunningSubprocess = false;
+          session.runningSubprocessPorts = [];
           session.pendingProcessEvents = [];
           session.pendingProcessEventIndex = 0;
           session.processEventDrainRunning = false;
@@ -1504,6 +1562,14 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         (session): session is TerminalSessionState & { pid: number } =>
           session.status === "running" && Number.isInteger(session.pid),
       );
+      const activeRunningSessionKeys = new Set(
+        runningSessions.map((session) => toSessionKey(session.threadId, session.terminalId)),
+      );
+      for (const sessionKey of subprocessActivityErrorLogState.keys()) {
+        if (!activeRunningSessionKeys.has(sessionKey)) {
+          subprocessActivityErrorLogState.delete(sessionKey);
+        }
+      }
 
       if (runningSessions.length === 0) {
         return;
@@ -1513,21 +1579,48 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         session: TerminalSessionState & { pid: number },
       ) {
         const terminalPid = session.pid;
-        const hasRunningSubprocess = yield* subprocessChecker(terminalPid).pipe(
+        const sessionKey = toSessionKey(session.threadId, session.terminalId);
+        const activity = yield* subprocessInspector(terminalPid).pipe(
+          Effect.tap(() => Effect.sync(() => subprocessActivityErrorLogState.delete(sessionKey))),
           Effect.map(Option.some),
-          Effect.catch((reason) =>
-            Effect.logWarning("failed to check terminal subprocess activity", {
+          Effect.catch((error) => {
+            const description = describeSubprocessInspectorError(error);
+            const logDecision = nextSubprocessActivityErrorLogState({
+              previous: subprocessActivityErrorLogState.get(sessionKey),
+              fingerprint: description.fingerprint,
+              now: Date.now(),
+              throttleMs: DEFAULT_SUBPROCESS_ACTIVITY_ERROR_LOG_THROTTLE_MS,
+            });
+            subprocessActivityErrorLogState.set(sessionKey, logDecision.next);
+            if (!logDecision.shouldLog) {
+              return Effect.succeed(Option.none<TerminalSubprocessActivity>());
+            }
+            return Effect.logWarning("failed to check terminal subprocess activity", {
               threadId: session.threadId,
               terminalId: session.terminalId,
               terminalPid,
-              reason,
-            }).pipe(Effect.as(Option.none<boolean>())),
-          ),
+              error: description.error,
+              ...(description.operation ? { operation: description.operation } : {}),
+              ...(description.command ? { command: description.command } : {}),
+              ...(description.detail ? { detail: description.detail } : {}),
+              ...(description.cause ? { cause: description.cause } : {}),
+              ...(logDecision.suppressedRepeats > 0
+                ? { suppressedRepeats: logDecision.suppressedRepeats }
+                : {}),
+            }).pipe(Effect.as(Option.none<TerminalSubprocessActivity>()));
+          }),
         );
 
-        if (Option.isNone(hasRunningSubprocess)) {
+        if (Option.isNone(activity)) {
           return;
         }
+
+        const hasRunningSubprocess = activity.value.hasRunningSubprocess === true;
+        const runningPorts = hasRunningSubprocess
+          ? normalizeRunningPorts(
+              yield* detectWebPorts(normalizeRunningPorts(activity.value.runningPorts)),
+            )
+          : [];
 
         const event = yield* modifyManagerState((state) => {
           const liveSession: Option.Option<TerminalSessionState> = Option.fromNullishOr(
@@ -1537,12 +1630,14 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             Option.isNone(liveSession) ||
             liveSession.value.status !== "running" ||
             liveSession.value.pid !== terminalPid ||
-            liveSession.value.hasRunningSubprocess === hasRunningSubprocess.value
+            (liveSession.value.hasRunningSubprocess === hasRunningSubprocess &&
+              arePortListsEqual(liveSession.value.runningSubprocessPorts, runningPorts))
           ) {
             return [Option.none(), state] as const;
           }
 
-          liveSession.value.hasRunningSubprocess = hasRunningSubprocess.value;
+          liveSession.value.hasRunningSubprocess = hasRunningSubprocess;
+          liveSession.value.runningSubprocessPorts = runningPorts;
           liveSession.value.updatedAt = new Date().toISOString();
 
           return [
@@ -1551,7 +1646,8 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: liveSession.value.threadId,
               terminalId: liveSession.value.terminalId,
               createdAt: new Date().toISOString(),
-              hasRunningSubprocess: hasRunningSubprocess.value,
+              hasRunningSubprocess,
+              runningPorts,
             }),
             state,
           ] as const;
@@ -1650,6 +1746,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               unsubscribeData: null,
               unsubscribeExit: null,
               hasRunningSubprocess: false,
+              runningSubprocessPorts: [],
               runtimeEnv: normalizedRuntimeEnv(input.env),
             };
 
@@ -1829,6 +1926,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               unsubscribeData: null,
               unsubscribeExit: null,
               hasRunningSubprocess: false,
+              runningSubprocessPorts: [],
               runtimeEnv: normalizedRuntimeEnv(input.env),
             };
             const createdSession = session;

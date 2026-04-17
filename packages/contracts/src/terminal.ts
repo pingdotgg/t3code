@@ -10,6 +10,7 @@ const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(20)).c
 const TerminalRowsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(5)).check(
   Schema.isLessThanOrEqualTo(200),
 );
+const TerminalPortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }));
 const TerminalIdSchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(128));
 const TerminalEnvKeySchema = Schema.String.check(
   Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
@@ -140,8 +141,8 @@ const TerminalActivityEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("activity"),
   hasRunningSubprocess: Schema.Boolean,
+  runningPorts: Schema.Array(TerminalPortSchema),
 });
-
 export const TerminalEvent = Schema.Union([
   TerminalStartedEvent,
   TerminalOutputEvent,

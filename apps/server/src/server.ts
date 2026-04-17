@@ -48,6 +48,8 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ProjectSetupScriptRunnerLive } from "./project/Layers/ProjectSetupScriptRunner.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
+import { TerminalProcessInspectorLive } from "./process/Layers/TerminalProcessInspector.ts";
+import { WebPortInspectorLive } from "./process/Layers/WebPortInspector.ts";
 import { ServerEnvironmentLive } from "./environment/Layers/ServerEnvironment.ts";
 import {
   authBearerBootstrapRouteLayer,
@@ -183,7 +185,11 @@ const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitCoreLive),
 );
 
-const TerminalLayerLive = TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive));
+const TerminalLayerLive = TerminalManagerLive.pipe(
+  Layer.provideMerge(WebPortInspectorLive),
+  Layer.provideMerge(TerminalProcessInspectorLive),
+  Layer.provide(PtyAdapterLive),
+);
 
 const WorkspaceEntriesLayerLive = WorkspaceEntriesLive.pipe(
   Layer.provide(WorkspacePathsLive),

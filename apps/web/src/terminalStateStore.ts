@@ -23,6 +23,7 @@ interface ThreadTerminalState {
   terminalHeight: number;
   terminalIds: string[];
   runningTerminalIds: string[];
+  runningTerminalPorts: Record<string, number[]>;
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
@@ -80,6 +81,30 @@ function normalizeRunningTerminalIds(
   return [...new Set(runningTerminalIds)]
     .map((id) => id.trim())
     .filter((id) => id.length > 0 && validTerminalIdSet.has(id));
+}
+
+export function normalizeRunningPorts(ports: readonly number[] | undefined): number[] {
+  if (!ports || ports.length === 0) return [];
+  return [...new Set(ports)]
+    .filter((port) => Number.isInteger(port) && port > 0 && port <= 65_535)
+    .toSorted((left, right) => left - right);
+}
+
+function normalizeRunningTerminalPorts(
+  runningTerminalPorts: Record<string, number[]> | undefined,
+  terminalIds: string[],
+): Record<string, number[]> {
+  if (!runningTerminalPorts) return {};
+  const validTerminalIdSet = new Set(terminalIds);
+  const normalizedEntries: Array<[string, number[]]> = [];
+  for (const [rawTerminalId, ports] of Object.entries(runningTerminalPorts)) {
+    const terminalId = rawTerminalId.trim();
+    if (terminalId.length === 0 || !validTerminalIdSet.has(terminalId)) {
+      continue;
+    }
+    normalizedEntries.push([terminalId, normalizeRunningPorts(ports)]);
+  }
+  return Object.fromEntries(normalizedEntries);
 }
 
 function fallbackGroupId(terminalId: string): string {
@@ -157,7 +182,7 @@ function normalizeTerminalGroups(
   return nextGroups;
 }
 
-function arraysEqual(a: string[], b: string[]): boolean {
+function arraysEqual<T>(a: readonly T[], b: readonly T[]): boolean {
   if (a.length !== b.length) return false;
   for (let index = 0; index < a.length; index += 1) {
     if (a[index] !== b[index]) return false;
@@ -177,6 +202,22 @@ function terminalGroupsEqual(left: ThreadTerminalGroup[], right: ThreadTerminalG
   return true;
 }
 
+function runningTerminalPortsEqual(
+  left: Record<string, number[]>,
+  right: Record<string, number[]>,
+): boolean {
+  const leftEntries = Object.entries(left);
+  const rightEntries = Object.entries(right);
+  if (leftEntries.length !== rightEntries.length) return false;
+  for (const [terminalId, leftPorts] of leftEntries) {
+    const rightPorts = right[terminalId];
+    if (!rightPorts || !arraysEqual(leftPorts, rightPorts)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTerminalState): boolean {
   return (
     left.terminalOpen === right.terminalOpen &&
@@ -185,6 +226,7 @@ function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTermin
     left.activeTerminalGroupId === right.activeTerminalGroupId &&
     arraysEqual(left.terminalIds, right.terminalIds) &&
     arraysEqual(left.runningTerminalIds, right.runningTerminalIds) &&
+    runningTerminalPortsEqual(left.runningTerminalPorts, right.runningTerminalPorts) &&
     terminalGroupsEqual(left.terminalGroups, right.terminalGroups)
   );
 }
@@ -194,6 +236,7 @@ const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
   terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
   terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
   runningTerminalIds: [],
+  runningTerminalPorts: {},
   activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
   terminalGroups: [
     {
@@ -209,6 +252,7 @@ function createDefaultThreadTerminalState(): ThreadTerminalState {
     ...DEFAULT_THREAD_TERMINAL_STATE,
     terminalIds: [...DEFAULT_THREAD_TERMINAL_STATE.terminalIds],
     runningTerminalIds: [...DEFAULT_THREAD_TERMINAL_STATE.runningTerminalIds],
+    runningTerminalPorts: { ...DEFAULT_THREAD_TERMINAL_STATE.runningTerminalPorts },
     terminalGroups: copyTerminalGroups(DEFAULT_THREAD_TERMINAL_STATE.terminalGroups),
   };
 }
@@ -221,6 +265,10 @@ function normalizeThreadTerminalState(state: ThreadTerminalState): ThreadTermina
   const terminalIds = normalizeTerminalIds(state.terminalIds);
   const nextTerminalIds = terminalIds.length > 0 ? terminalIds : [DEFAULT_THREAD_TERMINAL_ID];
   const runningTerminalIds = normalizeRunningTerminalIds(state.runningTerminalIds, nextTerminalIds);
+  const runningTerminalPorts = normalizeRunningTerminalPorts(
+    state.runningTerminalPorts,
+    nextTerminalIds,
+  );
   const activeTerminalId = nextTerminalIds.includes(state.activeTerminalId)
     ? state.activeTerminalId
     : (nextTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID);
@@ -241,6 +289,7 @@ function normalizeThreadTerminalState(state: ThreadTerminalState): ThreadTermina
         : DEFAULT_THREAD_TERMINAL_HEIGHT,
     terminalIds: nextTerminalIds,
     runningTerminalIds,
+    runningTerminalPorts,
     activeTerminalId,
     terminalGroups,
     activeTerminalGroupId:
@@ -481,6 +530,9 @@ function closeThreadTerminal(state: ThreadTerminalState, terminalId: string): Th
     terminalHeight: normalized.terminalHeight,
     terminalIds: remainingTerminalIds,
     runningTerminalIds: normalized.runningTerminalIds.filter((id) => id !== terminalId),
+    runningTerminalPorts: Object.fromEntries(
+      Object.entries(normalized.runningTerminalPorts).filter(([key]) => key !== terminalId),
+    ),
     activeTerminalId: nextActiveTerminalId,
     terminalGroups,
     activeTerminalGroupId: nextActiveTerminalGroupId,
@@ -491,22 +543,35 @@ function setThreadTerminalActivity(
   state: ThreadTerminalState,
   terminalId: string,
   hasRunningSubprocess: boolean,
+  runningPorts: readonly number[] = [],
 ): ThreadTerminalState {
   const normalized = normalizeThreadTerminalState(state);
   if (!normalized.terminalIds.includes(terminalId)) {
     return normalized;
   }
   const alreadyRunning = normalized.runningTerminalIds.includes(terminalId);
-  if (hasRunningSubprocess === alreadyRunning) {
+  const nextRunningPorts = normalizeRunningPorts(runningPorts);
+  const currentRunningPorts = normalized.runningTerminalPorts[terminalId] ?? [];
+  if (
+    hasRunningSubprocess === alreadyRunning &&
+    arraysEqual(currentRunningPorts, nextRunningPorts)
+  ) {
     return normalized;
   }
   const runningTerminalIds = new Set(normalized.runningTerminalIds);
+  const runningTerminalPorts = { ...normalized.runningTerminalPorts };
   if (hasRunningSubprocess) {
     runningTerminalIds.add(terminalId);
+    runningTerminalPorts[terminalId] = nextRunningPorts;
   } else {
     runningTerminalIds.delete(terminalId);
+    delete runningTerminalPorts[terminalId];
   }
-  return { ...normalized, runningTerminalIds: [...runningTerminalIds] };
+  return {
+    ...normalized,
+    runningTerminalIds: [...runningTerminalIds],
+    runningTerminalPorts,
+  };
 }
 
 export function selectThreadTerminalState(
@@ -516,7 +581,8 @@ export function selectThreadTerminalState(
   if (!threadRef || threadRef.threadId.length === 0) {
     return getDefaultThreadTerminalState();
   }
-  return terminalStateByThreadKey[terminalThreadKey(threadRef)] ?? getDefaultThreadTerminalState();
+  const state = terminalStateByThreadKey[terminalThreadKey(threadRef)];
+  return state ? normalizeThreadTerminalState(state) : getDefaultThreadTerminalState();
 }
 
 function updateTerminalStateByThreadKey(
@@ -588,6 +654,7 @@ interface TerminalStateStoreState {
     threadRef: ScopedThreadRef,
     terminalId: string,
     hasRunningSubprocess: boolean,
+    runningPorts?: readonly number[],
   ) => void;
   recordTerminalEvent: (threadRef: ScopedThreadRef, event: TerminalEvent) => void;
   applyTerminalEvent: (threadRef: ScopedThreadRef, event: TerminalEvent) => void;
@@ -672,9 +739,9 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
             const { [threadKey]: _removed, ...rest } = state.terminalLaunchContextByThreadKey;
             return { terminalLaunchContextByThreadKey: rest };
           }),
-        setTerminalActivity: (threadRef, terminalId, hasRunningSubprocess) =>
+        setTerminalActivity: (threadRef, terminalId, hasRunningSubprocess, runningPorts) =>
           updateTerminal(threadRef, (state) =>
-            setThreadTerminalActivity(state, terminalId, hasRunningSubprocess),
+            setThreadTerminalActivity(state, terminalId, hasRunningSubprocess, runningPorts),
           ),
         recordTerminalEvent: (threadRef, event) =>
           set((state) =>
@@ -717,7 +784,12 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
                 nextTerminalStateByThreadKey,
                 threadRef,
                 (current) =>
-                  setThreadTerminalActivity(current, event.terminalId, hasRunningSubprocess),
+                  setThreadTerminalActivity(
+                    current,
+                    event.terminalId,
+                    hasRunningSubprocess,
+                    event.type === "activity" ? event.runningPorts : [],
+                  ),
               );
             }
 

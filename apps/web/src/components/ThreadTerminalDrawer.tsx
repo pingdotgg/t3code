@@ -1,5 +1,5 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
+import { Globe, Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
 import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -47,7 +48,11 @@ import {
 } from "../types";
 import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
-import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalStateStore";
+import {
+  normalizeRunningPorts,
+  selectTerminalEventEntries,
+  useTerminalStateStore,
+} from "../terminalStateStore";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -87,6 +92,35 @@ export function selectPendingTerminalEventEntries(
   lastAppliedTerminalEventId: number,
 ): ReadonlyArray<{ id: number; event: TerminalEvent }> {
   return entries.filter((entry) => entry.id > lastAppliedTerminalEventId);
+}
+
+interface TerminalRuntimeStatus {
+  label: string;
+  primaryWebPort: number | null;
+}
+
+function terminalRuntimeStatus(
+  terminalId: string,
+  runningTerminalIds: Set<string>,
+  runningTerminalPorts: Record<string, number[]>,
+): TerminalRuntimeStatus | null {
+  if (!runningTerminalIds.has(terminalId)) {
+    return null;
+  }
+
+  const runningPorts = normalizeRunningPorts(runningTerminalPorts[terminalId]);
+  const primaryWebPort = runningPorts[0] ?? null;
+  const label =
+    runningPorts.length === 0
+      ? "Terminal process running"
+      : runningPorts.length === 1
+        ? `Open web server: http://localhost:${primaryWebPort}`
+        : `Open web server: http://localhost:${primaryWebPort} (detected web ports: ${runningPorts.join(", ")})`;
+
+  return {
+    label,
+    primaryWebPort,
+  };
 }
 
 function normalizeComputedColor(value: string | null | undefined, fallback: string): string {
@@ -810,6 +844,8 @@ interface ThreadTerminalDrawerProps {
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
+  runningTerminalIds: string[];
+  runningTerminalPorts: Record<string, number[]>;
   focusRequestId: number;
   onSplitTerminal: () => void;
   onNewTerminal: () => void;
@@ -864,6 +900,8 @@ export default function ThreadTerminalDrawer({
   activeTerminalId,
   terminalGroups,
   activeTerminalGroupId,
+  runningTerminalIds,
+  runningTerminalPorts,
   focusRequestId,
   onSplitTerminal,
   onNewTerminal,
@@ -988,6 +1026,10 @@ export default function ThreadTerminalDrawer({
       ),
     [normalizedTerminalIds],
   );
+  const runningTerminalIdSet = useMemo(
+    () => new Set(runningTerminalIds.map((terminalId) => terminalId.trim())),
+    [runningTerminalIds],
+  );
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal (max ${MAX_TERMINALS_PER_GROUP} per group)`
     : splitShortcutLabel
@@ -1108,6 +1150,14 @@ export default function ThreadTerminalDrawer({
       syncHeight(drawerHeightRef.current);
     };
   }, [syncHeight]);
+
+  const openWebPort = useCallback((event: ReactMouseEvent<HTMLButtonElement>, port: number) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const api = readLocalApi();
+    if (!api) return;
+    void api.shell.openExternal(`http://localhost:${port}`).catch(() => undefined);
+  }, []);
 
   return (
     <aside
@@ -1285,6 +1335,11 @@ export default function ThreadTerminalDrawer({
                       >
                         {terminalGroup.terminalIds.map((terminalId) => {
                           const isActive = terminalId === resolvedActiveTerminalId;
+                          const runtimeStatus = terminalRuntimeStatus(
+                            terminalId,
+                            runningTerminalIdSet,
+                            runningTerminalPorts,
+                          );
                           const closeTerminalLabel = `Close ${
                             terminalLabelById.get(terminalId) ?? "terminal"
                           }${isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
@@ -1310,6 +1365,59 @@ export default function ThreadTerminalDrawer({
                                   {terminalLabelById.get(terminalId) ?? "Terminal"}
                                 </span>
                               </button>
+                              {runtimeStatus &&
+                                (runtimeStatus.primaryWebPort === null ? (
+                                  <Popover>
+                                    <PopoverTrigger
+                                      openOnHover
+                                      render={
+                                        <span
+                                          role="img"
+                                          aria-label={runtimeStatus.label}
+                                          className="inline-flex items-center justify-center text-teal-600 dark:text-teal-300/90"
+                                        >
+                                          <TerminalSquare className="size-2.5 animate-pulse" />
+                                        </span>
+                                      }
+                                    />
+                                    <PopoverPopup
+                                      tooltipStyle
+                                      side="bottom"
+                                      sideOffset={6}
+                                      align="center"
+                                      className="pointer-events-none select-none"
+                                    >
+                                      {runtimeStatus.label}
+                                    </PopoverPopup>
+                                  </Popover>
+                                ) : (
+                                  <Popover>
+                                    <PopoverTrigger
+                                      openOnHover
+                                      render={
+                                        <button
+                                          type="button"
+                                          className="inline-flex cursor-pointer items-center justify-center rounded p-0.5 text-sky-600 transition-colors hover:bg-accent hover:text-sky-700 dark:text-sky-300/90 dark:hover:text-sky-200"
+                                          onClick={(event) =>
+                                            openWebPort(event, runtimeStatus.primaryWebPort!)
+                                          }
+                                          aria-label={runtimeStatus.label}
+                                        >
+                                          <Globe className="size-2.5 shrink-0" />
+                                        </button>
+                                      }
+                                    />
+                                    <PopoverPopup
+                                      tooltipStyle
+                                      side="bottom"
+                                      sideOffset={6}
+                                      align="center"
+                                      className="pointer-events-none select-none"
+                                    >
+                                      {runtimeStatus.label}
+                                    </PopoverPopup>
+                                  </Popover>
+                                ))}
                               {normalizedTerminalIds.length > 1 && (
                                 <Popover>
                                   <PopoverTrigger

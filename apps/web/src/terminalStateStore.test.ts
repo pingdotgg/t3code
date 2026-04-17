@@ -27,7 +27,13 @@ function makeTerminalEvent(
     case "output":
       return { ...base, type, data: "hello\n", ...overrides } as TerminalEvent;
     case "activity":
-      return { ...base, type, hasRunningSubprocess: true, ...overrides } as TerminalEvent;
+      return {
+        ...base,
+        type,
+        hasRunningSubprocess: true,
+        runningPorts: [],
+        ...overrides,
+      } as TerminalEvent;
     case "error":
       return { ...base, type, message: "boom", ...overrides } as TerminalEvent;
     case "cleared":
@@ -77,10 +83,32 @@ describe("terminalStateStore actions", () => {
       terminalHeight: 280,
       terminalIds: ["default"],
       runningTerminalIds: [],
+      runningTerminalPorts: {},
       activeTerminalId: "default",
       terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
       activeTerminalGroupId: "group-default",
     });
+  });
+
+  it("normalizes legacy persisted thread terminal state at selector boundaries", () => {
+    const terminalState = selectThreadTerminalState(
+      {
+        [scopedThreadKey(THREAD_REF)]: {
+          terminalOpen: true,
+          terminalHeight: 280,
+          terminalIds: ["default"],
+          runningTerminalIds: ["default", "default"],
+          runningTerminalPorts: { default: [5173, 3000, 5173, 0] },
+          activeTerminalId: "default",
+          terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
+          activeTerminalGroupId: "group-default",
+        },
+      },
+      THREAD_REF,
+    );
+
+    expect(terminalState.runningTerminalIds).toEqual(["default"]);
+    expect(terminalState.runningTerminalPorts).toEqual({ default: [3000, 5173] });
   });
 
   it("opens and splits terminals into the active group", () => {
@@ -219,21 +247,21 @@ describe("terminalStateStore actions", () => {
   it("tracks and clears terminal subprocess activity", () => {
     const store = useTerminalStateStore.getState();
     store.splitTerminal(THREAD_REF, "terminal-2");
-    store.setTerminalActivity(THREAD_REF, "terminal-2", true);
-    expect(
-      selectThreadTerminalState(
-        useTerminalStateStore.getState().terminalStateByThreadKey,
-        THREAD_REF,
-      ).runningTerminalIds,
-    ).toEqual(["terminal-2"]);
+    store.setTerminalActivity(THREAD_REF, "terminal-2", true, [5173, 3000, 5173]);
+    let terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalState.runningTerminalIds).toEqual(["terminal-2"]);
+    expect(terminalState.runningTerminalPorts).toEqual({ "terminal-2": [3000, 5173] });
 
     store.setTerminalActivity(THREAD_REF, "terminal-2", false);
-    expect(
-      selectThreadTerminalState(
-        useTerminalStateStore.getState().terminalStateByThreadKey,
-        THREAD_REF,
-      ).runningTerminalIds,
-    ).toEqual([]);
+    terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalState.runningTerminalIds).toEqual([]);
+    expect(terminalState.runningTerminalPorts).toEqual({});
   });
 
   it("resets to default and clears persisted entry when closing the last terminal", () => {
@@ -339,14 +367,15 @@ describe("terminalStateStore actions", () => {
       makeTerminalEvent("activity", {
         terminalId: "terminal-2",
         hasRunningSubprocess: true,
+        runningPorts: [5173, 3000],
       }),
     );
-    expect(
-      selectThreadTerminalState(
-        useTerminalStateStore.getState().terminalStateByThreadKey,
-        THREAD_REF,
-      ).runningTerminalIds,
-    ).toEqual(["terminal-2"]);
+    let terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalState.runningTerminalIds).toEqual(["terminal-2"]);
+    expect(terminalState.runningTerminalPorts).toEqual({ "terminal-2": [3000, 5173] });
 
     store.applyTerminalEvent(
       THREAD_REF,
@@ -357,7 +386,7 @@ describe("terminalStateStore actions", () => {
       }),
     );
 
-    const terminalState = selectThreadTerminalState(
+    terminalState = selectThreadTerminalState(
       useTerminalStateStore.getState().terminalStateByThreadKey,
       THREAD_REF,
     );
@@ -368,6 +397,7 @@ describe("terminalStateStore actions", () => {
     );
 
     expect(terminalState.runningTerminalIds).toEqual([]);
+    expect(terminalState.runningTerminalPorts).toEqual({});
     expect(entries.map((entry) => entry.event.type)).toEqual(["activity", "exited"]);
   });
 

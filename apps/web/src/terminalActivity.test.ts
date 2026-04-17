@@ -30,22 +30,25 @@ describe("terminalRunningSubprocessFromEvent", () => {
       ...eventBase(),
       type: "activity",
       hasRunningSubprocess: true,
+      runningPorts: [3000],
     });
     const idle = terminalRunningSubprocessFromEvent({
       ...eventBase(),
       type: "activity",
       hasRunningSubprocess: false,
+      runningPorts: [],
     });
 
     expect(active).toBe(true);
     expect(idle).toBe(false);
   });
 
-  it("clears running state when a terminal session starts/restarts/exits", () => {
+  it("clears running state when a terminal session starts/restarts/exits/errors", () => {
     const events: TerminalEvent[] = [
       { ...eventBase(), type: "started", snapshot },
       { ...eventBase(), type: "restarted", snapshot },
       { ...eventBase(), type: "exited", exitCode: 0, exitSignal: null },
+      { ...eventBase(), type: "error", message: "oops" },
     ];
 
     for (const event of events) {
@@ -59,13 +62,6 @@ describe("terminalRunningSubprocessFromEvent", () => {
         ...eventBase(),
         type: "output",
         data: "hello",
-      }),
-    ).toBeNull();
-    expect(
-      terminalRunningSubprocessFromEvent({
-        ...eventBase(),
-        type: "error",
-        message: "oops",
       }),
     ).toBeNull();
   });
