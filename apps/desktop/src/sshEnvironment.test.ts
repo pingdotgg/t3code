@@ -5,7 +5,7 @@ import * as Path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { __test, discoverDesktopSshHosts } from "./sshEnvironment";
+import { __test, discoverDesktopSshHosts } from "./sshEnvironment.ts";
 
 const tempDirectories: string[] = [];
 

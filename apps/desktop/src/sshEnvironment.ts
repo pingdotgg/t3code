@@ -17,7 +17,7 @@ import type {
   ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 
-import { waitForHttpReady } from "./backendReadiness";
+import { waitForHttpReady } from "./backendReadiness.ts";
 
 const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
@@ -101,13 +101,13 @@ function expandHomePath(input: string, homeDir: string = OS.homedir()): string {
 
 function resolveSshConfigIncludePattern(
   includePattern: string,
-  directory: string,
+  _directory: string,
   homeDir: string = OS.homedir(),
 ): string {
   const expandedPattern = expandHomePath(includePattern, homeDir);
   return Path.isAbsolute(expandedPattern)
     ? expandedPattern
-    : Path.resolve(directory, expandedPattern);
+    : Path.resolve(Path.join(homeDir, ".ssh"), expandedPattern);
 }
 
 function hasSshPattern(value: string): boolean {
@@ -147,6 +147,7 @@ function expandGlob(pattern: string): ReadonlyArray<string> {
 function collectSshConfigAliasesFromFile(
   filePath: string,
   visited = new Set<string>(),
+  homeDir: string = OS.homedir(),
 ): ReadonlyArray<string> {
   const resolvedPath = Path.resolve(filePath);
   if (visited.has(resolvedPath) || !FS.existsSync(resolvedPath)) {
@@ -168,9 +169,9 @@ function collectSshConfigAliasesFromFile(
     const normalizedDirective = directive.toLowerCase();
     if (normalizedDirective === "include") {
       for (const includePattern of rawArgs) {
-        const resolvedPattern = resolveSshConfigIncludePattern(includePattern, directory);
+        const resolvedPattern = resolveSshConfigIncludePattern(includePattern, directory, homeDir);
         for (const includedPath of expandGlob(resolvedPattern)) {
-          for (const alias of collectSshConfigAliasesFromFile(includedPath, visited)) {
+          for (const alias of collectSshConfigAliasesFromFile(includedPath, visited, homeDir)) {
             aliases.add(alias);
           }
         }
@@ -689,8 +690,8 @@ async function issueRemotePairingToken(
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
   });
-  const stdout = result.stdout.trim();
-  if (!stdout) {
+  const line = getLastNonEmptyOutputLine(result.stdout);
+  if (!line) {
     throw new Error(
       `SSH pairing did not return a credential. stdout=${JSON.stringify(result.stdout)}`,
     );
@@ -698,10 +699,10 @@ async function issueRemotePairingToken(
 
   let parsed: { credential?: unknown };
   try {
-    parsed = JSON.parse(stdout) as { credential?: unknown };
+    parsed = JSON.parse(line) as { credential?: unknown };
   } catch (cause) {
     throw new Error(
-      `SSH pairing returned unparseable output. stdout=${JSON.stringify(result.stdout)}`,
+      `SSH pairing returned unparseable output. line=${JSON.stringify(line)} stdout=${JSON.stringify(result.stdout)}`,
       { cause },
     );
   }
@@ -768,8 +769,13 @@ async function stopTunnel(entry: SshTunnelEntry): Promise<void> {
 export async function discoverDesktopSshHosts(input?: {
   readonly homeDir?: string;
 }): Promise<readonly DesktopDiscoveredSshHost[]> {
-  const sshDirectory = Path.join(input?.homeDir ?? OS.homedir(), ".ssh");
-  const configAliases = collectSshConfigAliasesFromFile(Path.join(sshDirectory, "config"));
+  const homeDir = input?.homeDir ?? OS.homedir();
+  const sshDirectory = Path.join(homeDir, ".ssh");
+  const configAliases = collectSshConfigAliasesFromFile(
+    Path.join(sshDirectory, "config"),
+    new Set<string>(),
+    homeDir,
+  );
   const knownHosts = readKnownHostsHostnames(Path.join(sshDirectory, "known_hosts"));
   const discovered = new Map<string, DesktopDiscoveredSshHost>();
 
@@ -803,8 +809,11 @@ export class DesktopSshEnvironmentManager {
   private readonly tunnels = new Map<string, SshTunnelEntry>();
   private readonly pendingTunnelEntries = new Map<string, Promise<SshTunnelEntry>>();
   private readonly authSecrets = new Map<string, string>();
+  private readonly options: DesktopSshEnvironmentManagerOptions;
 
-  constructor(private readonly options: DesktopSshEnvironmentManagerOptions = {}) {}
+  constructor(options: DesktopSshEnvironmentManagerOptions = {}) {
+    this.options = options;
+  }
 
   private deleteTunnelIfCurrent(entry: SshTunnelEntry): void {
     if (this.tunnels.get(entry.key) === entry) {
@@ -886,7 +895,12 @@ export class DesktopSshEnvironmentManager {
     target: DesktopSshEnvironmentTarget,
     options?: { readonly issuePairingToken?: boolean },
   ): Promise<DesktopSshEnvironmentBootstrap> {
-    const resolvedTarget = await resolveDesktopSshTarget(target.alias || target.hostname);
+    const baseResolved = await resolveDesktopSshTarget(target.alias || target.hostname);
+    const resolvedTarget: DesktopSshEnvironmentTarget = {
+      ...baseResolved,
+      ...(target.username !== null ? { username: target.username } : {}),
+      ...(target.port !== null ? { port: target.port } : {}),
+    };
     const key = targetConnectionKey(resolvedTarget);
     const packageSpec = this.options.resolveCliPackageSpec?.();
     const entry = await this.ensureTunnelEntry(key, resolvedTarget, packageSpec);
@@ -1003,7 +1017,7 @@ export class DesktopSshEnvironmentManager {
           });
           waitForHttpReady(httpBaseUrl, { timeoutMs: SSH_READY_TIMEOUT_MS })
             .then(() => resolve())
-            .catch((error) => reject(error));
+            .catch((error: unknown) => reject(error));
         });
         this.tunnels.set(key, tunnelEntry);
         try {

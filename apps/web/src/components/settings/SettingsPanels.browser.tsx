@@ -938,12 +938,16 @@ describe("GeneralSettingsPanel observability", () => {
     );
 
     await page.getByRole("button", { name: "Add environment", exact: true }).click();
-    await expect.element(page.getByText("Add Environment")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Add Environment", exact: true }))
+      .toBeInTheDocument();
     await page.getByRole("button", { name: "SSH", exact: true }).click();
     await vi.waitFor(() => {
       expect(discoverSshHosts).toHaveBeenCalledTimes(1);
     });
-    await expect.element(page.getByText("devbox")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "devbox", exact: true }))
+      .toBeInTheDocument();
 
     await page.getByText("Enter a host manually").click();
     await page.getByLabelText("Label").fill("Build box");

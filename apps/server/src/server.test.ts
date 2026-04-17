@@ -209,10 +209,8 @@ const browserOtlpTracingLayer = Layer.mergeAll(
   Layer.succeed(HttpClient.TracerDisabledWhen, () => true),
 );
 
-const authTestLayer = ServerAuthLive.pipe(
-  Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(ServerSecretStoreLive),
-);
+const makeAuthTestLayer = () =>
+  ServerAuthLive.pipe(Layer.provide(SqlitePersistenceMemory), Layer.provide(ServerSecretStoreLive));
 
 const makeBrowserOtlpPayload = (spanName: string) =>
   Effect.gen(function* () {
@@ -539,7 +537,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.repositoryIdentityResolver,
         }),
       ),
-      Layer.provideMerge(authTestLayer),
+      Layer.provideMerge(makeAuthTestLayer()),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),

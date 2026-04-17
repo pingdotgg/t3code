@@ -60,7 +60,8 @@ import type {
 import type { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
 import type { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import type { ClientSettings } from "./settings.ts";
+import { ServerSettings, ServerSettingsPatch } from "./settings.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
