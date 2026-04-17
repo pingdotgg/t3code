@@ -37,6 +37,10 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         status: "warning",
         auth: { status: "unknown" },
       });
+      const openCodeProvider = makeProvider("opencode", {
+        status: "warning",
+        auth: { status: "unknown", type: "opencode" },
+      });
       const codexPath = resolveProviderStatusCachePath({
         cacheDir: tempDir,
         provider: "codex",
@@ -44,6 +48,10 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       const claudePath = resolveProviderStatusCachePath({
         cacheDir: tempDir,
         provider: "claudeAgent",
+      });
+      const openCodePath = resolveProviderStatusCachePath({
+        cacheDir: tempDir,
+        provider: "opencode",
       });
 
       yield* writeProviderStatusCache({
@@ -54,9 +62,14 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         filePath: claudePath,
         provider: claudeProvider,
       });
+      yield* writeProviderStatusCache({
+        filePath: openCodePath,
+        provider: openCodeProvider,
+      });
 
       assert.deepStrictEqual(yield* readProviderStatusCache(codexPath), codexProvider);
       assert.deepStrictEqual(yield* readProviderStatusCache(claudePath), claudeProvider);
+      assert.deepStrictEqual(yield* readProviderStatusCache(openCodePath), openCodeProvider);
     }),
   );
 

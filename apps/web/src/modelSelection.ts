@@ -4,7 +4,11 @@ import {
   type ProviderKind,
   type ServerProvider,
 } from "@marcode/contracts";
-import { normalizeModelSlug, resolveSelectableModel } from "@marcode/shared/model";
+import {
+  createModelSelection,
+  normalizeModelSlug,
+  resolveSelectableModel,
+} from "@marcode/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderRegistry";
 import { UnifiedSettings } from "@marcode/contracts/settings";
 import {
@@ -47,6 +51,13 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     description: "Save additional Claude model slugs for the picker and `/model` command.",
     placeholder: "your-claude-model-slug",
     example: "claude-sonnet-5-0",
+  },
+  opencode: {
+    provider: "opencode",
+    title: "OpenCode",
+    description: "Save additional OpenCode model slugs in `provider/model` format.",
+    placeholder: "openai/gpt-5",
+    example: "anthropic/claude-sonnet-4-5-20250929",
   },
 };
 
@@ -170,6 +181,12 @@ export function getCustomModelOptionsByProvider(
       "claudeAgent",
       selectedProvider === "claudeAgent" ? selectedModel : undefined,
     ),
+    opencode: getAppModelOptions(
+      settings,
+      providers,
+      "opencode",
+      selectedProvider === "opencode" ? selectedModel : undefined,
+    ),
   };
 }
 
@@ -197,9 +214,5 @@ export function resolveAppModelSelectionState(
     },
   });
 
-  return {
-    provider,
-    model,
-    ...(modelOptionsForDispatch ? { options: modelOptionsForDispatch } : {}),
-  };
+  return createModelSelection(provider, model, modelOptionsForDispatch);
 }

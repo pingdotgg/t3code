@@ -32,7 +32,11 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@marcode/client-runtime";
-import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@marcode/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  createModelSelection,
+  normalizeModelSlug,
+} from "@marcode/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@marcode/shared/projectScripts";
 import { truncate } from "@marcode/shared/String";
 import {
@@ -3425,14 +3429,13 @@ export default function ChatView({
           }
         }
         const title = truncate(titleSeed);
-        const threadCreateModelSelection: ModelSelection = {
-          provider: selectedProvider,
-          model:
-            selectedModel ||
+        const threadCreateModelSelection = createModelSelection(
+          selectedProvider,
+          selectedModel ||
             activeProject.defaultModelSelection?.model ||
             DEFAULT_MODEL_BY_PROVIDER[selectedProvider],
-          ...(selectedModelSelection.options ? { options: selectedModelSelection.options } : {}),
-        };
+          selectedModelSelection.options,
+        );
 
         if (isFirstMessage && isServerThread) {
           await api.orchestration.dispatchCommand({
