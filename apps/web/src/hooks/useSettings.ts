@@ -64,7 +64,7 @@ async function hydrateClientSettings(): Promise<void> {
     try {
       const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
       if (persistedSettings) {
-        replaceClientSettingsSnapshot(persistedSettings);
+        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
     } catch (error) {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, error);

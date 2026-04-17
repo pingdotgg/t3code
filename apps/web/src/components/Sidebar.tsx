@@ -1379,7 +1379,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const overrideKey = deriveProjectGroupingOverrideKey(member);
       setProjectGroupingTarget(member);
       setProjectGroupingSelection(
-        projectGroupingSettings.sidebarProjectGroupingOverrides[overrideKey] ?? "inherit",
+        projectGroupingSettings.sidebarProjectGroupingOverrides?.[overrideKey] ?? "inherit",
       );
     },
     [projectGroupingSettings.sidebarProjectGroupingOverrides],

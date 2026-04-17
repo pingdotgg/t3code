@@ -70,7 +70,7 @@ export function resolveProjectGroupingMode(
   settings: ProjectGroupingSettings,
 ): SidebarProjectGroupingMode {
   return (
-    settings.sidebarProjectGroupingOverrides[deriveProjectGroupingOverrideKey(project)] ??
+    settings.sidebarProjectGroupingOverrides?.[deriveProjectGroupingOverrideKey(project)] ??
     settings.sidebarProjectGroupingMode
   );
 }
