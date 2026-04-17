@@ -157,7 +157,7 @@ describe("claudeUsageProbe", () => {
       checkedAt: "2026-04-17T10:00:00.000Z",
     });
 
-    const child = latestSpawnedChild();
+    const child = await latestSpawnedChild();
     expect(child.writes).toEqual(["/status\r"]);
 
     await vi.advanceTimersByTimeAsync(150);
@@ -175,7 +175,7 @@ describe("claudeUsageProbe", () => {
       checkedAt: "2026-04-17T10:00:00.000Z",
     });
 
-    const child = latestSpawnedChild();
+    const child = await latestSpawnedChild();
     child.emitData("Authenticated as Claude Max\n");
 
     await vi.advanceTimersByTimeAsync(150);
@@ -193,7 +193,7 @@ describe("claudeUsageProbe", () => {
       checkedAt: "2026-04-17T10:00:00.000Z",
     });
 
-    const child = latestSpawnedChild();
+    const child = await latestSpawnedChild();
     child.emitData("Session usage 42% resets at 2026-04-17T14:00:00Z\n");
 
     const result = await probePromise;
@@ -208,7 +208,7 @@ describe("claudeUsageProbe", () => {
       checkedAt: "2026-04-17T10:00:00.000Z",
     });
 
-    const child = latestSpawnedChild();
+    const child = await latestSpawnedChild();
     await vi.advanceTimersByTimeAsync(150);
     expect(child.writes).toEqual(["/status\r", "/usage\r"]);
 

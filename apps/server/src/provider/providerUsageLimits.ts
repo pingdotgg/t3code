@@ -31,11 +31,15 @@ export function windowKindFromDuration(input: {
   if (typeof duration !== "number" || !Number.isFinite(duration)) {
     return undefined;
   }
+  if (
+    duration >= 10080 ||
+    (duration === input.longestWindowDurationMins &&
+      input.longestWindowDurationMins !== input.shortestWindowDurationMins)
+  ) {
+    return "weekly";
+  }
   if (duration === input.shortestWindowDurationMins) {
     return "session";
-  }
-  if (duration === input.longestWindowDurationMins) {
-    return "weekly";
   }
   return undefined;
 }
