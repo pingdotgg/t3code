@@ -3,7 +3,7 @@
   "version": "0.0.17",
   "private": true,
   "type": "module",
-  "main": "dist-electron/main.js",
+  "main": "dist-electron/main.cjs",
   "scripts": {
     "dev": "bun run --parallel dev:bundle dev:electron",
     "dev:bundle": "tsdown --watch",

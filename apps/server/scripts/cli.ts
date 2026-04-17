@@ -147,7 +147,7 @@ const buildCmd = Command.make(
 
       yield* Effect.log("[cli] Running tsdown...");
       yield* runCommand(
-        ChildProcess.make(process.execPath, ["--run", "tsdown"], {
+        ChildProcess.make(process.execPath, ["--run", "build:bundle"], {
           cwd: serverDir,
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",

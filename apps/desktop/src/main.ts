@@ -1967,7 +1967,7 @@ function createWindow(): BrowserWindow {
     title: APP_DISPLAY_NAME,
     ...getWindowTitleBarOptions(),
     webPreferences: {
-      preload: Path.join(__dirname, "preload.js"),
+      preload: Path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
