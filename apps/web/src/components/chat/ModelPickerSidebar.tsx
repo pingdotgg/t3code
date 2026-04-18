@@ -72,7 +72,6 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
     }
     return counts;
   }, [props.instanceEntries]);
-
   useLayoutEffect(() => {
     const content = sidebarContentRef.current;
     if (!content) {
