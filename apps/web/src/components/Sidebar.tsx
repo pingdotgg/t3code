@@ -951,13 +951,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const removeFromSelection = useThreadSelectionStore((state) => state.removeFromSelection);
   const setSelectionAnchor = useThreadSelectionStore((state) => state.setAnchor);
   const selectedThreadCount = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
-  const clearComposerDraftForThread = useComposerDraftStore((state) => state.clearDraftThread);
-  const getDraftThreadByProjectRef = useComposerDraftStore(
-    (state) => state.getDraftThreadByProjectRef,
-  );
-  const clearProjectDraftThreadId = useComposerDraftStore(
-    (state) => state.clearProjectDraftThreadId,
-  );
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
     threadId: ThreadId;
   }>({
@@ -1283,6 +1276,31 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [projectGroupingSettings.sidebarProjectGroupingOverrides],
   );
 
+  const removeProject = useCallback(
+    async (member: SidebarProjectGroupMember, options: { force?: boolean } = {}): Promise<void> => {
+      const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
+      const draftStore = useComposerDraftStore.getState();
+      const projectDraftThread = draftStore.getDraftThreadByProjectRef(memberProjectRef);
+      if (projectDraftThread) {
+        draftStore.clearDraftThread(projectDraftThread.draftId);
+      }
+      draftStore.clearProjectDraftThreadId(memberProjectRef);
+
+      const projectApi = readEnvironmentApi(member.environmentId);
+      if (!projectApi) {
+        throw new Error("Project API unavailable.");
+      }
+
+      await projectApi.orchestration.dispatchCommand({
+        type: "project.delete",
+        commandId: newCommandId(),
+        projectId: member.id,
+        ...(options.force === true ? { force: true } : {}),
+      });
+    },
+    [],
+  );
+
   const handleRemoveProject = useCallback(
     async (member: SidebarProjectGroupMember) => {
       const api = readLocalApi();
@@ -1290,11 +1308,74 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
 
-      if ((memberThreadCountByPhysicalKey.get(member.physicalProjectKey) ?? 0) > 0) {
-        toastManager.add({
+      const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
+      const memberThreadCount = memberThreadCountByPhysicalKey.get(member.physicalProjectKey) ?? 0;
+      if (memberThreadCount > 0) {
+        const warningToastId = toastManager.add({
           type: "warning",
           title: "Project is not empty",
           description: "Delete all threads in this project before removing it.",
+          data: {
+            actionLayout: "stacked-end",
+            actionVariant: "destructive",
+          },
+          actionProps: {
+            children: "Delete anyway",
+            onClick: () => {
+              void (async () => {
+                toastManager.close(warningToastId);
+                await new Promise<void>((resolve) => {
+                  window.setTimeout(resolve, 180);
+                });
+
+                const latestProjectThreads = selectSidebarThreadsForProjectRefs(
+                  useStore.getState(),
+                  [memberProjectRef],
+                );
+                const confirmed = await api.dialogs.confirm(
+                  latestProjectThreads.length > 0
+                    ? [
+                        `Remove project "${member.name}" and delete its ${latestProjectThreads.length} thread${
+                          latestProjectThreads.length === 1 ? "" : "s"
+                        }?`,
+                        `Path: ${member.cwd}`,
+                        ...(member.environmentLabel
+                          ? [`Environment: ${member.environmentLabel}`]
+                          : []),
+                        "This permanently clears conversation history for those threads.",
+                        "This removes only this project entry.",
+                        "This action cannot be undone.",
+                      ].join("\n")
+                    : [
+                        `Remove project "${member.name}"?`,
+                        `Path: ${member.cwd}`,
+                        ...(member.environmentLabel
+                          ? [`Environment: ${member.environmentLabel}`]
+                          : []),
+                        "This removes only this project entry.",
+                      ].join("\n"),
+                );
+                if (!confirmed) {
+                  return;
+                }
+
+                await removeProject(member, { force: true });
+              })().catch((error) => {
+                const message =
+                  error instanceof Error ? error.message : "Unknown error removing project.";
+                console.error("Failed to remove project", {
+                  projectId: member.id,
+                  environmentId: member.environmentId,
+                  error,
+                });
+                toastManager.add({
+                  type: "error",
+                  title: `Failed to remove "${member.name}"`,
+                  description: message,
+                });
+              });
+            },
+          },
         });
         return;
       }
@@ -1310,23 +1391,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
 
-      const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
-
       try {
-        const projectDraftThread = getDraftThreadByProjectRef(memberProjectRef);
-        if (projectDraftThread) {
-          clearComposerDraftForThread(projectDraftThread.draftId);
-        }
-        clearProjectDraftThreadId(memberProjectRef);
-        const projectApi = readEnvironmentApi(member.environmentId);
-        if (!projectApi) {
-          throw new Error("Project API unavailable.");
-        }
-        await projectApi.orchestration.dispatchCommand({
-          type: "project.delete",
-          commandId: newCommandId(),
-          projectId: member.id,
-        });
+        await removeProject(member);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error removing project.";
         console.error("Failed to remove project", {
@@ -1341,12 +1407,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         });
       }
     },
-    [
-      clearComposerDraftForThread,
-      clearProjectDraftThreadId,
-      getDraftThreadByProjectRef,
-      memberThreadCountByPhysicalKey,
-    ],
+    [memberThreadCountByPhysicalKey, removeProject],
   );
 
   const handleProjectButtonContextMenu = useCallback(
@@ -1429,8 +1490,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             buildTargetedItem("copy-path", "Copy Project Path"),
             buildTargetedItem("delete", "Remove project", {
               destructive: true,
-              isDisabled: (member) =>
-                (memberThreadCountByPhysicalKey.get(member.physicalProjectKey) ?? 0) > 0,
             }),
           ],
           {
@@ -1449,7 +1508,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       copyPathToClipboard,
       handleRemoveProject,
-      memberThreadCountByPhysicalKey,
       openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,

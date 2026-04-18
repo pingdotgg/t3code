@@ -16,7 +16,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   forwardRef,
   memo,
@@ -70,6 +70,7 @@ import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
+  getComposerProviderControls,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
@@ -159,6 +160,7 @@ const terminalContextIdListsEqual = (
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
+  showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   showPlanToggle: boolean;
@@ -175,25 +177,29 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
     <>
       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
-      <Button
-        variant="ghost"
-        className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-        size="sm"
-        type="button"
-        onClick={props.onToggleInteractionMode}
-        title={
-          props.interactionMode === "plan"
-            ? "Plan mode — click to return to normal build mode"
-            : "Default mode — click to enter plan mode"
-        }
-      >
-        <BotIcon />
-        <span className="sr-only sm:not-sr-only">
-          {props.interactionMode === "plan" ? "Plan" : "Build"}
-        </span>
-      </Button>
+      {props.showInteractionModeToggle ? (
+        <>
+          <Button
+            variant="ghost"
+            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+            size="sm"
+            type="button"
+            onClick={props.onToggleInteractionMode}
+            title={
+              props.interactionMode === "plan"
+                ? "Plan mode — click to return to normal build mode"
+                : "Default mode — click to enter plan mode"
+            }
+          >
+            <BotIcon />
+            <span className="sr-only sm:not-sr-only">
+              {props.interactionMode === "plan" ? "Plan" : "Build"}
+            </span>
+          </Button>
 
-      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+        </>
+      ) : null}
 
       <Select
         value={props.runtimeMode}
@@ -588,12 +594,12 @@ export const ChatComposer = memo(
 
     const selectedPromptEffort = composerProviderState.promptEffort;
     const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
+    const composerProviderControls = useMemo(
+      () => getComposerProviderControls(selectedProvider),
+      [selectedProvider],
+    );
     const selectedModelSelection = useMemo<ModelSelection>(
-      () => ({
-        provider: selectedProvider,
-        model: selectedModel,
-        ...(selectedModelOptionsForDispatch ? { options: selectedModelOptionsForDispatch } : {}),
-      }),
+      () => createModelSelection(selectedProvider, selectedModel, selectedModelOptionsForDispatch),
       [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
     );
     const selectedModelForPicker = selectedModel;
@@ -604,6 +610,9 @@ export const ChatComposer = memo(
         codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
         claudeAgent:
           providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
+        opencode:
+          providerStatuses.find((provider) => provider.provider === "opencode")?.models ?? [],
+        cursor: providerStatuses.find((provider) => provider.provider === "cursor")?.models ?? [],
       }),
       [providerStatuses],
     );
@@ -1933,6 +1942,7 @@ export const ChatComposer = memo(
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       runtimeMode={runtimeMode}
+                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       traitsMenuContent={providerTraitsMenuContent}
                       onToggleInteractionMode={toggleInteractionMode}
                       onTogglePlanSidebar={togglePlanSidebar}
@@ -1950,6 +1960,9 @@ export const ChatComposer = memo(
                         </>
                       ) : null}
                       <ComposerFooterModeControls
+                        showInteractionModeToggle={
+                          composerProviderControls.showInteractionModeToggle
+                        }
                         interactionMode={interactionMode}
                         runtimeMode={runtimeMode}
                         showPlanToggle={showPlanSidebarToggle}

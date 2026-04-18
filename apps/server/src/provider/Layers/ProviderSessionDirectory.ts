@@ -1,5 +1,5 @@
-import { type ProviderKind, type ThreadId } from "@t3tools/contracts";
-import { Effect, Layer, Option } from "effect";
+import { ProviderKind, type ThreadId } from "@t3tools/contracts";
+import { Effect, Layer, Option, Schema } from "effect";
 
 import type { ProviderSessionRuntime } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
@@ -24,14 +24,15 @@ function decodeProviderKind(
   providerName: string,
   operation: string,
 ): Effect.Effect<ProviderKind, ProviderSessionDirectoryPersistenceError> {
-  if (providerName === "codex" || providerName === "claudeAgent") {
-    return Effect.succeed(providerName);
-  }
-  return Effect.fail(
-    new ProviderSessionDirectoryPersistenceError({
-      operation,
-      detail: `Unknown persisted provider '${providerName}'.`,
-    }),
+  return Schema.decodeUnknownEffect(ProviderKind)(providerName).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ProviderSessionDirectoryPersistenceError({
+          operation,
+          detail: `Unknown persisted provider '${providerName}'.`,
+          cause,
+        }),
+    ),
   );
 }
 
@@ -145,13 +146,6 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       ),
     );
 
-  const remove: ProviderSessionDirectoryShape["remove"] = (threadId) =>
-    repository
-      .deleteByThreadId({ threadId })
-      .pipe(
-        Effect.mapError(toPersistenceError("ProviderSessionDirectory.remove:deleteByThreadId")),
-      );
-
   const listThreadIds: ProviderSessionDirectoryShape["listThreadIds"] = () =>
     repository.list().pipe(
       Effect.mapError(toPersistenceError("ProviderSessionDirectory.listThreadIds:list")),
@@ -174,7 +168,6 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     upsert,
     getProvider,
     getBinding,
-    remove,
     listThreadIds,
     listBindings,
   } satisfies ProviderSessionDirectoryShape;

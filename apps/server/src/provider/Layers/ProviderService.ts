@@ -161,7 +161,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
       Effect.tap((canonicalEvent) =>
-        canonicalEventLogger ? canonicalEventLogger.write(canonicalEvent, null) : Effect.void,
+        canonicalEventLogger
+          ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
+          : Effect.void,
       ),
       Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
       Effect.asVoid,
@@ -620,7 +622,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (routed.isActive) {
           yield* routed.adapter.stopSession(routed.threadId);
         }
-        yield* directory.remove(input.threadId);
+        yield* directory.upsert({
+          threadId: input.threadId,
+          provider: routed.adapter.provider,
+          status: "stopped",
+          runtimePayload: {
+            activeTurnId: null,
+          },
+        });
         yield* analytics.record("provider.session.stopped", {
           provider: routed.adapter.provider,
         });

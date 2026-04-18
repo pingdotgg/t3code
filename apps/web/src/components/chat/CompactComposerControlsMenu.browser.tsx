@@ -126,6 +126,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       planSidebarLabel="Plan"
       planSidebarOpen={false}
       runtimeMode="approval-required"
+      showInteractionModeToggle
       traitsMenuContent={
         <TraitsMenuContent
           provider={provider}
@@ -266,5 +267,39 @@ describe("CompactComposerControlsMenu", () => {
         'Your prompt contains "ultrathink" in the text. Remove it to change effort.',
       );
     });
+  });
+
+  it("can hide the interaction mode section", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <CompactComposerControlsMenu
+        activePlan={false}
+        interactionMode="default"
+        planSidebarLabel="Plan"
+        planSidebarOpen={false}
+        runtimeMode="approval-required"
+        showInteractionModeToggle={false}
+        onToggleInteractionMode={vi.fn()}
+        onTogglePlanSidebar={vi.fn()}
+        onRuntimeModeChange={vi.fn()}
+      />,
+      { container: host },
+    );
+
+    await page.getByLabelText("More composer controls").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).not.toContain("Mode");
+      expect(text).not.toContain("Chat");
+      expect(text).not.toContain("Plan");
+      expect(text).toContain("Access");
+      expect(text).toContain("Supervised");
+      expect(text).toContain("Full access");
+    });
+
+    await screen.unmount();
+    host.remove();
   });
 });
