@@ -90,12 +90,12 @@ export function normalizeUsageWindows(
 export function makeUnavailableUsageLimits(input: {
   readonly source: ServerProviderUsageLimits["source"];
   readonly checkedAt: string;
-  readonly reason: string;
+  readonly reason?: string;
 }): ServerProviderUsageLimits {
   return {
     source: input.source,
     available: false,
-    reason: input.reason,
+    reason: input.reason ?? "Unable to fetch usage",
     windows: [],
     checkedAt: input.checkedAt,
   };

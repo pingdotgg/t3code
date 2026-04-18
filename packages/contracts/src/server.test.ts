@@ -86,6 +86,49 @@ describe("ServerProvider", () => {
     });
   });
 
+  it("accepts cursor and opencode usage limit sources", () => {
+    const cursorParsed = decodeServerProvider({
+      provider: "cursor",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "cursorAcp",
+        available: true,
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [{ kind: "session", label: "Session", usedPercent: 12 }],
+      },
+    });
+    const openCodeParsed = decodeServerProvider({
+      provider: "opencode",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "opencodeManaged",
+        available: false,
+        reason: "Unable to fetch usage",
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [],
+      },
+    });
+
+    expect(cursorParsed.usageLimits?.source).toBe("cursorAcp");
+    expect(openCodeParsed.usageLimits?.source).toBe("opencodeManaged");
+  });
+
   it("rejects invalid usage percentages", () => {
     expect(() =>
       decodeServerProvider({

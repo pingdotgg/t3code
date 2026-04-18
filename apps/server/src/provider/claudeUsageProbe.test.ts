@@ -58,12 +58,14 @@ import {
   shouldRequestClaudeUsageFallback,
 } from "./claudeUsageProbe.ts";
 
-function latestSpawnedChild(): MockPtyChild {
-  const latest = spawnMock.mock.results.at(-1)?.value;
-  if (!latest) {
-    throw new Error("Expected node-pty spawn to be called.");
-  }
-  return latest;
+async function latestSpawnedChild(): Promise<MockPtyChild> {
+  // Wait for dynamic import to resolve and spawn to be called
+  await vi.waitFor(() => {
+    if (!spawnMock.mock.results.at(-1)?.value) {
+      throw new Error("Expected node-pty spawn to be called.");
+    }
+  });
+  return spawnMock.mock.results.at(-1)?.value!;
 }
 
 describe("claudeUsageProbe", () => {
