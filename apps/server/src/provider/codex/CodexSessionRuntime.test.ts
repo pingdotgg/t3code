@@ -171,6 +171,27 @@ describe("isRecoverableThreadResumeError", () => {
       false,
     );
   });
+
+  it("ignores unrelated missing-resource errors that do not mention threads", () => {
+    assert.equal(
+      isRecoverableThreadResumeError(
+        new CodexErrors.CodexAppServerRequestError({
+          code: -32603,
+          errorMessage: "Config file not found",
+        }),
+      ),
+      false,
+    );
+    assert.equal(
+      isRecoverableThreadResumeError(
+        new CodexErrors.CodexAppServerRequestError({
+          code: -32603,
+          errorMessage: "Model does not exist",
+        }),
+      ),
+      false,
+    );
+  });
 });
 
 describe("openCodexThread", () => {
