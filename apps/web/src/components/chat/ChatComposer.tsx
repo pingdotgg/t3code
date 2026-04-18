@@ -75,6 +75,7 @@ import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderRegistry";
+import { AccountLimitMeter } from "./AccountLimitMeter";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../vscode-icons";
@@ -100,6 +101,7 @@ import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
+import { deriveLatestAccountLimitSnapshot } from "../../lib/accountLimits";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
@@ -268,6 +270,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
   activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
+  activeAccountLimit: ReturnType<typeof deriveLatestAccountLimitSnapshot>;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -289,6 +292,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   return (
     <>
       {props.activeContextWindow ? <ContextWindowMeter usage={props.activeContextWindow} /> : null}
+      {props.activeAccountLimit ? <AccountLimitMeter snapshot={props.activeAccountLimit} /> : null}
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
       ) : null}
@@ -645,6 +649,10 @@ export const ChatComposer = memo(
     // ------------------------------------------------------------------
     const activeContextWindow = useMemo(
       () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
+      [activeThreadActivities],
+    );
+    const activeAccountLimit = useMemo(
+      () => deriveLatestAccountLimitSnapshot(activeThreadActivities ?? []),
       [activeThreadActivities],
     );
 
@@ -1987,6 +1995,7 @@ export const ChatComposer = memo(
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}
+                    activeAccountLimit={activeAccountLimit}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     showPlanFollowUpPrompt={

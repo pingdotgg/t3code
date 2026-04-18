@@ -71,6 +71,10 @@
     "./path": {
       "types": "./src/path.ts",
       "import": "./src/path.ts"
+    },
+    "./accountLimits": {
+      "types": "./src/accountLimits.ts",
+      "import": "./src/accountLimits.ts"
     }
   },
   "scripts": {
