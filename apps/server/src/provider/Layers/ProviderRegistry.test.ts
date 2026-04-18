@@ -240,9 +240,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.provider, "codex");
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.version, "codex-cli/1.0.0");
+          assert.strictEqual(status.version, "1.0.0");
           assert.strictEqual(status.auth.status, "authenticated");
-          assert.strictEqual(status.auth.type, "pro");
+          assert.strictEqual(status.auth.type, "chatgpt");
           assert.strictEqual(status.auth.label, "ChatGPT Pro Subscription");
           assert.deepStrictEqual(status.models, [
             {
