@@ -172,7 +172,11 @@ function getUsageResetLabel(resetsAt: string | undefined): string | null {
   if (diffMs >= dayMs && diffMs < dayMs * 2) {
     return "Resets tomorrow";
   }
-  return `Resets in ${formatRelativeTimeUntilLabel(resetsAt).replace(/ left$/, "")}`;
+  const relativeLabel = formatRelativeTimeUntilLabel(resetsAt);
+  if (relativeLabel === "Soon") {
+    return "Resets soon";
+  }
+  return `Resets in ${relativeLabel.replace(/ left$/, "")}`;
 }
 
 function ProviderUsageLimitsBlock({ provider }: { provider: ServerProvider | undefined }) {
@@ -200,7 +204,7 @@ function ProviderUsageLimitsBlock({ provider }: { provider: ServerProvider | und
 
         return (
           <div
-            key={`${window.kind}-${window.label}-${window.windowDurationMins ?? "na"}-${window.resetsAt ?? "na"}-${Math.round(window.usedPercent)}`}
+            key={`${window.kind}-${window.windowDurationMins ?? "na"}-${window.resetsAt ?? "na"}`}
             className="space-y-1.5"
           >
             <div className="flex items-center justify-between gap-3 text-[11px]">
@@ -238,11 +242,12 @@ function ProviderCardShell({ children, expanded }: { children: ReactNode; expand
   return (
     <div
       className={cn(
-        "relative overflow-hidden border-t border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.028),rgba(255,255,255,0.01))] first:border-t-0",
-        expanded && "bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.016))]",
+        "relative overflow-hidden border-t border-border/70 bg-[linear-gradient(180deg,rgba(15,23,42,0.02),rgba(15,23,42,0.008))] first:border-t-0 dark:border-white/8 dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.028),rgba(255,255,255,0.01))]",
+        expanded &&
+          "bg-[linear-gradient(180deg,rgba(15,23,42,0.045),rgba(15,23,42,0.018))] dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.016))]",
       )}
     >
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-white/5" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-black/6 dark:bg-white/5" />
       {children}
     </div>
   );
