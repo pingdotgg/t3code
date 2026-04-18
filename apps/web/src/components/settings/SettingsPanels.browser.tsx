@@ -523,7 +523,7 @@ describe("GeneralSettingsPanel observability", () => {
             source: "claudeStatusProbe",
             available: false,
             checkedAt: "2036-04-07T00:00:00.000Z",
-            reason: "Usage limits unavailable for this Claude account.",
+            reason: "Unable to fetch usage",
             windows: [],
           },
         }),
@@ -536,9 +536,43 @@ describe("GeneralSettingsPanel observability", () => {
       </AppAtomRegistryProvider>,
     );
 
-    await expect
-      .element(page.getByText("Usage limits unavailable for this Claude account."))
-      .toBeInTheDocument();
+    await expect.element(page.getByText("Unable to fetch usage")).toBeInTheDocument();
+  });
+
+  it("renders multiple OpenCode managed usage windows when both subscriptions exist", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        makeProvider("opencode", {
+          usageLimits: {
+            source: "opencodeManaged",
+            available: true,
+            checkedAt: "2036-04-07T00:00:00.000Z",
+            windows: [
+              {
+                kind: "session",
+                label: "OpenCode Go",
+                usedPercent: 20,
+              },
+              {
+                kind: "session",
+                label: "OpenCode Zen",
+                usedPercent: 40,
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByLabelText("OpenCode Go usage 20%")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("OpenCode Zen usage 40%")).toBeInTheDocument();
   });
 
   it("hides provider usage UI for disabled or missing providers", async () => {

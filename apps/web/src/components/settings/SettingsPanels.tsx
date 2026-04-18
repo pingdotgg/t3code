@@ -294,7 +294,7 @@ function ProviderUsageLimitsBlock({ provider }: { provider: ServerProvider | und
   if (!provider.usageLimits.available) {
     return (
       <p className="pt-2 text-[11px] text-muted-foreground/85">
-        {provider.usageLimits.reason ?? "Usage limits unavailable for this account"}
+        {provider.usageLimits?.reason ?? "Unable to fetch usage"}
       </p>
     );
   }
@@ -309,7 +309,7 @@ function ProviderUsageLimitsBlock({ provider }: { provider: ServerProvider | und
 
         return (
           <div
-            key={`${window.kind}-${window.windowDurationMins ?? "na"}-${window.resetsAt ?? "na"}`}
+            key={`${window.label ?? ""}-${window.kind}-${window.windowDurationMins ?? "na"}-${window.resetsAt ?? "na"}`}
             className="space-y-1.5"
           >
             <div className="flex items-center justify-between gap-3 text-[11px]">
