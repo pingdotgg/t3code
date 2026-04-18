@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "@t3tools/monorepo",
@@ -200,6 +199,7 @@
     },
   },
   "trustedDependencies": [
+    "electron",
     "node-pty",
   ],
   "overrides": {
