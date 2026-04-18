@@ -140,7 +140,7 @@ export function AppearanceSettingsPanel() {
             </span>
           }
         >
-          <div className="space-y-3 pb-4 pt-3">
+          <div className="space-y-4 pb-4 pt-3">
             <Slider
               value={[settings.chatFontSize]}
               min={CHAT_FONT_SIZE_MIN}
