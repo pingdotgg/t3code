@@ -125,18 +125,18 @@ export function SidebarUpdatePill() {
                   aria-label={tooltip}
                   aria-disabled={disabled || undefined}
                   disabled={disabled}
-                  className="update-main relative flex h-full flex-1 items-center gap-2 px-2 enabled:cursor-pointer"
+                  className="update-main relative flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden px-2 enabled:cursor-pointer"
                   onClick={handleAction}
                 >
                   {action === "install" ? (
                     <>
-                      <RotateCwIcon className="size-3.5" />
-                      <span>Restart to update</span>
+                      <RotateCwIcon className="size-3.5 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate text-left">Restart to update</span>
                     </>
                   ) : state?.status === "downloading" ? (
                     <>
-                      <DownloadIcon className="size-3.5" />
-                      <span>
+                      <DownloadIcon className="size-3.5 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate text-left">
                         Downloading
                         {typeof state.downloadPercent === "number"
                           ? ` (${Math.floor(state.downloadPercent)}%)`
@@ -145,8 +145,8 @@ export function SidebarUpdatePill() {
                     </>
                   ) : (
                     <>
-                      <DownloadIcon className="size-3.5" />
-                      <span className="min-w-0 truncate">{availableLabel}</span>
+                      <DownloadIcon className="size-3.5 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate text-left">{availableLabel}</span>
                     </>
                   )}
                 </button>
@@ -161,7 +161,7 @@ export function SidebarUpdatePill() {
                   <button
                     type="button"
                     aria-label="Dismiss update"
-                    className="mr-1 inline-flex size-5 items-center justify-center rounded-md text-primary/60 transition-colors hover:text-primary"
+                    className="mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-md text-primary/60 transition-colors hover:text-primary"
                     onClick={() => setDismissed(true)}
                   >
                     <XIcon className="size-3.5" />

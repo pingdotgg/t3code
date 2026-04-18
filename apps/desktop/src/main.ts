@@ -67,6 +67,10 @@ import {
   isNightlyDesktopVersion,
   selectBestDesktopUpdateCandidate,
 } from "./updateChannels.ts";
+import {
+  resolveElectronUpdaterChannelFileName,
+  resolveLatestGitHubNightlyUpdateFeed,
+} from "./githubNightlyUpdates.ts";
 import { ServerListeningDetector } from "./serverListeningDetector.ts";
 import {
   createInitialDesktopUpdateState,
@@ -99,6 +103,7 @@ const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const NIGHTLY_BUILD_OLDER_MESSAGE = "Nightly build is older than current build";
 const NO_NEWER_NIGHTLY_BUILD_MESSAGE = "No newer nightly build";
+const GITHUB_NIGHTLY_FEED_NOT_FOUND_CODE = "ERR_UPDATER_NO_PUBLISHED_VERSIONS";
 const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
 const GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL = "desktop:get-local-environment-bootstrap";
 const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
@@ -670,8 +675,11 @@ function resolveAppRoot(): string {
   return app.getAppPath();
 }
 
+type AppUpdateYml = Record<string, string>;
+type AutoUpdaterFeedConfig = Parameters<typeof autoUpdater.setFeedURL>[0];
+
 /** Read the baked-in app-update.yml config (if applicable). */
-function readAppUpdateYml(): Record<string, string> | null {
+function readAppUpdateYml(): AppUpdateYml | null {
   try {
     // electron-updater reads from process.resourcesPath in packaged builds,
     // or dev-app-update.yml via app.getAppPath() in dev.
@@ -690,6 +698,12 @@ function readAppUpdateYml(): Record<string, string> | null {
   } catch {
     return null;
   }
+}
+
+function resolveGithubUpdateToken(): string {
+  return (
+    process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim() || ""
+  );
 }
 
 function normalizeCommitHash(value: unknown): string | null {
@@ -1171,6 +1185,94 @@ function applyAutoUpdaterChannel(
   );
 }
 
+function createMissingGitHubNightlyFeedError(): Error {
+  const error = new Error("No published nightly versions on GitHub");
+  (error as Error & { code: string }).code = GITHUB_NIGHTLY_FEED_NOT_FOUND_CODE;
+  return error;
+}
+
+function configureDefaultAutoUpdaterFeed(): void {
+  if (process.env.T3CODE_DESKTOP_MOCK_UPDATES) {
+    autoUpdater.setFeedURL({
+      provider: "generic",
+      url: `http://localhost:${process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
+    });
+    return;
+  }
+
+  const appUpdateYml = readAppUpdateYml();
+  if (!appUpdateYml) {
+    return;
+  }
+
+  const githubToken = resolveGithubUpdateToken();
+  if (githubToken && appUpdateYml.provider === "github") {
+    autoUpdater.setFeedURL({
+      ...appUpdateYml,
+      provider: "github" as const,
+      private: true,
+      token: githubToken,
+    });
+    return;
+  }
+
+  autoUpdater.setFeedURL(appUpdateYml as AutoUpdaterFeedConfig);
+}
+
+async function configureGitHubNightlyAutoUpdaterFeed(appUpdateYml: AppUpdateYml): Promise<void> {
+  const owner = appUpdateYml.owner;
+  const repo = appUpdateYml.repo;
+  if (!owner || !repo) {
+    throw createMissingGitHubNightlyFeedError();
+  }
+
+  // electron-updater's public GitHub provider derives prerelease channels by
+  // parsing the full tag as semver. Our nightly tags are prefixed with
+  // `nightly-v`, so resolve the release first and then use its asset directory
+  // as a generic updater feed.
+  const channelFileName = resolveElectronUpdaterChannelFileName(
+    "nightly",
+    process.platform,
+    process.env.TEST_UPDATER_ARCH || process.arch,
+  );
+  const githubToken = resolveGithubUpdateToken();
+  const nightlyFeed = await resolveLatestGitHubNightlyUpdateFeed({
+    repository: {
+      owner,
+      repo,
+      ...(appUpdateYml.host ? { host: appUpdateYml.host } : {}),
+    },
+    channelFileName,
+    ...(githubToken ? { token: githubToken } : {}),
+  });
+  if (!nightlyFeed) {
+    throw createMissingGitHubNightlyFeedError();
+  }
+
+  autoUpdater.setFeedURL({
+    provider: "generic",
+    url: nightlyFeed.feedUrl,
+  });
+  console.info(
+    `[desktop-updater] Resolved GitHub nightly feed ${nightlyFeed.version} from '${nightlyFeed.tag}'.`,
+  );
+}
+
+async function configureAutoUpdaterFeedForChannel(channel: DesktopUpdateChannel): Promise<void> {
+  if (process.env.T3CODE_DESKTOP_MOCK_UPDATES) {
+    configureDefaultAutoUpdaterFeed();
+    return;
+  }
+
+  const appUpdateYml = readAppUpdateYml();
+  if (channel === "nightly" && appUpdateYml?.provider === "github") {
+    await configureGitHubNightlyAutoUpdaterFeed(appUpdateYml);
+    return;
+  }
+
+  configureDefaultAutoUpdaterFeed();
+}
+
 function shouldEnableAutoUpdates(): boolean {
   const hasUpdateFeedConfig =
     readAppUpdateYml() !== null || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES);
@@ -1215,6 +1317,7 @@ async function checkForUpdatesOnChannel(
 ): Promise<UpdateCheckResult | null> {
   activeUpdateCheckChannel = channel;
   applyAutoUpdaterChannel(channel, options);
+  await configureAutoUpdaterFeedForChannel(channel);
   return autoUpdater.checkForUpdates();
 }
 
@@ -1388,29 +1491,7 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
 }
 
 function configureAutoUpdater(): void {
-  const githubToken =
-    process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim() || "";
-  if (githubToken) {
-    // When a token is provided, re-configure the feed with `private: true` so
-    // electron-updater uses the GitHub API (api.github.com) instead of the
-    // public Atom feed (github.com/…/releases.atom) which rejects Bearer auth.
-    const appUpdateYml = readAppUpdateYml();
-    if (appUpdateYml?.provider === "github") {
-      autoUpdater.setFeedURL({
-        ...appUpdateYml,
-        provider: "github" as const,
-        private: true,
-        token: githubToken,
-      });
-    }
-  }
-
-  if (process.env.T3CODE_DESKTOP_MOCK_UPDATES) {
-    autoUpdater.setFeedURL({
-      provider: "generic",
-      url: `http://localhost:${process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
-    });
-  }
+  configureDefaultAutoUpdaterFeed();
 
   const enabled = shouldEnableAutoUpdates();
   setUpdateState(createBaseUpdateState(desktopSettings.updateChannel, enabled));
