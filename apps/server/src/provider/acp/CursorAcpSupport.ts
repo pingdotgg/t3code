@@ -1,5 +1,5 @@
 import { type CursorModelOptions, type CursorSettings } from "@t3tools/contracts";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Scope } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
@@ -45,7 +45,7 @@ export function buildCursorAcpSpawnInput(
 
 export const makeCursorAcpRuntime = (
   input: CursorAcpRuntimeInput,
-): Effect.Effect<AcpSessionRuntimeShape, EffectAcpErrors.AcpError> =>
+): Effect.Effect<AcpSessionRuntimeShape, EffectAcpErrors.AcpError, Scope.Scope> =>
   Effect.gen(function* () {
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
@@ -60,7 +60,7 @@ export const makeCursorAcpRuntime = (
       ),
     );
     return yield* Effect.service(AcpSessionRuntime).pipe(Effect.provide(acpContext));
-  }).pipe(Effect.scoped);
+  });
 
 interface CursorAcpModelSelectionRuntime {
   readonly getConfigOptions: AcpSessionRuntime.AcpSessionRuntime["Service"]["getConfigOptions"];
