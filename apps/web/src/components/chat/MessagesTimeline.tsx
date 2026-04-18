@@ -31,6 +31,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { AssistantMessageBubbleShell, UserMessageBubbleShell } from "./chatBubbleShells";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -252,10 +253,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   return (
     <TimelineRowCtx.Provider value={sharedState}>
-      <div
-        className="h-full"
-        style={{ "--chat-font-size": `${chatFontSize}px` } as CSSProperties}
-      >
+      <div className="h-full" style={{ "--chat-font-size": `${chatFontSize}px` } as CSSProperties}>
         <LegendList<MessagesTimelineRow>
           ref={listRef}
           data={rows}
@@ -313,74 +311,70 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
           const terminalContexts = displayedUserMessage.contexts;
           const canRevertAgentWork = typeof row.revertTurnCount === "number";
           return (
-            <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                {userImages.length > 0 && (
-                  <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {userImages.map(
-                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+            <UserMessageBubbleShell>
+              {userImages.length > 0 && (
+                <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+                  {userImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                    <div
+                      key={image.id}
+                      className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                    >
+                      {image.previewUrl ? (
+                        <button
+                          type="button"
+                          className="h-full w-full cursor-zoom-in"
+                          aria-label={`Preview ${image.name}`}
+                          onClick={() => {
+                            const preview = buildExpandedImagePreview(userImages, image.id);
+                            if (!preview) return;
+                            ctx.onImageExpand(preview);
+                          }}
                         >
-                          {image.previewUrl ? (
-                            <button
-                              type="button"
-                              className="h-full w-full cursor-zoom-in"
-                              aria-label={`Preview ${image.name}`}
-                              onClick={() => {
-                                const preview = buildExpandedImagePreview(userImages, image.id);
-                                if (!preview) return;
-                                ctx.onImageExpand(preview);
-                              }}
-                            >
-                              <img
-                                src={image.previewUrl}
-                                alt={image.name}
-                                className="block h-auto max-h-[220px] w-full object-cover"
-                              />
-                            </button>
-                          ) : (
-                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-chat-xxs text-muted-foreground/70">
-                              {image.name}
-                            </div>
-                          )}
+                          <img
+                            src={image.previewUrl}
+                            alt={image.name}
+                            className="block h-auto max-h-[220px] w-full object-cover"
+                          />
+                        </button>
+                      ) : (
+                        <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-chat-xxs text-muted-foreground/70">
+                          {image.name}
                         </div>
-                      ),
-                    )}
-                  </div>
-                )}
-                {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0) && (
-                  <UserMessageBody
-                    text={displayedUserMessage.visibleText}
-                    terminalContexts={terminalContexts}
-                  />
-                )}
-                <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {displayedUserMessage.copyText && (
-                      <MessageCopyButton text={displayedUserMessage.copyText} />
-                    )}
-                    {canRevertAgentWork && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={ctx.isRevertingCheckpoint || ctx.isWorking}
-                        onClick={() => ctx.onRevertUserMessage(row.message.id)}
-                        title="Revert to this message"
-                      >
-                        <Undo2Icon className="size-3" />
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-right text-chat-xs text-muted-foreground/50">
-                    {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
-                  </p>
+                      )}
+                    </div>
+                  ))}
                 </div>
+              )}
+              {(displayedUserMessage.visibleText.trim().length > 0 ||
+                terminalContexts.length > 0) && (
+                <UserMessageBody
+                  text={displayedUserMessage.visibleText}
+                  terminalContexts={terminalContexts}
+                />
+              )}
+              <div className="mt-1.5 flex items-center justify-end gap-2">
+                <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                  {displayedUserMessage.copyText && (
+                    <MessageCopyButton text={displayedUserMessage.copyText} />
+                  )}
+                  {canRevertAgentWork && (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      disabled={ctx.isRevertingCheckpoint || ctx.isWorking}
+                      onClick={() => ctx.onRevertUserMessage(row.message.id)}
+                      title="Revert to this message"
+                    >
+                      <Undo2Icon className="size-3" />
+                    </Button>
+                  )}
+                </div>
+                <p className="text-right text-chat-xs text-muted-foreground/50">
+                  {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
+                </p>
               </div>
-            </div>
+            </UserMessageBubbleShell>
           );
         })()}
 
@@ -409,7 +403,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                   <span className="h-px flex-1 bg-border" />
                 </div>
               )}
-              <div className="min-w-0 px-1 py-0.5">
+              <AssistantMessageBubbleShell>
                 <ChatMarkdown
                   text={messageText}
                   cwd={ctx.markdownCwd}
@@ -448,7 +442,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                     </div>
                   ) : null}
                 </div>
-              </div>
+              </AssistantMessageBubbleShell>
             </>
           );
         })()}
