@@ -67,6 +67,33 @@ export interface OpenCodeInventory {
   readonly agents: ReadonlyArray<Agent>;
 }
 
+export interface OpenCodeManagedProviderDescriptor {
+  readonly providerId: "opencode-go" | "opencode-zen";
+  readonly label: "OpenCode Go" | "OpenCode Zen";
+}
+
+const OPENCODE_MANAGED_PROVIDER_DESCRIPTORS = {
+  "opencode-go": {
+    providerId: "opencode-go",
+    label: "OpenCode Go",
+  },
+  "opencode-zen": {
+    providerId: "opencode-zen",
+    label: "OpenCode Zen",
+  },
+} satisfies Record<string, OpenCodeManagedProviderDescriptor>;
+
+export function getOpenCodeManagedProviderDescriptor(
+  providerId: string,
+): OpenCodeManagedProviderDescriptor | undefined {
+  if (!(providerId in OPENCODE_MANAGED_PROVIDER_DESCRIPTORS)) {
+    return undefined;
+  }
+  return OPENCODE_MANAGED_PROVIDER_DESCRIPTORS[
+    providerId as keyof typeof OPENCODE_MANAGED_PROVIDER_DESCRIPTORS
+  ];
+}
+
 export interface ParsedOpenCodeModelSlug {
   readonly providerID: string;
   readonly modelID: string;
@@ -548,10 +575,16 @@ export function flattenOpenCodeModels(
   input: OpenCodeInventory,
 ): ReadonlyArray<ServerProviderModel> {
   const connected = new Set(input.providerList.connected);
+  const officialProviderIds = new Set(
+    Object.keys(OPENCODE_MANAGED_PROVIDER_DESCRIPTORS),
+  );
   const models: Array<ServerProviderModel> = [];
 
   for (const provider of input.providerList.all) {
     if (!connected.has(provider.id)) {
+      continue;
+    }
+    if (!officialProviderIds.has(provider.id)) {
       continue;
     }
 
