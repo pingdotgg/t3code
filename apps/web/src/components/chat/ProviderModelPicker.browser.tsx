@@ -240,8 +240,8 @@ describe("ProviderModelPicker", () => {
 
       await vi.waitFor(() => {
         const text = document.body.textContent ?? "";
-        // Should show locked provider name
-        expect(text).toContain("claudeAgent");
+        // Should show locked provider label
+        expect(text).toContain("Claude");
         // Should show models from locked provider
         expect(text).toContain("Claude Sonnet 4.6");
         expect(text).toContain("Claude Haiku 4.5");
