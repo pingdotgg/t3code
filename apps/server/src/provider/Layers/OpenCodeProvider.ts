@@ -16,9 +16,12 @@ import {
   DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   createOpenCodeSdkClient,
   flattenOpenCodeModels,
+  getOpenCodeManagedProviderDescriptor,
   loadOpenCodeInventory,
   runOpenCodeCommand,
 } from "../opencodeRuntime.ts";
+import { resolveOpenCodeManagedUsageLimits } from "../openCodeUsageLimits.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 
 const PROVIDER = "opencode" as const;
 
@@ -135,6 +138,11 @@ const makePendingOpenCodeProvider = (openCodeSettings: OpenCodeSettings): Server
     openCodeSettings.customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
+  const usageLimits = makeUnavailableUsageLimits({
+    source: "opencodeManaged",
+    checkedAt,
+    reason: "Unable to fetch usage",
+  });
 
   if (!openCodeSettings.enabled) {
     return buildServerProvider({
@@ -151,6 +159,7 @@ const makePendingOpenCodeProvider = (openCodeSettings: OpenCodeSettings): Server
           openCodeSettings.serverUrl.trim().length > 0
             ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
             : "OpenCode is disabled in T3 Code settings.",
+        usageLimits,
       },
     });
   }
@@ -166,6 +175,7 @@ const makePendingOpenCodeProvider = (openCodeSettings: OpenCodeSettings): Server
       status: "warning",
       auth: { status: "unknown" },
       message: "OpenCode provider status has not been checked in this session yet.",
+      usageLimits,
     },
   });
 };
@@ -200,6 +210,11 @@ export function checkOpenCodeProviderStatus(input: {
         status: "error",
         auth: { status: "unknown" },
         message: failure.message,
+        usageLimits: makeUnavailableUsageLimits({
+          source: "opencodeManaged",
+          checkedAt,
+          reason: "Unable to fetch usage",
+        }),
       },
     });
   };
@@ -224,6 +239,11 @@ export function checkOpenCodeProviderStatus(input: {
           message: isExternalServer
             ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
             : "OpenCode is disabled in T3 Code settings.",
+          usageLimits: makeUnavailableUsageLimits({
+            source: "opencodeManaged",
+            checkedAt,
+            reason: "Unable to fetch usage",
+          }),
         },
       });
     }
@@ -283,7 +303,20 @@ export function checkOpenCodeProviderStatus(input: {
       customModels,
       DEFAULT_OPENCODE_MODEL_CAPABILITIES,
     );
+    const usageLimits =
+      resolveOpenCodeManagedUsageLimits({
+        checkedAt,
+        inventory: inventoryExit.value,
+      }) ??
+      makeUnavailableUsageLimits({
+        source: "opencodeManaged",
+        checkedAt,
+        reason: "Unable to fetch usage",
+      });
     const connectedCount = inventoryExit.value.providerList.connected.length;
+    const connectedManagedCount = inventoryExit.value.providerList.connected.filter(
+      (providerId) => getOpenCodeManagedProviderDescriptor(providerId) !== undefined,
+    ).length;
     return buildServerProvider({
       provider: PROVIDER,
       enabled: true,
@@ -297,12 +330,15 @@ export function checkOpenCodeProviderStatus(input: {
           status: connectedCount > 0 ? "authenticated" : "unknown",
           type: "opencode",
         },
+        usageLimits,
         message:
-          connectedCount > 0
-            ? `${connectedCount} upstream provider${connectedCount === 1 ? "" : "s"} connected through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"}.`
-            : isExternalServer
-              ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
-              : "OpenCode is available, but it did not report any connected upstream providers.",
+          connectedManagedCount > 0
+            ? `${connectedManagedCount} OpenCode-managed provider${connectedManagedCount === 1 ? "" : "s"} connected through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"}.`
+            : connectedCount > 0
+              ? `${connectedCount} upstream provider${connectedCount === 1 ? "" : "s"} connected through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"}.`
+              : isExternalServer
+                ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
+                : "OpenCode is available, but it did not report any connected upstream providers.",
       },
     });
   });

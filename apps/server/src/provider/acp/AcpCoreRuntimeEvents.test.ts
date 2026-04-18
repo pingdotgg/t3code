@@ -8,6 +8,7 @@ import {
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
+  makeAcpUsageUpdatedEvent,
 } from "./AcpCoreRuntimeEvents.ts";
 
 describe("AcpCoreRuntimeEvents", () => {
@@ -149,6 +150,33 @@ describe("AcpCoreRuntimeEvents", () => {
       payload: {
         itemType: "assistant_message",
         status: "inProgress",
+      },
+    });
+  });
+
+  it("maps ACP usage updates to canonical thread token usage events", () => {
+    const stamp = { eventId: "event-1" as never, createdAt: "2026-03-27T00:00:00.000Z" };
+
+    expect(
+      makeAcpUsageUpdatedEvent({
+        stamp,
+        provider: "cursor",
+        threadId: "thread-1" as never,
+        turnId: TurnId.make("turn-1"),
+        size: 200_000,
+        used: 50_000,
+        rawPayload: { sessionId: "session-1", update: { sessionUpdate: "usage_update" } },
+      }),
+    ).toMatchObject({
+      type: "thread.token-usage.updated",
+      payload: {
+        usage: {
+          usedTokens: 50_000,
+          maxTokens: 200_000,
+        },
+      },
+      raw: {
+        payload: { sessionId: "session-1", update: { sessionUpdate: "usage_update" } },
       },
     });
   });

@@ -10,20 +10,31 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { OpenCodeProvider } from "../Services/OpenCodeProvider.ts";
 import { makeOpenCodeProviderLive } from "./OpenCodeProvider.ts";
 
-const runtimeMock = vi.hoisted(() => {
-  const state = {
+const runtimeMock = {
+  state: {
     runVersionError: null as Error | null,
     inventoryError: null as Error | null,
-  };
-
-  return {
-    state,
-    reset() {
-      state.runVersionError = null;
-      state.inventoryError = null;
+    inventoryResult: {
+      providerList: { connected: [], default: {}, all: [] },
+      agents: [],
+    } as {
+      providerList: {
+        connected: string[];
+        default: Record<string, string>;
+        all: Array<Record<string, unknown>>;
+      };
+      agents: Array<unknown>;
     },
-  };
-});
+  },
+  reset() {
+    this.state.runVersionError = null;
+    this.state.inventoryError = null;
+    this.state.inventoryResult = {
+      providerList: { connected: [], default: {}, all: [] },
+      agents: [],
+    };
+  },
+};
 
 vi.mock("../opencodeRuntime.ts", async () => {
   const actual =
@@ -48,10 +59,7 @@ vi.mock("../opencodeRuntime.ts", async () => {
       if (runtimeMock.state.inventoryError) {
         throw runtimeMock.state.inventoryError;
       }
-      return {
-        providerList: { connected: [], all: [] },
-        agents: [],
-      };
+      return runtimeMock.state.inventoryResult;
     }),
     flattenOpenCodeModels: vi.fn(() => []),
   };
@@ -90,6 +98,59 @@ it.layer(makeTestLayer())("OpenCodeProviderLive", (it) => {
       assert.equal(snapshot.status, "error");
       assert.equal(snapshot.installed, true);
       assert.equal(snapshot.message, "Failed to execute OpenCode CLI health check.");
+    }),
+  );
+
+  it.effect("shows managed OpenCode usage only when a managed provider reports real usage", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventoryResult = {
+        providerList: {
+          connected: ["opencode-go", "anthropic"],
+          default: {},
+          all: [
+            {
+              id: "opencode-go",
+              name: "OpenCode Go",
+              env: [],
+              models: {},
+              usage: { usedPercent: 27 },
+            },
+            {
+              id: "anthropic",
+              name: "Anthropic",
+              env: [],
+              models: {},
+              usage: { usedPercent: 99 },
+            },
+          ],
+        },
+        agents: [],
+      };
+      const provider = yield* OpenCodeProvider;
+      const snapshot = yield* provider.refresh;
+
+      assert.equal(snapshot.usageLimits?.available, true);
+      assert.deepEqual(snapshot.usageLimits?.windows, [
+        { kind: "session", label: "OpenCode Go", usedPercent: 27 },
+      ]);
+    }),
+  );
+
+  it.effect("shows unavailable usage when only upstream providers are connected", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventoryResult = {
+        providerList: {
+          connected: ["anthropic"],
+          default: {},
+          all: [{ id: "anthropic", name: "Anthropic", env: [], models: {} }],
+        },
+        agents: [],
+      };
+      const provider = yield* OpenCodeProvider;
+      const snapshot = yield* provider.refresh;
+
+      assert.equal(snapshot.usageLimits?.available, false);
+      assert.equal(snapshot.usageLimits?.reason, "Unable to fetch usage");
     }),
   );
 });
