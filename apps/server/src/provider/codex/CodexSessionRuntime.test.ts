@@ -1,13 +1,43 @@
 import assert from "node:assert/strict";
 
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, it } from "vitest";
+import { ThreadId } from "@t3tools/contracts";
+import * as CodexErrors from "effect-codex-app-server/errors";
+import * as CodexRpc from "effect-codex-app-server/rpc";
 
 import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "./CodexDeveloperInstructions.ts";
-import { buildTurnStartParams } from "./CodexSessionRuntime.ts";
+import {
+  buildTurnStartParams,
+  isRecoverableThreadResumeError,
+  openCodexThread,
+} from "./CodexSessionRuntime.ts";
+
+function makeThreadOpenResponse(
+  threadId: string,
+): CodexRpc.ClientRequestResponsesByMethod["thread/start"] {
+  return {
+    cwd: "/tmp/project",
+    model: "gpt-5.3-codex",
+    modelProvider: "openai",
+    approvalPolicy: "never",
+    approvalsReviewer: "user",
+    sandbox: { type: "danger-full-access" },
+    thread: {
+      id: threadId,
+      createdAt: "2026-04-18T00:00:00.000Z",
+      source: { session: "cli" },
+      turns: [],
+      status: {
+        state: "idle",
+        activeFlags: [],
+      },
+    },
+  } as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/start"];
+}
 
 describe("buildTurnStartParams", () => {
   it("includes plan collaboration mode when requested", () => {
@@ -114,5 +144,111 @@ describe("buildTurnStartParams", () => {
         },
       ],
     });
+  });
+});
+
+describe("isRecoverableThreadResumeError", () => {
+  it("matches missing thread errors", () => {
+    assert.equal(
+      isRecoverableThreadResumeError(
+        new CodexErrors.CodexAppServerRequestError({
+          code: -32603,
+          errorMessage: "Thread does not exist",
+        }),
+      ),
+      true,
+    );
+  });
+
+  it("ignores non-recoverable resume errors", () => {
+    assert.equal(
+      isRecoverableThreadResumeError(
+        new CodexErrors.CodexAppServerRequestError({
+          code: -32603,
+          errorMessage: "Permission denied",
+        }),
+      ),
+      false,
+    );
+  });
+});
+
+describe("openCodexThread", () => {
+  it("falls back to thread/start when resume fails recoverably", async () => {
+    const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+    const started = makeThreadOpenResponse("fresh-thread");
+    const client = {
+      request: <M extends "thread/start" | "thread/resume">(
+        method: M,
+        payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        calls.push({ method, payload });
+        if (method === "thread/resume") {
+          return Effect.fail(
+            new CodexErrors.CodexAppServerRequestError({
+              code: -32603,
+              errorMessage: "thread not found",
+            }),
+          );
+        }
+        return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
+      },
+    };
+
+    const opened = await Effect.runPromise(
+      openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "stale-thread",
+      }),
+    );
+
+    assert.equal(opened.thread.id, "fresh-thread");
+    assert.deepStrictEqual(
+      calls.map((call) => call.method),
+      ["thread/resume", "thread/start"],
+    );
+  });
+
+  it("propagates non-recoverable resume failures", async () => {
+    const client = {
+      request: <M extends "thread/start" | "thread/resume">(
+        method: M,
+        _payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        if (method === "thread/resume") {
+          return Effect.fail(
+            new CodexErrors.CodexAppServerRequestError({
+              code: -32603,
+              errorMessage: "timed out waiting for server",
+            }),
+          );
+        }
+        return Effect.succeed(
+          makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+        );
+      },
+    };
+
+    await assert.rejects(
+      Effect.runPromise(
+        openCodexThread({
+          client,
+          threadId: ThreadId.make("thread-1"),
+          runtimeMode: "full-access",
+          cwd: "/tmp/project",
+          requestedModel: "gpt-5.3-codex",
+          serviceTier: undefined,
+          resumeThreadId: "stale-thread",
+        }),
+      ),
+      (error: unknown) =>
+        Schema.is(CodexErrors.CodexAppServerRequestError)(error) &&
+        error.errorMessage === "timed out waiting for server",
+    );
   });
 });
