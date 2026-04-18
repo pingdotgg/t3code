@@ -1,7 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 
 import * as CodexError from "../errors.ts";
+
+const formatSchemaIssue = SchemaIssue.makeFormatterDefault();
 
 export const JsonRpcId = Schema.Union([Schema.Number, Schema.String]);
 
@@ -27,13 +30,16 @@ export const decodeOptionalPayload = <A, I>(
       return Effect.sync(() => undefined as A);
     }
     return Effect.fail(
-      CodexError.CodexAppServerRequestError.unexpectedPayload(method, "decode-payload", raw),
+      CodexError.CodexAppServerRequestError.invalidParams(`${method} does not accept params`, raw),
     );
   }
 
   return Schema.decodeUnknownEffect(schema)(raw).pipe(
     Effect.mapError((error) =>
-      CodexError.CodexAppServerRequestError.invalidPayload(method, "decode-payload", error),
+      CodexError.CodexAppServerRequestError.invalidParams(
+        `Invalid ${method} payload: ${formatSchemaIssue(error.issue)}`,
+        { issue: error.issue },
+      ),
     ),
   );
 };
@@ -48,13 +54,19 @@ export const encodeOptionalPayload = <A, I>(
       return Effect.sync(() => undefined);
     }
     return Effect.fail(
-      CodexError.CodexAppServerRequestError.unexpectedPayload(method, "encode-payload", payload),
+      CodexError.CodexAppServerRequestError.invalidParams(
+        `${method} does not accept params`,
+        payload,
+      ),
     );
   }
 
   return Schema.encodeEffect(schema)(payload).pipe(
     Effect.mapError((error) =>
-      CodexError.CodexAppServerRequestError.invalidPayload(method, "encode-payload", error),
+      CodexError.CodexAppServerRequestError.invalidParams(
+        `Invalid ${method} payload: ${formatSchemaIssue(error.issue)}`,
+        { issue: error.issue },
+      ),
     ),
   );
 };
@@ -65,12 +77,12 @@ export const decodeNotificationPayload = <A, I>(
   raw: unknown,
 ): Effect.Effect<A, CodexError.CodexAppServerProtocolParseError> =>
   decodeOptionalPayload(method, schema, raw).pipe(
-    Effect.mapError((error) =>
-      CodexError.CodexAppServerProtocolParseError.fromRequestError(
-        "decode-notification-payload",
-        method,
-        error,
-      ),
+    Effect.mapError(
+      (error) =>
+        new CodexError.CodexAppServerProtocolParseError({
+          detail: error.message,
+          cause: error,
+        }),
     ),
   );
 
@@ -84,8 +96,6 @@ export const runHandler = Effect.fnUntraced(function* <A, B>(
   }
 
   return yield* handler(payload).pipe(
-    Effect.mapError((error) =>
-      CodexError.CodexAppServerRequestError.fromAppServerError(error, method),
-    ),
+    Effect.mapError((error) => CodexError.normalizeToRequestError(error)),
   );
 });

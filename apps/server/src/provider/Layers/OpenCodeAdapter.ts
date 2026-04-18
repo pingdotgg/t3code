@@ -281,7 +281,28 @@ type EventBaseInput = {
   readonly requestId?: string | undefined;
   readonly createdAt?: string | undefined;
   readonly raw?: unknown;
-};
+}): Pick<
+  ProviderRuntimeEvent,
+  "eventId" | "provider" | "threadId" | "createdAt" | "turnId" | "itemId" | "requestId" | "raw"
+> {
+  return {
+    eventId: EventId.make(randomUUID()),
+    provider: PROVIDER,
+    threadId: input.threadId,
+    createdAt: input.createdAt ?? nowIso(),
+    ...(input.turnId ? { turnId: input.turnId } : {}),
+    ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
+    ...(input.requestId ? { requestId: RuntimeRequestId.make(input.requestId) } : {}),
+    ...(input.raw !== undefined
+      ? {
+          raw: {
+            source: "opencode.sdk.event",
+            payload: input.raw,
+          } as unknown as ProviderRuntimeEvent["raw"],
+        }
+      : {}),
+  };
+}
 
 function toToolLifecycleItemType(toolName: string): ToolLifecycleItemType {
   const normalized = toolName.toLowerCase();

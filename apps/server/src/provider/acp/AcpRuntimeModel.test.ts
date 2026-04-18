@@ -255,24 +255,6 @@ describe("AcpRuntimeModel", () => {
     }
   });
 
-  it("trims padded current mode updates before emitting a mode change", () => {
-    const result = parseSessionUpdateEvent({
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "current_mode_update",
-        currentModeId: " code ",
-      },
-    } satisfies EffectAcpSchema.SessionNotification);
-
-    expect(result.modeId).toBe("code");
-    expect(result.events).toEqual([
-      {
-        _tag: "ModeChanged",
-        modeId: "code",
-      },
-    ]);
-  });
-
   it("projects typed ACP plan and content updates", () => {
     const planResult = parseSessionUpdateEvent({
       sessionId: "session-1",

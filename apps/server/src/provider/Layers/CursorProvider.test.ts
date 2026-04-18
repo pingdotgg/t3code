@@ -1,21 +1,9 @@
-import * as NodeOS from "node:os";
-
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import type * as Crypto from "effect/Crypto";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vitest";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import type { CursorSettings } from "@t3tools/contracts";
-import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
-  buildCursorProviderSnapshot,
   buildCursorCapabilitiesFromConfigOptions,
-  checkCursorProviderStatus,
-  discoverCursorModelsViaAcp,
+  buildCursorDiscoveredModelsFromConfigOptions,
   getCursorFallbackModels,
   getCursorParameterizedModelPickerUnsupportedMessage,
   parseCursorAboutOutput,
@@ -24,139 +12,6 @@ import {
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "./CursorProvider.ts";
-
-const runNode = <A, E>(
-  effect: Effect.Effect<
-    A,
-    E,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
-  >,
-): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
-
-const resolveMockAgentPath = Effect.fn("resolveMockAgentPath")(function* () {
-  const path = yield* Path.Path;
-  return yield* path.fromFileUrl(new URL("../../../scripts/acp-mock-agent.ts", import.meta.url));
-});
-
-function selectDescriptor(
-  id: string,
-  label: string,
-  options: ReadonlyArray<{ id: string; label: string; isDefault?: boolean }>,
-) {
-  return {
-    id,
-    label,
-    type: "select" as const,
-    options: [...options],
-    ...(options.find((option) => option.isDefault)?.id
-      ? { currentValue: options.find((option) => option.isDefault)?.id }
-      : {}),
-  };
-}
-
-function booleanDescriptor(id: string, label: string, currentValue?: boolean) {
-  return {
-    id,
-    label,
-    type: "boolean" as const,
-    ...(typeof currentValue === "boolean" ? { currentValue } : {}),
-  };
-}
-
-const makeMockAgentWrapper = Effect.fn("makeMockAgentWrapper")(function* (
-  extraEnv?: Record<string, string>,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const mockAgentPath = yield* resolveMockAgentPath();
-  const dir = yield* fileSystem.makeTempDirectory({
-    directory: NodeOS.tmpdir(),
-    prefix: "cursor-provider-mock-",
-  });
-  const wrapperPath = path.join(dir, "fake-agent.sh");
-  const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-${envExports}
-exec ${mockAgentCommand} "$@"
-`;
-  yield* fileSystem.writeFileString(wrapperPath, script);
-  yield* fileSystem.chmod(wrapperPath, 0o755);
-  return wrapperPath;
-});
-
-const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const mockAgentPath = yield* resolveMockAgentPath();
-  const dir = yield* fileSystem.makeTempDirectory({
-    directory: NodeOS.tmpdir(),
-    prefix: "cursor-provider-about-mock-",
-  });
-  const wrapperPath = path.join(dir, "fake-agent.sh");
-  const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
-  const script = `#!/bin/sh
-if [ "$1" = "about" ]; then
-  printf 'CLI Version         2026.04.09-f2b0fcd\\n'
-  printf 'User Email          cursor@example.com\\n'
-  exit 0
-fi
-exec ${mockAgentCommand} "$@"
-`;
-  yield* fileSystem.writeFileString(wrapperPath, script);
-  yield* fileSystem.chmod(wrapperPath, 0o755);
-  return wrapperPath;
-});
-
-const waitForFileContent = Effect.fn("waitForFileContent")(function* (
-  filePath: string,
-  attempts = 40,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const content = yield* fileSystem
-      .readFileString(filePath)
-      .pipe(Effect.catch(() => Effect.void));
-    if (content !== undefined) {
-      if (content.trim().length > 0) {
-        return content;
-      }
-    }
-    yield* Effect.sleep("50 millis");
-  }
-  return yield* Effect.die(`Timed out waiting for file content at ${filePath}`);
-});
-
-const makeProviderStatusEnvFixture = Effect.fn("makeProviderStatusEnvFixture")(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const tempDir = yield* fileSystem.makeTempDirectory({
-    directory: NodeOS.tmpdir(),
-    prefix: "cursor-provider-status-env-",
-  });
-  return {
-    requestLogPath: path.join(tempDir, "requests.ndjson"),
-    wrapperPath: yield* makeMockAgentWithAboutWrapper(),
-  };
-});
-
-const makeExitLogFixture = Effect.fn("makeExitLogFixture")(function* (prefix: string) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const tempDir = yield* fileSystem.makeTempDirectory({
-    directory: NodeOS.tmpdir(),
-    prefix,
-  });
-  const exitLogPath = path.join(tempDir, "exit.log");
-  return {
-    exitLogPath,
-    wrapperPath: yield* makeMockAgentWrapper({
-      T3_ACP_EXIT_LOG_PATH: exitLogPath,
-    }),
-  };
-});
 
 const parameterizedGpt54ConfigOptions = [
   {
@@ -235,39 +90,33 @@ const parameterizedClaudeConfigOptions = [
   },
 ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
 
-const parameterizedClaudeModelOptionConfigOptions = [
+const sessionNewCursorConfigOptions = [
   {
     type: "select",
-    currentValue: "claude-opus-4-6",
-    options: [{ name: "Opus 4.6", value: "claude-opus-4-6" }],
+    currentValue: "agent",
+    options: [
+      { name: "Agent", value: "agent", description: "Full agent capabilities with tool access" },
+    ],
+    category: "mode",
+    id: "mode",
+    name: "Mode",
+    description: "Controls how the agent executes tasks",
+  },
+  {
+    type: "select",
+    currentValue: "composer-2",
+    options: [
+      { name: "Auto", value: "default" },
+      { name: "Composer 2", value: "composer-2" },
+      { name: "GPT-5.4", value: "gpt-5.4" },
+      { name: "Sonnet 4.6", value: "claude-sonnet-4-6" },
+      { name: "Opus 4.6", value: "claude-opus-4-6" },
+      { name: "Codex 5.3 Spark", value: "gpt-5.3-codex-spark" },
+    ],
     category: "model",
     id: "model",
     name: "Model",
-  },
-  {
-    type: "select",
-    currentValue: "high",
-    options: [
-      { name: "Low", value: "low" },
-      { name: "Medium", value: "medium" },
-      { name: "High", value: "high" },
-    ],
-    category: "thought_level",
-    id: "reasoning",
-    name: "Reasoning",
-  },
-  {
-    type: "select",
-    currentValue: "max",
-    options: [
-      { name: "Low", value: "low" },
-      { name: "Medium", value: "medium" },
-      { name: "High", value: "high" },
-      { name: "Max", value: "max" },
-    ],
-    category: "model_option",
-    id: "effort",
-    name: "Effort",
+    description: "Controls which model is used for responses",
   },
   {
     type: "select",
@@ -279,38 +128,9 @@ const parameterizedClaudeModelOptionConfigOptions = [
     category: "model_config",
     id: "fast",
     name: "Fast",
-  },
-  {
-    type: "select",
-    currentValue: "true",
-    options: [
-      { name: "Off", value: "false" },
-      { name: ":icon-brain:", value: "true" },
-    ],
-    category: "model_config",
-    id: "thinking",
-    name: "Thinking",
+    description: "Faster speeds.",
   },
 ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
-
-const baseCursorSettings: CursorSettings = {
-  enabled: true,
-  binaryPath: "cursor-agent",
-  apiEndpoint: "",
-  customModels: [],
-};
-const cursorAcpDiscoveryFailedMessage = [
-  "Cursor ACP model discovery failed.",
-  "Cursor CLI setup may be incomplete; install or enable the Cursor CLI, restart T3 Code, and try again.",
-  "See https://cursor.com/docs/cli/installation.",
-  "Check server logs for ACP details.",
-].join(" ");
-const missingCursorBinaryPath = "/definitely/not/installed/t3-cursor-agent";
-const cursorCliCommandMissingMessage = [
-  `Cursor CLI command \`${missingCursorBinaryPath}\` was not found.`,
-  `Install or enable the Cursor CLI, make sure \`${missingCursorBinaryPath}\` is on PATH, then restart T3 Code.`,
-  "See https://cursor.com/docs/cli/installation.",
-].join(" ");
 
 describe("getCursorFallbackModels", () => {
   it("does not publish any built-in cursor models before ACP discovery", () => {
@@ -319,55 +139,6 @@ describe("getCursorFallbackModels", () => {
         customModels: ["internal/cursor-model"],
       }).map((model) => model.slug),
     ).toEqual(["internal/cursor-model"]);
-  });
-});
-
-describe("buildCursorProviderSnapshot", () => {
-  it("downgrades ready status to warning when ACP model discovery times out", () => {
-    expect(
-      buildCursorProviderSnapshot({
-        checkedAt: "2026-01-01T00:00:00.000Z",
-        cursorSettings: baseCursorSettings,
-        parsed: {
-          version: "2026.04.09-f2b0fcd",
-          status: "ready",
-          auth: { status: "authenticated", type: "Team", label: "Cursor Team Subscription" },
-        },
-        discoveryWarning: "Cursor ACP model discovery timed out after 15000ms.",
-      }),
-    ).toMatchObject({
-      status: "warning",
-      message: "Cursor ACP model discovery timed out after 15000ms.",
-      models: [],
-    });
-  });
-
-  it("preserves provider error state while appending discovery warnings", () => {
-    expect(
-      buildCursorProviderSnapshot({
-        checkedAt: "2026-01-01T00:00:00.000Z",
-        cursorSettings: {
-          ...baseCursorSettings,
-          customModels: ["claude-sonnet-4-6"],
-        },
-        parsed: {
-          version: "2026.04.09-f2b0fcd",
-          status: "error",
-          auth: { status: "unauthenticated" },
-          message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
-        },
-        discoveryWarning: cursorAcpDiscoveryFailedMessage,
-      }),
-    ).toMatchObject({
-      status: "error",
-      message: `Cursor Agent is not authenticated. Run \`agent login\` and try again. ${cursorAcpDiscoveryFailedMessage}`,
-      models: [
-        {
-          slug: "claude-sonnet-4-6",
-          isCustom: true,
-        },
-      ],
-    });
   });
 });
 
@@ -401,25 +172,6 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
             { id: "medium", label: "Medium" },
             { id: "high", label: "High", isDefault: true },
           ]),
-          booleanDescriptor("thinking", "Thinking", true),
-        ],
-      }),
-    );
-  });
-
-  it("prefers the newer model_option effort control over legacy thought_level", () => {
-    expect(
-      buildCursorCapabilitiesFromConfigOptions(parameterizedClaudeModelOptionConfigOptions),
-    ).toEqual(
-      createModelCapabilities({
-        optionDescriptors: [
-          selectDescriptor("reasoning", "Effort", [
-            { id: "low", label: "Low" },
-            { id: "medium", label: "Medium" },
-            { id: "high", label: "High" },
-            { id: "max", label: "Max", isDefault: true },
-          ]),
-          booleanDescriptor("fastMode", "Fast", true),
           booleanDescriptor("thinking", "Thinking", true),
         ],
       }),
@@ -471,46 +223,6 @@ describe("checkCursorProviderStatus", () => {
       "claude-opus-4-6",
     ]);
     await expect(runNode(waitForFileContent(requestLogPath))).resolves.toContain("initialize");
-  });
-});
-
-describe("discoverCursorModelsViaAcp", () => {
-  it("keeps the ACP probe runtime alive long enough to discover models", async () => {
-    const wrapperPath = await runNode(makeMockAgentWrapper());
-
-    const models = await runNode(
-      discoverCursorModelsViaAcp({
-        enabled: true,
-        binaryPath: wrapperPath,
-        apiEndpoint: "",
-        customModels: [],
-      }).pipe(Effect.scoped),
-    );
-
-    expect(models.map((model) => model.slug)).toEqual([
-      "default",
-      "composer-2",
-      "gpt-5.4",
-      "claude-opus-4-6",
-    ]);
-  });
-
-  it("closes the ACP probe runtime after discovery completes", async () => {
-    const { exitLogPath, wrapperPath } = await runNode(
-      makeExitLogFixture("cursor-provider-exit-log-"),
-    );
-
-    await runNode(
-      discoverCursorModelsViaAcp({
-        enabled: true,
-        binaryPath: wrapperPath,
-        apiEndpoint: "",
-        customModels: [],
-      }),
-    );
-
-    const exitLog = await runNode(waitForFileContent(exitLogPath));
-    expect(exitLog).toContain("SIGTERM");
   });
 });
 
@@ -664,17 +376,5 @@ describe("resolveCursorAcpConfigUpdates", () => {
         { id: "fastMode", value: false },
       ]),
     ).toEqual([{ configId: "fast", value: "false" }]);
-  });
-
-  it("writes Cursor effort changes through the newer model_option config when available", () => {
-    expect(
-      resolveCursorAcpConfigUpdates(parameterizedClaudeModelOptionConfigOptions, [
-        { id: "reasoning", value: "max" },
-        { id: "thinking", value: false },
-      ]),
-    ).toEqual([
-      { configId: "effort", value: "max" },
-      { configId: "thinking", value: "false" },
-    ]);
   });
 });

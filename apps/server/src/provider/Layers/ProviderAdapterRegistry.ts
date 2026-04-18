@@ -29,22 +29,22 @@ import {
   ProviderAdapterRegistry,
   type ProviderAdapterRegistryShape,
 } from "../Services/ProviderAdapterRegistry.ts";
+import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
+import { CodexAdapter } from "../Services/CodexAdapter.ts";
+import { CursorAdapter } from "../Services/CursorAdapter.ts";
 
 const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(function* () {
   const registry = yield* ProviderInstanceRegistry;
 
-  const getByInstance: ProviderAdapterRegistryShape["getByInstance"] = (instanceId) =>
-    registry.getInstance(instanceId).pipe(
-      Effect.flatMap((instance) =>
-        instance === undefined
-          ? Effect.fail(
-              new ProviderUnsupportedError({
-                provider: instanceId,
-              }),
-            )
-          : Effect.succeed(instance.adapter),
-      ),
-    );
+const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(function* (
+  options?: ProviderAdapterRegistryLiveOptions,
+) {
+  const cursorAdapterOption = yield* Effect.serviceOption(CursorAdapter);
+  const adapters =
+    options?.adapters !== undefined
+      ? options.adapters
+      : [yield* CodexAdapter, yield* ClaudeAdapter, yield* CursorAdapter];
+  const byProvider = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
 
   const getInstanceInfo: ProviderAdapterRegistryShape["getInstanceInfo"] = (instanceId) =>
     registry.getInstance(instanceId).pipe(

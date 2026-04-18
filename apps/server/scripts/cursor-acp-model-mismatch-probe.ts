@@ -323,10 +323,10 @@ async function setSelectOptionIfAdvertised(
     sessionId,
     configId: option.id,
     value,
-  })) as SetConfigResult | null | undefined;
+  })) as SetConfigResult;
 
   logSection(`SET_${label}_RESPONSE`, response);
-  return response?.configOptions ?? configOptions;
+  return response.configOptions ?? configOptions;
 }
 
 async function main() {
@@ -384,10 +384,10 @@ async function main() {
       sessionId,
       configId: modelConfig.id,
       value: targetModel,
-    })) as SetConfigResult | null | undefined;
+    })) as SetConfigResult;
     logSection("SET_MODEL_RESPONSE", setModelResponse);
 
-    configOptions = setModelResponse?.configOptions ?? configOptions;
+    configOptions = setModelResponse.configOptions ?? configOptions;
 
     configOptions = await setSelectOptionIfAdvertised(
       rpc,

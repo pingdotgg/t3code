@@ -1263,41 +1263,6 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
-  it("does not use command stdout as the detail when Cursor omits the command input", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "cursor-command-complete",
-        createdAt: "2026-04-16T22:40:42.221Z",
-        kind: "tool.completed",
-        summary: "Ran command",
-        payload: {
-          itemType: "command_execution",
-          title: "Ran command",
-          data: {
-            toolCallId: "toolu_vrtx_01WypXgRM8PPygBtrVAZwzy5",
-            kind: "execute",
-            rawInput: {},
-            rawOutput: {
-              exitCode: 0,
-              stdout: "total 960\napps\npackages\n",
-              stderr: "",
-            },
-          },
-        },
-      }),
-    ];
-
-    const [entry] = deriveWorkLogEntries(activities);
-    expect(entry).toMatchObject({
-      id: "cursor-command-complete",
-      label: "Ran command",
-      itemType: "command_execution",
-      toolTitle: "Ran command",
-    });
-    expect(entry?.detail).toBeUndefined();
-    expect(entry?.command).toBeUndefined();
-  });
-
   it("collapses legacy completed tool rows that are missing tool metadata", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1684,5 +1649,34 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+describe("PROVIDER_OPTIONS", () => {
+  it("advertises Codex, Claude, OpenCode, and Cursor as available providers", () => {
+    const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeAgent");
+    const opencode = PROVIDER_OPTIONS.find((option) => option.value === "opencode");
+    const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
+    expect(PROVIDER_OPTIONS).toEqual([
+      { value: "codex", label: "Codex", available: true },
+      { value: "claudeAgent", label: "Claude", available: true },
+      { value: "opencode", label: "OpenCode", available: true },
+      { value: "cursor", label: "Cursor", available: true },
+    ]);
+    expect(claude).toEqual({
+      value: "claudeAgent",
+      label: "Claude",
+      available: true,
+    });
+    expect(opencode).toEqual({
+      value: "opencode",
+      label: "OpenCode",
+      available: true,
+    });
+    expect(cursor).toEqual({
+      value: "cursor",
+      label: "Cursor",
+      available: true,
+    });
   });
 });

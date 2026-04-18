@@ -5,10 +5,12 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 
-type InputProps = Omit<InputPrimitive.Props & React.RefAttributes<HTMLInputElement>, "size"> & {
-  size?: "sm" | "default" | "lg" | number;
-  unstyled?: boolean;
-  nativeInput?: boolean;
+type InputProps = Omit<InputPrimitive.Props, "className" | "size" | "style"> & {
+  className?: string | undefined;
+  size?: "sm" | "default" | "lg" | number | undefined;
+  style?: React.CSSProperties | undefined;
+  unstyled?: boolean | undefined;
+  nativeInput?: boolean | undefined;
 };
 
 function Input({

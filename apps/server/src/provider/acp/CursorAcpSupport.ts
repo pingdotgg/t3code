@@ -1,9 +1,6 @@
-import { type CursorSettings, type ProviderOptionSelection } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Scope from "effect/Scope";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { type CursorModelOptions, type CursorSettings } from "@t3tools/contracts";
+import { Effect, Layer } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
 import {
@@ -48,11 +45,7 @@ export function buildCursorAcpSpawnInput(
 
 export const makeCursorAcpRuntime = (
   input: CursorAcpRuntimeInput,
-): Effect.Effect<
-  AcpSessionRuntime.AcpSessionRuntime["Service"],
-  EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
-> =>
+): Effect.Effect<AcpSessionRuntimeShape, EffectAcpErrors.AcpError> =>
   Effect.gen(function* () {
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
@@ -66,10 +59,8 @@ export const makeCursorAcpRuntime = (
         ),
       ),
     );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-      Effect.provide(acpContext),
-    );
-  });
+    return yield* Effect.service(AcpSessionRuntime).pipe(Effect.provide(acpContext));
+  }).pipe(Effect.scoped);
 
 interface CursorAcpModelSelectionRuntime {
   readonly getConfigOptions: AcpSessionRuntime.AcpSessionRuntime["Service"]["getConfigOptions"];
