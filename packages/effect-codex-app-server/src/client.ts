@@ -281,7 +281,7 @@ export const layerCommand = (
           ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
           shell: process.platform === "win32",
         });
-        const handle = yield* spawner.spawn(command).pipe(
+        return yield* spawner.spawn(command).pipe(
           Effect.mapError(
             (cause) =>
               new CodexError.CodexAppServerSpawnError({
@@ -290,9 +290,11 @@ export const layerCommand = (
               }),
           ),
         );
-        const client = yield* make(makeChildStdio(handle), options, makeTerminationError(handle));
-        return { client, handle };
       }),
-      ({ handle }) => handle.kill().pipe(Effect.orDie),
-    ).pipe(Effect.map(({ client }) => client)),
+      (handle) => handle.kill().pipe(Effect.orDie),
+    ).pipe(
+      Effect.flatMap((handle) =>
+        make(makeChildStdio(handle), options, makeTerminationError(handle)),
+      ),
+    ),
   );
