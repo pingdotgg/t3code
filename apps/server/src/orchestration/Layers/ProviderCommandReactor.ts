@@ -129,7 +129,7 @@ function findProviderAdapterRequestError(
 
 function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
   const error = findProviderAdapterRequestError(cause);
-  if (Schema.is(ProviderAdapterRequestError)(error)) {
+  if (error) {
     const detail = error.detail.toLowerCase();
     return (
       detail.includes("unknown pending approval request") ||
@@ -147,7 +147,7 @@ function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderService
 
 function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
   const error = findProviderAdapterRequestError(cause);
-  if (Schema.is(ProviderAdapterRequestError)(error)) {
+  if (error) {
     return error.detail.toLowerCase().includes("unknown pending user-input request");
   }
   const message = Cause.pretty(cause).toLowerCase();
@@ -264,7 +264,7 @@ const make = Effect.gen(function* () {
       ? failReason.error
       : undefined;
     if (providerError) {
-      return providerError.message;
+      return providerError.detail;
     }
     if (isProviderWorkspaceMissingError(failReason?.error)) {
       return failReason.error.message;
@@ -607,9 +607,6 @@ const make = Effect.gen(function* () {
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
-      const providerChanged =
-        requestedModelSelection !== undefined &&
-        requestedModelSelection.provider !== currentProvider;
       const sessionModelSwitch =
         currentProvider === undefined
           ? "in-session"
@@ -629,7 +626,6 @@ const make = Effect.gen(function* () {
 
       if (
         !runtimeModeChanged &&
-        !providerChanged &&
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
@@ -637,7 +633,9 @@ const make = Effect.gen(function* () {
         return existingSessionThreadId;
       }
 
-      const resumeCursor = providerChanged ? undefined : (activeSession?.resumeCursor ?? undefined);
+      const resumeCursor = shouldRestartForModelChange
+        ? undefined
+        : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
         threadId,
         existingSessionThreadId,
@@ -648,7 +646,6 @@ const make = Effect.gen(function* () {
         currentRuntimeMode: thread.session?.runtimeMode,
         desiredRuntimeMode: thread.runtimeMode,
         runtimeModeChanged,
-        providerChanged,
         modelChanged,
         instanceChanged,
         shouldRestartForModelChange,
@@ -1115,6 +1112,9 @@ const make = Effect.gen(function* () {
     }
 
     const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
+      if (Cause.hasInterruptsOnly(cause)) {
+        return Effect.void;
+      }
       const detail = formatFailureDetail(cause);
       return setThreadSessionErrorOnTurnStartFailure({
         threadId: event.payload.threadId,
@@ -1131,8 +1131,21 @@ const make = Effect.gen(function* () {
             createdAt: event.payload.createdAt,
           }),
         ),
+        Effect.asVoid,
       );
     };
+
+    const recoverTurnStartFailure = (cause: Cause.Cause<unknown>) =>
+      handleTurnStartFailure(cause).pipe(
+        Effect.catchCause((recoveryCause) =>
+          Effect.logWarning("provider command reactor failed to recover turn start failure", {
+            eventType: event.type,
+            threadId: event.payload.threadId,
+            cause: Cause.pretty(recoveryCause),
+            originalCause: Cause.pretty(cause),
+          }),
+        ),
+      );
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
@@ -1157,7 +1170,7 @@ const make = Effect.gen(function* () {
 
     yield* providerService
       .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(handleTurnStartFailure), Effect.forkScoped);
+      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
