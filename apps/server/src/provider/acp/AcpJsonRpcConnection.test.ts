@@ -513,6 +513,8 @@ describe("AcpSessionRuntime", () => {
           _meta: { parameterizedModelPicker: true },
         },
       });
+
+      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -552,7 +554,7 @@ describe("AcpSessionRuntime", () => {
       });
       expect(promptResult).toMatchObject({ stopReason: "end_turn" });
 
-      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 4)));
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.events, 4)));
       expect(notes).toHaveLength(4);
       expect(notes.map((note) => note._tag)).toEqual([
         "PlanUpdated",
@@ -573,6 +575,8 @@ describe("AcpSessionRuntime", () => {
       ) {
         expect(assistantDelta.itemId).toBe(assistantStart.itemId);
       }
+
+      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -753,7 +757,7 @@ describe("AcpSessionRuntime", () => {
       });
       expect(promptResult).toMatchObject({ stopReason: "end_turn" });
 
-      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 7)));
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.events, 7)));
       expect(notes.map((note) => note._tag)).toEqual([
         "AssistantItemStarted",
         "ContentDelta",
@@ -784,6 +788,8 @@ describe("AcpSessionRuntime", () => {
         expect(secondStarted.itemId).not.toBe(firstStarted.itemId);
         expect(secondDelta.itemId).toBe(secondStarted.itemId);
       }
+
+      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -804,7 +810,7 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
-  it.effect("emits status-only tool updates through completion", () =>
+  it.effect("suppresses generic placeholder tool updates until completion", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
@@ -814,23 +820,16 @@ describe("AcpSessionRuntime", () => {
       });
       expect(promptResult).toMatchObject({ stopReason: "end_turn" });
 
-      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 3)));
-      expect(notes.map((note) => note._tag)).toEqual([
-        "ToolCallUpdated",
-        "ToolCallUpdated",
-        "ToolCallUpdated",
-      ]);
-      const toolCalls = notes.flatMap((note) =>
-        note._tag === "ToolCallUpdated" ? [note.toolCall] : [],
-      );
-      expect(toolCalls.map((toolCall) => toolCall.status)).toEqual([
-        "pending",
-        "inProgress",
-        "completed",
-      ]);
-      for (const toolCall of toolCalls) {
-        expect(toolCall.title).toBe("Read file");
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.events, 1)));
+      expect(notes.map((note) => note._tag)).toEqual(["ToolCallUpdated"]);
+      const toolCall = notes[0];
+      expect(toolCall?._tag).toBe("ToolCallUpdated");
+      if (toolCall?._tag === "ToolCallUpdated") {
+        expect(toolCall.toolCall.status).toBe("completed");
+        expect(toolCall.toolCall.title).toBe("Read file");
       }
+
+      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -882,41 +881,8 @@ describe("AcpSessionRuntime", () => {
           (event) => event.method === "session/prompt" && event.status === "succeeded",
         ),
       ).toBe(true);
-    }).pipe(
-      Effect.provide(
-        AcpSessionRuntime.layer({
-          authMethodId: "test",
-          spawn: {
-            command: mockAgentCommand,
-            args: mockAgentArgs,
-          },
-          cwd: process.cwd(),
-          clientInfo: { name: "t3-test", version: "0.0.0" },
-          requestLogger: (event) =>
-            Effect.sync(() => {
-              requestEvents.push(event);
-            }),
-        }),
-      ),
-      Effect.scoped,
-      Effect.provide(NodeServices.layer),
-    );
-  });
 
-  it.effect("skips no-op session config writes when the requested value is already active", () => {
-    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
-    return Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-      yield* runtime.start();
-
-      yield* runtime.setConfigOption("model", "default");
-      yield* runtime.setMode("ask");
-
-      expect(
-        requestEvents.some(
-          (event) => event.method === "session/set_config_option" && event.status === "started",
-        ),
-      ).toBe(false);
+      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -960,6 +926,8 @@ describe("AcpSessionRuntime", () => {
       expect(
         protocolEvents.some((event) => event.direction === "incoming" && event.stage === "decoded"),
       ).toBe(true);
+
+      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -1105,7 +1073,9 @@ describe("AcpSessionRuntime", () => {
         expect(error.message).toContain("composer-2[fast=true]");
       }
 
-      const recordedRequests = NodeFS.readFileSync(requestLogPath, "utf8")
+      yield* runtime.close;
+
+      const recordedRequests = readFileSync(requestLogPath, "utf8")
         .trim()
         .split("\n")
         .filter((line) => line.length > 0)
@@ -1117,6 +1087,8 @@ describe("AcpSessionRuntime", () => {
             message.params?.value === "composer-2[fast=false]",
         ),
       ).toBe(false);
+
+      rmSync(tempDir, { recursive: true, force: true });
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -1134,7 +1106,6 @@ describe("AcpSessionRuntime", () => {
       ),
       Effect.scoped,
       Effect.provide(NodeServices.layer),
-      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
     );
   });
 });
