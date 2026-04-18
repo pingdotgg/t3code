@@ -49,16 +49,16 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
   const codex = yield* CodexTextGen;
   const claude = yield* ClaudeTextGen;
   const cursor = yield* CursorTextGen;
-  const opencode = yield* OpenCodeTextGen;
+  const openCode = yield* OpenCodeTextGen;
 
-  const providerToService = {
-    codex,
-    claudeAgent: claude,
-    cursor,
-    opencode,
-  };
-
-  const route = (provider: TextGenerationProvider | "opencode") => providerToService[provider];
+  const route = (provider?: TextGenerationProvider): TextGenerationShape =>
+    provider === "claudeAgent"
+      ? claude
+      : provider === "opencode"
+        ? openCode
+        : provider === "cursor"
+          ? cursor
+          : codex;
 
   return {
     generateCommitMessage: (input) =>

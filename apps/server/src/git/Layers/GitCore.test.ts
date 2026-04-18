@@ -183,16 +183,8 @@ function splitNullSeparatedPaths(input: string): string[] {
 // ── Tests ──
 
 it.layer(TestLayer)("git integration", (it) => {
-  const LONG_EFFECT_TEST_TIMEOUT_MS = 30_000;
-  const ASYNC_GIT_WAIT_TIMEOUT_MS = 30_000;
-  const effect = (
-    name: string,
-    test: Parameters<typeof it.effect>[1],
-    timeout = LONG_EFFECT_TEST_TIMEOUT_MS,
-  ) => it.effect(name, test, timeout);
-
   describe("shell process execution", () => {
-    effect("caps captured output when maxOutputBytes is exceeded", () =>
+    it.effect("caps captured output when maxOutputBytes is exceeded", () =>
       Effect.gen(function* () {
         const result = yield* runShellCommand({
           command: `node -e "process.stdout.write('x'.repeat(2000))"`,
@@ -211,7 +203,7 @@ it.layer(TestLayer)("git integration", (it) => {
   // ── initGitRepo ──
 
   describe("initGitRepo", () => {
-    effect("creates a valid git repo", () =>
+    it.effect("creates a valid git repo", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* (yield* GitCore).initRepo({ cwd: tmp });
@@ -219,7 +211,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("listGitBranches reports isRepo: true after init + commit", () =>
+    it.effect("listGitBranches reports isRepo: true after init + commit", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -315,7 +307,7 @@ it.layer(TestLayer)("git integration", (it) => {
   // ── listGitBranches ──
 
   describe("listGitBranches", () => {
-    effect("returns isRepo: false for non-git directory", () =>
+    it.effect("returns isRepo: false for non-git directory", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const result = yield* (yield* GitCore).listBranches({ cwd: tmp });
@@ -325,7 +317,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("returns isRepo: false for deleted directories", () =>
+    it.effect("returns isRepo: false for deleted directories", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const deletedDir = path.join(tmp, "deleted-repo");
@@ -340,7 +332,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("returns the current branch with current: true", () =>
+    it.effect("returns the current branch with current: true", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -351,7 +343,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("does not include detached HEAD pseudo-refs as branches", () =>
+    it.effect("does not include detached HEAD pseudo-refs as branches", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -363,7 +355,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("keeps current branch first and sorts the remaining branches by recency", () =>
+    it.effect("keeps current branch first and sorts the remaining branches by recency", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -401,7 +393,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("keeps default branch right after current branch", () =>
+    it.effect("keeps default branch right after current branch", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const remote = yield* makeTmpDir();
@@ -445,7 +437,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("lists multiple branches after creating them", () =>
+    it.effect("lists multiple branches after creating them", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -556,7 +548,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("lists local branches first and remote branches last", () =>
+    it.effect("lists local branches first and remote branches last", () =>
       Effect.gen(function* () {
         const remote = yield* makeTmpDir();
         const tmp = yield* makeTmpDir();
@@ -603,7 +595,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("includes remoteName metadata for remotes with slash in the name", () =>
+    it.effect("includes remoteName metadata for remotes with slash in the name", () =>
       Effect.gen(function* () {
         const remote = yield* makeTmpDir();
         const tmp = yield* makeTmpDir();
@@ -674,7 +666,7 @@ it.layer(TestLayer)("git integration", (it) => {
   // ── checkoutGitBranch ──
 
   describe("checkoutGitBranch", () => {
-    effect("checks out an existing branch", () =>
+    it.effect("checks out an existing branch", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -688,7 +680,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("refreshes upstream behind count after checkout when remote branch advanced", () =>
+    it.effect("refreshes upstream behind count after checkout when remote branch advanced", () =>
       Effect.gen(function* () {
         const context = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(context);
@@ -734,7 +726,7 @@ it.layer(TestLayer)("git integration", (it) => {
               expect(details.behindCount).toBe(1);
             },
             {
-              timeout: ASYNC_GIT_WAIT_TIMEOUT_MS,
+              timeout: 10_000,
               interval: 100,
             },
           ),
@@ -742,7 +734,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("statusDetails remains successful when upstream refresh fails after checkout", () =>
+    it.effect("statusDetails remains successful when upstream refresh fails after checkout", () =>
       Effect.gen(function* () {
         const remote = yield* makeTmpDir();
         const source = yield* makeTmpDir();
@@ -789,7 +781,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("defers upstream refresh until statusDetails is requested", () =>
+    it.effect("defers upstream refresh until statusDetails is requested", () =>
       Effect.gen(function* () {
         const remote = yield* makeTmpDir();
         const source = yield* makeTmpDir();
@@ -834,7 +826,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("shares upstream refreshes across worktrees that use the same git common dir", () =>
+    it.effect("coalesces upstream refreshes across sibling worktrees on the same remote", () =>
       Effect.gen(function* () {
         const ok = (stdout = "") =>
           Effect.succeed({
@@ -908,78 +900,83 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("briefly backs off failed upstream refreshes across sibling worktrees", () =>
-      Effect.gen(function* () {
-        const ok = (stdout = "") =>
-          Effect.succeed({
-            code: 0,
-            stdout,
-            stderr: "",
-            stdoutTruncated: false,
-            stderrTruncated: false,
-          });
+    it.effect(
+      "briefly backs off failed upstream refreshes across sibling worktrees on one remote",
+      () =>
+        Effect.gen(function* () {
+          const ok = (stdout = "") =>
+            Effect.succeed({
+              code: 0,
+              stdout,
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
 
-        let fetchCount = 0;
-        const core = yield* makeIsolatedGitCore((input) => {
-          if (
-            input.args[0] === "rev-parse" &&
-            input.args[1] === "--abbrev-ref" &&
-            input.args[2] === "--symbolic-full-name" &&
-            input.args[3] === "@{upstream}"
-          ) {
-            return ok(
-              input.cwd === "/repo/worktrees/pr-123" ? "origin/feature/pr-123\n" : "origin/main\n",
-            );
-          }
-          if (input.args[0] === "remote") {
-            return ok("origin\n");
-          }
-          if (input.args[0] === "rev-parse" && input.args[1] === "--git-common-dir") {
-            return ok("/repo/.git\n");
-          }
-          if (input.args[0] === "--git-dir" && input.args[2] === "fetch") {
-            fetchCount += 1;
+          let fetchCount = 0;
+          const core = yield* makeIsolatedGitCore((input) => {
+            if (
+              input.args[0] === "rev-parse" &&
+              input.args[1] === "--abbrev-ref" &&
+              input.args[2] === "--symbolic-full-name" &&
+              input.args[3] === "@{upstream}"
+            ) {
+              return ok(
+                input.cwd === "/repo/worktrees/pr-123"
+                  ? "origin/feature/pr-123\n"
+                  : "origin/main\n",
+              );
+            }
+            if (input.args[0] === "remote") {
+              return ok("origin\n");
+            }
+            if (input.args[0] === "rev-parse" && input.args[1] === "--git-common-dir") {
+              return ok("/repo/.git\n");
+            }
+            if (input.args[0] === "--git-dir" && input.args[2] === "fetch") {
+              fetchCount += 1;
+              return Effect.fail(
+                new GitCommandError({
+                  operation: input.operation,
+                  command: `git ${input.args.join(" ")}`,
+                  cwd: input.cwd,
+                  detail: "simulated fetch timeout",
+                }),
+              );
+            }
+            if (input.operation === "GitCore.statusDetails.status") {
+              return ok(
+                input.cwd === "/repo/worktrees/pr-123"
+                  ? "# branch.head feature/pr-123\n# branch.upstream origin/feature/pr-123\n# branch.ab +0 -0\n"
+                  : "# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0\n",
+              );
+            }
+            if (
+              input.operation === "GitCore.statusDetails.unstagedNumstat" ||
+              input.operation === "GitCore.statusDetails.stagedNumstat"
+            ) {
+              return ok();
+            }
+            if (input.operation === "GitCore.statusDetails.defaultRef") {
+              return ok("refs/remotes/origin/main\n");
+            }
             return Effect.fail(
               new GitCommandError({
                 operation: input.operation,
                 command: `git ${input.args.join(" ")}`,
                 cwd: input.cwd,
-                detail: "simulated fetch timeout",
+                detail: "Unexpected git command in refresh failure cooldown test.",
               }),
             );
-          }
-          if (input.operation === "GitCore.statusDetails.status") {
-            return ok(
-              input.cwd === "/repo/worktrees/pr-123"
-                ? "# branch.head feature/pr-123\n# branch.upstream origin/feature/pr-123\n# branch.ab +0 -0\n"
-                : "# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0\n",
-            );
-          }
-          if (
-            input.operation === "GitCore.statusDetails.unstagedNumstat" ||
-            input.operation === "GitCore.statusDetails.stagedNumstat"
-          ) {
-            return ok();
-          }
-          if (input.operation === "GitCore.statusDetails.defaultRef") {
-            return ok("refs/remotes/origin/main\n");
-          }
-          return Effect.fail(
-            new GitCommandError({
-              operation: input.operation,
-              command: `git ${input.args.join(" ")}`,
-              cwd: input.cwd,
-              detail: "Unexpected git command in refresh failure cooldown test.",
-            }),
-          );
-        });
-        yield* core.statusDetails("/repo/worktrees/main");
-        yield* core.statusDetails("/repo/worktrees/pr-123");
-        expect(fetchCount).toBe(1);
-      }),
+          });
+
+          yield* core.statusDetails("/repo/worktrees/main");
+          yield* core.statusDetails("/repo/worktrees/pr-123");
+          expect(fetchCount).toBe(1);
+        }),
     );
 
-    effect("throws when branch does not exist", () =>
+    it.effect("throws when branch does not exist", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -990,7 +987,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("does not silently checkout a local branch when a remote ref no longer exists", () =>
+    it.effect("does not silently checkout a local branch when a remote ref no longer exists", () =>
       Effect.gen(function* () {
         const remote = yield* makeTmpDir();
         const source = yield* makeTmpDir();
@@ -1013,7 +1010,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("checks out a remote tracking branch when remote name contains slashes", () =>
+    it.effect("checks out a remote tracking branch when remote name contains slashes", () =>
       Effect.gen(function* () {
         const remote = yield* makeTmpDir();
         const prefixRemote = yield* makeTmpDir();
@@ -1078,7 +1075,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect(
+    it.effect(
       "falls back to detached checkout when --track would conflict with an existing local branch",
       () =>
         Effect.gen(function* () {
@@ -1108,7 +1105,7 @@ it.layer(TestLayer)("git integration", (it) => {
         }),
     );
 
-    effect("throws when checkout would overwrite uncommitted changes", () =>
+    it.effect("throws when checkout would overwrite uncommitted changes", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1146,7 +1143,7 @@ it.layer(TestLayer)("git integration", (it) => {
   // ── createGitBranch ──
 
   describe("createGitBranch", () => {
-    effect("creates a new branch visible in listGitBranches", () =>
+    it.effect("creates a new branch visible in listGitBranches", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1157,7 +1154,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("throws when branch already exists", () =>
+    it.effect("throws when branch already exists", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1173,7 +1170,7 @@ it.layer(TestLayer)("git integration", (it) => {
   // ── renameGitBranch ──
 
   describe("renameGitBranch", () => {
-    effect("renames the current branch", () =>
+    it.effect("renames the current branch", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1195,7 +1192,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("returns success without git invocation when old/new names match", () =>
+    it.effect("returns success without git invocation when old/new names match", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1213,7 +1210,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("appends numeric suffix when target branch already exists", () =>
+    it.effect("appends numeric suffix when target branch already exists", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1240,7 +1237,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("increments suffix until it finds an available branch name", () =>
+    it.effect("increments suffix until it finds an available branch name", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1259,7 +1256,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("uses '--' separator for branch rename arguments", () =>
+    it.effect("uses '--' separator for branch rename arguments", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1290,7 +1287,7 @@ it.layer(TestLayer)("git integration", (it) => {
   // ── createGitWorktree + removeGitWorktree ──
 
   describe("createGitWorktree", () => {
-    effect("creates a worktree with a new branch from the base branch", () =>
+    it.effect("creates a worktree with a new branch from the base branch", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1317,7 +1314,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("worktree has the new branch checked out", () =>
+    it.effect("worktree has the new branch checked out", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1342,7 +1339,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("creates a worktree for an existing branch when newBranch is omitted", () =>
+    it.effect("creates a worktree for an existing branch when newBranch is omitted", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1364,7 +1361,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("throws when new branch name already exists", () =>
+    it.effect("throws when new branch name already exists", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1387,7 +1384,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("listGitBranches from worktree cwd reports worktree branch as current", () =>
+    it.effect("listGitBranches from worktree cwd reports worktree branch as current", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1419,7 +1416,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("removeGitWorktree cleans up the worktree", () =>
+    it.effect("removeGitWorktree cleans up the worktree", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1442,7 +1439,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("removeGitWorktree force removes a dirty worktree", () =>
+    it.effect("removeGitWorktree force removes a dirty worktree", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1477,7 +1474,7 @@ it.layer(TestLayer)("git integration", (it) => {
   // ── Full flow: local branch checkout ──
 
   describe("full flow: local branch checkout", () => {
-    effect("init → commit → create branch → checkout → verify current", () =>
+    it.effect("init → commit → create branch → checkout → verify current", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1494,7 +1491,7 @@ it.layer(TestLayer)("git integration", (it) => {
   // ── Full flow: worktree creation from base branch ──
 
   describe("full flow: worktree creation", () => {
-    effect("creates worktree with new branch from current branch", () =>
+    it.effect("creates worktree with new branch from current branch", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1529,7 +1526,7 @@ it.layer(TestLayer)("git integration", (it) => {
   });
 
   describe("fetchPullRequestBranch", () => {
-    effect("fetches a GitHub pull request ref into a local branch without checkout", () =>
+    it.effect("fetches a GitHub pull request ref into a local branch without checkout", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(tmp);
@@ -1562,7 +1559,7 @@ it.layer(TestLayer)("git integration", (it) => {
   // ── Full flow: thread switching simulation ──
 
   describe("full flow: thread switching (checkout toggling)", () => {
-    effect("checkout a → checkout b → checkout a → current matches", () =>
+    it.effect("checkout a → checkout b → checkout a → current matches", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1590,7 +1587,7 @@ it.layer(TestLayer)("git integration", (it) => {
   // ── Full flow: checkout conflict ──
 
   describe("full flow: checkout conflict", () => {
-    effect("uncommitted changes prevent checkout to a diverged branch", () =>
+    it.effect("uncommitted changes prevent checkout to a diverged branch", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1624,7 +1621,7 @@ it.layer(TestLayer)("git integration", (it) => {
   });
 
   describe("GitCore", () => {
-    effect("supports branch lifecycle operations through the service API", () =>
+    it.effect("supports branch lifecycle operations through the service API", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const core = yield* GitCore;
@@ -1648,7 +1645,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect(
+    it.effect(
       "reuses an existing remote when the target URL only differs by a trailing slash after .git",
       () =>
         Effect.gen(function* () {
@@ -1669,7 +1666,7 @@ it.layer(TestLayer)("git integration", (it) => {
         }),
     );
 
-    effect("reports status details and dirty state", () =>
+    it.effect("reports status details and dirty state", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1685,7 +1682,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("returns a non-repo status for deleted directories", () =>
+    it.effect("returns a non-repo status for deleted directories", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const deletedDir = path.join(tmp, "deleted-repo");
@@ -1716,7 +1713,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("computes ahead count against base branch when no upstream is configured", () =>
+    it.effect("computes ahead count against base branch when no upstream is configured", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1736,37 +1733,39 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("computes ahead count against origin/default when local default branch is missing", () =>
-      Effect.gen(function* () {
-        const remote = yield* makeTmpDir();
-        const source = yield* makeTmpDir();
-        yield* git(remote, ["init", "--bare"]);
+    it.effect(
+      "computes ahead count against origin/default when local default branch is missing",
+      () =>
+        Effect.gen(function* () {
+          const remote = yield* makeTmpDir();
+          const source = yield* makeTmpDir();
+          yield* git(remote, ["init", "--bare"]);
 
-        yield* initRepoWithCommit(source);
-        const initialBranch = (yield* (yield* GitCore).listBranches({
-          cwd: source,
-        })).branches.find((branch) => branch.current)!.name;
-        yield* git(source, ["remote", "add", "origin", remote]);
-        yield* git(source, ["push", "-u", "origin", initialBranch]);
-        yield* git(source, ["checkout", "-b", "feature/remote-base-only"]);
-        yield* writeTextFile(
-          path.join(source, "feature.txt"),
-          `ahead of origin/${initialBranch}\n`,
-        );
-        yield* git(source, ["add", "feature.txt"]);
-        yield* git(source, ["commit", "-m", "feature commit"]);
-        yield* git(source, ["branch", "-D", initialBranch]);
+          yield* initRepoWithCommit(source);
+          const initialBranch = (yield* (yield* GitCore).listBranches({
+            cwd: source,
+          })).branches.find((branch) => branch.current)!.name;
+          yield* git(source, ["remote", "add", "origin", remote]);
+          yield* git(source, ["push", "-u", "origin", initialBranch]);
+          yield* git(source, ["checkout", "-b", "feature/remote-base-only"]);
+          yield* writeTextFile(
+            path.join(source, "feature.txt"),
+            `ahead of origin/${initialBranch}\n`,
+          );
+          yield* git(source, ["add", "feature.txt"]);
+          yield* git(source, ["commit", "-m", "feature commit"]);
+          yield* git(source, ["branch", "-D", initialBranch]);
 
-        const core = yield* GitCore;
-        const details = yield* core.statusDetails(source);
-        expect(details.branch).toBe("feature/remote-base-only");
-        expect(details.hasUpstream).toBe(false);
-        expect(details.aheadCount).toBe(1);
-        expect(details.behindCount).toBe(0);
-      }),
+          const core = yield* GitCore;
+          const details = yield* core.statusDetails(source);
+          expect(details.branch).toBe("feature/remote-base-only");
+          expect(details.hasUpstream).toBe(false);
+          expect(details.aheadCount).toBe(1);
+          expect(details.behindCount).toBe(0);
+        }),
     );
 
-    effect(
+    it.effect(
       "computes ahead count against a non-origin remote-prefixed gh-merge-base candidate",
       () =>
         Effect.gen(function* () {
@@ -1804,7 +1803,7 @@ it.layer(TestLayer)("git integration", (it) => {
         }),
     );
 
-    effect("skips push when no upstream is configured and branch is not ahead of base", () =>
+    it.effect("skips push when no upstream is configured and branch is not ahead of base", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -1820,7 +1819,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("pushes with upstream setup when no comparable base branch exists", () =>
+    it.effect("pushes with upstream setup when no comparable base branch exists", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const remote = yield* makeTmpDir();
@@ -1845,7 +1844,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("pushes with upstream setup to the only configured non-origin remote", () =>
+    it.effect("pushes with upstream setup to the only configured non-origin remote", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const remote = yield* makeTmpDir();
@@ -1870,7 +1869,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect(
+    it.effect(
       "pushes with upstream setup when comparable base exists but remote branch is missing",
       () =>
         Effect.gen(function* () {
@@ -1906,7 +1905,7 @@ it.layer(TestLayer)("git integration", (it) => {
         }),
     );
 
-    effect("prefers branch pushRemote over origin when setting upstream", () =>
+    it.effect("prefers branch pushRemote over origin when setting upstream", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const origin = yield* makeTmpDir();
@@ -1943,7 +1942,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect(
+    it.effect(
       "pushes renamed PR worktree branches to their tracked upstream branch even when push.default is current",
       () =>
         Effect.gen(function* () {
@@ -1990,7 +1989,7 @@ it.layer(TestLayer)("git integration", (it) => {
         }),
     );
 
-    effect("pushes to the tracked upstream when the remote name contains slashes", () =>
+    it.effect("pushes to the tracked upstream when the remote name contains slashes", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const remote = yield* makeTmpDir();
@@ -2031,7 +2030,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("includes command context when worktree removal fails", () =>
+    it.effect("includes command context when worktree removal fails", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -2052,38 +2051,46 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("refreshes upstream before statusDetails so behind count reflects remote updates", () =>
-      Effect.gen(function* () {
-        const remote = yield* makeTmpDir();
-        const source = yield* makeTmpDir();
-        const clone = yield* makeTmpDir();
-        yield* git(remote, ["init", "--bare"]);
+    it.effect(
+      "refreshes upstream before statusDetails so behind count reflects remote updates",
+      () =>
+        Effect.gen(function* () {
+          const remote = yield* makeTmpDir();
+          const source = yield* makeTmpDir();
+          const clone = yield* makeTmpDir();
+          yield* git(remote, ["init", "--bare"]);
 
-        yield* initRepoWithCommit(source);
-        const initialBranch = (yield* (yield* GitCore).listBranches({
-          cwd: source,
-        })).branches.find((branch) => branch.current)!.name;
-        yield* git(source, ["remote", "add", "origin", remote]);
-        yield* git(source, ["push", "-u", "origin", initialBranch]);
+          yield* initRepoWithCommit(source);
+          const initialBranch = (yield* (yield* GitCore).listBranches({
+            cwd: source,
+          })).branches.find((branch) => branch.current)!.name;
+          yield* git(source, ["remote", "add", "origin", remote]);
+          yield* git(source, ["push", "-u", "origin", initialBranch]);
 
-        yield* git(clone, ["clone", remote, "."]);
-        yield* git(clone, ["config", "user.email", "test@test.com"]);
-        yield* git(clone, ["config", "user.name", "Test"]);
-        yield* git(clone, ["checkout", "-B", initialBranch, "--track", `origin/${initialBranch}`]);
-        yield* writeTextFile(path.join(clone, "CHANGELOG.md"), "remote change\n");
-        yield* git(clone, ["add", "CHANGELOG.md"]);
-        yield* git(clone, ["commit", "-m", "remote update"]);
-        yield* git(clone, ["push", "origin", initialBranch]);
+          yield* git(clone, ["clone", remote, "."]);
+          yield* git(clone, ["config", "user.email", "test@test.com"]);
+          yield* git(clone, ["config", "user.name", "Test"]);
+          yield* git(clone, [
+            "checkout",
+            "-B",
+            initialBranch,
+            "--track",
+            `origin/${initialBranch}`,
+          ]);
+          yield* writeTextFile(path.join(clone, "CHANGELOG.md"), "remote change\n");
+          yield* git(clone, ["add", "CHANGELOG.md"]);
+          yield* git(clone, ["commit", "-m", "remote update"]);
+          yield* git(clone, ["push", "origin", initialBranch]);
 
-        const core = yield* GitCore;
-        const details = yield* core.statusDetails(source);
-        expect(details.branch).toBe(initialBranch);
-        expect(details.aheadCount).toBe(0);
-        expect(details.behindCount).toBe(1);
-      }),
+          const core = yield* GitCore;
+          const details = yield* core.statusDetails(source);
+          expect(details.branch).toBe(initialBranch);
+          expect(details.aheadCount).toBe(0);
+          expect(details.behindCount).toBe(1);
+        }),
     );
 
-    effect("prepares commit context by auto-staging and creates commit", () =>
+    it.effect("prepares commit context by auto-staging and creates commit", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -2101,7 +2108,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("prepareCommitContext stages only selected files when filePaths provided", () =>
+    it.effect("prepareCommitContext stages only selected files when filePaths provided", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -2124,7 +2131,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("prepareCommitContext stages everything when filePaths is undefined", () =>
+    it.effect("prepareCommitContext stages everything when filePaths is undefined", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -2140,7 +2147,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("prepareCommitContext truncates oversized staged patches instead of failing", () =>
+    it.effect("prepareCommitContext truncates oversized staged patches instead of failing", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -2155,7 +2162,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("readRangeContext truncates oversized diff patches instead of failing", () =>
+    it.effect("readRangeContext truncates oversized diff patches instead of failing", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(tmp);
@@ -2174,7 +2181,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("pushes with upstream setup and then skips when up to date", () =>
+    it.effect("pushes with upstream setup and then skips when up to date", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const remote = yield* makeTmpDir();
@@ -2202,7 +2209,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("pulls behind branch and then reports up-to-date", () =>
+    it.effect("pulls behind branch and then reports up-to-date", () =>
       Effect.gen(function* () {
         const remote = yield* makeTmpDir();
         const source = yield* makeTmpDir();
@@ -2234,7 +2241,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("top-level pullGitBranch rejects when no upstream exists", () =>
+    it.effect("top-level pullGitBranch rejects when no upstream exists", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -2246,7 +2253,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("lists branches when recency lookup fails", () =>
+    it.effect("lists branches when recency lookup fails", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
@@ -2276,7 +2283,7 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
-    effect("falls back to empty remote branch data when remote lookups fail", () =>
+    it.effect("falls back to empty remote branch data when remote lookups fail", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const remote = yield* makeTmpDir();

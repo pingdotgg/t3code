@@ -669,7 +669,7 @@ export const ClaudeProviderLive = Layer.effect(
         Stream.map((settings) => settings.providers.claudeAgent),
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
-      buildInitialSnapshot: buildInitialClaudeProviderSnapshot,
+      initialSnapshot: makePendingClaudeProvider,
       checkProvider,
     });
   }),

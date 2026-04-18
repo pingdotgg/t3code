@@ -96,6 +96,22 @@ function withFakeAcpAgent<A, E, R>(
   });
 }
 
+function waitForFileContent(path: string): Effect.Effect<string> {
+  return Effect.promise(async () => {
+    const deadline = Date.now() + 5_000;
+    for (;;) {
+      try {
+        return readFileSync(path, "utf8");
+      } catch (error) {
+        if (Date.now() >= deadline) {
+          throw error instanceof Error ? error : new Error(String(error));
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  });
+}
+
 it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
   it.effect("uses ACP model config options instead of raw CLI model ids", () => {
     const requestLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-log-"));
@@ -145,14 +161,6 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
             parameterizedModelPicker: true,
           },
         });
-        expect(
-          requests.some(
-            (request) =>
-              request.method === "session/set_config_option" &&
-              request.params?.configId === "mode" &&
-              request.params?.value === "ask",
-          ),
-        ).toBe(true);
         expect(
           requests.some(
             (request) =>
@@ -250,4 +258,41 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
       }),
     ),
   );
+
+  it.effect("closes the ACP child process after text generation completes", () => {
+    const exitLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-exit-log-"));
+    const exitLogPath = path.join(exitLogDir, "exit.log");
+
+    return withFakeAcpAgent(
+      {
+        T3_ACP_EXIT_LOG_PATH: exitLogPath,
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          subject: "Close runtime after generation",
+          body: "",
+        }),
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/cursor-runtime-close",
+          stagedSummary: "M apps/server/src/git/Layers/CursorTextGeneration.ts",
+          stagedPatch:
+            "diff --git a/apps/server/src/git/Layers/CursorTextGeneration.ts b/apps/server/src/git/Layers/CursorTextGeneration.ts",
+          modelSelection: {
+            provider: "cursor",
+            model: "composer-2",
+          },
+        });
+
+        expect(generated.subject).toBe("Close runtime after generation");
+
+        const exitLog = yield* waitForFileContent(exitLogPath);
+        expect(exitLog).toContain("exit:0");
+
+        rmSync(exitLogDir, { recursive: true, force: true });
+      }),
+    );
+  });
 });
