@@ -383,6 +383,9 @@ function classifyCodexStderrLine(rawLine: string): { readonly message: string } 
 
 export function isRecoverableThreadResumeError(error: unknown): boolean {
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (!message.includes("thread")) {
+    return false;
+  }
   return RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS.some((snippet) => message.includes(snippet));
 }
 
@@ -390,8 +393,17 @@ type CodexThreadOpenResponse =
   | CodexRpc.ClientRequestResponsesByMethod["thread/start"]
   | CodexRpc.ClientRequestResponsesByMethod["thread/resume"];
 
+type CodexThreadOpenMethod = "thread/start" | "thread/resume";
+
+interface CodexThreadOpenClient {
+  readonly request: <M extends CodexThreadOpenMethod>(
+    method: M,
+    payload: CodexRpc.ClientRequestParamsByMethod[M],
+  ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexErrors.CodexAppServerError>;
+}
+
 export const openCodexThread = (input: {
-  readonly client: CodexClient.CodexAppServerClientShape;
+  readonly client: CodexThreadOpenClient;
   readonly threadId: ThreadId;
   readonly runtimeMode: RuntimeMode;
   readonly cwd: string;
@@ -1288,6 +1300,7 @@ export const makeCodexSessionRuntime = (
               requestId,
             });
           }
+          const codexAnswers = yield* toCodexUserInputAnswers(answers);
           yield* Ref.update(pendingUserInputsRef, (current) => {
             const next = new Map(current);
             next.delete(requestId);
@@ -1302,7 +1315,7 @@ export const makeCodexSessionRuntime = (
             ...(pending.turnId ? { turnId: pending.turnId } : {}),
             ...(pending.itemId ? { itemId: pending.itemId } : {}),
             payload: {
-              answers: yield* toCodexUserInputAnswers(answers),
+              answers: codexAnswers,
             },
           });
         }),
