@@ -17,6 +17,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       const started = yield* runtime.start();
       expect(started.initializeResult).toBeDefined();
+      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -57,10 +58,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
       if (Array.isArray(configOptions)) {
         const modelConfig = configOptions.find((opt) => opt.category === "model");
         const parameterizedOptions = configOptions.filter(
-          (opt) =>
-            opt.category === "thought_level" ||
-            opt.category === "model_option" ||
-            opt.category === "model_config",
+          (opt) => opt.category === "thought_level" || opt.category === "model_config",
         );
         // @effect-diagnostics-next-line preferSchemaOverJson:off
         yield* Console.log("Model config option:", JSON.stringify(modelConfig, null, 2));
@@ -72,6 +70,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
         expect(modelConfig).toBeDefined();
         expect(typeof modelConfig?.id).toBe("string");
       }
+      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -118,16 +117,14 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
       if (Array.isArray(setResult.configOptions)) {
         const modelConfig = setResult.configOptions.find((opt) => opt.category === "model");
         const parameterizedOptions = setResult.configOptions.filter(
-          (opt) =>
-            opt.category === "thought_level" ||
-            opt.category === "model_option" ||
-            opt.category === "model_config",
+          (opt) => opt.category === "thought_level" || opt.category === "model_config",
         );
         if (modelConfig?.type === "select") {
           expect(modelConfig.currentValue).toBe("gpt-5.4");
         }
         expect(parameterizedOptions.length).toBeGreaterThan(0);
       }
+      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
