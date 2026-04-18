@@ -153,7 +153,7 @@ async function waitForThread(
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
   }) => boolean,
-  timeoutMs = 30_000,
+  timeoutMs = 15_000,
 ) {
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
   const poll = async (): Promise<{
@@ -178,7 +178,7 @@ async function waitForThread(
 async function waitForEvent(
   engine: OrchestrationEngineShape,
   predicate: (event: { type: string }) => boolean,
-  timeoutMs = 30_000,
+  timeoutMs = 15_000,
 ) {
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
   const poll = async () => {
@@ -229,7 +229,7 @@ function gitShowFileAtRef(cwd: string, ref: string, filePath: string): string {
   return runGit(cwd, ["show", `${ref}:${filePath}`]);
 }
 
-async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 30_000) {
+async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<void> => {
     if (gitRefExists(cwd, ref)) {
@@ -245,9 +245,6 @@ async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 30_000)
 }
 
 describe("CheckpointReactor", () => {
-  const LONG_TEST_TIMEOUT_MS = 30_000;
-  const test = (name: string, run: () => Promise<void>, timeout = LONG_TEST_TIMEOUT_MS) =>
-    it(name, run, timeout);
   let runtime: ManagedRuntime.ManagedRuntime<
     | OrchestrationEngineService
     | CheckpointReactor
@@ -450,7 +447,7 @@ describe("CheckpointReactor", () => {
     };
   }
 
-  test("captures pre-turn baseline on turn.started and post-turn checkpoint on turn.completed", async () => {
+  it("captures pre-turn baseline on turn.started and post-turn checkpoint on turn.completed", async () => {
     const harness = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = "2026-01-01T00:00:00.000Z";
 
@@ -700,7 +697,7 @@ describe("CheckpointReactor", () => {
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
   });
 
-  test("captures pre-turn and completion checkpoints for claude runtime events", async () => {
+  it("captures pre-turn and completion checkpoints for claude runtime events", async () => {
     const harness = await createHarness({
       seedFilesystemCheckpoints: false,
       providerName: ProviderDriverKind.make("claudeAgent"),
@@ -761,7 +758,7 @@ describe("CheckpointReactor", () => {
     ).toBe(true);
   });
 
-  test("appends capture failure activity when turn diff summary cannot be derived", async () => {
+  it("appends capture failure activity when turn diff summary cannot be derived", async () => {
     const harness = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = "2026-01-01T00:00:00.000Z";
 
@@ -808,7 +805,7 @@ describe("CheckpointReactor", () => {
     ).toBe(true);
   });
 
-  test("captures pre-turn baseline from project workspace root when thread worktree is unset", async () => {
+  it("captures pre-turn baseline from project workspace root when thread worktree is unset", async () => {
     const harness = await createHarness({
       hasSession: false,
       seedFilesystemCheckpoints: false,
@@ -845,7 +842,7 @@ describe("CheckpointReactor", () => {
     ).toBe("v1\n");
   });
 
-  test("captures turn completion checkpoint from project workspace root when provider session cwd is unavailable", async () => {
+  it("captures turn completion checkpoint from project workspace root when provider session cwd is unavailable", async () => {
     const harness = await createHarness({
       hasSession: false,
       seedFilesystemCheckpoints: false,
@@ -896,7 +893,7 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
-  test("ignores non-v2 checkpoint.captured runtime events", async () => {
+  it("ignores non-v2 checkpoint.captured runtime events", async () => {
     const harness = await createHarness();
     const createdAt = "2026-01-01T00:00:00.000Z";
 
@@ -938,7 +935,7 @@ describe("CheckpointReactor", () => {
     );
   });
 
-  test("continues processing runtime events after a single checkpoint runtime failure", async () => {
+  it("continues processing runtime events after a single checkpoint runtime failure", async () => {
     const nonRepositorySessionCwd = fs.mkdtempSync(
       path.join(os.tmpdir(), "t3-checkpoint-runtime-non-repo-"),
     );
@@ -998,7 +995,7 @@ describe("CheckpointReactor", () => {
     ).toBe(true);
   });
 
-  test("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
+  it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
     const harness = await createHarness();
     const createdAt = "2026-01-01T00:00:00.000Z";
 
@@ -1079,7 +1076,7 @@ describe("CheckpointReactor", () => {
     ).toBe(false);
   });
 
-  test("executes provider revert and emits thread.reverted for claude sessions", async () => {
+  it("executes provider revert and emits thread.reverted for claude sessions", async () => {
     const harness = await createHarness({ providerName: "claudeAgent" });
     const createdAt = new Date().toISOString();
 
@@ -1148,7 +1145,7 @@ describe("CheckpointReactor", () => {
     });
   });
 
-  test("processes consecutive revert requests with deterministic rollback sequencing", async () => {
+  it("processes consecutive revert requests with deterministic rollback sequencing", async () => {
     const harness = await createHarness();
     const createdAt = "2026-01-01T00:00:00.000Z";
 
@@ -1231,7 +1228,7 @@ describe("CheckpointReactor", () => {
     });
   });
 
-  test("appends an error activity when revert is requested without an active session", async () => {
+  it("appends an error activity when revert is requested without an active session", async () => {
     const harness = await createHarness({ hasSession: false });
     const createdAt = "2026-01-01T00:00:00.000Z";
 

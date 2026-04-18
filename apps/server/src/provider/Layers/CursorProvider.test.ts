@@ -1,9 +1,20 @@
+import * as path from "node:path";
+import * as os from "node:os";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import type { CursorSettings, ServerProviderModel } from "@t3tools/contracts";
 
 import {
+  buildCursorProviderSnapshot,
   buildCursorCapabilitiesFromConfigOptions,
   buildCursorDiscoveredModelsFromConfigOptions,
+  discoverCursorModelCapabilitiesViaAcp,
+  discoverCursorModelsViaAcp,
   getCursorFallbackModels,
   getCursorParameterizedModelPickerUnsupportedMessage,
   parseCursorAboutOutput,
@@ -12,6 +23,37 @@ import {
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "./CursorProvider.ts";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
+
+async function makeMockAgentWrapper(extraEnv?: Record<string, string>) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "cursor-provider-mock-"));
+  const wrapperPath = path.join(dir, "fake-agent.sh");
+  const envExports = Object.entries(extraEnv ?? {})
+    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
+    .join("\n");
+  const script = `#!/bin/sh
+${envExports}
+exec ${JSON.stringify("bun")} ${JSON.stringify(mockAgentPath)} "$@"
+`;
+  await writeFile(wrapperPath, script, "utf8");
+  await chmod(wrapperPath, 0o755);
+  return wrapperPath;
+}
+
+async function waitForFileContent(filePath: string, attempts = 40): Promise<string> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const content = await readFile(filePath, "utf8");
+      if (content.trim().length > 0) {
+        return content;
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for file content at ${filePath}`);
+}
 
 const parameterizedGpt54ConfigOptions = [
   {
@@ -90,6 +132,64 @@ const parameterizedClaudeConfigOptions = [
   },
 ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
 
+const parameterizedClaudeModelOptionConfigOptions = [
+  {
+    type: "select",
+    currentValue: "claude-opus-4-6",
+    options: [{ name: "Opus 4.6", value: "claude-opus-4-6" }],
+    category: "model",
+    id: "model",
+    name: "Model",
+  },
+  {
+    type: "select",
+    currentValue: "high",
+    options: [
+      { name: "Low", value: "low" },
+      { name: "Medium", value: "medium" },
+      { name: "High", value: "high" },
+    ],
+    category: "thought_level",
+    id: "reasoning",
+    name: "Reasoning",
+  },
+  {
+    type: "select",
+    currentValue: "max",
+    options: [
+      { name: "Low", value: "low" },
+      { name: "Medium", value: "medium" },
+      { name: "High", value: "high" },
+      { name: "Max", value: "max" },
+    ],
+    category: "model_option",
+    id: "effort",
+    name: "Effort",
+  },
+  {
+    type: "select",
+    currentValue: "true",
+    options: [
+      { name: "Off", value: "false" },
+      { name: "Fast", value: "true" },
+    ],
+    category: "model_config",
+    id: "fast",
+    name: "Fast",
+  },
+  {
+    type: "select",
+    currentValue: "true",
+    options: [
+      { name: "Off", value: "false" },
+      { name: ":icon-brain:", value: "true" },
+    ],
+    category: "model_config",
+    id: "thinking",
+    name: "Thinking",
+  },
+] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+
 const sessionNewCursorConfigOptions = [
   {
     type: "select",
@@ -132,6 +232,21 @@ const sessionNewCursorConfigOptions = [
   },
 ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
 
+const baseCursorSettings: CursorSettings = {
+  enabled: true,
+  binaryPath: "agent",
+  apiEndpoint: "",
+  customModels: [],
+};
+
+const emptyCapabilities = {
+  reasoningEffortLevels: [],
+  supportsFastMode: false,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+} as const;
+
 describe("getCursorFallbackModels", () => {
   it("does not publish any built-in cursor models before ACP discovery", () => {
     expect(
@@ -139,6 +254,56 @@ describe("getCursorFallbackModels", () => {
         customModels: ["internal/cursor-model"],
       }).map((model) => model.slug),
     ).toEqual(["internal/cursor-model"]);
+  });
+});
+
+describe("buildCursorProviderSnapshot", () => {
+  it("downgrades ready status to warning when ACP model discovery times out", () => {
+    expect(
+      buildCursorProviderSnapshot({
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        cursorSettings: baseCursorSettings,
+        parsed: {
+          version: "2026.04.09-f2b0fcd",
+          status: "ready",
+          auth: { status: "authenticated", type: "Team", label: "Cursor Team Subscription" },
+        },
+        discoveryWarning: "Cursor ACP model discovery timed out after 15000ms.",
+      }),
+    ).toMatchObject({
+      status: "warning",
+      message: "Cursor ACP model discovery timed out after 15000ms.",
+      models: [],
+    });
+  });
+
+  it("preserves provider error state while appending discovery warnings", () => {
+    expect(
+      buildCursorProviderSnapshot({
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        cursorSettings: {
+          ...baseCursorSettings,
+          customModels: ["claude-sonnet-4-6"],
+        },
+        parsed: {
+          version: "2026.04.09-f2b0fcd",
+          status: "error",
+          auth: { status: "unauthenticated" },
+          message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
+        },
+        discoveryWarning: "Cursor ACP model discovery failed. Check server logs for details.",
+      }),
+    ).toMatchObject({
+      status: "error",
+      message:
+        "Cursor Agent is not authenticated. Run `agent login` and try again. Cursor ACP model discovery failed. Check server logs for details.",
+      models: [
+        {
+          slug: "claude-sonnet-4-6",
+          isCustom: true,
+        },
+      ],
+    });
   });
 });
 
@@ -176,6 +341,23 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
         ],
       }),
     );
+  });
+
+  it("prefers the newer model_option effort control over legacy thought_level", () => {
+    expect(
+      buildCursorCapabilitiesFromConfigOptions(parameterizedClaudeModelOptionConfigOptions),
+    ).toEqual({
+      reasoningEffortLevels: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High" },
+        { value: "max", label: "Max", isDefault: true },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: true,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    });
   });
 });
 
@@ -223,6 +405,91 @@ describe("checkCursorProviderStatus", () => {
       "claude-opus-4-6",
     ]);
     await expect(runNode(waitForFileContent(requestLogPath))).resolves.toContain("initialize");
+  });
+});
+
+describe("discoverCursorModelsViaAcp", () => {
+  it("keeps the ACP probe runtime alive long enough to discover models", async () => {
+    const wrapperPath = await makeMockAgentWrapper();
+
+    const models = await Effect.runPromise(
+      discoverCursorModelsViaAcp({
+        enabled: true,
+        binaryPath: wrapperPath,
+        apiEndpoint: "",
+        customModels: [],
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+
+    expect(models.map((model) => model.slug)).toEqual([
+      "default",
+      "composer-2",
+      "gpt-5.4",
+      "claude-opus-4-6",
+    ]);
+  });
+
+  it("closes the ACP probe runtime after discovery completes", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "cursor-provider-exit-log-"));
+    const exitLogPath = path.join(tempDir, "exit.log");
+    const wrapperPath = await makeMockAgentWrapper({
+      T3_ACP_EXIT_LOG_PATH: exitLogPath,
+    });
+
+    await Effect.runPromise(
+      discoverCursorModelsViaAcp({
+        enabled: true,
+        binaryPath: wrapperPath,
+        apiEndpoint: "",
+        customModels: [],
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    const exitLog = await waitForFileContent(exitLogPath);
+    expect(exitLog).toContain("SIGTERM");
+  });
+});
+
+describe("discoverCursorModelCapabilitiesViaAcp", () => {
+  it("closes all ACP probe runtimes after capability enrichment completes", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "cursor-capabilities-exit-log-"));
+    const exitLogPath = path.join(tempDir, "exit.log");
+    const wrapperPath = await makeMockAgentWrapper({
+      T3_ACP_EXIT_LOG_PATH: exitLogPath,
+    });
+    const existingModels: ReadonlyArray<ServerProviderModel> = [
+      { slug: "default", name: "Auto", isCustom: false, capabilities: emptyCapabilities },
+      { slug: "composer-2", name: "Composer 2", isCustom: false, capabilities: emptyCapabilities },
+      { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: emptyCapabilities },
+      {
+        slug: "claude-opus-4-6",
+        name: "Opus 4.6",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+    ];
+
+    const models = await Effect.runPromise(
+      discoverCursorModelCapabilitiesViaAcp(
+        {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        existingModels,
+      ).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    expect(models.map((model) => model.slug)).toEqual([
+      "default",
+      "composer-2",
+      "gpt-5.4",
+      "claude-opus-4-6",
+    ]);
+
+    const exitLog = await waitForFileContent(exitLogPath);
+    expect(exitLog.match(/SIGTERM/g)?.length ?? 0).toBe(4);
   });
 });
 
@@ -376,5 +643,17 @@ describe("resolveCursorAcpConfigUpdates", () => {
         { id: "fastMode", value: false },
       ]),
     ).toEqual([{ configId: "fast", value: "false" }]);
+  });
+
+  it("writes Cursor effort changes through the newer model_option config when available", () => {
+    expect(
+      resolveCursorAcpConfigUpdates(parameterizedClaudeModelOptionConfigOptions, {
+        reasoning: "max",
+        thinking: false,
+      }),
+    ).toEqual([
+      { configId: "effort", value: "max" },
+      { configId: "thinking", value: "false" },
+    ]);
   });
 });

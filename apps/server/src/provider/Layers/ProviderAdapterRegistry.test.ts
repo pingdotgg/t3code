@@ -10,9 +10,14 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
-import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-import { CodexAdapter, type CodexAdapterShape } from "../Services/CodexAdapter.ts";
-import { CursorAdapter, type CursorAdapterShape } from "../Services/CursorAdapter.ts";
+import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
+import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import { CodexAdapter } from "../Services/CodexAdapter.ts";
+import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { CursorAdapter } from "../Services/CursorAdapter.ts";
+import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
+import { OpenCodeAdapter } from "../Services/OpenCodeAdapter.ts";
+import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
 import { ProviderUnsupportedError } from "../Errors.ts";
@@ -57,6 +62,23 @@ const fakeClaudeAdapter: ClaudeAdapter.ClaudeAdapterShape = {
   streamEvents: Stream.empty,
 };
 
+const fakeOpenCodeAdapter: OpenCodeAdapterShape = {
+  provider: "opencode",
+  capabilities: { sessionModelSwitch: "in-session" },
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
 const fakeCursorAdapter: CursorAdapterShape = {
   provider: "cursor",
   capabilities: { sessionModelSwitch: "in-session" },
@@ -81,6 +103,7 @@ const layer = it.layer(
       Layer.mergeAll(
         Layer.succeed(CodexAdapter, fakeCodexAdapter),
         Layer.succeed(ClaudeAdapter, fakeClaudeAdapter),
+        Layer.succeed(OpenCodeAdapter, fakeOpenCodeAdapter),
         Layer.succeed(CursorAdapter, fakeCursorAdapter),
       ),
     ),
@@ -95,13 +118,15 @@ it.layer(layer)("ProviderAdapterRegistryLive", (it) => {
       const registry = yield* ProviderAdapterRegistry;
       const codex = yield* registry.getByProvider("codex");
       const claude = yield* registry.getByProvider("claudeAgent");
+      const openCode = yield* registry.getByProvider("opencode");
       const cursor = yield* registry.getByProvider("cursor");
       assert.equal(codex, fakeCodexAdapter);
       assert.equal(claude, fakeClaudeAdapter);
+      assert.equal(openCode, fakeOpenCodeAdapter);
       assert.equal(cursor, fakeCursorAdapter);
 
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["codex", "claudeAgent", "cursor"]);
+      assert.deepEqual(providers, ["codex", "claudeAgent", "opencode", "cursor"]);
     }),
   );
 

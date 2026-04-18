@@ -32,6 +32,7 @@ import {
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { CursorAdapter } from "../Services/CursorAdapter.ts";
+import { OpenCodeAdapter } from "../Services/OpenCodeAdapter.ts";
 
 const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(function* () {
   const registry = yield* ProviderInstanceRegistry;
@@ -43,7 +44,12 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
   const adapters =
     options?.adapters !== undefined
       ? options.adapters
-      : [yield* CodexAdapter, yield* ClaudeAdapter, yield* CursorAdapter];
+      : [
+          yield* CodexAdapter,
+          yield* ClaudeAdapter,
+          yield* OpenCodeAdapter,
+          ...(cursorAdapterOption._tag === "Some" ? [cursorAdapterOption.value] : []),
+        ];
   const byProvider = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
 
   const getInstanceInfo: ProviderAdapterRegistryShape["getInstanceInfo"] = (instanceId) =>
