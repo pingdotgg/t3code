@@ -628,6 +628,92 @@ describe("TraitsPicker (Codex)", () => {
   });
 });
 
+// ── OpenCode TraitsPicker tests ───────────────────────────────────────
+
+async function mountOpenCodePicker(props: { model?: string; options?: OpenCodeModelOptions }) {
+  const threadId = ThreadId.make("thread-opencode-traits");
+  const threadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, threadId);
+  const threadKey = scopedThreadKey(threadRef);
+  const model = props.model ?? DEFAULT_MODEL_BY_PROVIDER.opencode;
+  const draftsByThreadKey: Record<string, ComposerThreadDraftState> = {
+    [threadKey]: {
+      prompt: "",
+      images: [],
+      nonPersistedImageIds: [],
+      persistedAttachments: [],
+      terminalContexts: [],
+      modelSelectionByProvider: {
+        opencode: {
+          provider: "opencode",
+          model,
+          ...(props.options ? { options: props.options } : {}),
+        },
+      },
+      activeProvider: "opencode",
+      runtimeMode: null,
+      interactionMode: null,
+    },
+  };
+
+  useComposerDraftStore.setState({
+    draftsByThreadKey,
+    draftThreadsByThreadKey: {},
+    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const screen = await render(
+    <TraitsPicker
+      provider="opencode"
+      models={findTestProvider("opencode").models}
+      threadRef={threadRef}
+      model={model}
+      prompt=""
+      modelOptions={props.options}
+      onPromptChange={() => {}}
+    />,
+    { container: host },
+  );
+
+  const cleanup = async () => {
+    await screen.unmount();
+    host.remove();
+  };
+
+  return {
+    [Symbol.asyncDispose]: cleanup,
+    cleanup,
+  };
+}
+
+describe("TraitsPicker (OpenCode)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    localStorage.removeItem(COMPOSER_DRAFT_STORAGE_KEY);
+    useComposerDraftStore.setState({
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: {},
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+      stickyModelSelectionByProvider: {},
+    });
+  });
+
+  it("shows the selected agent label with capitalization in the trigger", async () => {
+    await using _ = await mountOpenCodePicker({
+      options: {
+        variant: "medium",
+        agent: "plan",
+      },
+    });
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Medium · Plan");
+      expect(text).not.toContain("Medium · plan");
+    });
+  });
+});
+
 describe("TraitsPicker (Cursor)", () => {
   afterEach(() => {
     document.body.innerHTML = "";
