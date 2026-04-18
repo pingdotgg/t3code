@@ -314,7 +314,7 @@ function restoreUsedProviders(
   };
 }
 
-const PROVIDER_ORDER: readonly ProviderKind[] = ["codex", "claudeAgent", "cursor"];
+const PROVIDER_ORDER: readonly ProviderKind[] = ["codex", "claudeAgent", "opencode", "cursor"];
 
 /**
  * Ensure the `textGenerationModelSelection` points to an enabled provider.

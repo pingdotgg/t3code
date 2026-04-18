@@ -1512,6 +1512,41 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("does not use command stdout as the detail when Cursor omits the command input", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "cursor-command-complete",
+        createdAt: "2026-04-16T22:40:42.221Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "toolu_vrtx_01WypXgRM8PPygBtrVAZwzy5",
+            kind: "execute",
+            rawInput: {},
+            rawOutput: {
+              exitCode: 0,
+              stdout: "total 960\napps\npackages\n",
+              stderr: "",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      id: "cursor-command-complete",
+      label: "Ran command",
+      itemType: "command_execution",
+      toolTitle: "Ran command",
+    });
+    expect(entry?.detail).toBeUndefined();
+    expect(entry?.command).toBeUndefined();
+  });
+
   it("collapses legacy completed tool rows that are missing tool metadata", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
