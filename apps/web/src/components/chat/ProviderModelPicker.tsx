@@ -19,7 +19,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { ClaudeAI, CursorIcon, Gemini, Icon, OpenAI, OpenCodeIcon } from "../Icons";
-import { CLAUDE_PROVIDER_ICON_CLASS_NAME } from "../providerBrandClassNames";
+import { providerIconClassName } from "../providerBrandClassNames";
 import { cn } from "~/lib/utils";
 import { getProviderSnapshot } from "../../providerModels";
 
@@ -43,13 +43,6 @@ const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
   { id: "gemini", label: "Gemini", icon: Gemini },
 ] as const;
-
-function providerIconClassName(
-  provider: ProviderKind | ProviderPickerKind,
-  fallbackClassName: string,
-): string {
-  return provider === "claudeAgent" ? CLAUDE_PROVIDER_ICON_CLASS_NAME : fallbackClassName;
-}
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
