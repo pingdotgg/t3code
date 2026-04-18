@@ -588,6 +588,34 @@ describe("parseCursorAboutOutput", () => {
   });
 });
 
+describe("buildCursorProviderSnapshot", () => {
+  it("attaches real Cursor ACP usage when provided", () => {
+    const snapshot = buildCursorProviderSnapshot({
+      checkedAt: "2026-04-18T00:00:00.000Z",
+      cursorSettings: {
+        enabled: true,
+        binaryPath: "agent",
+        apiEndpoint: "",
+        customModels: [],
+      } satisfies CursorSettings,
+      parsed: {
+        version: "2026.04.18-123456",
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+      usageLimits: {
+        source: "cursorAcp",
+        available: true,
+        checkedAt: "2026-04-18T00:00:00.000Z",
+        windows: [{ kind: "session", label: "Session", usedPercent: 50 }],
+      },
+    });
+
+    expect(snapshot.usageLimits?.source).toBe("cursorAcp");
+    expect(snapshot.usageLimits?.available).toBe(true);
+  });
+});
+
 describe("Cursor parameterized model picker preview gating", () => {
   it("parses Cursor CLI version dates from build versions", () => {
     expect(parseCursorVersionDate("2026.04.08-c4e73a3")).toBe(20260408);

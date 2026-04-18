@@ -25,8 +25,10 @@ import {
 } from "../providerSnapshot.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { CursorProvider } from "../Services/CursorProvider.ts";
+import { ProviderUsageState } from "../Services/ProviderUsageState.ts";
 import { AcpSessionRuntime } from "../acp/AcpSessionRuntime.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 
 const PROVIDER = "cursor" as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = {
@@ -37,9 +39,9 @@ const EMPTY_CAPABILITIES: ModelCapabilities = {
   promptInjectedEffortLevels: [],
 };
 
-const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
-const CURSOR_ACP_MODEL_CAPABILITY_TIMEOUT = "4 seconds";
-const CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY = 4;
+const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 60_000;
+const CURSOR_ACP_MODEL_CAPABILITY_TIMEOUT = "15 seconds";
+const CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY = 2;
 const CURSOR_REFRESH_INTERVAL = "1 hour";
 const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08;
 export const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
@@ -51,6 +53,11 @@ export const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
 function buildInitialCursorProviderSnapshot(cursorSettings: CursorSettings): ServerProvider {
   const checkedAt = new Date().toISOString();
   const models = getCursorFallbackModels(cursorSettings);
+  const unavailableUsageLimits = makeUnavailableUsageLimits({
+    source: "cursorAcp",
+    checkedAt,
+    reason: "Unable to fetch usage",
+  });
 
   if (!cursorSettings.enabled) {
     return buildServerProvider({
@@ -64,6 +71,7 @@ function buildInitialCursorProviderSnapshot(cursorSettings: CursorSettings): Ser
         status: "warning",
         auth: { status: "unknown" },
         message: "Cursor is disabled in T3 Code settings.",
+        usageLimits: unavailableUsageLimits,
       },
     });
   }
@@ -79,6 +87,7 @@ function buildInitialCursorProviderSnapshot(cursorSettings: CursorSettings): Ser
       status: "warning",
       auth: { status: "unknown" },
       message: "Checking Cursor Agent availability...",
+      usageLimits: unavailableUsageLimits,
     },
   });
 }
@@ -606,6 +615,7 @@ export function buildCursorProviderSnapshot(input: {
   readonly parsed: CursorAboutResult;
   readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
   readonly discoveryWarning?: string;
+  readonly usageLimits?: ServerProvider["usageLimits"];
 }): ServerProvider {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
   return buildServerProvider({
@@ -625,6 +635,7 @@ export function buildCursorProviderSnapshot(input: {
         input.discoveryWarning && input.parsed.status === "ready" ? "warning" : input.parsed.status,
       auth: input.parsed.auth,
       ...(message ? { message } : {}),
+      ...(input.usageLimits ? { usageLimits: input.usageLimits } : {}),
     },
   });
 }
@@ -1079,10 +1090,37 @@ export const CursorProviderLive = Layer.effect(
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const providerUsageState = yield* Effect.serviceOption(ProviderUsageState);
 
     const checkProvider = checkCursorProviderStatus().pipe(
       Effect.provideService(ServerSettingsService, serverSettings),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.flatMap((snapshot) =>
+        Option.match(providerUsageState, {
+          onNone: () =>
+            Effect.succeed({
+              ...snapshot,
+              usageLimits: makeUnavailableUsageLimits({
+                source: "cursorAcp",
+                checkedAt: snapshot.checkedAt,
+                reason: "Unable to fetch usage",
+              }),
+            }),
+          onSome: (usageState) =>
+            usageState.get(PROVIDER).pipe(
+              Effect.map((usageLimits) => ({
+                ...snapshot,
+                usageLimits:
+                  usageLimits ??
+                  makeUnavailableUsageLimits({
+                    source: "cursorAcp",
+                    checkedAt: snapshot.checkedAt,
+                    reason: "Unable to fetch usage",
+                  }),
+              })),
+            ),
+        }),
+      ),
     );
 
     return yield* makeManagedServerProvider<CursorSettings>({
