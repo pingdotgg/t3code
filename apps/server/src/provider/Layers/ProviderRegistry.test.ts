@@ -29,7 +29,11 @@ import {
   parseAuthStatusFromOutput,
   readCodexConfigModelProvider,
 } from "./CodexProvider.ts";
-import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider.ts";
+import {
+  checkClaudeProviderStatus,
+  claudeProbeCacheKey,
+  parseClaudeAuthStatusFromOutput,
+} from "./ClaudeProvider.ts";
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings.ts";
@@ -1268,6 +1272,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           ),
         ),
       );
+    });
+
+    // ── claudeProbeCacheKey (per-cwd cache separation, #2048) ────────
+
+    describe("claudeProbeCacheKey", () => {
+      it("produces distinct keys for the same binary with different cwds", () => {
+        const a = claudeProbeCacheKey("/usr/local/bin/claude", "/repo-a");
+        const b = claudeProbeCacheKey("/usr/local/bin/claude", "/repo-b");
+        assert.notStrictEqual(a, b);
+      });
+
+      it("treats undefined and empty-string cwd as the same key", () => {
+        const undef = claudeProbeCacheKey("/usr/local/bin/claude");
+        const empty = claudeProbeCacheKey("/usr/local/bin/claude", "");
+        assert.strictEqual(undef, empty);
+      });
+
+      it("separates different binaries even with the same cwd", () => {
+        const a = claudeProbeCacheKey("/opt/claude-a", "/repo");
+        const b = claudeProbeCacheKey("/opt/claude-b", "/repo");
+        assert.notStrictEqual(a, b);
+      });
     });
 
     // ── parseClaudeAuthStatusFromOutput pure tests ────────────────────

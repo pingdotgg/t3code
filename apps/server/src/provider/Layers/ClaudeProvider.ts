@@ -29,6 +29,7 @@ import {
 import { compareCliVersions } from "../cliVersion.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { ClaudeProvider } from "../Services/ClaudeProvider.ts";
+import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerSettingsError } from "@t3tools/contracts";
 
@@ -766,11 +767,25 @@ const makePendingClaudeProvider = (claudeSettings: ClaudeSettings): ServerProvid
   });
 };
 
+/**
+ * Cache key for the Claude capability probe. `cwd` is included so probes
+ * from two different project directories stay in separate cache entries;
+ * a probe from `/repo-a` must not satisfy a probe for `/repo-b` because
+ * the SDK resolves `.claude/skills` against the provided cwd (#2048).
+ */
+export const claudeProbeCacheKey = (binaryPath: string, cwd?: string) =>
+  `${binaryPath}|${cwd ?? ""}`;
+
 export const ClaudeProviderLive = Layer.effect(
   ClaudeProvider,
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    // The active workspace the server was launched in. We pass this as the
+    // probe cwd so the Claude Agent SDK resolves `settingSources: ['project',
+    // 'local']` — and therefore `.claude/skills/` — against the user's
+    // project instead of the T3 server process cwd (#2048).
+    const { cwd: workspaceRoot } = yield* ServerConfig;
 
     // Cache key is `${binaryPath}|${cwd ?? ''}` so probes with different
     // project cwds don't collide. Capacity is 8 so a handful of recent
@@ -786,15 +801,13 @@ export const ClaudeProviderLive = Layer.effect(
       },
     });
 
-    const probeKey = (binaryPath: string, cwd?: string) => `${binaryPath}|${cwd ?? ""}`;
-
     const checkProvider = checkClaudeProviderStatus(
       (binaryPath) =>
-        Cache.get(subscriptionProbeCache, probeKey(binaryPath)).pipe(
+        Cache.get(subscriptionProbeCache, claudeProbeCacheKey(binaryPath, workspaceRoot)).pipe(
           Effect.map((probe) => probe?.subscriptionType),
         ),
       (binaryPath) =>
-        Cache.get(subscriptionProbeCache, probeKey(binaryPath)).pipe(
+        Cache.get(subscriptionProbeCache, claudeProbeCacheKey(binaryPath, workspaceRoot)).pipe(
           Effect.map((probe) => probe?.slashCommands),
         ),
     ).pipe(
