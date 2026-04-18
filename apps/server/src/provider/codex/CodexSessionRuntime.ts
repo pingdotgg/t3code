@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   ApprovalRequestId,
+  DEFAULT_MODEL_BY_PROVIDER,
   EventId,
   ProviderItemId,
   type ProviderApprovalDecision,
@@ -26,12 +27,6 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "../codexAppServer.ts";
 import {
-  CODEX_DEFAULT_MODEL,
-  readCodexAccountSnapshotResponse,
-  resolveCodexModelForAccount,
-  type CodexAccountSnapshot,
-} from "../codexAccount.ts";
-import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "./CodexDeveloperInstructions.ts";
@@ -45,6 +40,13 @@ const CODEX_STDERR_LOG_REGEX =
 const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db missing rollout path for thread",
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
+];
+const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
+  "not found",
+  "missing thread",
+  "no such thread",
+  "unknown thread",
+  "does not exist",
 ];
 
 export const CodexResumeCursorSchema = Schema.Struct({
@@ -300,7 +302,7 @@ function buildCodexCollaborationMode(input: {
   if (input.interactionMode === undefined) {
     return undefined;
   }
-  const model = normalizeCodexModelSlug(input.model) ?? CODEX_DEFAULT_MODEL;
+  const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL_BY_PROVIDER.codex;
   return {
     mode: input.interactionMode,
     settings: {
@@ -378,6 +380,54 @@ function classifyCodexStderrLine(rawLine: string): { readonly message: string } 
 
   return { message: line };
 }
+
+export function isRecoverableThreadResumeError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS.some((snippet) => message.includes(snippet));
+}
+
+type CodexThreadOpenResponse =
+  | CodexRpc.ClientRequestResponsesByMethod["thread/start"]
+  | CodexRpc.ClientRequestResponsesByMethod["thread/resume"];
+
+export const openCodexThread = (input: {
+  readonly client: CodexClient.CodexAppServerClientShape;
+  readonly threadId: ThreadId;
+  readonly runtimeMode: RuntimeMode;
+  readonly cwd: string;
+  readonly requestedModel: string | undefined;
+  readonly serviceTier: EffectCodexSchema.V2ThreadStartParams__ServiceTier | undefined;
+  readonly resumeThreadId: string | undefined;
+}): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
+  const resumeThreadId = input.resumeThreadId;
+  const startParams = buildThreadStartParams({
+    cwd: input.cwd,
+    runtimeMode: input.runtimeMode,
+    model: input.requestedModel,
+    serviceTier: input.serviceTier,
+  });
+
+  if (resumeThreadId === undefined) {
+    return input.client.request("thread/start", startParams);
+  }
+
+  return input.client
+    .request("thread/resume", {
+      threadId: resumeThreadId,
+      ...startParams,
+    })
+    .pipe(
+      Effect.catchIf(isRecoverableThreadResumeError, (error) =>
+        Effect.logWarning("codex app-server thread resume fell back to fresh start", {
+          threadId: input.threadId,
+          requestedRuntimeMode: input.runtimeMode,
+          resumeThreadId,
+          recoverable: true,
+          cause: error.message,
+        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+      ),
+    );
+};
 
 function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
   switch (notification.method) {
@@ -654,12 +704,6 @@ export const makeCodexSessionRuntime = (
       updatedAt: new Date().toISOString(),
     } satisfies ProviderSession;
     const sessionRef = yield* Ref.make<ProviderSession>(initialSession);
-    const accountRef = yield* Ref.make<CodexAccountSnapshot>({
-      type: "unknown",
-      planType: null,
-      sparkEnabled: false,
-    });
-
     const offerEvent = (event: ProviderEvent) => Queue.offer(events, event).pipe(Effect.asVoid);
 
     const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
@@ -1078,37 +1122,17 @@ export const makeCodexSessionRuntime = (
       yield* client.request("initialize", buildCodexInitializeParams());
       yield* client.notify("initialized", undefined);
 
-      const accountSnapshot = readCodexAccountSnapshotResponse(
-        yield* client.request("account/read", {}),
-      );
-      yield* Ref.set(accountRef, accountSnapshot);
+      const requestedModel = normalizeCodexModelSlug(options.model);
 
-      const requestedModel = resolveCodexModelForAccount(
-        normalizeCodexModelSlug(options.model),
-        accountSnapshot,
-      );
-
-      const resumedThreadId = readResumeCursorThreadId(options.resumeCursor);
-      const opened =
-        resumedThreadId !== undefined
-          ? yield* client.request("thread/resume", {
-              threadId: resumedThreadId,
-              ...buildThreadStartParams({
-                cwd: options.cwd,
-                runtimeMode: options.runtimeMode,
-                model: requestedModel,
-                serviceTier: options.serviceTier,
-              }),
-            })
-          : yield* client.request(
-              "thread/start",
-              buildThreadStartParams({
-                cwd: options.cwd,
-                runtimeMode: options.runtimeMode,
-                model: requestedModel,
-                serviceTier: options.serviceTier,
-              }),
-            );
+      const opened = yield* openCodexThread({
+        client,
+        threadId: options.threadId,
+        runtimeMode: options.runtimeMode,
+        cwd: options.cwd,
+        requestedModel,
+        serviceTier: options.serviceTier,
+        resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+      });
 
       const providerThreadId = opened.thread.id;
       const session = {
@@ -1157,10 +1181,8 @@ export const makeCodexSessionRuntime = (
       sendTurn: (input) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
-          const account = yield* Ref.get(accountRef);
-          const normalizedModel = resolveCodexModelForAccount(
-            normalizeCodexModelSlug(input.model ?? (yield* Ref.get(sessionRef)).model),
-            account,
+          const normalizedModel = normalizeCodexModelSlug(
+            input.model ?? (yield* Ref.get(sessionRef)).model,
           );
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
