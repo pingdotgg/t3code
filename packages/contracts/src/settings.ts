@@ -9,7 +9,7 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   OpenCodeModelOptions,
 } from "./model.ts";
-import { ModelSelection } from "./orchestration.ts";
+import { ModelSelection, ProviderKind } from "./orchestration.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -39,8 +39,8 @@ export const ClientSettingsSchema = Schema.Struct({
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   favorites: Schema.Array(
     Schema.Struct({
-      provider: Schema.String,
-      model: Schema.String,
+      provider: ProviderKind,
+      model: TrimmedNonEmptyString,
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
@@ -273,8 +273,8 @@ export const ServerSettingsPatch = Schema.Struct({
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
-        provider: Schema.String,
-        model: Schema.String,
+        provider: ProviderKind,
+        model: TrimmedNonEmptyString,
       }),
     ),
   ),
