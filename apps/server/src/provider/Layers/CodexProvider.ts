@@ -74,7 +74,7 @@ class CodexDiscoveryCacheKey extends Data.Class<{
   readonly cwd: string;
 }> {}
 
-function buildInitialCodexProviderSnapshot(codexSettings: CodexSettings): ServerProvider {
+const makePendingCodexProvider = (codexSettings: CodexSettings): ServerProvider => {
   const checkedAt = new Date().toISOString();
   const models = providerModelsFromSettings(
     BUILT_IN_CODEX_MODELS,
@@ -107,14 +107,14 @@ function buildInitialCodexProviderSnapshot(codexSettings: CodexSettings): Server
     models,
     skills: [],
     probe: {
-      installed: true,
+      installed: false,
       version: null,
       status: "warning",
       auth: { status: "unknown" },
-      message: "Checking Codex CLI availability...",
+      message: "Codex provider status has not been checked in this session yet.",
     },
   });
-}
+};
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
@@ -756,7 +756,7 @@ export const CodexProviderLive = Layer.effect(
         Stream.map((settings) => settings.providers.codex),
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
-      buildInitialSnapshot: buildInitialCodexProviderSnapshot,
+      initialSnapshot: makePendingCodexProvider,
       checkProvider,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         enrichCodexSnapshotViaDiscovery({
