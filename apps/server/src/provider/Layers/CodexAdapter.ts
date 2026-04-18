@@ -180,11 +180,12 @@ function normalizeCodexTokenUsage(
 }
 
 function toTurnStatus(
-  value: EffectCodexSchema.V2TurnCompletedNotification["turn"]["status"],
+  value: EffectCodexSchema.V2TurnCompletedNotification["turn"]["status"] | "cancelled",
 ): "completed" | "failed" | "cancelled" | "interrupted" {
   switch (value) {
     case "completed":
     case "failed":
+    case "cancelled":
     case "interrupted":
       return value;
     default:
