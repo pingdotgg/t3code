@@ -7,8 +7,49 @@ import { ProviderDriverKind } from "./providerInstance.ts";
 export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
 export type ProviderOptionDescriptorType = typeof ProviderOptionDescriptorType.Type;
 
-export const ProviderOptionChoice = Schema.Struct({
-  id: TrimmedNonEmptyString,
+export type ProviderReasoningEffort =
+  | CodexReasoningEffort
+  | ClaudeAgentEffort
+  | CursorReasoningOption;
+
+export const CodexModelOptions = Schema.Struct({
+  reasoningEffort: Schema.optional(CodexReasoningEffort),
+  fastMode: Schema.optional(Schema.Boolean),
+});
+export type CodexModelOptions = typeof CodexModelOptions.Type;
+
+export const ClaudeModelOptions = Schema.Struct({
+  thinking: Schema.optional(Schema.Boolean),
+  effort: Schema.optional(ClaudeAgentEffort),
+  fastMode: Schema.optional(Schema.Boolean),
+  contextWindow: Schema.optional(Schema.String),
+});
+export type ClaudeModelOptions = typeof ClaudeModelOptions.Type;
+
+export const CursorModelOptions = Schema.Struct({
+  reasoning: Schema.optional(CursorReasoningOption),
+  fastMode: Schema.optional(Schema.Boolean),
+  thinking: Schema.optional(Schema.Boolean),
+  contextWindow: Schema.optional(Schema.String),
+});
+export type CursorModelOptions = typeof CursorModelOptions.Type;
+
+export const OpenCodeModelOptions = Schema.Struct({
+  variant: Schema.optional(TrimmedNonEmptyString),
+  agent: Schema.optional(TrimmedNonEmptyString),
+});
+export type OpenCodeModelOptions = typeof OpenCodeModelOptions.Type;
+
+export const ProviderModelOptions = Schema.Struct({
+  codex: Schema.optional(CodexModelOptions),
+  claudeAgent: Schema.optional(ClaudeModelOptions),
+  cursor: Schema.optional(CursorModelOptions),
+  opencode: Schema.optional(OpenCodeModelOptions),
+});
+export type ProviderModelOptions = typeof ProviderModelOptions.Type;
+
+export const EffortOption = Schema.Struct({
+  value: TrimmedNonEmptyString,
   label: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   isDefault: Schema.optional(Schema.Boolean),
@@ -161,8 +202,6 @@ export const PREFERRED_DEFAULT_CODEX_MODELS: ReadonlyArray<string> = [
   "gpt-5.6-terra",
 ];
 export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-5.6-luna";
-/** Keep the official Antigravity session's current model. Never send this ID to ACP. */
-export const ANTIGRAVITY_DEFAULT_MODEL = "antigravity-default";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
@@ -172,7 +211,6 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   // Product slug, not an ACP model id. The Grok adapter treats it as "the session's current model".
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
-  [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
 };
 
 /** Per-provider text generation model defaults. */
@@ -180,7 +218,6 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   Record<ProviderDriverKind, string>
 > = {
   [CODEX_DRIVER_KIND]: DEFAULT_TEXT_GENERATION_MODEL,
-  [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
@@ -212,13 +249,9 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
   [OPENCODE_DRIVER_KIND]: {},
 };
 
-// ── Provider display names ────────────────────────────────────────────
-
-export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>> = {
-  [ProviderDriverKind.make("antigravity")]: "Antigravity",
-  [CODEX_DRIVER_KIND]: "Codex",
-  [CLAUDE_DRIVER_KIND]: "Claude",
-  [CURSOR_DRIVER_KIND]: "Cursor",
-  [GROK_DRIVER_KIND]: "Grok",
-  [OPENCODE_DRIVER_KIND]: "OpenCode",
+export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
+  codex: "Codex",
+  claudeAgent: "Claude",
+  cursor: "Cursor",
+  opencode: "OpenCode",
 };

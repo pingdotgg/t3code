@@ -634,4 +634,43 @@ export const makePendingClaudeProvider = (
     });
   });
 
-export { probeClaudeCapabilities };
+export const ClaudeProviderLive = Layer.effect(
+  ClaudeProvider,
+  Effect.gen(function* () {
+    const serverSettings = yield* ServerSettingsService;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+    const subscriptionProbeCache = yield* Cache.make({
+      capacity: 1,
+      timeToLive: Duration.minutes(5),
+      lookup: (binaryPath: string) => probeClaudeCapabilities(binaryPath),
+    });
+
+    const checkProvider = checkClaudeProviderStatus(
+      (binaryPath) =>
+        Cache.get(subscriptionProbeCache, binaryPath).pipe(
+          Effect.map((probe) => probe?.subscriptionType),
+        ),
+      (binaryPath) =>
+        Cache.get(subscriptionProbeCache, binaryPath).pipe(
+          Effect.map((probe) => probe?.slashCommands),
+        ),
+    ).pipe(
+      Effect.provideService(ServerSettingsService, serverSettings),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return yield* makeManagedServerProvider<ClaudeSettings>({
+      getSettings: serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.providers.claudeAgent),
+        Effect.orDie,
+      ),
+      streamSettings: serverSettings.streamChanges.pipe(
+        Stream.map((settings) => settings.providers.claudeAgent),
+      ),
+      haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
+      buildInitialSnapshot: buildInitialClaudeProviderSnapshot,
+      checkProvider,
+    });
+  }),
+);

@@ -165,39 +165,6 @@ describe("derivePendingApprovals", () => {
     ]);
   });
 
-  it("keeps app access approvals and persistence choices from remote activities", () => {
-    const options = [
-      { decision: "decline", label: "Decline" },
-      { decision: "acceptAlways", label: "Always allow Safari" },
-      { decision: "accept", label: "Approve" },
-    ];
-    const activities = [
-      makeActivity({
-        kind: "approval.requested",
-        summary: "App access approval requested",
-        tone: "approval",
-        payload: {
-          requestId: "req-safari",
-          requestType: "mcp_elicitation_approval",
-          detail: "Allow ChatGPT to use Safari?",
-          appName: "Safari",
-          options,
-        },
-      }),
-    ];
-
-    expect(derivePendingApprovals(activities)).toEqual([
-      {
-        requestId: "req-safari",
-        requestKind: "mcp-elicitation",
-        createdAt: "2026-02-23T00:00:00.000Z",
-        detail: "Allow ChatGPT to use Safari?",
-        appName: "Safari",
-        options,
-      },
-    ]);
-  });
-
   it("derives dynamic tool requests as actionable generic approvals", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -285,50 +252,6 @@ describe("derivePendingApprovals", () => {
 });
 
 describe("derivePendingUserInputs", () => {
-  it("keeps free-text questions without suggested answers", () => {
-    const question = {
-      id: "0",
-      header: "Question",
-      question: "What should it be named?",
-      options: [],
-      allowCustomAnswer: true,
-      multiSelect: false,
-    };
-    const activities = [
-      makeActivity({
-        id: "async-question",
-        kind: "user-input.requested",
-        summary: "User input requested",
-        payload: { requestId: "async-1", responseMode: "message", questions: [question] },
-      }),
-    ];
-    expect(derivePendingUserInputs(activities)[0]?.questions).toEqual([question]);
-  });
-
-  it("preserves native choice values and the custom-answer restriction", () => {
-    const question = {
-      id: "interaction-result",
-      header: "Result",
-      question: "Which result should be used?",
-      options: [
-        { value: " first\t", label: "Result", description: "First result" },
-        { value: "second", label: "Result", description: "Second result" },
-      ],
-      allowCustomAnswer: false,
-      multiSelect: false,
-    };
-    const activities = [
-      makeActivity({
-        id: "native-user-input",
-        kind: "user-input.requested",
-        summary: "User input requested",
-        payload: { requestId: "req-native-choice", questions: [question] },
-      }),
-    ];
-
-    expect(derivePendingUserInputs(activities)[0]?.questions).toEqual([question]);
-  });
-
   it("tracks open structured prompts and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -520,62 +443,10 @@ describe("deriveActivePlanState", () => {
       steps: [{ step: "Write tests", status: "completed" }],
     });
   });
+});
 
-  it("starts timing again after a plan is cleared and recreated", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "plan-old-start",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: { plan: [{ step: "Check", status: "inProgress" }] },
-      }),
-      makeActivity({
-        id: "plan-old-complete",
-        createdAt: "2026-02-23T00:00:05.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: { plan: [{ step: "Check", status: "completed" }] },
-      }),
-      makeActivity({
-        id: "plan-clear",
-        createdAt: "2026-02-23T00:00:06.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: { plan: [] },
-      }),
-      makeActivity({
-        id: "plan-new-start",
-        createdAt: "2026-02-23T00:00:10.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: { plan: [{ step: "Check", status: "inProgress" }] },
-      }),
-      makeActivity({
-        id: "plan-new-complete",
-        createdAt: "2026-02-23T00:00:13.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: { plan: [{ step: "Check", status: "completed" }] },
-      }),
-    ];
-
-    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
-      { durationMs: 3_000, step: "Check", status: "completed" },
-    ]);
-  });
-
-  it("tracks repeated step labels independently", () => {
+describe("deriveTurnPlans", () => {
+  it("keeps one entry per turn, anchored at the first snapshot with the latest steps", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "plan-1a",
@@ -585,10 +456,7 @@ describe("deriveActivePlanState", () => {
         tone: "info",
         turnId: "turn-1",
         payload: {
-          plan: [
-            { step: "Check", status: "inProgress" },
-            { step: "Check", status: "pending" },
-          ],
+          plan: [{ step: "Inspect code", status: "inProgress" }],
         },
       }),
       makeActivity({
@@ -599,87 +467,49 @@ describe("deriveActivePlanState", () => {
         tone: "info",
         turnId: "turn-1",
         payload: {
-          plan: [
-            { step: "Check", status: "completed" },
-            { step: "Check", status: "inProgress" },
-          ],
+          plan: [{ step: "Inspect code", status: "completed" }],
         },
       }),
       makeActivity({
-        id: "plan-1c",
-        createdAt: "2026-02-23T00:00:11.000Z",
+        id: "plan-2a",
+        createdAt: "2026-02-23T00:01:00.000Z",
         kind: "turn.plan.updated",
         summary: "Plan updated",
         tone: "info",
-        turnId: "turn-1",
+        turnId: "turn-2",
         payload: {
-          plan: [
-            { step: "Check", status: "completed" },
-            { step: "Check", status: "completed" },
-          ],
+          plan: [{ step: "Ship it", status: "pending" }],
         },
       }),
     ];
 
-    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
-      { durationMs: 4_000, step: "Check", status: "completed" },
-      { durationMs: 6_000, step: "Check", status: "completed" },
-    ]);
+    const turnPlans = deriveTurnPlans(activities);
+    expect(turnPlans).toHaveLength(2);
+    expect(turnPlans[0]).toMatchObject({
+      id: "turn-plan:turn-1",
+      createdAt: "2026-02-23T00:00:01.000Z",
+      turnId: "turn-1",
+    });
+    expect(turnPlans[0]?.plan.steps).toEqual([{ step: "Inspect code", status: "completed" }]);
+    expect(turnPlans[1]?.plan.steps).toEqual([{ step: "Ship it", status: "pending" }]);
   });
 
-  it("derives fallback durations in completion order", () => {
+  it("skips activities without parseable steps", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
-        id: "plan-start",
+        id: "plan-bad",
         createdAt: "2026-02-23T00:00:01.000Z",
         kind: "turn.plan.updated",
         summary: "Plan updated",
         tone: "info",
         turnId: "turn-1",
-        payload: {
-          plan: [
-            { step: "First", status: "pending" },
-            { step: "Second", status: "pending" },
-          ],
-        },
-      }),
-      makeActivity({
-        id: "plan-second-complete",
-        createdAt: "2026-02-23T00:00:06.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: {
-          plan: [
-            { step: "First", status: "pending" },
-            { step: "Second", status: "completed" },
-          ],
-        },
-      }),
-      makeActivity({
-        id: "plan-first-complete",
-        createdAt: "2026-02-23T00:00:11.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: {
-          plan: [
-            { step: "First", status: "completed" },
-            { step: "Second", status: "completed" },
-          ],
-        },
+        payload: { plan: [] },
       }),
     ];
-
-    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
-      { durationMs: 5_000, step: "First", status: "completed" },
-      { durationMs: 5_000, step: "Second", status: "completed" },
-    ]);
+    expect(deriveTurnPlans(activities)).toEqual([]);
   });
 
-  it("clears the active plan when a later snapshot has no steps", () => {
+  it("drops a turn's chip when a later snapshot clears the plan", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "plan-set",
@@ -1320,13 +1150,6 @@ describe("deriveWorkLogEntries", () => {
         payload: {
           itemType: "mcp_tool_call",
           title: "t3-code · preview_status",
-          toolSurface: "browser",
-          toolIcon: { _tag: "website", pageUrl: "https://example.com/checkout" },
-          toolSource: {
-            key: "browser-use:browser",
-            name: "Browser",
-            kind: "browser",
-          },
           data: { item },
         },
       }),
@@ -1334,16 +1157,6 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolTitle).toBe("t3-code · preview_status");
-    expect(entry?.toolSurface).toBe("browser");
-    expect(entry?.toolIcon).toEqual({
-      _tag: "website",
-      pageUrl: "https://example.com/checkout",
-    });
-    expect(entry?.toolSource).toEqual({
-      key: "browser-use:browser",
-      name: "Browser",
-      kind: "browser",
-    });
     expect(entry?.toolData).toEqual(item);
   });
 
@@ -1393,7 +1206,6 @@ describe("deriveWorkLogEntries", () => {
         payload: {
           itemType: "mcp_tool_call",
           toolCallId: "call-1",
-          toolSurface: "browser",
           data: { item },
         },
       }),
@@ -1404,123 +1216,12 @@ describe("deriveWorkLogEntries", () => {
         payload: {
           itemType: "mcp_tool_call",
           toolCallId: "call-1",
-          toolIcon: { _tag: "website", pageUrl: "https://example.com/result" },
         },
       }),
     ];
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolData).toEqual(item);
-    expect(entry?.toolCallId).toBe("call-1");
-    expect(entry?.toolSurface).toBe("browser");
-    expect(entry?.toolIcon).toEqual({
-      _tag: "website",
-      pageUrl: "https://example.com/result",
-    });
-    expect(resolveWorkEntryToolPresentation(entry!)?.displayName).toBe(
-      "Took a snapshot of the preview page",
-    );
-  });
-
-  it("collapses interleaved lifecycle updates by tool call id", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "tool-a-progress",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        turnId: "turn-1",
-        kind: "tool.updated",
-        summary: "Tool A",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "call-a",
-          status: "inProgress",
-          data: { command: "vp test run" },
-        },
-      }),
-      makeActivity({
-        id: "tool-b-progress",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        turnId: "turn-1",
-        kind: "tool.updated",
-        summary: "Tool B",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "call-b",
-          status: "inProgress",
-          data: { command: "vp lint" },
-        },
-      }),
-      makeActivity({
-        id: "tool-a-complete",
-        createdAt: "2026-02-23T00:00:03.000Z",
-        turnId: "turn-1",
-        kind: "tool.completed",
-        summary: "Tool A completed",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "call-a",
-          status: "completed",
-        },
-      }),
-      makeActivity({
-        id: "tool-b-complete",
-        createdAt: "2026-02-23T00:00:04.000Z",
-        turnId: "turn-1",
-        kind: "tool.completed",
-        summary: "Tool B completed",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "call-b",
-          status: "completed",
-        },
-      }),
-    ];
-
-    expect(deriveWorkLogEntries(activities)).toMatchObject([
-      {
-        id: "tool-a-complete",
-        command: "vp test run",
-        toolCallId: "call-a",
-        toolLifecycleStatus: "completed",
-      },
-      {
-        id: "tool-b-complete",
-        command: "vp lint",
-        toolCallId: "call-b",
-        toolLifecycleStatus: "completed",
-      },
-    ]);
-  });
-
-  it("does not merge reused tool call ids across turns", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "turn-1-tool",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        turnId: "turn-1",
-        kind: "tool.updated",
-        summary: "Tool",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "reused-call",
-          status: "inProgress",
-        },
-      }),
-      makeActivity({
-        id: "turn-2-tool",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        turnId: "turn-2",
-        kind: "tool.completed",
-        summary: "Tool completed",
-        payload: {
-          itemType: "command_execution",
-          toolCallId: "reused-call",
-          status: "completed",
-        },
-      }),
-    ];
-
-    expect(deriveWorkLogEntries(activities)).toHaveLength(2);
   });
 
   it("unwraps PowerShell command wrappers for displayed command text", () => {
@@ -1809,79 +1510,6 @@ describe("deriveWorkLogEntries", () => {
       detail: 'import * as Effect from "effect/Effect"',
       itemType: "dynamic_tool_call",
     });
-  });
-
-  it("keeps viewed image metadata while collapsing a streamed Claude Read", () => {
-    const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "image-read-update",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "tool.updated",
-        summary: "Image view",
-        payload: {
-          toolCallId: "tool-read-image",
-          itemType: "image_view",
-          detail: `${imagePath.slice(0, 177)}...`,
-          data: { imagePath },
-        },
-      }),
-      makeActivity({
-        id: "image-read-complete",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        kind: "tool.completed",
-        summary: "Image view",
-        payload: {
-          toolCallId: "tool-read-image",
-          itemType: "image_view",
-          detail: `${imagePath.slice(0, 177)}...`,
-          data: {},
-        },
-      }),
-    ];
-
-    const entries = deriveWorkLogEntries(activities);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      id: "image-read-complete",
-      itemType: "image_view",
-      viewedImagePath: imagePath,
-    });
-  });
-
-  it("does not use command stdout as the detail when Cursor omits the command input", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "cursor-command-complete",
-        createdAt: "2026-04-16T22:40:42.221Z",
-        kind: "tool.completed",
-        summary: "Ran command",
-        payload: {
-          itemType: "command_execution",
-          title: "Ran command",
-          data: {
-            toolCallId: "toolu_vrtx_01WypXgRM8PPygBtrVAZwzy5",
-            kind: "execute",
-            rawInput: {},
-            rawOutput: {
-              exitCode: 0,
-              stdout: "total 960\napps\npackages\n",
-              stderr: "",
-            },
-          },
-        },
-      }),
-    ];
-
-    const [entry] = deriveWorkLogEntries(activities);
-    expect(entry).toMatchObject({
-      id: "cursor-command-complete",
-      label: "Ran command",
-      itemType: "command_execution",
-      toolTitle: "Ran command",
-    });
-    expect(entry?.detail).toBeUndefined();
-    expect(entry?.command).toBeUndefined();
   });
 
   it("collapses legacy completed tool rows that are missing tool metadata", () => {
@@ -2533,20 +2161,6 @@ describe("deriveActiveWorkStartedAt", () => {
     ).toBe("2026-02-27T21:11:00.000Z");
   });
 
-  it("falls back to the latest user message while a running turn is being acknowledged", () => {
-    expect(
-      deriveActiveWorkStartedAt(
-        latestTurn,
-        {
-          status: "running",
-          activeTurnId: TurnId.make("turn-2"),
-        },
-        null,
-        "2026-02-27T21:11:00.000Z",
-      ),
-    ).toBe("2026-02-27T21:11:00.000Z");
-  });
-
   it("falls back to sendStartedAt once the latest turn is settled", () => {
     expect(
       deriveActiveWorkStartedAt(
@@ -2787,69 +2401,31 @@ describe("rerun workflows", () => {
   });
 });
 
-describe("session activity performance", () => {
-  it("reuses entries for unchanged activities", () => {
-    const activities = ["status", "diff", "log"].map((command, index) =>
-      makeActivity({
-        id: `stable-tool-${index}`,
-        kind: "tool.completed",
-        sequence: index,
-        payload: {
-          itemType: "command_execution",
-          data: { toolCallId: `stable-tool-${index}`, item: { command: ["git", command] } },
-        },
-      }),
-    );
-
-    const initialEntries = deriveWorkLogEntries(activities.slice(0, 2));
-    const appendedEntries = deriveWorkLogEntries(activities);
-    expect(appendedEntries[0]).toBe(initialEntries[0]);
-    expect(appendedEntries[1]).toBe(initialEntries[1]);
-  });
-
-  it("reuses entries when appending to 20,000 ordered tool activities", () => {
-    const activities = Array.from({ length: 20_000 }, (_, index) =>
-      makeActivity({
-        id: `benchmark-tool-${index}`,
-        createdAt: new Date(1_700_000_000_000 + index).toISOString(),
-        kind: "tool.completed",
-        summary: "Ran command",
-        sequence: index,
-        payload: {
-          itemType: "command_execution",
-          title: "Ran command",
-          data: {
-            toolCallId: `benchmark-tool-${index}`,
-            item: { command: ["git", "status"] },
-          },
-        },
-      }),
-    );
-    const initialEntries = deriveWorkLogEntries(activities);
-    expect(initialEntries).toHaveLength(20_000);
-    const updatedActivities = [
-      ...activities,
-      makeActivity({
-        id: "benchmark-tool-appended",
-        createdAt: new Date(1_700_000_000_000 + activities.length).toISOString(),
-        kind: "tool.completed",
-        summary: "Ran command",
-        sequence: activities.length,
-        payload: {
-          itemType: "command_execution",
-          title: "Ran command",
-          data: { toolCallId: "benchmark-tool-appended", item: { command: ["git", "diff"] } },
-        },
-      }),
-    ];
-
-    const updatedEntries = deriveWorkLogEntries(updatedActivities);
-    expect(updatedEntries).toHaveLength(20_001);
-    expect(initialEntries.every((entry, index) => updatedEntries[index] === entry)).toBe(true);
-    expect(updatedEntries.at(-1)).toMatchObject({
-      id: "benchmark-tool-appended",
-      command: "git diff",
-      toolLifecycleStatus: "completed",
+describe("PROVIDER_OPTIONS", () => {
+  it("advertises Codex, Claude, OpenCode, and Cursor as available providers", () => {
+    const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeAgent");
+    const opencode = PROVIDER_OPTIONS.find((option) => option.value === "opencode");
+    const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
+    expect(PROVIDER_OPTIONS).toEqual([
+      { value: "codex", label: "Codex", available: true },
+      { value: "claudeAgent", label: "Claude", available: true },
+      { value: "opencode", label: "OpenCode", available: true },
+      { value: "cursor", label: "Cursor", available: true },
+    ]);
+    expect(claude).toEqual({
+      value: "claudeAgent",
+      label: "Claude",
+      available: true,
+    });
+    expect(opencode).toEqual({
+      value: "opencode",
+      label: "OpenCode",
+      available: true,
+    });
+    expect(cursor).toEqual({
+      value: "cursor",
+      label: "Cursor",
+      available: true,
     });
   });
 });

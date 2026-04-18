@@ -9,6 +9,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexError from "../errors.ts";
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 export const makeChildStdio = (handle: ChildProcessSpawner.ChildProcessHandle) =>
   Stdio.make({
@@ -24,7 +25,6 @@ export const makeChildStdio = (handle: ChildProcessSpawner.ChildProcessHandle) =
 export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
   const input = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
   const output = yield* Queue.unbounded<string>();
-  const decoder = new TextDecoder();
 
   return {
     stdio: Stdio.make({
@@ -32,10 +32,7 @@ export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
       stdin: Stream.fromQueue(input),
       stdout: () =>
         Sink.forEach((chunk: string | Uint8Array) =>
-          Queue.offer(
-            output,
-            typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true }),
-          ),
+          Queue.offer(output, typeof chunk === "string" ? chunk : decoder.decode(chunk)),
         ),
       stderr: () => Sink.drain,
     }),
@@ -44,20 +41,14 @@ export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
   };
 });
 
-type ChildProcessTerminationHandle = Pick<
-  ChildProcessSpawner.ChildProcessHandle,
-  "exitCode" | "pid"
->;
-
 export const makeTerminationError = (
-  handle: ChildProcessTerminationHandle,
+  handle: ChildProcessSpawner.ChildProcessHandle,
 ): Effect.Effect<CodexError.CodexAppServerError> =>
   Effect.match(handle.exitCode, {
     onFailure: (cause) =>
       new CodexError.CodexAppServerTransportError({
-        operation: "read-process-exit-status",
-        pid: handle.pid,
+        detail: "Failed to determine Codex App Server process exit status",
         cause,
       }),
-    onSuccess: (code) => new CodexError.CodexAppServerProcessExitedError({ code, pid: handle.pid }),
+    onSuccess: (code) => new CodexError.CodexAppServerProcessExitedError({ code }),
   });

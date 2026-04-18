@@ -314,6 +314,14 @@ function restoreUsedProviders(
   };
 }
 
+const PROVIDER_ORDER: readonly ProviderKind[] = ["codex", "claudeAgent", "cursor"];
+
+/**
+ * Ensure the `textGenerationModelSelection` points to an enabled provider.
+ * If the selected provider is disabled, fall back to the first enabled
+ * provider with its default model.  This is applied at read-time so the
+ * persisted preference is preserved for when a provider is re-enabled.
+ */
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
     ? settings

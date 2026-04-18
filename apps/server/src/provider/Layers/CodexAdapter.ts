@@ -8,7 +8,6 @@
  * @module CodexAdapterLive
  */
 import {
-  EventId,
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
@@ -18,9 +17,6 @@ import {
   type ProviderRuntimeEvent,
   type ProviderRequestKind,
   type ThreadTokenUsageSnapshot,
-  type ToolActivityIcon,
-  type ToolActivityNativeAppReference,
-  type ToolActivitySource,
   type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
@@ -31,23 +27,10 @@ import {
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as NodeCrypto from "node:crypto";
-import * as Crypto from "effect/Crypto";
-import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
-import * as Queue from "effect/Queue";
-import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
+import { Effect, Fiber, FileSystem, Layer, Queue, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
-
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -57,9 +40,10 @@ import {
   ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { CodexAdapter, type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
@@ -68,10 +52,9 @@ import {
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeShape,
-} from "./CodexSessionRuntime.ts";
+} from "../codex/CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
-import { codexRateLimitsToUpdate } from "./codexUsageLimits.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -82,14 +65,12 @@ const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 const PROVIDER = ProviderDriverKind.make("codex");
 
 export interface CodexAdapterLiveOptions {
-  readonly instanceId?: ProviderInstanceId;
-  readonly environment?: NodeJS.ProcessEnv;
   readonly makeRuntime?: (
     options: CodexSessionRuntimeOptions,
   ) => Effect.Effect<
     CodexSessionRuntimeShape,
     CodexSessionRuntimeError,
-    ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -97,7 +78,6 @@ export interface CodexAdapterLiveOptions {
 
 interface CodexAdapterSessionContext {
   readonly threadId: ThreadId;
-  readonly scope: Scope.Closeable;
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
   readonly turnTokenUsage: CodexTurnTokenUsageState;
@@ -133,7 +113,10 @@ function mapCodexRuntimeError(
   method: string,
   error: CodexSessionRuntimeError,
 ): ProviderAdapterError {
-  if (isCodexAppServerProcessExitedError(error) || isCodexAppServerTransportError(error)) {
+  if (
+    Schema.is(CodexErrors.CodexAppServerProcessExitedError)(error) ||
+    Schema.is(CodexErrors.CodexAppServerTransportError)(error)
+  ) {
     return new ProviderAdapterSessionClosedError({
       provider: PROVIDER,
       threadId,
@@ -141,7 +124,7 @@ function mapCodexRuntimeError(
     });
   }
 
-  if (isCodexSessionRuntimeThreadIdMissingError(error)) {
+  if (Schema.is(CodexSessionRuntimeThreadIdMissingError)(error)) {
     return new ProviderAdapterSessionNotFoundError({
       provider: PROVIDER,
       threadId,
@@ -173,243 +156,12 @@ function readPayload<A>(
   schema: Schema.Schema<A>,
   payload: ProviderEvent["payload"],
 ): A | undefined {
-  const isPayload = Schema.is(schema);
-  return isPayload(payload) ? payload : undefined;
+  return Schema.is(schema)(payload) ? payload : undefined;
 }
 
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
-}
-
-function asUnknownRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
-}
-
-function normalizeMcpIntentTitle(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const normalized = value.trim().replace(/\s+/gu, " ");
-  if (!normalized) return undefined;
-  const characters = Array.from(normalized);
-  return characters.length <= 80 ? normalized : `${characters.slice(0, 79).join("")}…`;
-}
-
-function normalizedHttpUrl(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length > 4096) return undefined;
-  try {
-    const url = new URL(value);
-    const href = url.href;
-    return (url.protocol === "http:" || url.protocol === "https:") && href.length <= 4096
-      ? href
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function normalizedImageUrl(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length > 4096) return undefined;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "data:"
-      ? url.href
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function normalizedAppId(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const appId = value.trim();
-  return appId.length > 0 && appId.length <= 512 && /^[A-Za-z0-9._-]+$/u.test(appId)
-    ? appId
-    : undefined;
-}
-
-function normalizedDisplayName(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const displayName = value.trim().replace(/\s+/gu, " ");
-  return displayName && displayName.length <= 160 ? displayName : undefined;
-}
-
-function normalizedSourceKeyPart(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function nativeAppSourceKey(appId: string): string {
-  const key = `native-app:${appId.toLowerCase()}`;
-  if (key.length <= 512) return key;
-  const digest = NodeCrypto.createHash("sha256").update(key).digest("hex");
-  return `${key.slice(0, 512 - digest.length - 1)}:${digest}`;
-}
-
-function browserDisplayName(value: unknown): string | undefined {
-  const normalized = normalizedDisplayName(value)?.toLowerCase();
-  if (!normalized) return undefined;
-  if (normalized.includes("chrome") || normalized === "chromium") return "Chrome";
-  if (normalized.includes("edge")) return "Microsoft Edge";
-  if (normalized.includes("firefox")) return "Firefox";
-  if (normalized.includes("safari")) return "Safari";
-  if (normalized.includes("arc")) return "Arc";
-  if (normalized === "iab" || normalized.includes("in-app")) return "Browser";
-  return normalizedDisplayName(value);
-}
-
-function browserNativeAppReference(name: string): ToolActivityNativeAppReference | undefined {
-  switch (name) {
-    case "Chrome":
-      return { _tag: "display-name", displayName: "Google Chrome" };
-    case "Microsoft Edge":
-    case "Firefox":
-    case "Safari":
-    case "Arc":
-      return { _tag: "display-name", displayName: name };
-    default:
-      return undefined;
-  }
-}
-
-function appDisplayNameFromId(appId: string): string | undefined {
-  const knownNames: Readonly<Record<string, string>> = {
-    "com.apple.finder": "Finder",
-    "com.apple.safari": "Safari",
-    "com.google.chrome": "Chrome",
-    "com.microsoft.edgemac": "Microsoft Edge",
-    "org.mozilla.firefox": "Firefox",
-    "company.thebrowser.browser": "Arc",
-  };
-  return knownNames[appId.toLowerCase()];
-}
-
-function nativeAppReference(value: unknown): ToolActivityNativeAppReference | undefined {
-  const app = asUnknownRecord(value);
-  if (app?.kind === "appId") {
-    const appId = normalizedAppId(app.appId);
-    return appId ? { _tag: "app-id", appId } : undefined;
-  }
-  if (app?.kind === "displayName") {
-    const displayName = normalizedDisplayName(app.displayName);
-    return displayName ? { _tag: "display-name", displayName } : undefined;
-  }
-  return undefined;
-}
-
-function themedLogoIcon(
-  ...records: ReadonlyArray<Record<string, unknown> | undefined>
-): ToolActivityIcon | undefined {
-  for (const record of records) {
-    const logoUrl = normalizedImageUrl(record?.logoUrl);
-    if (!logoUrl) continue;
-    const logoUrlDark = normalizedImageUrl(record?.logoUrlDark ?? record?.logoDarkUrl);
-    return {
-      _tag: "themed-logo",
-      logoUrl,
-      ...(logoUrlDark ? { logoUrlDark } : {}),
-    };
-  }
-  return undefined;
-}
-
-interface McpToolPresentation {
-  readonly toolSurface?: "browser" | "computer";
-  readonly toolIcon?: ToolActivityIcon;
-  readonly toolSource?: ToolActivitySource;
-}
-
-function mcpToolPresentation(
-  item: Extract<CodexLifecycleItem, { readonly type: "mcpToolCall" }>,
-): McpToolPresentation {
-  const result = asUnknownRecord(item.result);
-  const metadata = asUnknownRecord(result?._meta);
-  const surface = asUnknownRecord(metadata?.["codex/toolSurface"]);
-  const sourceMetadata = asUnknownRecord(metadata?.source);
-  const appContext = asUnknownRecord(item.appContext);
-  const sourceLogo = themedLogoIcon(surface, sourceMetadata, appContext);
-  if (surface?.kind === "browserUse") {
-    const screenshot = asUnknownRecord(surface.screenshot);
-    const browserUse = asUnknownRecord(metadata?.browser_use);
-    const openTabs = Array.isArray(surface.openTabs) ? surface.openTabs : [];
-    const latestOpenTab = openTabs
-      .toReversed()
-      .map(asUnknownRecord)
-      .find((tab) => normalizedHttpUrl(tab?.url) !== undefined);
-    const selectedPage = [
-      { record: screenshot, url: screenshot?.pageUrl },
-      { record: browserUse, url: browserUse?.url },
-      { record: latestOpenTab, url: latestOpenTab?.url },
-    ]
-      .map((candidate) => ({ ...candidate, pageUrl: normalizedHttpUrl(candidate.url) }))
-      .find((candidate) => candidate.pageUrl !== undefined);
-    const pageUrl = selectedPage?.pageUrl;
-    const faviconUrl = normalizedImageUrl(
-      selectedPage?.record?.faviconUrl ?? selectedPage?.record?.favIconUrl,
-    );
-    const faviconUrlDark = normalizedImageUrl(
-      selectedPage?.record?.faviconUrlDark ?? selectedPage?.record?.favIconUrlDark,
-    );
-    const name =
-      browserDisplayName(appContext?.appName) ??
-      browserDisplayName(surface.browserFamily) ??
-      browserDisplayName(surface.backend) ??
-      "Browser";
-    const nativeBrowserIcon = browserNativeAppReference(name);
-    const sourceIcon =
-      sourceLogo ??
-      (nativeBrowserIcon ? ({ _tag: "native-app", app: nativeBrowserIcon } as const) : undefined);
-    const sourceKeyPart = normalizedSourceKeyPart(name) || "browser";
-    return {
-      toolSurface: "browser",
-      ...(pageUrl
-        ? {
-            toolIcon: {
-              _tag: "website",
-              pageUrl,
-              ...(faviconUrl ? { faviconUrl } : {}),
-              ...(faviconUrlDark ? { faviconUrlDark } : {}),
-            } as const,
-          }
-        : {}),
-      toolSource: {
-        key: `browser-use:${sourceKeyPart}`,
-        name,
-        kind: name === "Browser" ? "browser" : "integration",
-        ...(sourceIcon ? { icon: sourceIcon } : {}),
-      },
-    };
-  }
-  if (surface?.kind === "computerUse") {
-    const app = nativeAppReference(surface.app);
-    const args = asUnknownRecord(item.arguments);
-    const argumentAppName =
-      normalizedDisplayName(args?.appName) ??
-      normalizedDisplayName(args?.application) ??
-      normalizedDisplayName(typeof args?.app === "string" ? args.app : undefined);
-    const name =
-      normalizedDisplayName(appContext?.appName) ??
-      argumentAppName ??
-      (app?._tag === "display-name" ? app.displayName : undefined) ??
-      (app?._tag === "app-id" ? appDisplayNameFromId(app.appId) : undefined) ??
-      "Computer Use";
-    const sourceIcon = sourceLogo ?? (app ? ({ _tag: "native-app", app } as const) : undefined);
-    const sourceKey = app
-      ? app._tag === "app-id"
-        ? nativeAppSourceKey(app.appId)
-        : `native-app-name:${normalizedSourceKeyPart(app.displayName)}`
-      : "computer-use";
-    return {
-      toolSurface: "computer",
-      ...(app ? { toolIcon: { _tag: "native-app", app } as const } : {}),
-      toolSource: {
-        key: sourceKey,
-        name,
-        kind: "computer",
-        ...(sourceIcon ? { icon: sourceIcon } : {}),
-      },
-    };
-  }
-
-  return {};
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
@@ -612,12 +364,11 @@ function completeCodexTurnTokenUsage(
 }
 
 function toTurnStatus(
-  value: EffectCodexSchema.V2TurnCompletedNotification["turn"]["status"] | "cancelled",
+  value: EffectCodexSchema.V2TurnCompletedNotification["turn"]["status"],
 ): "completed" | "failed" | "cancelled" | "interrupted" {
   switch (value) {
     case "completed":
     case "failed":
-    case "cancelled":
     case "interrupted":
       return value;
     default:
@@ -657,82 +408,8 @@ function toCanonicalItemType(raw: string | undefined | null): CanonicalItemType 
   return "unknown";
 }
 
-function boundedToolArgument(value: unknown): string | undefined {
-  const normalized = typeof value === "string" ? value.trim().replace(/\s+/gu, " ") : "";
-  if (!normalized) return undefined;
-  return normalized.length <= 48 ? normalized : `${normalized.slice(0, 47)}…`;
-}
-
-function normalizedMcpToolName(value: string): string {
-  return (
-    value
-      .split(/__|[./:]/u)
-      .at(-1)
-      ?.trim() ?? value.trim()
-  );
-}
-
-function computerUseToolTitle(
-  item: Extract<CodexLifecycleItem, { readonly type: "mcpToolCall" }>,
-  presentation: McpToolPresentation,
-): string | undefined {
-  if (normalizeItemType(item.server) !== "computer use") return undefined;
-  if (item.status === "failed") return undefined;
-  const tool = normalizeItemType(normalizedMcpToolName(item.tool)).replace(/ /gu, "_");
-  const inProgress = item.status === "inProgress";
-  const args = asUnknownRecord(item.arguments);
-  const appName =
-    (presentation.toolSource?.kind === "computer" && presentation.toolSource.name !== "Computer Use"
-      ? presentation.toolSource.name
-      : undefined) ??
-    normalizedDisplayName(args?.appName) ??
-    normalizedDisplayName(args?.application) ??
-    normalizedDisplayName(typeof args?.app === "string" ? args.app : undefined);
-  const withApp = (label: string) => (appName ? `${label} in ${appName}` : label);
-  switch (tool) {
-    case "list_apps":
-      return inProgress ? "Listing apps" : "Listed apps";
-    case "click":
-      return withApp(inProgress ? "Clicking" : "Clicked");
-    case "drag":
-      return withApp(inProgress ? "Dragging" : "Dragged");
-    case "get_app_state":
-    case "get_state":
-      return appName
-        ? `${inProgress ? "Looking at" : "Looked at"} ${appName}`
-        : inProgress
-          ? "Looking at the screen"
-          : "Looked at the screen";
-    case "perform_accessibility_action":
-    case "perform_secondary_action":
-      return inProgress ? "Performing accessibility action" : "Performed accessibility action";
-    case "press_key":
-      return withApp(inProgress ? "Pressing key" : "Pressed key");
-    case "scroll": {
-      const direction = boundedToolArgument(args?.direction)?.toLowerCase();
-      return withApp(`${inProgress ? "Scrolling" : "Scrolled"}${direction ? ` ${direction}` : ""}`);
-    }
-    case "set_value":
-      return withApp(inProgress ? "Setting value" : "Set value");
-    case "type_text":
-      return withApp(inProgress ? "Typing text" : "Typed text");
-    default:
-      return undefined;
-  }
-}
-
-function itemTitle(
-  itemType: CanonicalItemType,
-  item?: CodexLifecycleItem,
-  presentation: McpToolPresentation = {},
-): string | undefined {
+function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): string | undefined {
   if (itemType === "mcp_tool_call" && item?.type === "mcpToolCall") {
-    if (normalizedMcpToolName(item.tool) === "js") {
-      const intentTitle = normalizeMcpIntentTitle(asUnknownRecord(item.arguments)?.title);
-      if (intentTitle) return intentTitle;
-    }
-    const computerUseTitle = computerUseToolTitle(item, presentation);
-    if (computerUseTitle) return computerUseTitle;
     return `${item.server} · ${item.tool}`;
   }
   switch (itemType) {
@@ -763,14 +440,8 @@ function itemTitle(
   }
 }
 
-function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): string | undefined {
-  const itemRecord = item as Record<string, unknown>;
-  const action = itemRecord.action as Record<string, unknown> | undefined;
-  const actionQueries = Array.isArray(action?.queries) ? action.queries : [];
+function itemDetail(item: CodexLifecycleItem): string | undefined {
   const candidates = [
-    ...(itemType === "web_search"
-      ? [itemRecord.query, action?.query, ...actionQueries, action?.pattern, action?.url]
-      : []),
     "command" in item ? item.command : undefined,
     "title" in item ? item.title : undefined,
     "summary" in item ? item.summary : undefined,
@@ -972,9 +643,7 @@ function mapItemLifecycle(
     return undefined;
   }
 
-  const detail = itemDetail(itemType, item);
-  const toolPresentation = item.type === "mcpToolCall" ? mcpToolPresentation(item) : {};
-  const title = itemTitle(itemType, item, toolPresentation);
+  const detail = itemDetail(item);
   const status =
     lifecycle === "item.started"
       ? "inProgress"
@@ -990,9 +659,8 @@ function mapItemLifecycle(
     payload: {
       itemType,
       ...(status ? { status } : {}),
-      ...(title ? { title } : {}),
+      ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
       ...(detail ? { detail } : {}),
-      ...toolPresentation,
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
   };
@@ -1629,30 +1297,9 @@ function mapToRuntimeEvents(
     if (!item) {
       return [];
     }
-    if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length) {
-      return [
-        {
-          ...runtimeEventBase(event, canonicalThreadId),
-          type: "user-input.requested",
-          requestId: RuntimeRequestId.make(`codex-async:${canonicalThreadId}:${item.id}`),
-          eventId: EventId.make(`codex-async:${canonicalThreadId}:${item.id}`),
-          payload: {
-            responseMode: "message",
-            questions: item.questions.map((question, index) => ({
-              id: String(index),
-              header: "Question",
-              question: question.title,
-              options: (question.options ?? []).map((label) => ({ label, description: "" })),
-              allowCustomAnswer: true,
-              multiSelect: false,
-            })),
-          },
-        },
-      ];
-    }
     const itemType = toCanonicalItemType(item.type);
     if (itemType === "plan") {
-      const detail = itemDetail(itemType, item);
+      const detail = itemDetail(item);
       if (!detail) {
         return [];
       }
@@ -1667,18 +1314,7 @@ function mapToRuntimeEvents(
       ];
     }
     const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
-    if (!completed || itemType !== "context_compaction") {
-      return completed ? [completed] : [];
-    }
-    return [
-      completed,
-      {
-        ...runtimeEventBase(event, canonicalThreadId),
-        eventId: EventId.make(`${event.id}:thread-compacted`),
-        type: "thread.state.changed",
-        payload: { state: "compacted" },
-      },
-    ];
+    return completed ? [completed] : [];
   }
 
   if (
@@ -1941,19 +1577,16 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    const payload = readPayload(
-      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
-      event.payload,
-    );
-    const limits = payload ? codexRateLimitsToUpdate(payload.rateLimits) : undefined;
-    if (!limits) {
+    if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
       return [];
     }
     return [
       {
         type: "account.rate-limits.updated",
         ...runtimeEventBase(event, canonicalThreadId),
-        payload: { limits },
+        payload: {
+          rateLimits: event.payload ?? {},
+        },
       },
     ];
   }
@@ -1992,7 +1625,7 @@ function mapToRuntimeEvents(
         type: "thread.realtime.started",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          realtimeSessionId: payload.realtimeSessionId ?? undefined,
+          realtimeSessionId: payload.sessionId ?? undefined,
         },
       },
     ];
@@ -2179,7 +1812,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* Effect.service(ServerConfig);
   const nativeEventLogger =
     options?.nativeEventLogger ??
@@ -2188,195 +1820,109 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           stream: "native",
         })
       : undefined);
-  const managedNativeEventLogger =
-    options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+  const serverSettingsService = yield* ServerSettingsService;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
-  const startSession: CodexAdapterShape["startSession"] = (input) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        if (input.provider !== undefined && input.provider !== PROVIDER) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "startSession",
-            issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
-          });
-        }
-
-        const existing = sessions.get(input.threadId);
-        if (existing && !existing.stopped) {
-          yield* Effect.suspend(() => stopSessionInternal(existing));
-        }
-
-        const serviceTier =
-          input.modelSelection?.instanceId === boundInstanceId
-            ? getCodexServiceTierOptionValue(input.modelSelection)
-            : undefined;
-        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-        const runtimeInput: CodexSessionRuntimeOptions = {
-          threadId: input.threadId,
-          providerInstanceId: boundInstanceId,
-          cwd: input.cwd ?? process.cwd(),
-          binaryPath: codexConfig.binaryPath,
-          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
-          ...(options?.environment ? { environment: options.environment } : {}),
-          ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
-          ...(isCodexResumeCursorSchema(input.resumeCursor)
-            ? { resumeCursor: input.resumeCursor }
-            : {}),
-          runtimeMode: input.runtimeMode,
-          ...(input.modelSelection?.instanceId === boundInstanceId
-            ? { model: input.modelSelection.model }
-            : {}),
-          ...(serviceTier ? { serviceTier } : {}),
-          ...(mcpSession
-            ? {
-                environment: {
-                  ...(options?.environment ?? process.env),
-                  T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
-                },
-                appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-                ],
-              }
-            : {}),
-        };
-        const turnTokenUsage = makeCodexTurnTokenUsageState();
-        const sessionScope = yield* Scope.make("sequential");
-        let sessionScopeTransferred = false;
-        yield* Effect.addFinalizer(() =>
-          sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
-        );
-        const createRuntime = options?.makeRuntime ?? makeCodexSessionRuntime;
-        const runtime = yield* createRuntime(runtimeInput).pipe(
-          Effect.provideService(Scope.Scope, sessionScope),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterProcessError({
-                provider: PROVIDER,
-                threadId: input.threadId,
-                detail: cause.message,
-                cause,
-              }),
-          ),
-        );
-
-        // Fork into the session scope, not the calling fiber. `forkChild` makes
-        // this a child of `startSession`, and Effect interrupts a fiber's
-        // children when it completes, so the consumer died on return and every
-        // runtime event the session emitted afterwards was dropped.
-        const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
-          Effect.gen(function* () {
-            yield* writeNativeEvent(event);
-            if (event.method === "turn/started" && event.turnId) {
-              if (turnTokenUsage.activeTurnId !== event.turnId) {
-                turnTokenUsage.byTurnId.clear();
-                turnTokenUsage.activeTurnId = event.turnId;
-                getCodexTurnAccumulator(turnTokenUsage, event.turnId);
-              }
-            } else if (event.method === "thread/tokenUsage/updated") {
-              const payload = readPayload(
-                EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
-                event.payload,
-              );
-              if (payload) {
-                accumulateCodexTurnTokenUsage(turnTokenUsage, payload.turnId, payload.tokenUsage);
-              }
-            } else if (turnTokenUsage.activeTurnId) {
-              const collabPayload =
-                typeof event.payload === "object" && event.payload !== null
-                  ? (event.payload as Record<string, unknown>)
-                  : undefined;
-              const isCollabSpawn =
-                event.method === "collabAgent/started" ||
-                (event.method === "collabAgent/activity" &&
-                  collabPayload?.activityKind === "started");
-              if (isCollabSpawn && event.turnId === turnTokenUsage.activeTurnId) {
-                getCodexTurnAccumulator(turnTokenUsage, turnTokenUsage.activeTurnId).hasSubagents =
-                  true;
-              }
-            }
-
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
-              if (runtimeEvent.type === "turn.completed" && runtimeEvent.turnId) {
-                return {
-                  ...runtimeEvent,
-                  payload: {
-                    ...runtimeEvent.payload,
-                    tokenUsage: completeCodexTurnTokenUsage(
-                      turnTokenUsage,
-                      String(runtimeEvent.turnId),
-                      runtimeEvent.payload.state === "completed",
-                    ),
-                  },
-                } satisfies ProviderRuntimeEvent;
-              }
-              if (runtimeEvent.type === "turn.aborted" && runtimeEvent.turnId) {
-                return {
-                  ...runtimeEvent,
-                  payload: {
-                    ...runtimeEvent.payload,
-                    tokenUsage: completeCodexTurnTokenUsage(
-                      turnTokenUsage,
-                      String(runtimeEvent.turnId),
-                      false,
-                    ),
-                  },
-                } satisfies ProviderRuntimeEvent;
-              }
-              return runtimeEvent;
-            });
-            if (runtimeEvents.length === 0) {
-              yield* Effect.logDebug("ignoring unhandled Codex provider event", {
-                method: event.method,
-                threadId: event.threadId,
-                turnId: event.turnId,
-                itemId: event.itemId,
-              });
-              return;
-            }
-            yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
-          }),
-        ).pipe(Effect.forkIn(sessionScope));
-
-        const started = yield* runtime.start().pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterProcessError({
-                provider: PROVIDER,
-                threadId: input.threadId,
-                detail: cause.message,
-                cause,
-              }),
-          ),
-          Effect.onError(() =>
-            runtime.close.pipe(
-              Effect.andThen(Effect.ignore(Scope.close(sessionScope, Exit.void))),
-              Effect.andThen(Fiber.interrupt(eventFiber)),
-              Effect.ignore,
-            ),
-          ),
-        );
-
-        sessions.set(input.threadId, {
-          threadId: input.threadId,
-          scope: sessionScope,
-          runtime,
-          eventFiber,
-          turnTokenUsage,
-          stopped: false,
+  const startSession: CodexAdapterShape["startSession"] = Effect.fn("startSession")(
+    function* (input) {
+      if (input.provider !== undefined && input.provider !== PROVIDER) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "startSession",
+          issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
         });
-        sessionScopeTransferred = true;
+      }
 
-        return started;
-      }),
-    );
+      const existing = sessions.get(input.threadId);
+      if (existing && !existing.stopped) {
+        yield* Effect.suspend(() => stopSessionInternal(existing));
+      }
+
+      const codexSettings = yield* serverSettingsService.getSettings.pipe(
+        Effect.map((settings) => settings.providers.codex),
+        Effect.mapError(
+          (error) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: error.message,
+              cause: error,
+            }),
+        ),
+      );
+      const runtimeInput: CodexSessionRuntimeOptions = {
+        threadId: input.threadId,
+        cwd: input.cwd ?? process.cwd(),
+        binaryPath: codexSettings.binaryPath,
+        ...(codexSettings.homePath ? { homePath: codexSettings.homePath } : {}),
+        ...(Schema.is(CodexResumeCursorSchema)(input.resumeCursor)
+          ? { resumeCursor: input.resumeCursor }
+          : {}),
+        runtimeMode: input.runtimeMode,
+        ...(input.modelSelection?.provider === "codex"
+          ? { model: input.modelSelection.model }
+          : {}),
+        ...(input.modelSelection?.provider === "codex" && input.modelSelection.options?.fastMode
+          ? { serviceTier: "fast" }
+          : {}),
+      };
+      const createRuntime = options?.makeRuntime ?? makeCodexSessionRuntime;
+      const runtime = yield* createRuntime(runtimeInput).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: cause.message,
+              cause,
+            }),
+        ),
+      );
+
+      const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
+        Effect.gen(function* () {
+          yield* writeNativeEvent(event);
+          const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+          if (runtimeEvents.length === 0) {
+            yield* Effect.logDebug("ignoring unhandled Codex provider event", {
+              method: event.method,
+              threadId: event.threadId,
+              turnId: event.turnId,
+              itemId: event.itemId,
+            });
+            return;
+          }
+          yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
+        }),
+      ).pipe(Effect.forkChild);
+
+      const started = yield* runtime.start().pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: cause.message,
+              cause,
+            }),
+        ),
+        Effect.onError(() =>
+          runtime.close.pipe(Effect.andThen(Fiber.interrupt(eventFiber)), Effect.ignore),
+        ),
+      );
+
+      sessions.set(input.threadId, {
+        threadId: input.threadId,
+        runtime,
+        eventFiber,
+        stopped: false,
+      });
+
+      return started;
+    },
+  );
 
   const resolveAttachment = Effect.fn("resolveAttachment")(function* (
     input: ProviderSendTurnInput,
@@ -2421,26 +1967,19 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
 
     const session = yield* requireSession(input.threadId);
-    const reasoningEffort =
-      input.modelSelection?.instanceId === boundInstanceId
-        ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
-        : undefined;
-    const serviceTier =
-      input.modelSelection?.instanceId === boundInstanceId
-        ? getCodexServiceTierOptionValue(input.modelSelection)
-        : undefined;
     return yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),
-        ...(input.modelSelection?.instanceId === boundInstanceId
+        ...(input.modelSelection?.provider === "codex"
           ? { model: input.modelSelection.model }
           : {}),
-        ...(reasoningEffort
-          ? {
-              effort: reasoningEffort as EffectCodexSchema.V2TurnStartParams__ReasoningEffort,
-            }
+        ...(input.modelSelection?.provider === "codex" &&
+        input.modelSelection.options?.reasoningEffort !== undefined
+          ? { effort: input.modelSelection.options.reasoningEffort }
           : {}),
-        ...(serviceTier ? { serviceTier } : {}),
+        ...(input.modelSelection?.provider === "codex" && input.modelSelection.options?.fastMode
+          ? { serviceTier: "fast" }
+          : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
@@ -2467,15 +2006,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           : mapCodexRuntimeError(threadId, "turn/interrupt", cause),
       ),
     );
-
-  const compactThread: NonNullable<CodexAdapterShape["compactThread"]> = Effect.fn("compactThread")(
-    function* (threadId) {
-      const session = yield* requireSession(threadId);
-      yield* session.runtime.compactThread.pipe(
-        Effect.mapError((cause) => mapCodexRuntimeError(threadId, "thread/compact/start", cause)),
-      );
-    },
-  );
 
   const readThread: CodexAdapterShape["readThread"] = (threadId) =>
     requireSession(threadId).pipe(
@@ -2561,7 +2091,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
-  const writeNativeEvent = Effect.fnUntraced(function* (event: ProviderEvent) {
+  const writeNativeEvent = Effect.fn("writeNativeEvent")(function* (event: ProviderEvent) {
     if (!nativeEventLogger) {
       return;
     }
@@ -2577,7 +2107,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     session.stopped = true;
     sessions.delete(session.threadId);
     yield* session.runtime.close.pipe(Effect.ignore);
-    yield* Effect.ignore(Scope.close(session.scope, Exit.void));
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
   });
 
@@ -2607,11 +2136,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     }).pipe(Effect.asVoid);
 
   yield* Effect.acquireRelease(Effect.void, () =>
-    stopAll().pipe(
-      Effect.andThen(Queue.shutdown(runtimeEventQueue)),
-      Effect.andThen(managedNativeEventLogger?.close() ?? Effect.void),
-      Effect.ignore,
-    ),
+    stopAll().pipe(Effect.andThen(Queue.shutdown(runtimeEventQueue)), Effect.ignore),
   );
 
   return {
@@ -2622,7 +2147,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     },
     startSession,
     sendTurn,
-    compactThread,
     interruptTurn,
     readThread,
     rollbackThread,
