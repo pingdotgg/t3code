@@ -314,6 +314,8 @@ describe("ProviderModelPicker", () => {
   });
 
   it("toggles favorite stars when clicked", async () => {
+    localStorage.removeItem("t3code:client-settings:v1");
+
     const mounted = await mountPicker({
       provider: "claudeAgent",
       model: "claude-opus-4-6",
@@ -328,20 +330,31 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("Claude Opus 4.6");
       });
 
-      // Get star buttons
-      const starButtons = await page.getByRole("button", { name: /favor/ }).all();
-      const firstStar = starButtons[0];
-      if (firstStar) {
-        // Click to add to favorites
-        await firstStar.click();
-      }
+      const getFirstStarButton = () => {
+        const starButton = document.querySelector<HTMLButtonElement>(
+          'button[aria-label*="favorites"]',
+        );
+        expect(starButton).not.toBeNull();
+        return starButton!;
+      };
 
-      // Favorites should toggle
+      const firstStar = getFirstStarButton();
+      const initialAriaLabel = firstStar.getAttribute("aria-label");
+      expect(
+        initialAriaLabel === "Add to favorites" || initialAriaLabel === "Remove from favorites",
+      ).toBe(true);
+
+      await page.getByRole("button", { name: initialAriaLabel! }).first().click();
+
+      const expectedAriaLabel =
+        initialAriaLabel === "Add to favorites" ? "Remove from favorites" : "Add to favorites";
+
       await vi.waitFor(() => {
-        expect(starButtons.length).toBeGreaterThan(0);
+        expect(getFirstStarButton().getAttribute("aria-label")).toBe(expectedAriaLabel);
       });
     } finally {
       await mounted.cleanup();
+      localStorage.removeItem("t3code:client-settings:v1");
     }
   });
 
