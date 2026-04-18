@@ -9,7 +9,6 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexError from "../errors.ts";
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 export const makeChildStdio = (handle: ChildProcessSpawner.ChildProcessHandle) =>
   Stdio.make({
@@ -25,6 +24,7 @@ export const makeChildStdio = (handle: ChildProcessSpawner.ChildProcessHandle) =
 export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
   const input = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
   const output = yield* Queue.unbounded<string>();
+  const decoder = new TextDecoder();
 
   return {
     stdio: Stdio.make({
