@@ -7,7 +7,7 @@ const ANSI_PATTERN =
   // Matches common CSI / OSC ANSI escape sequences.
   // eslint-disable-next-line no-control-regex
   /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
-const nodePtyModulePromise = import("node-pty");
+let nodePtyModulePromise: Promise<typeof import("node-pty")> | undefined;
 
 export interface ClaudeUsageProbeResult {
   readonly usageLimits: ServerProviderUsageLimits;
@@ -29,6 +29,17 @@ export function shouldRequestClaudeUsageFallback(input: {
 
 function stripAnsi(value: string): string {
   return value.replaceAll(ANSI_PATTERN, "");
+}
+
+async function getNodePtyModule(): Promise<typeof import("node-pty")> {
+  if (!nodePtyModulePromise) {
+    nodePtyModulePromise = import("node-pty").catch((error: unknown) => {
+      nodePtyModulePromise = undefined;
+      throw error;
+    });
+  }
+
+  return await nodePtyModulePromise;
 }
 
 function parsePercent(value: string | undefined): number | undefined {
@@ -171,7 +182,7 @@ export async function probeClaudeUsageLimits(input: {
   readonly cwd: string;
   readonly checkedAt: string;
 }): Promise<ClaudeUsageProbeResult> {
-  const nodePty = await nodePtyModulePromise;
+  const nodePty = await getNodePtyModule();
   const probeArgs = [
     ...(input.launchArgs?.trim().split(/\s+/).filter(Boolean) ?? []),
     "--permission-mode",

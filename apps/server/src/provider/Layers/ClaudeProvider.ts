@@ -904,7 +904,7 @@ export const ClaudeProviderLive = Layer.effect(
             });
           }
 
-          if (!entry) {
+          if (!entry || (entry.inFlight && entry.rawOutput.trim().length === 0)) {
             return makeUnavailableUsageLimits({
               source: "claudeStatusProbe",
               checkedAt: input.checkedAt,
