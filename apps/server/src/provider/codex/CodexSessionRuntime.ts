@@ -379,14 +379,6 @@ function classifyCodexStderrLine(rawLine: string): { readonly message: string } 
   return { message: line };
 }
 
-function toTurnId(value: string | null | undefined): TurnId | undefined {
-  return value?.trim() ? TurnId.make(value) : undefined;
-}
-
-function toItemId(value: string | null | undefined): ProviderItemId | undefined {
-  return value?.trim() ? ProviderItemId.make(value) : undefined;
-}
-
 function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
   switch (notification.method) {
     case "thread/started":
@@ -446,18 +438,18 @@ function readRouteFields(notification: CodexServerNotification): {
     case "turn/started":
     case "turn/completed":
       return {
-        turnId: toTurnId(notification.params.turn.id),
+        turnId: TurnId.make(notification.params.turn.id),
         itemId: undefined,
       };
     case "error":
       return {
-        turnId: toTurnId(notification.params.turnId),
+        turnId: TurnId.make(notification.params.turnId),
         itemId: undefined,
       };
     case "turn/diff/updated":
     case "turn/plan/updated":
       return {
-        turnId: toTurnId(notification.params.turnId),
+        turnId: TurnId.make(notification.params.turnId),
         itemId: undefined,
       };
     case "serverRequest/resolved":
@@ -468,8 +460,8 @@ function readRouteFields(notification: CodexServerNotification): {
     case "item/started":
     case "item/completed":
       return {
-        turnId: toTurnId(notification.params.turnId),
-        itemId: toItemId(notification.params.item.id),
+        turnId: TurnId.make(notification.params.turnId),
+        itemId: ProviderItemId.make(notification.params.item.id),
       };
     case "item/agentMessage/delta":
     case "item/plan/delta":
@@ -480,8 +472,8 @@ function readRouteFields(notification: CodexServerNotification): {
     case "item/reasoning/summaryPartAdded":
     case "item/reasoning/textDelta":
       return {
-        turnId: toTurnId(notification.params.turnId),
-        itemId: toItemId(notification.params.itemId),
+        turnId: TurnId.make(notification.params.turnId),
+        itemId: ProviderItemId.make(notification.params.itemId),
       };
     default:
       return {
@@ -838,8 +830,8 @@ export const makeCodexSessionRuntime = (
     yield* client.handleServerRequest("item/commandExecution/requestApproval", (payload) =>
       Effect.gen(function* () {
         const requestId = ApprovalRequestId.make(randomUUID());
-        const turnId = toTurnId(payload.turnId);
-        const itemId = toItemId(payload.itemId);
+        const turnId = TurnId.make(payload.turnId);
+        const itemId = ProviderItemId.make(payload.itemId);
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
 
         yield* Ref.update(pendingApprovalsRef, (current) => {
@@ -894,8 +886,8 @@ export const makeCodexSessionRuntime = (
     yield* client.handleServerRequest("item/fileChange/requestApproval", (payload) =>
       Effect.gen(function* () {
         const requestId = ApprovalRequestId.make(randomUUID());
-        const turnId = toTurnId(payload.turnId);
-        const itemId = toItemId(payload.itemId);
+        const turnId = TurnId.make(payload.turnId);
+        const itemId = ProviderItemId.make(payload.itemId);
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
 
         yield* Ref.update(pendingApprovalsRef, (current) => {
@@ -950,8 +942,8 @@ export const makeCodexSessionRuntime = (
     yield* client.handleServerRequest("item/tool/requestUserInput", (payload) =>
       Effect.gen(function* () {
         const requestId = ApprovalRequestId.make(randomUUID());
-        const turnId = toTurnId(payload.turnId);
-        const itemId = toItemId(payload.itemId);
+        const turnId = TurnId.make(payload.turnId);
+        const itemId = ProviderItemId.make(payload.itemId);
         const answers = yield* Deferred.make<ProviderUserInputAnswers>();
 
         yield* Ref.update(pendingUserInputsRef, (current) => {
