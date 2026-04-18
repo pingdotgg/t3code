@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   ApprovalRequestId,
   EventId,
@@ -14,7 +17,7 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
-import { Effect, Fiber, Layer, Option, Queue, Scope, Stream } from "effect";
+import { Effect, Exit, Fiber, Layer, Option, Queue, Scope, Stream } from "effect";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
@@ -968,3 +971,61 @@ scopedFailureLayer("CodexAdapterLive scoped startup failure", (it) => {
     }),
   );
 });
+
+it.effect("flushes managed native logs when the adapter layer shuts down", () =>
+  Effect.gen(function* () {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-codex-adapter-native-log-"));
+    const basePath = path.join(tempDir, "provider-native.ndjson");
+    const runtimeFactory = makeRuntimeFactory();
+    const scope = yield* Scope.make("sequential");
+    let scopeClosed = false;
+
+    try {
+      const layer = makeCodexAdapterLive({
+        makeRuntime: runtimeFactory.factory,
+        nativeEventLogPath: basePath,
+      }).pipe(
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      const context = yield* Layer.buildWithScope(layer, scope);
+      const adapter = yield* Effect.service(CodexAdapter).pipe(Effect.provide(context));
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: asThreadId("thread-logger"),
+        runtimeMode: "full-access",
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      assert.ok(runtime);
+
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      yield* runtime.emit({
+        id: asEventId("evt-native-log"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-logger"),
+        createdAt: new Date().toISOString(),
+        method: "process/stderr",
+        message: "native flush test",
+      } satisfies ProviderEvent);
+      yield* Fiber.join(firstEventFiber);
+
+      yield* Scope.close(scope, Exit.void);
+      scopeClosed = true;
+
+      const threadLogPath = path.join(tempDir, "thread-logger.log");
+      assert.equal(fs.existsSync(threadLogPath), true);
+      const contents = fs.readFileSync(threadLogPath, "utf8");
+      assert.match(contents, /NTIVE: .*"message":"native flush test"/);
+    } finally {
+      if (!scopeClosed) {
+        yield* Scope.close(scope, Exit.void);
+      }
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }),
+);
