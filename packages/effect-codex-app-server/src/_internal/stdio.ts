@@ -32,7 +32,10 @@ export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
       stdin: Stream.fromQueue(input),
       stdout: () =>
         Sink.forEach((chunk: string | Uint8Array) =>
-          Queue.offer(output, typeof chunk === "string" ? chunk : decoder.decode(chunk)),
+          Queue.offer(
+            output,
+            typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true }),
+          ),
         ),
       stderr: () => Sink.drain,
     }),
