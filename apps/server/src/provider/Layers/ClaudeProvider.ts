@@ -812,10 +812,11 @@ export const ClaudeProviderLive = Layer.effect(
       (input) =>
         Effect.gen(function* () {
           const key = JSON.stringify([input.binaryPath, input.launchArgs]);
-          const entry = (yield* Ref.get(usageProbeStateRef)).get(key);
-          const isFresh = entry !== undefined && Date.now() - entry.fetchedAtMs < usageProbeTtlMs;
+          const currentEntry = (yield* Ref.get(usageProbeStateRef)).get(key);
+          const isFresh =
+            currentEntry !== undefined && Date.now() - currentEntry.fetchedAtMs < usageProbeTtlMs;
 
-          if ((!entry || !isFresh) && !entry?.inFlight) {
+          if ((!currentEntry || !isFresh) && !currentEntry?.inFlight) {
             yield* Effect.sync(() => {
               void Effect.runPromiseExit(
                 refreshUsageProbe(key, input.binaryPath, input.launchArgs),
@@ -823,7 +824,9 @@ export const ClaudeProviderLive = Layer.effect(
             });
           }
 
-          if (!entry || (entry.inFlight && entry.rawOutput.trim().length === 0)) {
+          const latestEntry = (yield* Ref.get(usageProbeStateRef)).get(key);
+
+          if (!latestEntry || (latestEntry.inFlight && latestEntry.rawOutput.trim().length === 0)) {
             return makeUnavailableUsageLimits({
               source: "claudeStatusProbe",
               checkedAt: input.checkedAt,
@@ -832,7 +835,7 @@ export const ClaudeProviderLive = Layer.effect(
           }
 
           return parseClaudeUsageLimitsOutput({
-            output: entry.rawOutput,
+            output: latestEntry.rawOutput,
             checkedAt: input.checkedAt,
           });
         }),
