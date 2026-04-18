@@ -2203,12 +2203,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
 
           yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry;
-
-            const refreshed = yield* registry.refresh("codex");
-            assert.strictEqual(
-              refreshed.find((status) => status.provider === "codex")?.status,
-              "ready",
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            let providers = yield* registry.getProviders;
+            for (
+              let attempts = 0;
+              attempts < 50 &&
+              providers.find((provider) => provider.instanceId === "codex_personal")?.status !==
+                "error";
+              attempts += 1
+            ) {
+              yield* Effect.yieldNow;
+              providers = yield* registry.getProviders;
+            }
+            const codexPersonal = providers.find(
+              (provider) => provider.instanceId === "codex_personal",
             );
             assert.notStrictEqual(
               codexPersonal,
