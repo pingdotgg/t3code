@@ -345,6 +345,42 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("does not duplicate favorited models across favorites and all models sections", async () => {
+    localStorage.removeItem("t3code:client-settings:v1");
+
+    const mounted = await mountPicker({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      lockedProvider: null,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        const text = document.body.textContent ?? "";
+        expect(text).toContain("Claude Opus 4.6");
+      });
+
+      const favoriteButton = page.getByRole("button", {
+        name: "Add to favorites",
+      });
+      await favoriteButton.first().click();
+
+      await vi.waitFor(async () => {
+        const favoritesHeader = await page.getByText("FAVORITES").all();
+        const allModelsHeader = await page.getByText("ALL MODELS").all();
+        const favoritedModelRows = await page.getByText("Claude Opus 4.6").all();
+        expect(favoritesHeader.length).toBeGreaterThan(0);
+        expect(allModelsHeader.length).toBeGreaterThan(0);
+        expect(favoritedModelRows.length).toBe(1);
+      });
+    } finally {
+      await mounted.cleanup();
+      localStorage.removeItem("t3code:client-settings:v1");
+    }
+  });
+
   it("dispatches callback with correct provider and model when selected", async () => {
     const mounted = await mountPicker({
       provider: "claudeAgent",

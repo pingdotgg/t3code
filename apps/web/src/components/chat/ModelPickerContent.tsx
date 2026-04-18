@@ -96,22 +96,35 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   // Get visible favorite models (respecting search/provider filter)
   const visibleFavoriteModels = useMemo(() => {
-    if (!searchQuery.trim() && selectedProvider !== "favorites") {
-      // No search and not in favorites mode: show favorites in dedicated section
+    if (!searchQuery.trim() && selectedProvider !== "all") {
+      // No search and not in "all" mode: show favorites in dedicated section
       let result = favoriteModels;
 
       if (props.lockedProvider !== null) {
         result = result.filter((m) => m.provider === props.lockedProvider);
-      } else if (selectedProvider !== "all") {
+      } else if (selectedProvider !== "favorites") {
         result = result.filter((m) => m.provider === selectedProvider);
       }
 
       return result;
     }
 
-    // With search or in favorites mode: don't show separate section
+    // With search or in "all" mode: don't show separate section
     return [];
   }, [favoriteModels, searchQuery, selectedProvider, props.lockedProvider]);
+
+  const visibleFavoriteModelKeys = useMemo(() => {
+    return new Set(visibleFavoriteModels.map((model) => `${model.provider}:${model.slug}`));
+  }, [visibleFavoriteModels]);
+
+  const allModelsSectionModels = useMemo(() => {
+    if (visibleFavoriteModelKeys.size === 0) {
+      return filteredModels;
+    }
+    return filteredModels.filter(
+      (model) => !visibleFavoriteModelKeys.has(`${model.provider}:${model.slug}`),
+    );
+  }, [filteredModels, visibleFavoriteModelKeys]);
 
   const handleModelSelect = (modelSlug: string, provider: ProviderKind) => {
     const resolvedModel = resolveSelectableModel(
@@ -199,7 +212,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
         {/* Model list */}
         <div className="flex-1 overflow-y-auto model-picker-list">
-          {visibleFavoriteModels.length > 0 || filteredModels.length > 0 ? (
+          {visibleFavoriteModels.length > 0 || allModelsSectionModels.length > 0 ? (
             <div>
               {/* Favorites section with sticky header */}
               {visibleFavoriteModels.length > 0 && (
@@ -225,21 +238,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 </div>
               )}
 
-              {/* All models section - only has sticky header if no favorites */}
-              {filteredModels.length > 0 && (
+              {/* All models section - always shows with sticky header */}
+              {allModelsSectionModels.length > 0 && (
                 <div>
-                  {visibleFavoriteModels.length === 0 && (
-                    <div className="px-3 py-2 text-xs font-semibold text-muted-foreground bg-popover sticky top-0 z-20">
-                      ALL MODELS
-                    </div>
-                  )}
-                  {visibleFavoriteModels.length > 0 && (
-                    <div className="px-3 py-2 text-xs font-semibold text-muted-foreground bg-popover sticky top-0 z-20">
-                      ALL MODELS
-                    </div>
-                  )}
+                  <div className="px-3 py-2 text-xs font-semibold text-muted-foreground bg-popover sticky top-0 z-20">
+                    ALL MODELS
+                  </div>
                   <div className="divide-y">
-                    {filteredModels.map((model) => (
+                    {allModelsSectionModels.map((model) => (
                       <ModelListRow
                         key={`${model.provider}:${model.slug}`}
                         slug={model.slug}
