@@ -24,7 +24,7 @@ import {
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
-import { Effect, Fiber, FileSystem, Layer, Queue, Schema, Stream } from "effect";
+import { Effect, Exit, Fiber, FileSystem, Layer, Queue, Schema, Scope, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
@@ -66,7 +66,7 @@ export interface CodexAdapterLiveOptions {
   ) => Effect.Effect<
     CodexSessionRuntimeShape,
     CodexSessionRuntimeError,
-    ChildProcessSpawner.ChildProcessSpawner
+    ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -74,6 +74,7 @@ export interface CodexAdapterLiveOptions {
 
 interface CodexAdapterSessionContext {
   readonly threadId: ThreadId;
+  readonly scope: Scope.Closeable;
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
   stopped: boolean;
@@ -1353,105 +1354,118 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
-  const startSession: CodexAdapterShape["startSession"] = Effect.fn("startSession")(
-    function* (input) {
-      if (input.provider !== undefined && input.provider !== PROVIDER) {
-        return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
-          operation: "startSession",
-          issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+  const startSession: CodexAdapterShape["startSession"] = (input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if (input.provider !== undefined && input.provider !== PROVIDER) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+          });
+        }
+
+        const existing = sessions.get(input.threadId);
+        if (existing && !existing.stopped) {
+          yield* Effect.suspend(() => stopSessionInternal(existing));
+        }
+
+        const codexSettings = yield* serverSettingsService.getSettings.pipe(
+          Effect.map((settings) => settings.providers.codex),
+          Effect.mapError(
+            (error) =>
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId: input.threadId,
+                detail: error.message,
+                cause: error,
+              }),
+          ),
+        );
+        const runtimeInput: CodexSessionRuntimeOptions = {
+          threadId: input.threadId,
+          cwd: input.cwd ?? process.cwd(),
+          binaryPath: codexSettings.binaryPath,
+          ...(codexSettings.homePath ? { homePath: codexSettings.homePath } : {}),
+          ...(Schema.is(CodexResumeCursorSchema)(input.resumeCursor)
+            ? { resumeCursor: input.resumeCursor }
+            : {}),
+          runtimeMode: input.runtimeMode,
+          ...(input.modelSelection?.provider === "codex"
+            ? { model: input.modelSelection.model }
+            : {}),
+          ...(input.modelSelection?.provider === "codex" && input.modelSelection.options?.fastMode
+            ? { serviceTier: "fast" }
+            : {}),
+        };
+        const sessionScope = yield* Scope.make("sequential");
+        let sessionScopeTransferred = false;
+        yield* Effect.addFinalizer(() =>
+          sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
+        );
+        const createRuntime = options?.makeRuntime ?? makeCodexSessionRuntime;
+        const runtime = yield* createRuntime(runtimeInput).pipe(
+          Effect.provideService(Scope.Scope, sessionScope),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId: input.threadId,
+                detail: cause.message,
+                cause,
+              }),
+          ),
+        );
+
+        const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
+          Effect.gen(function* () {
+            yield* writeNativeEvent(event);
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            if (runtimeEvents.length === 0) {
+              yield* Effect.logDebug("ignoring unhandled Codex provider event", {
+                method: event.method,
+                threadId: event.threadId,
+                turnId: event.turnId,
+                itemId: event.itemId,
+              });
+              return;
+            }
+            yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
+          }),
+        ).pipe(Effect.forkChild);
+
+        const started = yield* runtime.start().pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId: input.threadId,
+                detail: cause.message,
+                cause,
+              }),
+          ),
+          Effect.onError(() =>
+            runtime.close.pipe(
+              Effect.andThen(Effect.ignore(Scope.close(sessionScope, Exit.void))),
+              Effect.andThen(Fiber.interrupt(eventFiber)),
+              Effect.ignore,
+            ),
+          ),
+        );
+
+        sessions.set(input.threadId, {
+          threadId: input.threadId,
+          scope: sessionScope,
+          runtime,
+          eventFiber,
+          stopped: false,
         });
-      }
+        sessionScopeTransferred = true;
 
-      const existing = sessions.get(input.threadId);
-      if (existing && !existing.stopped) {
-        yield* Effect.suspend(() => stopSessionInternal(existing));
-      }
-
-      const codexSettings = yield* serverSettingsService.getSettings.pipe(
-        Effect.map((settings) => settings.providers.codex),
-        Effect.mapError(
-          (error) =>
-            new ProviderAdapterProcessError({
-              provider: PROVIDER,
-              threadId: input.threadId,
-              detail: error.message,
-              cause: error,
-            }),
-        ),
-      );
-      const runtimeInput: CodexSessionRuntimeOptions = {
-        threadId: input.threadId,
-        cwd: input.cwd ?? process.cwd(),
-        binaryPath: codexSettings.binaryPath,
-        ...(codexSettings.homePath ? { homePath: codexSettings.homePath } : {}),
-        ...(Schema.is(CodexResumeCursorSchema)(input.resumeCursor)
-          ? { resumeCursor: input.resumeCursor }
-          : {}),
-        runtimeMode: input.runtimeMode,
-        ...(input.modelSelection?.provider === "codex"
-          ? { model: input.modelSelection.model }
-          : {}),
-        ...(input.modelSelection?.provider === "codex" && input.modelSelection.options?.fastMode
-          ? { serviceTier: "fast" }
-          : {}),
-      };
-      const createRuntime = options?.makeRuntime ?? makeCodexSessionRuntime;
-      const runtime = yield* createRuntime(runtimeInput).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterProcessError({
-              provider: PROVIDER,
-              threadId: input.threadId,
-              detail: cause.message,
-              cause,
-            }),
-        ),
-      );
-
-      const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
-        Effect.gen(function* () {
-          yield* writeNativeEvent(event);
-          const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
-          if (runtimeEvents.length === 0) {
-            yield* Effect.logDebug("ignoring unhandled Codex provider event", {
-              method: event.method,
-              threadId: event.threadId,
-              turnId: event.turnId,
-              itemId: event.itemId,
-            });
-            return;
-          }
-          yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
-        }),
-      ).pipe(Effect.forkChild);
-
-      const started = yield* runtime.start().pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterProcessError({
-              provider: PROVIDER,
-              threadId: input.threadId,
-              detail: cause.message,
-              cause,
-            }),
-        ),
-        Effect.onError(() =>
-          runtime.close.pipe(Effect.andThen(Fiber.interrupt(eventFiber)), Effect.ignore),
-        ),
-      );
-
-      sessions.set(input.threadId, {
-        threadId: input.threadId,
-        runtime,
-        eventFiber,
-        stopped: false,
-      });
-
-      return started;
-    },
-  );
+        return started;
+      }),
+    );
 
   const resolveAttachment = Effect.fn("resolveAttachment")(function* (
     input: ProviderSendTurnInput,
@@ -1612,6 +1626,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     session.stopped = true;
     sessions.delete(session.threadId);
     yield* session.runtime.close.pipe(Effect.ignore);
+    yield* Effect.ignore(Scope.close(session.scope, Exit.void));
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
   });
 

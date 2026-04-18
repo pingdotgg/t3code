@@ -22,7 +22,8 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
-import { Effect, Fiber, Layer, Option, Queue, Stream } from "effect";
+import { Effect, Fiber, Layer, Option, Queue, Scope, Stream } from "effect";
+import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -154,6 +155,41 @@ function makeRuntimeFactory() {
 
   return {
     factory,
+    get lastRuntime(): FakeCodexRuntime | undefined {
+      return runtimes.at(-1);
+    },
+  };
+}
+
+function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolean }) {
+  const runtimes: Array<FakeCodexRuntime> = [];
+  const releasedThreadIds: Array<ThreadId> = [];
+
+  const factory = vi.fn((runtimeOptions: CodexSessionRuntimeOptions) =>
+    Effect.gen(function* () {
+      yield* Scope.Scope;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          releasedThreadIds.push(runtimeOptions.threadId);
+        }),
+      );
+
+      if (options?.failConstruction) {
+        return yield* new CodexErrors.CodexAppServerSpawnError({
+          command: `${runtimeOptions.binaryPath} app-server`,
+          cause: new Error("runtime construction failed"),
+        });
+      }
+
+      const runtime = new FakeCodexRuntime(runtimeOptions);
+      runtimes.push(runtime);
+      return runtime;
+    }),
+  );
+
+  return {
+    factory,
+    releasedThreadIds,
     get lastRuntime(): FakeCodexRuntime | undefined {
       return runtimes.at(-1);
     },
@@ -1035,6 +1071,76 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         lastReasoningOutputTokens: 0,
         compactsAutomatically: true,
       });
+    }),
+  );
+});
+
+const scopedLifecycleRuntimeFactory = makeScopedRuntimeFactory();
+const scopedLifecycleLayer = it.layer(
+  makeCodexAdapterLive({ makeRuntime: scopedLifecycleRuntimeFactory.factory }).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
+  it.effect("closes the externally owned session scope on stopSession", () =>
+    Effect.gen(function* () {
+      scopedLifecycleRuntimeFactory.releasedThreadIds.length = 0;
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: asThreadId("thread-stop"),
+        runtimeMode: "full-access",
+      });
+
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime;
+      assert.ok(runtime);
+
+      yield* adapter.stopSession(asThreadId("thread-stop"));
+
+      assert.equal(runtime.closeImpl.mock.calls.length, 1);
+      assert.deepStrictEqual(scopedLifecycleRuntimeFactory.releasedThreadIds, [
+        asThreadId("thread-stop"),
+      ]);
+      assert.equal(yield* adapter.hasSession(asThreadId("thread-stop")), false);
+    }),
+  );
+});
+
+const scopedFailureRuntimeFactory = makeScopedRuntimeFactory({ failConstruction: true });
+const scopedFailureLayer = it.layer(
+  makeCodexAdapterLive({ makeRuntime: scopedFailureRuntimeFactory.factory }).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+scopedFailureLayer("CodexAdapterLive scoped startup failure", (it) => {
+  it.effect("closes the externally owned session scope when startSession fails", () =>
+    Effect.gen(function* () {
+      scopedFailureRuntimeFactory.releasedThreadIds.length = 0;
+      const adapter = yield* CodexAdapter;
+
+      const result = yield* adapter
+        .startSession({
+          provider: "codex",
+          threadId: asThreadId("thread-fail"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      assert.equal(result.failure._tag, "ProviderAdapterProcessError");
+      assert.deepStrictEqual(scopedFailureRuntimeFactory.releasedThreadIds, [
+        asThreadId("thread-fail"),
+      ]);
+      assert.equal(yield* adapter.hasSession(asThreadId("thread-fail")), false);
     }),
   );
 });
