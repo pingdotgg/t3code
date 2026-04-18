@@ -3332,7 +3332,7 @@ function ChatViewContent(props: ChatViewProps) {
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
     isGitRepo,
-    branch: gitStatusQuery.data?.branch ?? null,
+    branch: gitStatusQuery.data?.refName,
   });
 
   useEffect(() => {
