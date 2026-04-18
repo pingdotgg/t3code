@@ -20,7 +20,14 @@ import {
   WrenchIcon,
 } from "lucide-react";
 
+import { FolderPlusIcon } from "lucide-react";
 import { ClaudeAI, CursorIcon, type Icon, OpenAI, OpenCodeIcon, PiIcon } from "./Icons";
+import { DEFAULT_MODEL_BY_PROVIDER } from "@t3tools/contracts";
+import { toastManager } from "./ui/toast";
+import { newCommandId, newProjectId } from "../lib/utils";
+import { inferProjectTitleFromPath } from "../lib/projectPaths";
+import { readLocalApi } from "../localApi";
+import { readEnvironmentApi } from "../environmentApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { formatProviderDisplayLabel, describeProviderAvailability } from "../coworkShell";
 import { isElectron } from "../env";
@@ -49,6 +56,7 @@ import {
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuSeparator,
   MenuTrigger,
 } from "./ui/menu";
 import { SidebarInset, SidebarTrigger } from "./ui/sidebar";
@@ -225,6 +233,82 @@ export function NoActiveThreadState() {
   );
   const selectedModelOptions = modelOptionsByProvider[selectedProvider];
   const accessModeCopy = ACCESS_MODE_COPY[runtimeMode];
+
+  /**
+   * Launches the OS folder picker, turns the chosen directory into a new
+   * project in the current environment, and selects it as the active
+   * folder. The folder picker lives on the desktop `LocalApi`; the
+   * project-create dispatch goes through the thread's environment API.
+   *
+   * Falls back with a helpful toast on web (no desktop bridge) or when
+   * there's no existing environment to attach the new project to.
+   */
+  const handleBrowseForFolder = useCallback(async () => {
+    const targetEnvironmentId = orderedProjects[0]?.environmentId ?? undefined;
+    if (!targetEnvironmentId) {
+      toastManager.add({
+        type: "info",
+        title: "Add a project first",
+        description: "Use the command palette (\u2318K) to create your first workspace.",
+      });
+      return;
+    }
+    const localApi = readLocalApi();
+    if (!localApi?.dialogs?.pickFolder) {
+      toastManager.add({
+        type: "info",
+        title: "Folder picker unavailable",
+        description: "Install the desktop app to browse folders directly.",
+      });
+      return;
+    }
+    let pickedPath: string | null = null;
+    try {
+      pickedPath = await localApi.dialogs.pickFolder();
+    } catch {
+      return;
+    }
+    if (!pickedPath) return;
+    const existing = orderedProjects.find(
+      (project) => project.environmentId === targetEnvironmentId && project.cwd === pickedPath,
+    );
+    if (existing) {
+      setSelectedProjectId(projectKey(existing));
+      return;
+    }
+    const envApi = readEnvironmentApi(targetEnvironmentId);
+    if (!envApi) {
+      toastManager.add({
+        type: "error",
+        title: "Couldn't reach that environment",
+        description: "Try refreshing the page.",
+      });
+      return;
+    }
+    try {
+      const projectId = newProjectId();
+      await envApi.orchestration.dispatchCommand({
+        type: "project.create",
+        commandId: newCommandId(),
+        projectId,
+        title: inferProjectTitleFromPath(pickedPath),
+        workspaceRoot: pickedPath,
+        createWorkspaceRootIfMissing: true,
+        defaultModelSelection: {
+          provider: "codex",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+        },
+        createdAt: new Date().toISOString(),
+      });
+      setSelectedProjectId(scopedProjectKey(scopeProjectRef(targetEnvironmentId, projectId)));
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Failed to add folder",
+        description: error instanceof Error ? error.message : "Could not create that project.",
+      });
+    }
+  }, [orderedProjects]);
 
   const handleSubmit = useCallback(async () => {
     const trimmedPrompt = prompt.trim();
@@ -411,6 +495,11 @@ export function NoActiveThreadState() {
                                 ))}
                               </MenuRadioGroup>
                             )}
+                            <MenuSeparator />
+                            <MenuItem onClick={() => void handleBrowseForFolder()}>
+                              <FolderPlusIcon aria-hidden="true" className="size-4 opacity-75" />
+                              <span>Open a folder…</span>
+                            </MenuItem>
                           </MenuPopup>
                         </Menu>
 
