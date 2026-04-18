@@ -1135,11 +1135,10 @@ export const makeCodexSessionRuntime = (
     });
 
     const close = Effect.gen(function* () {
-      const alreadyClosed = yield* Ref.get(closedRef);
+      const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
       if (alreadyClosed) {
         return;
       }
-      yield* Ref.set(closedRef, true);
       yield* settlePendingApprovals("cancel");
       yield* settlePendingUserInputs({});
       yield* updateSession(sessionRef, {
