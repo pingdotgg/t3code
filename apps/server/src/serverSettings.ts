@@ -182,7 +182,7 @@ export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
 
-const PROVIDER_ORDER: readonly ProviderKind[] = ["codex", "claudeAgent", "cursor"];
+const PROVIDER_ORDER: readonly ProviderKind[] = ["codex", "claudeAgent", "opencode", "cursor"];
 
 /**
  * Ensure the `textGenerationModelSelection` points to an enabled provider.

@@ -33,7 +33,6 @@ export const CursorModelOptions = Schema.Struct({
   contextWindow: Schema.optional(Schema.String),
 });
 export type CursorModelOptions = typeof CursorModelOptions.Type;
-
 export const OpenCodeModelOptions = Schema.Struct({
   variant: Schema.optional(TrimmedNonEmptyString),
   agent: Schema.optional(TrimmedNonEmptyString),
@@ -253,6 +252,8 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
   },
   [OPENCODE_DRIVER_KIND]: {},
 };
+
+// ── Provider display names ────────────────────────────────────────────
 
 export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
   codex: "Codex",

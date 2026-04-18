@@ -293,7 +293,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
 export const CursorSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   binaryPath: makeBinaryPathSetting("agent"),
   apiEndpoint: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),

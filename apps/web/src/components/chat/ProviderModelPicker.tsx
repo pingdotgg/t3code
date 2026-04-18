@@ -1,5 +1,5 @@
 import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
-import { resolveModelSlugForProvider, resolveSelectableModel } from "@t3tools/shared/model";
+import { resolveSelectableModel } from "@t3tools/shared/model";
 import { memo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
@@ -46,24 +46,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   open?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
-  disabledReason?: string;
   onProviderModelChange: (provider: ProviderKind, model: string) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const activeProvider = props.lockedProvider ?? props.provider;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
-  const selectedModelValue =
-    resolveSelectableModel(activeProvider, props.model, selectedProviderOptions) ?? props.model;
   const selectedModelLabel =
-    selectedProviderOptions.find((option) => option.slug === selectedModelValue)?.name ??
-    props.model;
+    selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
   const handleModelChange = (provider: ProviderKind, value: string) => {
     if (props.disabled) return;
     if (!value) return;
-    const resolvedModel =
-      resolveSelectableModel(provider, value, props.modelOptionsByProvider[provider]) ??
-      resolveModelSlugForProvider(provider, value);
+    const resolvedModel = resolveSelectableModel(
+      provider,
+      value,
+      props.modelOptionsByProvider[provider],
+    );
     if (!resolvedModel) return;
     props.onProviderModelChange(provider, resolvedModel);
     setIsMenuOpen(false);
@@ -92,7 +90,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               props.triggerClassName,
             )}
             disabled={props.disabled}
-            title={props.disabled ? props.disabledReason : undefined}
           />
         }
       >
@@ -124,7 +121,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         {props.lockedProvider !== null ? (
           <MenuGroup>
             <MenuRadioGroup
-              value={selectedModelValue}
+              value={props.model}
               onValueChange={(value) => handleModelChange(props.lockedProvider!, value)}
             >
               {props.modelOptionsByProvider[props.lockedProvider].map((modelOption) => (
@@ -182,15 +179,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   <MenuSubPopup className="[--available-height:min(24rem,70vh)]" sideOffset={4}>
                     <MenuGroup>
                       <MenuRadioGroup
-                        value={
-                          props.provider === option.value
-                            ? (resolveSelectableModel(
-                                option.value,
-                                props.model,
-                                props.modelOptionsByProvider[option.value],
-                              ) ?? props.model)
-                            : ""
-                        }
+                        value={props.provider === option.value ? props.model : ""}
                         onValueChange={(value) => handleModelChange(option.value, value)}
                       >
                         {props.modelOptionsByProvider[option.value].map((modelOption) => (

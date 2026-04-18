@@ -1303,6 +1303,33 @@ describe("composerDraftStore modelSelection", () => {
     );
   });
 
+  it("preserves the selected Cursor model when only traits change", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProviderModelOptions(
+      threadRef,
+      "cursor",
+      {
+        reasoning: "high",
+      },
+      {
+        model: "gpt-5.4",
+        persistSticky: true,
+      },
+    );
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "gpt-5.4", {
+        reasoning: "high",
+      }),
+    );
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "gpt-5.4", {
+        reasoning: "high",
+      }),
+    );
+  });
+
   it("updates only the draft when sticky persistence is omitted", () => {
     const store = useComposerDraftStore.getState();
 

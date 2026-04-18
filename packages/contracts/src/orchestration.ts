@@ -32,10 +32,6 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
 } as const;
 
-export const ORCHESTRATION_WS_CHANNELS = {
-  domainEvent: "orchestration.domainEvent",
-} as const;
-
 export const ProviderKind = Schema.Literals(["codex", "claudeAgent", "cursor", "opencode"]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([

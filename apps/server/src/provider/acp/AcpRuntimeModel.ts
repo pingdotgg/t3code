@@ -515,11 +515,13 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
 
   switch (upd.sessionUpdate) {
     case "current_mode_update": {
-      modeId = upd.currentModeId;
-      events.push({
-        _tag: "ModeChanged",
-        modeId,
-      });
+      modeId = upd.currentModeId.trim();
+      if (modeId) {
+        events.push({
+          _tag: "ModeChanged",
+          modeId,
+        });
+      }
       break;
     }
     case "plan": {
