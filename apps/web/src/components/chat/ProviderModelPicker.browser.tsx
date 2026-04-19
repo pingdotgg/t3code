@@ -420,4 +420,49 @@ describe("ProviderModelPicker", () => {
       await mounted.cleanup();
     }
   });
+
+  it("falls back to the active provider's first model when props.model doesn't belong to it (#1982)", async () => {
+    // Repro: user disabled codex, provider switched to claudeAgent, but the thread
+    // still has a codex slug selected. Previously the trigger rendered the Claude
+    // icon with the raw codex slug as text ("Claude icon + GPT 5.4"). The active
+    // provider's option list does NOT include the codex slug (getCustomModelOptionsByProvider
+    // only adds the selectedModel to whatever provider matches the selectedProvider).
+    const host = document.createElement("div");
+    document.body.append(host);
+    const onProviderModelChange = vi.fn();
+    // Crafted options: claudeAgent has its normal models, no dangling codex slug.
+    const modelOptionsByProvider = {
+      claudeAgent: [
+        { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
+        { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+      ],
+      codex: [{ slug: "gpt-5-codex", name: "GPT-5 Codex" }],
+      cursor: [],
+      opencode: [],
+    } as const;
+    const screen = await render(
+      <ProviderModelPicker
+        provider="claudeAgent"
+        model="gpt-5-codex"
+        lockedProvider={null}
+        providers={TEST_PROVIDERS}
+        modelOptionsByProvider={modelOptionsByProvider}
+        onProviderModelChange={onProviderModelChange}
+      />,
+      { container: host },
+    );
+
+    try {
+      const button = document.querySelector("button");
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error("Expected picker trigger button to be rendered.");
+      }
+      const label = button.textContent ?? "";
+      expect(label).not.toContain("gpt-5-codex");
+      expect(label).toContain("Claude Opus 4.6");
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
 });

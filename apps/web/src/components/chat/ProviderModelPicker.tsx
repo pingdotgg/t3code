@@ -64,8 +64,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const activeProvider = props.lockedProvider ?? props.provider;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
+  // When props.model doesn't belong to activeProvider (e.g. codex was just disabled
+  // and the thread still has a codex slug selected), prefer the active provider's
+  // first model over the raw slug so the icon and the label always agree.
   const selectedModelLabel =
-    selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
+    selectedProviderOptions.find((option) => option.slug === props.model)?.name ??
+    selectedProviderOptions[0]?.name ??
+    props.model;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
   const handleModelChange = (provider: ProviderKind, value: string) => {
     if (props.disabled) return;
