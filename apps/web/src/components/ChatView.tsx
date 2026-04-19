@@ -1929,7 +1929,6 @@ export default function ChatView(props: ChatViewProps) {
       activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
   }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
   const {
-    wrapperRef: planSidebarWrapperRef,
     handleRef: planResizeHandleRef,
     setWrapperRef: setPlanSidebarWrapperRef,
     onPointerDown: handlePlanResizePointerDown,

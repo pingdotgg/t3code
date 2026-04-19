@@ -84,18 +84,28 @@ export function useResizeHandle({
     };
   }, []);
 
-  /** Callback ref: restores the persisted width when the wrapper element mounts. */
+  /**
+   * Callback ref for the wrapper element.
+   * - On mount: restores the persisted width from localStorage.
+   * - On unmount (node === null): cancels any active resize and clears body styles,
+   *   covering the case where `planSidebarOpen` flips to false programmatically
+   *   mid-drag (e.g. auto-close from plan state changes).
+   */
   const setWrapperRef = useCallback(
     (node: HTMLDivElement | null) => {
       (wrapperRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
-      if (!node) return;
+      if (!node) {
+        const state = resizeStateRef.current;
+        if (state) stop(state.pointerId);
+        return;
+      }
       const stored = localStorage.getItem(storageKey);
       if (!stored) return;
       const parsed = Number(stored);
       if (!Number.isFinite(parsed) || parsed < minWidth) return;
       node.style.setProperty(cssVarName, `${parsed}px`);
     },
-    [cssVarName, storageKey, minWidth],
+    [cssVarName, storageKey, minWidth, stop],
   );
 
   const onPointerDown = useCallback(
@@ -167,7 +177,6 @@ export function useResizeHandle({
   }, []);
 
   return {
-    wrapperRef,
     handleRef,
     setWrapperRef,
     onPointerDown,
