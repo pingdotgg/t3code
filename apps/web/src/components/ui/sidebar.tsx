@@ -290,7 +290,7 @@ function Sidebar({
           {...props}
         >
           <div
-            className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm/5"
+            className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm/5"
             data-sidebar="sidebar"
             data-slot="sidebar-inner"
           >
@@ -621,7 +621,7 @@ function SidebarInput({ className, ...props }: React.ComponentProps<typeof Input
 function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("flex flex-col gap-2 p-2", className)}
+      className={cn("flex min-w-0 flex-col gap-2 overflow-hidden p-2", className)}
       data-sidebar="header"
       data-slot="sidebar-header"
       {...props}

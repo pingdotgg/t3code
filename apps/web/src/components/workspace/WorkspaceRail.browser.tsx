@@ -92,8 +92,8 @@ const { default: WorkspaceRail } = await import("./WorkspaceRail");
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const THREAD_ID = ThreadId.make("thread-workspace-rail-test");
-const VISIBILITY_KEY = "atelier:workspace-rail:pane-visibility:v3";
-const COLLAPSED_KEY = "atelier:workspace-rail:pane-collapsed:v2";
+const VISIBILITY_KEY = "workbench:console:pane-visibility:v1";
+const COLLAPSED_KEY = "workbench:console:pane-collapsed:v1";
 
 type RailProps = React.ComponentProps<typeof WorkspaceRail>;
 
@@ -169,10 +169,10 @@ describe("WorkspaceRail (vertical stack model)", () => {
     vi.clearAllMocks();
   });
 
-  it("defaults to a single Files card in the stack", async () => {
+  it("defaults to Files, Recent edited files, and Tasks in the stack", async () => {
     await using _ = await mountRail();
     await vi.waitFor(() => {
-      expect(visiblePaneIds()).toEqual(["tree"]);
+      expect(visiblePaneIds()).toEqual(["tree", "recent", "task"]);
     });
   });
 
@@ -182,16 +182,20 @@ describe("WorkspaceRail (vertical stack model)", () => {
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
       expect(text).toContain("Files");
-      expect(text).toContain("Recent changes");
-      expect(text).toContain("Task");
+      expect(text).toContain("Recent edited files");
+      expect(text).toContain("Tasks");
     });
   });
 
-  it("checking Task in the menu adds it to the stack below Files", async () => {
+  it("checking Tasks in the menu adds it to the stack below Files", async () => {
+    window.localStorage.setItem(
+      VISIBILITY_KEY,
+      JSON.stringify({ tree: true, recent: false, task: false }),
+    );
     await using _ = await mountRail();
     await page.getByLabelText("Add or remove console panes").click();
     // The menu item label is just the pane name.
-    await page.getByRole("menuitem", { name: /Task/ }).click();
+    await page.getByRole("menuitemcheckbox", { name: /Tasks/ }).click();
 
     await vi.waitFor(() => {
       const ids = visiblePaneIds();
@@ -200,14 +204,14 @@ describe("WorkspaceRail (vertical stack model)", () => {
   });
 
   it("each card has its own X that removes only that card from the stack", async () => {
-    // Seed Files + Task visible (Recent stays hidden by default).
+    // Seed Files + Tasks visible.
     window.localStorage.setItem(
       VISIBILITY_KEY,
       JSON.stringify({ tree: true, recent: false, task: true }),
     );
 
     await using _ = await mountRail();
-    await page.getByLabelText("Close Task card").click();
+    await page.getByLabelText("Close Tasks card").click();
 
     await vi.waitFor(() => {
       expect(visiblePaneIds()).toEqual(["tree"]);
@@ -257,16 +261,24 @@ describe("WorkspaceRail (vertical stack model)", () => {
     }
   });
 
-  it("the Recent changes card appears in the Console menu and can be added to the stack", async () => {
+  it("the Recent edited files card appears in the Console menu and can be added to the stack", async () => {
+    window.localStorage.setItem(
+      VISIBILITY_KEY,
+      JSON.stringify({ tree: true, recent: false, task: false }),
+    );
     await using _ = await mountRail();
     await page.getByLabelText("Add or remove console panes").click();
-    await page.getByRole("menuitem", { name: /Recent changes/ }).click();
+    await page.getByRole("menuitemcheckbox", { name: /Recent edited files/ }).click();
     await vi.waitFor(() => {
       expect(visiblePaneIds()).toContain("recent");
     });
   });
 
   it("stack can never go empty — closing the last card forces Files back on", async () => {
+    window.localStorage.setItem(
+      VISIBILITY_KEY,
+      JSON.stringify({ tree: true, recent: false, task: false }),
+    );
     await using _ = await mountRail();
     await page.getByLabelText("Close Files card").click();
     await vi.waitFor(() => {
@@ -325,7 +337,7 @@ describe("WorkspaceRail (vertical stack model)", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("auto-shows the Task card when a plan first becomes available", async () => {
+  it("auto-shows the Tasks card when a plan first becomes available", async () => {
     await using _ = await mountRail({
       activeProposedPlan: {
         id: OrchestrationProposedPlanId.make("plan-test-1"),
@@ -409,8 +421,14 @@ describe("WorkspaceRail viewer (Phase 2)", () => {
   });
 
   it("clicking Quick edit reveals the textarea + Save and Cancel buttons", async () => {
+    mockReadFileResponse = {
+      contents: "# Original\n\nBefore the edit.",
+      relativePath: "some/file.md",
+      truncated: false,
+    };
     await using _ = await mountRail({
-      focusedPath: "/Users/jlm/some/file.md",
+      workspaceRoot: "/Users/jlm/proj",
+      focusedPath: "/Users/jlm/proj/some/file.md",
     });
     await page.getByTitle("Quick edit this file inline").click();
     await vi.waitFor(() => {
@@ -421,8 +439,14 @@ describe("WorkspaceRail viewer (Phase 2)", () => {
   });
 
   it("Save is disabled until the user actually changes the buffer", async () => {
+    mockReadFileResponse = {
+      contents: "# Original\n\nBefore the edit.",
+      relativePath: "some/file.md",
+      truncated: false,
+    };
     await using _ = await mountRail({
-      focusedPath: "/Users/jlm/some/file.md",
+      workspaceRoot: "/Users/jlm/proj",
+      focusedPath: "/Users/jlm/proj/some/file.md",
     });
     await page.getByTitle("Quick edit this file inline").click();
     await vi.waitFor(() => {
@@ -503,6 +527,26 @@ describe("WorkspaceRail viewer (Phase 2)", () => {
       expect(writeFile).not.toHaveBeenCalled();
     });
   });
+
+  it("Source switches the viewer to raw file contents", async () => {
+    mockReadFileResponse = {
+      contents: "# Hello\n\nDocument content.",
+      relativePath: "some/file.md",
+      truncated: false,
+    };
+    await using _ = await mountRail({
+      workspaceRoot: "/Users/jlm/proj",
+      focusedPath: "/Users/jlm/proj/some/file.md",
+    });
+
+    await page.getByTitle("View raw source").click();
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".document-markdown")).toBeNull();
+      expect(document.body.textContent ?? "").toContain("# Hello");
+      expect(document.body.textContent ?? "").toContain("Document content.");
+    });
+  });
 });
 
 // ----- visual snapshots -----
@@ -520,15 +564,15 @@ describe("WorkspaceRail (visual snapshots)", () => {
     vi.clearAllMocks();
   });
 
-  it("snapshot — default stack (Files only)", async () => {
+  it("snapshot — default stack (Files, Recent edited files, Tasks)", async () => {
     await using _ = await mountRail();
     await vi.waitFor(() => {
-      expect(visiblePaneIds()).toEqual(["tree"]);
+      expect(visiblePaneIds()).toEqual(["tree", "recent", "task"]);
     });
     await page.screenshot({ path: "__screenshots__/stack-default.png" });
   });
 
-  it("snapshot — stack with Files + Recent changes + Task all visible", async () => {
+  it("snapshot — stack with Files + Recent edited files + Tasks all visible", async () => {
     window.localStorage.setItem(
       VISIBILITY_KEY,
       JSON.stringify({ tree: true, recent: true, task: true }),
@@ -540,7 +584,7 @@ describe("WorkspaceRail (visual snapshots)", () => {
     await page.screenshot({ path: "__screenshots__/stack-all-cards.png" });
   });
 
-  it("snapshot — Files collapsed (header only), Task expanded", async () => {
+  it("snapshot — Files collapsed (header only), Tasks expanded", async () => {
     window.localStorage.setItem(
       VISIBILITY_KEY,
       JSON.stringify({ tree: true, recent: false, task: true }),
@@ -573,7 +617,7 @@ describe("WorkspaceRail (visual snapshots)", () => {
     await page.getByLabelText("Add or remove console panes").click();
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
-      expect(text).toContain("Task");
+      expect(text).toContain("Tasks");
     });
     await page.screenshot({ path: "__screenshots__/workspace-menu-open.png" });
   });

@@ -5,8 +5,8 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 
 import type { WorkspacePaneId, WorkspacePaneVisibilityMap } from "./types";
 
-const VISIBILITY_STORAGE_KEY = "atelier:workspace-rail:pane-visibility:v3";
-const COLLAPSED_STORAGE_KEY = "atelier:workspace-rail:pane-collapsed:v2";
+const VISIBILITY_STORAGE_KEY = "workbench:console:pane-visibility:v1";
+const COLLAPSED_STORAGE_KEY = "workbench:console:pane-collapsed:v1";
 
 const VisibilitySchema = Schema.Struct({
   tree: Schema.Boolean,
@@ -21,13 +21,11 @@ const CollapsedSchema = Schema.Struct({
 });
 
 const DEFAULT_VISIBILITY: WorkspacePaneVisibilityMap = {
-  // Default-on: tree is the user's primary navigation surface for the
-  // workspace, and task is what we auto-promote when a plan kicks in.
-  // Recent is opt-in via the Workspace menu so the default first-load is
-  // a single tidy card.
+  // The Console should immediately surface the three core panes users rely
+  // on most: files, recent edited files, and tasks.
   tree: true,
-  recent: false,
-  task: false,
+  recent: true,
+  task: true,
 };
 
 const DEFAULT_COLLAPSED: WorkspacePaneVisibilityMap = {

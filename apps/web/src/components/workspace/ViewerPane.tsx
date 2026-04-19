@@ -179,6 +179,7 @@ export function ViewerPane({
   onSaveFile,
 }: ViewerPaneProps) {
   const documentSelectionContainerRef = useRef<HTMLDivElement | null>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [paneRootRef, paneWidth] = useElementWidth<HTMLDivElement>();
   const isNarrow = paneWidth > 0 && paneWidth < VIEWER_NARROW_THRESHOLD_PX;
 
@@ -191,6 +192,12 @@ export function ViewerPane({
     ? EDITABLE_CATEGORIES.has(selectedDescriptor.category)
     : false;
   const supportsEdit = !!onSaveFile && supportsCodeView && isEditableCategory && !!selectedPath;
+  const quickEditDisabledReason = documentTextLoading
+    ? "Loading file contents"
+    : documentTextTruncated
+      ? "Open the full file in your editor before editing"
+      : null;
+  const canEnterEditMode = supportsEdit && quickEditDisabledReason === null;
 
   // ----- edit-mode buffer + dirty tracking -----
   // `editBuffer` is null when not editing. Once the user enters edit mode we
@@ -271,9 +278,17 @@ export function ViewerPane({
     editBaselineRef.current = "";
   }, [selectedPath]);
 
+  useEffect(() => {
+    if (activeDocumentViewMode !== "edit" || editBuffer === null) {
+      return;
+    }
+    editTextareaRef.current?.focus();
+    editTextareaRef.current?.setSelectionRange(0, 0);
+  }, [activeDocumentViewMode, editBuffer]);
+
   return (
-    <div ref={paneRootRef} className="flex h-full min-h-0 min-w-0 flex-col">
-      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/60 px-3">
+    <div ref={paneRootRef} className="flex h-full min-h-0 min-w-0 flex-col [-webkit-app-region:no-drag]">
+      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/60 px-3 [-webkit-app-region:no-drag]">
         <div className="flex min-w-0 items-center gap-1.5">
           <Button
             size="xs"
@@ -348,8 +363,9 @@ export function ViewerPane({
                 size="xs"
                 variant="outline"
                 onClick={enterEditMode}
+                disabled={!canEnterEditMode}
                 className="gap-1.5"
-                title="Quick edit this file inline"
+                title={quickEditDisabledReason ?? "Quick edit this file inline"}
               >
                 <PencilIcon className="size-3.5" />
                 Quick edit
@@ -397,7 +413,7 @@ export function ViewerPane({
         </div>
       </div>
 
-      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/60 px-4 py-3">
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/60 px-4 py-3 [-webkit-app-region:no-drag]">
         <div className="min-w-0">
           {selectedPath ? (
             <WorkspaceBreadcrumb
@@ -448,6 +464,7 @@ export function ViewerPane({
           // Save/Cancel live in the toolbar above (next to the Quick edit
           // button slot), so the body is just the textarea filling the pane. -----
           <textarea
+            ref={editTextareaRef}
             aria-label="Edit file contents"
             value={editBuffer}
             onChange={(event) => setEditBuffer(event.target.value)}

@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import type { EnvironmentId, ProjectEntry, ThreadId, TurnId } from "@workbench/contracts";
 import type { TimestampFormat } from "@workbench/contracts/settings";
 import {
-  CheckIcon,
   FilesIcon,
   HistoryIcon,
   ListChecksIcon,
@@ -42,7 +41,7 @@ import {
 } from "../../workspaceArtifacts";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { toastManager } from "../ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -113,9 +112,9 @@ function paneLabelFor(id: WorkspacePaneId) {
     case "tree":
       return "Files";
     case "recent":
-      return "Recent changes";
+      return "Recent edited files";
     case "task":
-      return "Task";
+      return "Tasks";
   }
 }
 
@@ -124,7 +123,7 @@ function paneDescriptionFor(id: WorkspacePaneId) {
     case "tree":
       return "Browse the project's folder tree";
     case "recent":
-      return "Files the agent recently created or updated";
+      return "Files the agent recently created or edited";
     case "task":
       return "Active plan, status, and recent work";
   }
@@ -380,7 +379,7 @@ const WorkspaceRail = memo(function WorkspaceRail({
     projectReadFileQueryOptions({
       environmentId,
       cwd: workspaceRoot ?? null,
-      relativePath: selectedPath,
+      relativePath: selectedPath ? resolveWorkspaceSelectionPath(selectedPath, workspaceRoot) : null,
       enabled: viewerOverlayOpen && !!workspaceRoot && selectedDescriptor?.previewKind === "text",
       maxBytes: 24_000,
     }),
@@ -492,11 +491,17 @@ const WorkspaceRail = memo(function WorkspaceRail({
         throw new Error("environment api unavailable");
       }
       // The viewer hands us the full path; projects.writeFile expects a
-      // relative path under cwd, so strip the workspace root prefix when
-      // present.
-      const relativePath = path.startsWith(`${workspaceRoot}/`)
-        ? path.slice(workspaceRoot.length + 1)
-        : path;
+      // relative path under cwd, so normalize absolute + workspace-labelled
+      // paths before writing.
+      const relativePath = resolveWorkspaceSelectionPath(path, workspaceRoot);
+      if (relativePath === null) {
+        toastManager.add({
+          type: "error",
+          title: "Could not save file",
+          description: "The selected file is outside the active workspace.",
+        });
+        throw new Error("file path outside workspace");
+      }
       try {
         const result = await api.projects.writeFile({
           cwd: workspaceRoot,
@@ -626,7 +631,7 @@ const WorkspaceRail = memo(function WorkspaceRail({
   return (
     <div
       data-panel-mode={mode}
-      className="relative flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden bg-card/55"
+      className="relative flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden bg-card/55 [-webkit-app-region:no-drag]"
     >
       <RailHeader
         summary={headerSummary}
@@ -756,7 +761,7 @@ interface RailHeaderProps {
 
 function RailHeader({ summary, panes, visibility, onTogglePane, onClose }: RailHeaderProps) {
   return (
-    <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/60 px-3">
+    <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/60 px-3 [-webkit-app-region:no-drag]">
       <div className="flex min-w-0 items-center gap-2">
         {/* Workspace pane picker — chip-styled trigger so it reads as
             interactive at a glance. Click opens a checkbox menu of available
@@ -788,18 +793,15 @@ function RailHeader({ summary, panes, visibility, onTogglePane, onClose }: RailH
               const active = visibility[pane.id];
               const Icon = pane.Icon;
               return (
-                <MenuItem
+                <MenuCheckboxItem
                   key={pane.id}
-                  onClick={() => onTogglePane(pane.id)}
-                  aria-checked={active}
-                  className="flex items-center gap-2"
+                  checked={active}
+                  onCheckedChange={() => onTogglePane(pane.id)}
+                  className="min-h-8"
                 >
-                  <span className="flex size-4 items-center justify-center text-blue-500">
-                    {active ? <CheckIcon className="size-3.5" /> : null}
-                  </span>
                   <Icon className="size-3.5 text-muted-foreground/75" />
-                  <span className="flex-1">{pane.label}</span>
-                </MenuItem>
+                  <span>{pane.label}</span>
+                </MenuCheckboxItem>
               );
             })}
           </MenuPopup>
@@ -831,7 +833,8 @@ function EmptyRailState({ onShowFiles }: { onShowFiles: () => void }) {
       <div className="max-w-sm rounded-2xl border border-dashed border-border/60 bg-background/50 p-5 text-center">
         <p className="text-sm font-medium text-foreground/88">No panes are showing</p>
         <p className="mt-1 text-xs leading-5 text-muted-foreground/70">
-          Open the Console menu in the header to add Files, Task, and other cards to your stack.
+          Open the Console menu in the header to add Files, Tasks, Recent edited files, and other
+          cards to your stack.
         </p>
         <Button size="xs" variant="outline" className="mt-3" onClick={onShowFiles}>
           Show Files
