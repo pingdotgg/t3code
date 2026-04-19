@@ -11,6 +11,7 @@ import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
+import { Combobox, ComboboxEmpty, ComboboxInput, ComboboxList } from "../ui/combobox";
 import {
   PROVIDER_ICON_BY_PROVIDER,
   providerIconClassName,
@@ -47,6 +48,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const { keybindings: providedKeybindings, modelOptionsByProvider, onProviderModelChange } = props;
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const listRegionRef = useRef<HTMLDivElement>(null);
+  const highlightedModelKeyRef = useRef<string | null>(null);
   const favorites = useSettings((s) => s.favorites ?? []);
   const [selectedProvider, setSelectedProvider] = useState<ProviderKind | "favorites">(() => {
     if (props.lockedProvider !== null) {
@@ -132,7 +135,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       const rankedMatches = result
         .map((model) => ({
           model,
-          score: scoreModelPickerSearch(model, searchQuery),
+          score: scoreModelPickerSearch(
+            {
+              ...model,
+              isFavorite: favoritesSet.has(`${model.provider}:${model.slug}`),
+            },
+            searchQuery,
+          ),
           isFavorite: favoritesSet.has(`${model.provider}:${model.slug}`),
           tieBreaker: buildModelPickerSearchText(model),
         }))
@@ -262,6 +271,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => [...modelJumpCommandByKey.keys()],
     [modelJumpCommandByKey],
   );
+  const allModelKeys = useMemo(
+    (): string[] => flatModels.map((model) => `${model.provider}:${model.slug}`),
+    [flatModels],
+  );
+  const filteredModelKeys = useMemo(
+    (): string[] => filteredModels.map((model) => `${model.provider}:${model.slug}`),
+    [filteredModels],
+  );
+  const filteredModelByKey = useMemo(
+    (): ReadonlyMap<string, ModelPickerItem> =>
+      new Map(filteredModels.map((model) => [`${model.provider}:${model.slug}`, model] as const)),
+    [filteredModels],
+  );
   const modelJumpShortcutContext = useMemo(
     () =>
       ({
@@ -321,10 +343,47 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   }, [handleModelSelect, keybindings, modelJumpModelKeys, modelJumpShortcutContext]);
 
+  useLayoutEffect(() => {
+    const listRegion = listRegionRef.current;
+    if (!listRegion) {
+      return;
+    }
+
+    let cancelled = false;
+    let frame = 0;
+    let nestedFrame = 0;
+    let timeout = 0;
+
+    const measureScrollArea = () => {
+      if (cancelled) {
+        return;
+      }
+      const viewport = listRegion.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      if (!viewport || viewport.scrollHeight <= viewport.clientHeight) {
+        return;
+      }
+      viewport.dispatchEvent(new Event("scroll"));
+    };
+
+    queueMicrotask(measureScrollArea);
+    frame = window.requestAnimationFrame(() => {
+      measureScrollArea();
+      nestedFrame = window.requestAnimationFrame(measureScrollArea);
+    });
+    timeout = window.setTimeout(measureScrollArea, 0);
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+      window.cancelAnimationFrame(nestedFrame);
+      window.clearTimeout(timeout);
+    };
+  }, [filteredModelKeys]);
+
   return (
     <div
       className={cn(
-        "flex h-screen max-h-96 w-screen max-w-100 bg-popover",
+        "relative flex h-screen max-h-96 w-screen max-w-100 overflow-hidden rounded-lg border bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
         isLocked ? "flex-col" : "flex-row",
       )}
     >
@@ -355,59 +414,102 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       )}
 
       {/* Main content area */}
-      <div className={cn("flex-1 flex flex-col", isLocked ? "min-w-0" : showSidebar && "border-l")}>
-        {/* Search bar */}
-        <div className="px-3 py-2 border-b flex items-center gap-2 relative z-20">
-          <SearchIcon className="size-4 shrink-0 text-muted-foreground/50" />
-          <input
-            ref={searchInputRef}
-            type="text"
-            placeholder="Search models..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.preventDefault();
-                e.stopPropagation();
-                props.onRequestClose?.();
-                return;
-              }
-              e.stopPropagation();
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
-            autoFocus
-            className="flex-1 bg-transparent text-xs font-normal leading-snug outline-none placeholder:text-muted-foreground/50 relative z-20"
-          />
-        </div>
-
-        {/* Model list */}
-        <div className="flex-1 overflow-y-auto model-picker-list">
-          {filteredModels.length > 0 ? (
-            <div className="divide-y p-1">
-              {filteredModels.map((model) => (
-                <ModelListRow
-                  key={`${model.provider}:${model.slug}`}
-                  slug={model.slug}
-                  name={model.name}
-                  provider={model.provider}
-                  isSelected={props.provider === model.provider && props.model === model.slug}
-                  isFavorite={favoritesSet.has(`${model.provider}:${model.slug}`)}
-                  showProvider={!isLocked}
-                  showNewBadge={isModelPickerNewModel(model.provider, model.slug)}
-                  jumpLabel={modelJumpLabelByKey.get(`${model.provider}:${model.slug}`) ?? null}
-                  onSelect={() => handleModelSelect(model.slug, model.provider)}
-                  onToggleFavorite={() => toggleFavorite(model.provider, model.slug)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="flex items-center justify-center h-full text-xs font-normal leading-snug text-muted-foreground">
-              No models found
-            </div>
+      <Combobox
+        inline
+        items={allModelKeys}
+        filteredItems={filteredModelKeys}
+        filter={null}
+        autoHighlight
+        open
+        value={`${props.provider}:${props.model}`}
+        onItemHighlighted={(modelKey) => {
+          highlightedModelKeyRef.current = typeof modelKey === "string" ? modelKey : null;
+        }}
+        onValueChange={(modelKey) => {
+          if (typeof modelKey !== "string") {
+            return;
+          }
+          const [provider, slug] = modelKey.split(":") as [ProviderKind, string];
+          handleModelSelect(slug, provider);
+        }}
+      >
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 flex-col overflow-hidden",
+            isLocked ? "min-w-0" : showSidebar && "border-l",
           )}
+        >
+          {/* Search bar */}
+          <div className="border-b px-3 py-2">
+            <ComboboxInput
+              ref={searchInputRef}
+              className="[&_input]:font-sans rounded-md"
+              inputClassName="border-0 shadow-none ring-0 focus-visible:ring-0"
+              placeholder="Search models..."
+              showTrigger={false}
+              startAddon={<SearchIcon className="size-4 shrink-0 text-muted-foreground/50" />}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  props.onRequestClose?.();
+                  return;
+                }
+                if (e.key === "Enter" && highlightedModelKeyRef.current) {
+                  (e as typeof e & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const [provider, slug] = highlightedModelKeyRef.current.split(":") as [
+                    ProviderKind,
+                    string,
+                  ];
+                  handleModelSelect(slug, provider);
+                  return;
+                }
+                e.stopPropagation();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              size="sm"
+            />
+          </div>
+
+          {/* Model list */}
+          <div
+            ref={listRegionRef}
+            className="relative min-h-0 flex-1 before:pointer-events-none before:absolute before:inset-0 before:bg-muted/40"
+          >
+            <ComboboxList className="model-picker-list size-full divide-y px-2 py-1">
+              {filteredModelKeys.map((modelKey, index) => {
+                const model = filteredModelByKey.get(modelKey);
+                if (!model) {
+                  return null;
+                }
+                return (
+                  <ModelListRow
+                    key={modelKey}
+                    index={index}
+                    value={modelKey}
+                    slug={model.slug}
+                    name={model.name}
+                    provider={model.provider}
+                    isFavorite={favoritesSet.has(modelKey)}
+                    showProvider={!isLocked}
+                    showNewBadge={isModelPickerNewModel(model.provider, model.slug)}
+                    jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
+                    onToggleFavorite={() => toggleFavorite(model.provider, model.slug)}
+                  />
+                );
+              })}
+            </ComboboxList>
+          </div>
+          <ComboboxEmpty className="not-empty:py-6 empty:h-0 text-xs font-normal leading-snug">
+            No models found
+          </ComboboxEmpty>
         </div>
-      </div>
+      </Combobox>
     </div>
   );
 });

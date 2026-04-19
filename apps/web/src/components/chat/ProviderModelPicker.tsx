@@ -7,7 +7,7 @@ import { memo, useEffect, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ChevronDownIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
-import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { cn } from "~/lib/utils";
 import { ModelPickerContent } from "./ModelPickerContent";
 import { providerIconClassName, PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
@@ -59,7 +59,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   };
 
   return (
-    <Menu
+    <Popover
       open={isMenuOpen}
       onOpenChange={(open) => {
         if (props.disabled) {
@@ -69,7 +69,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         setIsMenuOpen(open);
       }}
     >
-      <MenuTrigger
+      <PopoverTrigger
         render={
           <Button
             size="sm"
@@ -101,8 +101,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           <span className="min-w-0 flex-1 truncate">{selectedModelLabel}</span>
           <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
         </span>
-      </MenuTrigger>
-      <MenuPopup align="start" className="p-0">
+      </PopoverTrigger>
+      <PopoverPopup
+        align="start"
+        className="border-0 bg-transparent p-0 shadow-none before:hidden [--viewport-inline-padding:0] [&>[data-slot=popover-viewport]]:p-0"
+      >
         <ModelPickerContent
           provider={props.provider}
           model={props.model}
@@ -114,7 +117,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           onRequestClose={() => setIsMenuOpen(false)}
           onProviderModelChange={handleProviderModelChange}
         />
-      </MenuPopup>
-    </Menu>
+      </PopoverPopup>
+    </Popover>
   );
 });

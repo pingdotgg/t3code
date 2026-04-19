@@ -58,4 +58,48 @@ describe("scoreModelPickerSearch", () => {
     expect(fuzzyScore).not.toBeNull();
     expect(exactScore!).toBeLessThan(fuzzyScore!);
   });
+
+  it("gives favorite models a strong enough ranking boost for partial queries", () => {
+    const favoriteScore = scoreModelPickerSearch(
+      {
+        provider: "claudeAgent",
+        name: "Claude Opus 4.7",
+        isFavorite: true,
+      },
+      "opu",
+    );
+    const nonFavoriteScore = scoreModelPickerSearch(
+      {
+        provider: "cursor",
+        name: "Opus 4.5",
+      },
+      "opu",
+    );
+
+    expect(favoriteScore).not.toBeNull();
+    expect(nonFavoriteScore).not.toBeNull();
+    expect(favoriteScore!).toBeLessThan(nonFavoriteScore!);
+  });
+
+  it("does not let the favorite boost outrank clearly better textual matches", () => {
+    const favoriteScore = scoreModelPickerSearch(
+      {
+        provider: "claudeAgent",
+        name: "Claude Opus 4.7",
+        isFavorite: true,
+      },
+      "opus 4.7",
+    );
+    const nonFavoriteExactScore = scoreModelPickerSearch(
+      {
+        provider: "cursor",
+        name: "Opus 4.7",
+      },
+      "opus 4.7",
+    );
+
+    expect(favoriteScore).not.toBeNull();
+    expect(nonFavoriteExactScore).not.toBeNull();
+    expect(nonFavoriteExactScore!).toBeLessThan(favoriteScore!);
+  });
 });

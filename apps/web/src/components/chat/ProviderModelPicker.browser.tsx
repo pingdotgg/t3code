@@ -1,6 +1,6 @@
 import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -440,6 +440,170 @@ describe("ProviderModelPicker", () => {
         const text = document.body.textContent ?? "";
         expect(text).toContain("Claude Opus 4.6");
         expect(text).not.toContain("GPT-5 Codex");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("supports arrow-key navigation in the model picker", async () => {
+    const mounted = await mountPicker({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      lockedProvider: "claudeAgent",
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      const searchInput = page.getByPlaceholder("Search models...");
+      await userEvent.click(searchInput);
+      await userEvent.keyboard("{ArrowDown}");
+      await vi.waitFor(() => {
+        const highlightedItem = document.querySelector<HTMLElement>(
+          '[data-slot="combobox-item"][data-highlighted]',
+        );
+        expect(highlightedItem).not.toBeNull();
+        expect(highlightedItem?.textContent).toContain("Claude Opus 4.6");
+      });
+      await userEvent.keyboard("{ArrowDown}");
+      await vi.waitFor(() => {
+        const highlightedItem = document.querySelector<HTMLElement>(
+          '[data-slot="combobox-item"][data-highlighted]',
+        );
+        expect(highlightedItem).not.toBeNull();
+        expect(highlightedItem?.textContent).toContain("Claude Sonnet 4.6");
+      });
+      await userEvent.keyboard("{Enter}");
+
+      expect(mounted.onProviderModelChange).toHaveBeenCalledWith(
+        "claudeAgent",
+        "claude-sonnet-4-6",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("initializes scroll overflow state before the first manual scroll", async () => {
+    const mounted = await mountPicker({
+      provider: "codex",
+      model: "gpt-5-codex",
+      lockedProvider: null,
+      providers: [
+        buildCodexProvider([
+          {
+            slug: "gpt-5-codex",
+            name: "GPT-5 Codex",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: true,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+          {
+            slug: "gpt-5.3-codex",
+            name: "GPT-5.3 Codex",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: true,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+          {
+            slug: "gpt-5.4",
+            name: "GPT-5.4",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: true,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+          {
+            slug: "gpt-5.4-mini",
+            name: "GPT-5.4 Mini",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: true,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+          {
+            slug: "gpt-5.3-codex-spark",
+            name: "GPT-5.3 Codex Spark",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: true,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+          {
+            slug: "gpt-5.2-codex",
+            name: "GPT-5.2 Codex",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: true,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+          {
+            slug: "gpt-5.2",
+            name: "GPT-5.2",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: true,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+          {
+            slug: "crest-alpha",
+            name: "crest-alpha",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: true,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+        ]),
+      ],
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        const viewport = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+        const scrollbar = document.querySelector<HTMLElement>(
+          '[data-slot="scroll-area-scrollbar"][data-orientation="vertical"]',
+        );
+        expect(viewport).not.toBeNull();
+        expect(viewport?.hasAttribute("data-has-overflow-y")).toBe(true);
+        expect(scrollbar).not.toBeNull();
+        expect(scrollbar?.style.visibility).not.toBe("hidden");
       });
     } finally {
       await mounted.cleanup();

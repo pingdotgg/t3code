@@ -4,17 +4,16 @@ import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRan
 type ModelPickerSearchableModel = {
   provider: ProviderKind;
   name: string;
+  isFavorite?: boolean;
 };
 
-function normalizeSearchValue(value: string): string {
-  return normalizeSearchQuery(value);
-}
+const MODEL_PICKER_FAVORITE_SCORE_BOOST = 24;
 
 function getModelPickerSearchFields(model: ModelPickerSearchableModel): string[] {
   return [
-    normalizeSearchValue(model.name),
-    normalizeSearchValue(model.provider),
-    normalizeSearchValue(PROVIDER_DISPLAY_NAMES[model.provider]),
+    normalizeSearchQuery(model.name),
+    normalizeSearchQuery(model.provider),
+    normalizeSearchQuery(PROVIDER_DISPLAY_NAMES[model.provider]),
     buildModelPickerSearchText(model),
   ];
 }
@@ -36,7 +35,7 @@ function scoreModelPickerSearchToken(
 }
 
 export function buildModelPickerSearchText(model: ModelPickerSearchableModel): string {
-  return normalizeSearchValue(
+  return normalizeSearchQuery(
     [model.name, model.provider, PROVIDER_DISPLAY_NAMES[model.provider]].join(" "),
   );
 }
@@ -45,7 +44,7 @@ export function scoreModelPickerSearch(
   model: ModelPickerSearchableModel,
   query: string,
 ): number | null {
-  const tokens = normalizeSearchValue(query)
+  const tokens = normalizeSearchQuery(query)
     .split(/\s+/u)
     .filter((token) => token.length > 0);
 
@@ -68,5 +67,5 @@ export function scoreModelPickerSearch(
     score += Math.min(...tokenScores);
   }
 
-  return score;
+  return model.isFavorite ? score - MODEL_PICKER_FAVORITE_SCORE_BOOST : score;
 }

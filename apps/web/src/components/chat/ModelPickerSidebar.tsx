@@ -62,7 +62,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               render={
                 <button
                   className={cn(
-                    "relative isolate flex w-full aspect-square items-center justify-center rounded transition-colors hover:bg-muted",
+                    "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded transition-colors hover:bg-muted",
                     props.selectedProvider === "favorites" && SELECTED_BUTTON_CLASS,
                   )}
                   onClick={() => handleProviderClick("favorites")}
@@ -106,7 +106,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
           <button
             data-model-picker-provider={option.value}
             className={cn(
-              "relative isolate flex w-full aspect-square items-center justify-center rounded transition-colors hover:bg-muted",
+              "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded transition-colors hover:bg-muted",
               isSelected && SELECTED_BUTTON_CLASS,
               isDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
             )}

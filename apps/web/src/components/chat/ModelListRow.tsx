@@ -7,41 +7,63 @@ import {
   getProviderLabel,
   getDisplayModelName,
 } from "./providerIconUtils";
+import { ComboboxItem } from "../ui/combobox";
 import { Kbd } from "../ui/kbd";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 
 export const ModelListRow = memo(function ModelListRow(props: {
+  index: number;
+  value: string;
   slug: string;
   name: string;
   provider: ProviderKind;
-  isSelected: boolean;
   isFavorite: boolean;
   showProvider: boolean;
   showNewBadge?: boolean;
   jumpLabel?: string | null;
-  onSelect: () => void;
   onToggleFavorite: () => void;
 }) {
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.provider];
 
   return (
-    <div
+    <ComboboxItem
+      hideIndicator
+      index={props.index}
+      value={props.value}
+      contentClassName="flex w-full items-start gap-2"
       className={cn(
-        "w-full px-3 py-2 rounded transition-colors flex items-start gap-2 group",
-        !props.isSelected && "hover:bg-muted",
-        props.isSelected && "bg-accent",
+        "w-full cursor-pointer rounded px-3 py-2 transition-colors group",
+        "data-highlighted:bg-muted data-selected:bg-accent data-selected:text-foreground",
       )}
     >
-      <button
-        className="shrink-0 mt-0.5 opacity-40 group-hover:opacity-100 transition-opacity"
-        onClick={props.onToggleFavorite}
-        type="button"
-        aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
-      >
-        <StarIcon className={cn("size-4", props.isFavorite && "fill-current text-yellow-500")} />
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              className="mt-0.5 shrink-0 cursor-pointer opacity-40 transition-opacity group-hover:opacity-100"
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onToggleFavorite();
+              }}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+              }}
+              type="button"
+              aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+            >
+              <StarIcon
+                className={cn("size-4", props.isFavorite && "fill-current text-yellow-500")}
+              />
+            </button>
+          }
+        />
+        <TooltipPopup side="top" align="center">
+          {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+        </TooltipPopup>
+      </Tooltip>
 
-      <button className="min-w-0 flex-1 text-left" onClick={props.onSelect} type="button">
+      <div className="min-w-0 flex-1 text-left">
         <div className="flex items-center justify-between gap-2 min-w-0">
           <div className="text-xs font-medium leading-snug flex items-center gap-2 min-w-0">
             <span className="truncate">{getDisplayModelName(props.provider, props.name)}</span>
@@ -73,7 +95,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
             </span>
           </div>
         )}
-      </button>
-    </div>
+      </div>
+    </ComboboxItem>
   );
 });
