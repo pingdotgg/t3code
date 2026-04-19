@@ -94,7 +94,13 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import {
+  RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY,
+  PLAN_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+  PLAN_INLINE_DEFAULT_WIDTH,
+  PLAN_INLINE_SIDEBAR_MIN_WIDTH,
+} from "../rightPanelLayout";
+import { Sidebar, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
@@ -1923,6 +1929,17 @@ export default function ChatView(props: ChatViewProps) {
     planSidebarDismissedForTurnRef.current =
       activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
   }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+  const onPlanSidebarOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setPlanSidebarOpen(true);
+        planSidebarDismissedForTurnRef.current = null;
+        return;
+      }
+      closePlanSidebar();
+    },
+    [closePlanSidebar],
+  );
 
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
@@ -3434,19 +3451,40 @@ export default function ChatView(props: ChatViewProps) {
         </div>
         {/* end chat column */}
 
-        {/* Plan sidebar */}
-        {planSidebarOpen && !shouldUsePlanSidebarSheet ? (
-          <PlanSidebar
-            activePlan={activePlan}
-            activeProposedPlan={sidebarProposedPlan}
-            label={planSidebarLabel}
-            environmentId={environmentId}
-            markdownCwd={gitCwd ?? undefined}
-            workspaceRoot={activeWorkspaceRoot}
-            timestampFormat={timestampFormat}
-            mode="sidebar"
-            onClose={closePlanSidebar}
-          />
+        {/* Plan sidebar (inline, resizable) */}
+        {!shouldUsePlanSidebarSheet ? (
+          <SidebarProvider
+            defaultOpen={false}
+            open={planSidebarOpen}
+            onOpenChange={onPlanSidebarOpenChange}
+            className="w-auto min-h-0 flex-none bg-transparent"
+            style={{ "--sidebar-width": PLAN_INLINE_DEFAULT_WIDTH } as React.CSSProperties}
+          >
+            <Sidebar
+              side="right"
+              collapsible="offcanvas"
+              className="border-l border-border bg-card text-foreground"
+              resizable={{
+                minWidth: PLAN_INLINE_SIDEBAR_MIN_WIDTH,
+                storageKey: PLAN_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+              }}
+            >
+              {planSidebarOpen ? (
+                <PlanSidebar
+                  activePlan={activePlan}
+                  activeProposedPlan={sidebarProposedPlan}
+                  label={planSidebarLabel}
+                  environmentId={environmentId}
+                  markdownCwd={gitCwd ?? undefined}
+                  workspaceRoot={activeWorkspaceRoot}
+                  timestampFormat={timestampFormat}
+                  mode="sidebar"
+                  onClose={closePlanSidebar}
+                />
+              ) : null}
+              <SidebarRail />
+            </Sidebar>
+          </SidebarProvider>
         ) : null}
       </div>
       {/* end horizontal flex container */}
