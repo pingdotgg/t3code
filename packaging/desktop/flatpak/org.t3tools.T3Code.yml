@@ -1,0 +1,70 @@
+app-id: org.t3tools.T3Code
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+# Provides the Electron binary at /app/bin/electron
+base: org.electronjs.Electron2.BaseApp
+base-version: "24.08"
+command: t3code
+separate-locales: false
+
+finish-args:
+  # Display
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  # Network (the server communicates with AI providers)
+  - --share=network
+  # Filesystem — the app reads/writes project files from the user's home directory
+  - --filesystem=home
+  # Notifications
+  - --talk-name=org.freedesktop.Notifications
+  # Allow running subprocesses (git, etc.)
+  - --allow=devel
+
+modules:
+  - name: t3code
+    buildsystem: simple
+    build-commands:
+      # app-content/ is populated by build-flatpak.sh (extracted from the .deb).
+      # It follows the standard electron-builder deb layout:
+      #   usr/bin/t3code          → symlink (not used here)
+      #   usr/lib/t3code/         → electron binary + resources/
+      #   usr/share/applications/ → .desktop file
+      #   usr/share/icons/        → icons
+      #
+      # We use the Electron binary from the base app and only copy the app resources.
+      - cp -r app-content/usr/lib/t3code/resources /app/t3code-resources
+      - install -Dm755 t3code-launcher.sh /app/bin/t3code
+      # Desktop integration
+      - |
+        if ls app-content/usr/share/applications/*.desktop 2>/dev/null | head -1 | grep -q .; then
+          install -Dm644 app-content/usr/share/applications/*.desktop \
+            /app/share/applications/org.t3tools.T3Code.desktop
+          # Fix the Exec line to use our flatpak wrapper
+          sed -i 's|^Exec=.*|Exec=/app/bin/t3code|' \
+            /app/share/applications/org.t3tools.T3Code.desktop
+        fi
+      - |
+        if [ -d app-content/usr/share/icons ]; then
+          cp -r app-content/usr/share/icons /app/share/icons
+        fi
+
+    sources:
+      # app-content/ is a staging directory created by ../build-flatpak.sh.
+      # It is gitignored and must be populated before running flatpak-builder.
+      - type: dir
+        path: ./app-content
+
+      - type: script
+        dest-filename: t3code-launcher.sh
+        commands:
+          # The Electron base app places the electron binary at /app/bin/electron.
+          # We point it at our app resources (either app.asar or the app/ directory).
+          - |
+            if [ -f /app/t3code-resources/app.asar ]; then
+              exec /app/bin/electron /app/t3code-resources/app.asar "$@"
+            else
+              exec /app/bin/electron /app/t3code-resources/app "$@"
+            fi
