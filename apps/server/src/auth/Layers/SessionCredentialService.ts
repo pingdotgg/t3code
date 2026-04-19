@@ -1,4 +1,8 @@
-import { AuthSessionId, type AuthClientMetadata, type AuthClientSession } from "@workbench/contracts";
+import {
+  AuthSessionId,
+  type AuthClientMetadata,
+  type AuthClientSession,
+} from "@workbench/contracts";
 import { Clock, DateTime, Duration, Effect, Layer, PubSub, Ref, Schema, Stream } from "effect";
 import { Option } from "effect";
 

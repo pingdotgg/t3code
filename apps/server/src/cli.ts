@@ -141,7 +141,10 @@ function optionalConfigWithAliases<Value>(
     config = Config.orElse(config, () => read(name));
   }
 
-  return config.pipe(Config.option, Config.map((value) => Option.getOrUndefined(value)));
+  return config.pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)),
+  );
 }
 
 const stringConfigWithAliases = (...names: ReadonlyArray<string>) =>

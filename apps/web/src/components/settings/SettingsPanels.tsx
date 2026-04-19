@@ -380,7 +380,8 @@ function getProviderSummary(provider: ServerProvider | undefined) {
     return {
       headline: "Disabled",
       detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in Workbench.",
+        provider.message ??
+        "This provider is installed but disabled for new sessions in Workbench.",
     };
   }
   if (!provider.installed) {

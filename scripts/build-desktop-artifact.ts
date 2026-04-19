@@ -265,9 +265,8 @@ const BuildEnvConfig = Config.all({
     ["WORKBENCH_DESKTOP_TARGET", "T3CODE_DESKTOP_TARGET"],
     Config.string,
   ),
-  arch: optionalConfigWithAliases(
-    ["WORKBENCH_DESKTOP_ARCH", "T3CODE_DESKTOP_ARCH"],
-    (name) => Config.schema(BuildArch, name),
+  arch: optionalConfigWithAliases(["WORKBENCH_DESKTOP_ARCH", "T3CODE_DESKTOP_ARCH"], (name) =>
+    Config.schema(BuildArch, name),
   ),
   version: optionalConfigWithAliases(
     ["WORKBENCH_DESKTOP_VERSION", "T3CODE_DESKTOP_VERSION"],

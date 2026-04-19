@@ -20,9 +20,9 @@
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "@workbench/contracts": "workspace:*",
     "@workbench/shared": "workspace:*",
-    "@types/node": "catalog:",
     "effect-acp": "workspace:*",
     "tsdown": "catalog:",
     "typescript": "catalog:",

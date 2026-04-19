@@ -42,9 +42,7 @@ const DEFAULT_COLLAPSED: ConsolePaneVisibilityMap = {
 export function useConsolePaneVisibility(): [
   ConsolePaneVisibilityMap,
   (
-    next:
-      | ConsolePaneVisibilityMap
-      | ((prev: ConsolePaneVisibilityMap) => ConsolePaneVisibilityMap),
+    next: ConsolePaneVisibilityMap | ((prev: ConsolePaneVisibilityMap) => ConsolePaneVisibilityMap),
   ) => void,
   (paneId: ConsolePaneId) => void,
 ] {

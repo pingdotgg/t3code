@@ -49,7 +49,13 @@ const MODE_ARGS = {
   ],
   "dev:server": ["run", "dev", "--filter=workbench"],
   "dev:web": ["run", "dev", "--filter=@workbench/web"],
-  "dev:desktop": ["run", "dev", "--filter=@workbench/desktop", "--filter=@workbench/web", "--parallel"],
+  "dev:desktop": [
+    "run",
+    "dev",
+    "--filter=@workbench/desktop",
+    "--filter=@workbench/web",
+    "--parallel",
+  ],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;
@@ -76,17 +82,22 @@ function optionalConfigWithAliases<Value>(
     config = Config.orElse(config, () => read(name));
   }
 
-  return config.pipe(Config.option, Config.map((value) => Option.getOrUndefined(value)));
+  return config.pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)),
+  );
 }
 
 const optionalStringConfig = (...names: ReadonlyArray<string>): Config.Config<string | undefined> =>
   optionalConfigWithAliases(names, Config.string);
-const optionalBooleanConfig = (...names: ReadonlyArray<string>): Config.Config<boolean | undefined> =>
-  optionalConfigWithAliases(names, Config.boolean);
+const optionalBooleanConfig = (
+  ...names: ReadonlyArray<string>
+): Config.Config<boolean | undefined> => optionalConfigWithAliases(names, Config.boolean);
 const optionalPortConfig = (...names: ReadonlyArray<string>): Config.Config<number | undefined> =>
   optionalConfigWithAliases(names, Config.port);
-const optionalIntegerConfig = (...names: ReadonlyArray<string>): Config.Config<number | undefined> =>
-  optionalConfigWithAliases(names, Config.int);
+const optionalIntegerConfig = (
+  ...names: ReadonlyArray<string>
+): Config.Config<number | undefined> => optionalConfigWithAliases(names, Config.int);
 const optionalUrlConfig = (...names: ReadonlyArray<string>): Config.Config<URL | undefined> =>
   optionalConfigWithAliases(names, Config.url);
 
@@ -530,7 +541,9 @@ const devRunnerCli = Command.make("dev-runner", {
   logWebSocketEvents: Flag.boolean("log-websocket-events").pipe(
     Flag.withDescription("WebSocket event logging toggle (equivalent to WORKBENCH_LOG_WS_EVENTS)."),
     Flag.withAlias("log-ws-events"),
-    Flag.withFallbackConfig(optionalBooleanConfig("WORKBENCH_LOG_WS_EVENTS", "T3CODE_LOG_WS_EVENTS")),
+    Flag.withFallbackConfig(
+      optionalBooleanConfig("WORKBENCH_LOG_WS_EVENTS", "T3CODE_LOG_WS_EVENTS"),
+    ),
   ),
   host: Flag.string("host").pipe(
     Flag.withDescription("Server host/interface override (forwards to WORKBENCH_HOST)."),

@@ -1,6 +1,9 @@
 import type { RepositoryIdentity } from "@workbench/contracts";
 import { Cache, Duration, Effect, Exit, Layer } from "effect";
-import { detectGitHostingProviderFromRemoteUrl, normalizeGitRemoteUrl } from "@workbench/shared/git";
+import {
+  detectGitHostingProviderFromRemoteUrl,
+  normalizeGitRemoteUrl,
+} from "@workbench/shared/git";
 
 import { runProcess } from "../../processRunner.ts";
 import {

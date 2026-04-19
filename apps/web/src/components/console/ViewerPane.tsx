@@ -287,7 +287,10 @@ export function ViewerPane({
   }, [activeDocumentViewMode, editBuffer]);
 
   return (
-    <div ref={paneRootRef} className="flex h-full min-h-0 min-w-0 flex-col [-webkit-app-region:no-drag]">
+    <div
+      ref={paneRootRef}
+      className="flex h-full min-h-0 min-w-0 flex-col [-webkit-app-region:no-drag]"
+    >
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/60 px-3 [-webkit-app-region:no-drag]">
         <div className="flex min-w-0 items-center gap-1.5">
           <Button
