@@ -584,9 +584,6 @@ export function flattenOpenCodeModels(
     if (!connected.has(provider.id)) {
       continue;
     }
-    if (!officialProviderIds.has(provider.id)) {
-      continue;
-    }
 
     for (const model of Object.values(provider.models)) {
       models.push({
