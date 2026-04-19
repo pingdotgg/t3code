@@ -81,13 +81,46 @@ export const CodexSettings = Schema.Struct({
 });
 export type CodexSettings = typeof CodexSettings.Type;
 
-export const ClaudeSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+export const DEFAULT_CLAUDE_PERSONAL_PROFILE_ID = "personal";
+
+export const ClaudeProfile = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
   binaryPath: makeBinaryPathSetting("claude"),
-  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  homePath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   launchArgs: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
+export type ClaudeProfile = typeof ClaudeProfile.Type;
+
+const DEFAULT_CLAUDE_PROFILE: ClaudeProfile = {
+  id: DEFAULT_CLAUDE_PERSONAL_PROFILE_ID,
+  label: "Personal",
+  binaryPath: "claude",
+  homePath: "",
+  launchArgs: "",
+};
+
+export const ClaudeSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  profiles: Schema.Array(ClaudeProfile).pipe(
+    Schema.withDecodingDefault(Effect.succeed([DEFAULT_CLAUDE_PROFILE])),
+  ),
+  defaultProfileId: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CLAUDE_PERSONAL_PROFILE_ID)),
+  ),
+});
 export type ClaudeSettings = typeof ClaudeSettings.Type;
+
+export function resolveClaudeProfile(claude: ClaudeSettings, profileId?: string): ClaudeProfile {
+  const profiles = claude.profiles.length > 0 ? claude.profiles : [DEFAULT_CLAUDE_PROFILE];
+  if (profileId) {
+    const found = profiles.find((p) => p.id === profileId);
+    if (found) return found;
+  }
+  const byDefault = profiles.find((p) => p.id === claude.defaultProfileId);
+  return byDefault ?? profiles[0]!;
+}
 
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -178,9 +211,9 @@ const CodexSettingsPatch = Schema.Struct({
 
 const ClaudeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(Schema.String),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-  launchArgs: Schema.optionalKey(Schema.String),
+  profiles: Schema.optionalKey(Schema.Array(ClaudeProfile)),
+  defaultProfileId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 
 export const ServerSettingsPatch = Schema.Struct({

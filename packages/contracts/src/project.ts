@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderKind } from "./orchestration.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
@@ -53,3 +54,27 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
+
+/**
+ * User-level per-project override: pins a repo path to a preferred provider
+ * and/or Claude profile. Stored on the server under the user data directory,
+ * keyed by absolute cwd. Read on session start to resolve defaults when the
+ * composer did not specify them.
+ */
+export const ProjectProviderOverride = Schema.Struct({
+  provider: Schema.optional(ProviderKind),
+  claudeProfileId: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProjectProviderOverride = typeof ProjectProviderOverride.Type;
+
+export const ProjectProviderOverrideInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  override: ProjectProviderOverride,
+});
+export type ProjectProviderOverrideInput = typeof ProjectProviderOverrideInput.Type;
+
+export const ProjectProviderOverrideEntry = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  override: ProjectProviderOverride,
+});
+export type ProjectProviderOverrideEntry = typeof ProjectProviderOverrideEntry.Type;
