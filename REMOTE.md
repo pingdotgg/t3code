@@ -1,89 +1,76 @@
-# Remote Access
+# Connecting to a Workbench server
 
-Use this when you want to connect to a Workbench server from another device such as a phone, tablet, or separate desktop app.
+Use this when you want to connect the Workbench desktop app to a server running on another machine — for example, a beefier Mac at home from your laptop on the go, or a shared workstation reachable from your phone.
 
-## Recommended Setup
+## Recommended setup
 
-Use a trusted private network that meshes your devices together, such as a tailnet.
+Use a trusted private network that meshes your devices together — Tailscale, ZeroTier, or any other mesh VPN.
 
 That gives you:
 
 - a stable address to connect to
 - transport security at the network layer
-- less exposure than opening the server to the public internet
+- no need to expose anything to the public internet
 
-## Enabling Network Access
+## Two ways to enable network access
 
-There are two ways to expose your server for remote connections: from the desktop app or from the CLI.
+### Option 1: From the desktop app
 
-### Option 1: Desktop App
+If you're already running the desktop app and want to make it reachable from other devices:
 
-If you are already running the desktop app and want to make it reachable from other devices:
+1. Open **Settings → Connections**.
+2. Under **Manage Local Backend**, toggle **Network access** on. The app restarts and binds the backend to all network interfaces.
+3. The settings panel shows the address (e.g. `http://192.168.1.42:3773`).
+4. Hit **Create Link** to generate a one-time pairing link to share with another device.
 
-1. Open **Settings** → **Connections**.
-2. Under **Manage Local Backend**, toggle **Network access** on. This will restart the app and run the backend on all network interfaces.
-3. The settings panel will show the address the server is reachable at (e.g. `http://192.168.x.y:3773`).
-4. Use **Create Link** to generate a pairing link you can share with another device.
+### Option 2: Headless server (CLI)
 
-### Option 2: Headless Server (CLI)
-
-Use this when you want to run the server without a GUI, for example on a remote machine over SSH.
-
-The CLI command still uses `t3` during the migration:
-
-Run the server with `t3 serve`.
+For running on a machine without a GUI — say, an SSH'd-into Mac mini.
 
 ```bash
-npx t3 serve --host "$(tailscale ip -4)"
+npx workbench serve --host "$(tailscale ip -4)"
 ```
 
-`t3 serve` starts the server without opening a browser and prints:
+`workbench serve` starts the server without opening a browser and prints:
 
 - a connection string
 - a pairing token
 - a pairing URL
 - a QR code for the pairing URL
 
-From there, connect from another device in either of these ways:
+From another device, you can:
 
 - scan the QR code on your phone
-- in the desktop app, enter the full pairing URL
-- in the desktop app, enter the host and token separately
+- paste the full pairing URL into the desktop app
+- enter the host and token separately in the desktop app
 
-Use `t3 serve --help` for the full flag reference. It supports the same general startup options as the normal server command, including an optional `cwd` argument.
+`workbench serve --help` has the full flag reference. Same general startup options as the local backend, including an optional `cwd`.
 
-> Note
-> The GUIs do not currently support adding projects on remote environments.
-> For now, use `t3 project ...` on the server machine instead.
-> Full GUI support for remote project management is coming soon.
+> **Note:** Adding new projects on a remote environment via the GUI isn't fully supported yet. For now, use `workbench project ...` on the server machine to add projects, then connect from the GUI.
 
-## How Pairing Works
+## How pairing works
 
-The remote device does not need a long-lived secret up front.
+The remote device doesn't need a long-lived secret up front. Instead:
 
-Instead:
-
-1. `t3 serve` issues a one-time owner pairing token.
+1. `workbench serve` (or **Create Link** in the desktop app) issues a one-time owner pairing token.
 2. The remote device exchanges that token with the server.
 3. The server creates an authenticated session for that device.
 
-After pairing, future access is session-based. You do not need to keep reusing the original token unless you are pairing a new device.
+After pairing, future access is session-based — the original token isn't needed again unless you're pairing a new device.
 
-## Managing Access Later
+## Managing access later
 
-Use `t3 auth` to manage access after the initial pairing flow.
-
-Typical uses:
+`workbench auth` manages access after the initial pairing flow:
 
 - issue additional pairing credentials
-- inspect active sessions
-- revoke old pairing links or sessions
+- list active sessions
+- revoke pairing links or sessions
 
-Use `t3 auth --help` and the nested subcommand help pages for the full reference.
+`workbench auth --help` and the nested subcommand help pages have the full reference.
 
-## Security Notes
+## Security notes
 
 - Treat pairing URLs and pairing tokens like passwords.
-- Prefer binding `--host` to a trusted private address, such as a Tailnet IP, instead of exposing the server broadly.
+- Prefer binding `--host` to a trusted private address (Tailnet IP, etc.) over exposing the server broadly.
 - Anyone with a valid pairing credential can create a session until that credential expires or is revoked.
-- Use `t3 auth` to revoke credentials or sessions you no longer trust.
+- Use `workbench auth` to revoke credentials or sessions you no longer trust.

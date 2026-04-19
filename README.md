@@ -1,64 +1,46 @@
 # Workbench
 
-Workbench is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
+Workbench is a folder-first AI workbench for real tasks and real files.
 
-## Installation
+It's built for knowledge workers, technical-adjacent builders, and developers who want a calmer interface for agent-driven work. The goal is to feel like **"AI that can actually work in my folder"**, not just a chat window or a developer IDE.
 
-> [!WARNING]
-> Workbench currently supports Codex and Claude.
-> Install and authenticate at least one provider before use:
->
-> - Codex: install [Codex CLI](https://github.com/openai/codex) and run `codex login`
-> - Claude: install Claude Code and run `claude auth login`
+## Quick start
 
-### Run without installing
-
-During the identity migration, the CLI entrypoint still uses `t3` for compatibility:
+Requires [Bun](https://bun.sh/) and Node 20+.
 
 ```bash
-npx t3
+bun install
+bun run dev
 ```
 
-### Desktop app
+This starts the desktop app in development mode, the local backend server, and the web app in parallel via Turbo.
 
-Install the latest version of the Workbench desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
-
-#### Windows (`winget`)
+For other commands:
 
 ```bash
-winget install T3Tools.T3Code
+bun fmt        # format
+bun lint       # lint
+bun typecheck  # type-check
+bun run test   # vitest
 ```
 
-#### macOS (Homebrew)
+## Repo layout
 
-```bash
-brew install --cask t3-code
-```
+| Path | What it is |
+|---|---|
+| `apps/desktop/` | Electron shell — packages the web app + local backend into a desktop binary |
+| `apps/web/` | React + Vite frontend (the actual UI) |
+| `apps/server/` | Bun + Effect WS server — runs as the local backend or as a headless server |
+| `apps/marketing/` | Astro marketing site |
+| `packages/contracts/` | Shared schema + RPC contracts between web and server |
+| `packages/` | Other shared libraries |
+| `scripts/` | Build, release, and tooling scripts |
+| `assets/` | App icons + branding assets |
 
-#### Arch Linux (AUR)
+## Connecting from another device
 
-```bash
-yay -S t3code-bin
-```
+See [REMOTE.md](./REMOTE.md) for pairing the desktop app with a Workbench server running on another machine.
 
-## Some notes
+## Acknowledgements
 
-We are very very early in this project. Expect bugs.
-
-We are not accepting contributions yet.
-
-Observability guide: [docs/observability.md](./docs/observability.md)
-
-## If you REALLY want to contribute still.... read this first
-
-Before local development, prepare the environment and install dependencies:
-
-```bash
-# Optional: only needed if you use mise for dev tool management.
-mise install
-bun install .
-```
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+Workbench is a fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code), substantially rebranded and reshaped for non-developer workflows. Many of the underlying primitives (provider adapters, orchestration, the diff viewer) come straight from that work.
