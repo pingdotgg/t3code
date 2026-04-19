@@ -22,6 +22,7 @@ import {
   TurnId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
+import { normalizeAccountRateLimits } from "@t3tools/shared/accountLimits";
 import { Effect, FileSystem, Layer, Queue, Schema, Context, Stream } from "effect";
 
 import {
@@ -1166,12 +1167,14 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
+    const normalized = normalizeAccountRateLimits(event.payload);
     return [
       {
         type: "account.rate-limits.updated",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           rateLimits: event.payload ?? {},
+          ...(normalized ? { normalized } : {}),
         },
       },
     ];

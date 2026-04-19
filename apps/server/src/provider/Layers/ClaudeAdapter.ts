@@ -19,6 +19,7 @@ import {
   type SDKUserMessage,
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { normalizeAccountRateLimits } from "@t3tools/shared/accountLimits";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
   ApprovalRequestId,
@@ -2276,11 +2277,13 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
+      const normalized = normalizeAccountRateLimits(message);
       yield* offerRuntimeEvent({
         ...base,
         type: "account.rate-limits.updated",
         payload: {
           rateLimits: message,
+          ...(normalized ? { normalized } : {}),
         },
       });
       return;

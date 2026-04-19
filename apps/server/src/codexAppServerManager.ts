@@ -540,6 +540,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           planType: context.account.planType,
           sparkEnabled: context.account.sparkEnabled,
         });
+        await this.refreshRateLimits(context, "session-start");
       } catch (error) {
         console.log("codex account/read failed", error);
       }
@@ -1144,6 +1145,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         activeTurnId: undefined,
         lastError: errorMessage ?? context.session.lastError,
       });
+      void this.refreshRateLimits(context, "turn-completed");
+      return;
+    }
+
+    if (notification.method === "account/updated") {
+      void this.refreshRateLimits(context, "account-updated");
       return;
     }
 
@@ -1324,6 +1331,27 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       method,
       message,
     });
+  }
+
+  private async refreshRateLimits(context: CodexSessionContext, reason: string): Promise<void> {
+    try {
+      const response = await this.sendRequest(context, "account/rateLimits/read", {}, 5_000);
+      this.emitEvent({
+        id: EventId.make(randomUUID()),
+        kind: "notification",
+        provider: "codex",
+        threadId: context.session.threadId,
+        createdAt: new Date().toISOString(),
+        method: "account/rateLimits/updated",
+        payload: response,
+      });
+    } catch (error) {
+      await Effect.logDebug("codex app-server rate limits refresh failed", {
+        threadId: context.session.threadId,
+        reason,
+        cause: error instanceof Error ? error.message : String(error),
+      }).pipe(this.runPromise);
+    }
   }
 
   private emitEvent(event: ProviderEvent): void {
